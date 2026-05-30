@@ -14,6 +14,8 @@ import { TelegramChannelsModule } from './telegram-channels/telegram-channels.mo
 import { TransactionsModule } from './transactions/transactions.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { BootstrapModule } from './bootstrap/bootstrap.module';
+import { InvestorsModule } from './investors/investors.module';
+import { InvestmentsModule } from './investments/investments.module';
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { BootstrapModule } from './bootstrap/bootstrap.module';
     AdCampaignsModule,
     DashboardModule,
     BootstrapModule,
+    InvestorsModule,
+    InvestmentsModule,
   ],
   controllers: [AppController],
 })

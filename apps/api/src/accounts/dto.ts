@@ -12,6 +12,10 @@ export class CreateAccountDto {
   @Type(() => Number)
   @IsNumber()
   initialBalance!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class UpdateAccountDto {

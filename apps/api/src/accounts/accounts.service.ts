@@ -79,6 +79,7 @@ export class AccountsService {
         name: dto.name,
         currency: dto.currency,
         initialBalance: dto.initialBalance,
+        isActive: dto.isActive ?? true,
       },
     });
     return account;

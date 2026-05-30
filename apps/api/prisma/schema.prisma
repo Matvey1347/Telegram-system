@@ -72,6 +72,8 @@ model Workspace {
   advertisingSources AdvertisingSource[]
   adCampaigns        AdCampaign[]
   exchangeRates      ExchangeRate[]
+  investors          Investor[]
+  investments        Investment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -106,6 +108,7 @@ model Account {
   outgoingTransfers Transfer[] @relation("OutgoingTransfers")
   incomingTransfers Transfer[] @relation("IncomingTransfers")
   adCampaigns       AdCampaign[]
+  investments       Investment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -130,6 +133,46 @@ model Transaction {
   account   Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
 
   adCampaign AdCampaign? @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
+  investment Investment?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Investor {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String?
+  phone       String?
+  notes       String?
+  isActive    Boolean  @default(true)
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  investments Investment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Investment {
+  id                      String   @id @default(cuid())
+  workspaceId             String
+  investorId              String
+  accountId               String
+  transactionId           String?  @unique
+  amount                  Decimal
+  currency                Currency
+  amountInPrimaryCurrency Decimal
+  exchangeRateToPrimary   Decimal
+  date                    DateTime
+  notes                   String?
+  createdByUserId         String?
+
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  investor    Investor    @relation(fields: [investorId], references: [id], onDelete: Restrict)
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
