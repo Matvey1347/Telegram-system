@@ -1,0 +1,340 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+}
+
+enum Currency {
+  UAH
+  USD
+  EUR
+  PLN
+}
+
+enum TransactionType {
+  income
+  expense
+}
+
+enum CampaignStatus {
+  planned
+  active
+  finished
+  cancelled
+  archived
+}
+
+enum PromoStatus {
+  draft
+  active
+  archived
+}
+
+enum AdvertisingSourceType {
+  telegram_channel
+  instagram
+  facebook
+  website
+  direct
+  other
+}
+
+model User {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  passwordHash String
+  name         String
+  memberships  WorkspaceMember[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model Workspace {
+  id                String   @id @default(cuid())
+  name              String
+  primaryCurrency   Currency @default(USD)
+  secondaryCurrency Currency @default(UAH)
+
+  members            WorkspaceMember[]
+  accounts           Account[]
+  transactions       Transaction[]
+  transfers          Transfer[]
+  telegramChannels   TelegramChannel[]
+  promos             Promo[]
+  advertisingSources AdvertisingSource[]
+  adCampaigns        AdCampaign[]
+  exchangeRates      ExchangeRate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(admin)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, userId])
+}
+
+model Account {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  name           String
+  currency       Currency
+  initialBalance Decimal  @default(0)
+  isActive       Boolean  @default(true)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  transactions      Transaction[]
+  outgoingTransfers Transfer[] @relation("OutgoingTransfers")
+  incomingTransfers Transfer[] @relation("IncomingTransfers")
+  adCampaigns       AdCampaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  id                      String          @id @default(cuid())
+  workspaceId              String
+  accountId                String
+  type                    TransactionType
+  amount                  Decimal
+  currency                Currency
+  amountInPrimaryCurrency Decimal
+  exchangeRateToPrimary   Decimal
+  category                String
+  description             String?
+  date                    DateTime
+  adCampaignId            String?         @unique
+  createdByUserId         String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  adCampaign AdCampaign? @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transfer {
+  id                  String    @id @default(cuid())
+  workspaceId          String
+  fromAccountId        String
+  toAccountId          String
+  fromAmount           Decimal
+  fromCurrency         Currency
+  toAmount             Decimal
+  toCurrency           Currency
+  exchangeRate         Decimal?
+  expectedToAmount     Decimal?
+  transferLossAmount   Decimal?
+  transferLossCurrency Currency?
+  date                 DateTime
+  description          String?
+  createdByUserId      String?
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  fromAccount Account   @relation("OutgoingTransfers", fields: [fromAccountId], references: [id], onDelete: Restrict)
+  toAccount   Account   @relation("IncomingTransfers", fields: [toAccountId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramChannel {
+  id                      String   @id @default(cuid())
+  workspaceId              String
+  title                   String
+  username                String?
+  telegramChatId           String?
+  inviteLink              String?
+  description             String?
+  language                String?
+  niche                   String?
+  currentSubscribersCount Int?
+  isActive                Boolean  @default(true)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  promos      Promo[]
+  adCampaigns AdCampaign[]
+  inviteLinks TelegramInviteLink[]
+  dailyStats  TelegramChannelDailyStats[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramChannelDailyStats {
+  id                String   @id @default(cuid())
+  telegramChannelId String
+  date              DateTime
+  subscribersCount  Int?
+  joinedCount       Int?
+  leftCount         Int?
+  viewsCount        Int?
+  reactionsCount    Int?
+  forwardsCount     Int?
+
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([telegramChannelId, date])
+}
+
+model Promo {
+  id                String      @id @default(cuid())
+  workspaceId        String
+  telegramChannelId  String
+  title             String
+  text              String
+  angle             String?
+  status            PromoStatus @default(draft)
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  adCampaigns AdCampaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdvertisingSource {
+  id               String                @id @default(cuid())
+  workspaceId       String
+  name             String
+  type             AdvertisingSourceType
+  url              String?
+  telegramUsername String?
+  description      String?
+  contactInfo      String?
+  notes            String?
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adCampaigns AdCampaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdCampaign {
+  id                      String         @id @default(cuid())
+  workspaceId              String
+  telegramChannelId        String
+  advertisingSourceId      String?
+  promoId                  String?
+  accountId                String?
+
+  title                    String
+  status                   CampaignStatus @default(planned)
+  price                    Decimal
+  currency                 Currency
+  priceInPrimaryCurrency   Decimal
+  exchangeRateToPrimary    Decimal
+  inviteLink               String?
+  telegramInviteLinkId     String?
+  sourcePostUrl            String?
+  sourcePostViews          Int?
+  startedAt                DateTime?
+  endedAt                  DateTime?
+  joinedCount              Int            @default(0)
+  leftCount                Int?
+  netGrowthCount           Int?
+  cpa                      Decimal?
+  cpm                      Decimal?
+  notes                    String?
+  createdByUserId          String?
+
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel   TelegramChannel    @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  advertisingSource AdvertisingSource? @relation(fields: [advertisingSourceId], references: [id], onDelete: SetNull)
+  promo             Promo?             @relation(fields: [promoId], references: [id], onDelete: SetNull)
+  account           Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  expenseTransaction Transaction? @relation("CampaignExpenseTransaction")
+
+  inviteLinks      TelegramInviteLink[]
+  subscriberEvents SubscriberEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramInviteLink {
+  id                   String    @id @default(cuid())
+  workspaceId           String
+  telegramChannelId     String
+  adCampaignId          String?
+  name                 String
+  url                  String
+  telegramInviteLinkId  String?
+  createdBy            String?
+  createsJoinRequest   Boolean?
+  expireDate           DateTime?
+  memberLimit          Int?
+  joinedCount          Int       @default(0)
+  isRevoked            Boolean   @default(false)
+  lastSyncedAt         DateTime?
+
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  adCampaign      AdCampaign?     @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+
+  subscriberEvents SubscriberEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SubscriberEvent {
+  id                String   @id @default(cuid())
+  workspaceId        String
+  telegramChannelId  String
+  adCampaignId       String?
+  inviteLinkId       String?
+  telegramUserId     String?
+  eventType          String
+  eventDate          DateTime
+  source             String?
+
+  adCampaign AdCampaign?        @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+  inviteLink TelegramInviteLink? @relation(fields: [inviteLinkId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+}
+
+model ExchangeRate {
+  id             String   @id @default(cuid())
+  workspaceId     String
+  baseCurrency    Currency
+  targetCurrency  Currency
+  rate           Decimal
+  date           DateTime
+  source         String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, baseCurrency, targetCurrency, date])
+}

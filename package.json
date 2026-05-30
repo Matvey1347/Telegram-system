@@ -1,0 +1,21 @@
+{
+  "name": "telegram_system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal system for Telegram channel finance, ads, campaigns and analytics.",
+  "scripts": {
+    "dev": "pnpm --parallel --filter web --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api start:dev",
+    "build": "pnpm --recursive build",
+    "lint": "pnpm --recursive lint",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:migrate": "pnpm --filter api prisma migrate dev",
+    "db:generate": "pnpm --filter api prisma generate",
+    "db:studio": "pnpm --filter api prisma studio",
+    "db:seed": "pnpm --filter api prisma db seed"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
