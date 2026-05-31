@@ -89,3 +89,13 @@ Backend:
 PostgreSQL:
 
     localhost:5432
+
+## Telegram Bot Integration Model
+
+- One Telegram bot can manage multiple Telegram channels.
+- One Telegram channel has one selected main bot for automation.
+- Telegram Bot API cannot list all channels where bot is admin automatically.
+- Users must manually create channels in the system and assign a connected bot.
+- Bot must be admin in the channel to run automation checks and generate invite links.
+- Invite link generation requires Add Subscribers (`can_invite_users`) permission.
+- Webhook processing and live join tracking are planned for the next phase.

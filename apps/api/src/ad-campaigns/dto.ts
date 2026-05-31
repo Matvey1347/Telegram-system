@@ -20,4 +20,9 @@ export class CreateAdCampaignDto {
   @IsOptional() @IsDateString() endedAt?: string;
   @IsOptional() @IsString() notes?: string;
 }
+
 export class UpdateAdCampaignDto extends CreateAdCampaignDto {}
+
+export class GenerateInviteLinkDto {
+  @IsOptional() @IsString() telegramBotIntegrationId?: string;
+}
