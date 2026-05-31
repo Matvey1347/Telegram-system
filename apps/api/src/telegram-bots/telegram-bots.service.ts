@@ -62,10 +62,11 @@ export class TelegramBotsService {
   async create(userId: string, dto: CreateTelegramBotDto) {
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const diagnostics = await this.diagnostics(dto.botToken);
+    const autoLabel = diagnostics.username ? `@${diagnostics.username.replace('@', '')}` : (diagnostics.firstName || `Bot ${diagnostics.botId}`);
     const row = await this.prisma.telegramBotIntegration.create({
       data: {
         workspaceId,
-        label: dto.label,
+        label: autoLabel,
         botToken: dto.botToken,
         ...diagnostics,
       },
@@ -95,8 +96,37 @@ export class TelegramBotsService {
     const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
     if (!existing) throw new NotFoundException('Telegram bot not found');
     const row = await this.prisma.$transaction(async (tx) => {
-      await tx.telegramChannel.updateMany({ where: { workspaceId, telegramBotIntegrationId: id }, data: { isActive: false } });
-      return tx.telegramBotIntegration.update({ where: { id }, data: { isActive: false } });
+      const channels = await tx.telegramChannel.findMany({ where: { workspaceId, telegramBotIntegrationId: id }, select: { id: true } });
+
+      for (const channel of channels) {
+        const campaigns = await tx.adCampaign.findMany({ where: { workspaceId, telegramChannelId: channel.id }, select: { id: true } });
+        const campaignIds = campaigns.map((c) => c.id);
+        const inviteLinks = await tx.telegramInviteLink.findMany({ where: { workspaceId, telegramChannelId: channel.id }, select: { id: true } });
+        const inviteIds = inviteLinks.map((x) => x.id);
+
+        if (campaignIds.length) {
+          await tx.transaction.deleteMany({ where: { workspaceId, adCampaignId: { in: campaignIds } } });
+        }
+
+        await tx.subscriberEvent.deleteMany({
+          where: {
+            workspaceId,
+            OR: [
+              { telegramChannelId: channel.id },
+              campaignIds.length ? { adCampaignId: { in: campaignIds } } : undefined,
+              inviteIds.length ? { inviteLinkId: { in: inviteIds } } : undefined,
+            ].filter(Boolean) as any,
+          },
+        });
+
+        await tx.promo.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
+        await tx.telegramInviteLink.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
+        await tx.adCampaign.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
+        await tx.telegramChannelDailyStats.deleteMany({ where: { telegramChannelId: channel.id } });
+        await tx.telegramChannel.delete({ where: { id: channel.id } });
+      }
+
+      return tx.telegramBotIntegration.delete({ where: { id } });
     });
     return this.safe(row);
   }

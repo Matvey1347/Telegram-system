@@ -1,7 +1,6 @@
 import { IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateTelegramBotDto {
-  @IsString() label!: string;
   @IsString() @MinLength(10) botToken!: string;
 }
 
