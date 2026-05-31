@@ -266,6 +266,7 @@ model Promo {
   title             String
   text              String
   angle             String?
+  imageData         String?
   status            PromoStatus @default(draft)
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
