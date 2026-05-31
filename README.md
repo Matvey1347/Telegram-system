@@ -17,28 +17,25 @@ Internal system for managing Telegram channels, ad campaigns, finance, currencie
 - `NEXT_PUBLIC_API_URL`
 - `BOT_TOKEN_ENCRYPTION_KEY`
 
-Example key generation:
+Key generation:
 
 `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 
-## Auth and workspaces
+## Workspace members and investments
 
-- Admin env bootstrap was removed from app startup.
-- Users register via `/api/auth/register`.
-- Registration creates:
-  - user
-  - workspace
-  - owner membership
-- One workspace supports multiple members (`owner` / `admin` / `member`).
+- `User` is a login account.
+- `WorkspaceMember` is access inside workspace.
+- `Investment` belongs to `WorkspaceMember`.
+- There is no standalone Investors entity anymore.
+- A workspace member becomes an investor automatically after first investment.
+
+## Investment share
+
+- UI/analytics show **share of total investments**.
+- This is not legal ownership or equity.
 
 ## Telegram bots
 
 - Bot tokens are encrypted at rest (AES-256-GCM).
-- API responses never expose raw or encrypted tokens.
-- UI and API use only `maskedToken`.
+- API responses expose only masked token.
 - One bot can manage multiple channels.
-
-## Notes on migration
-
-- A migration is included for role update, investor-user link, and encrypted bot token fields.
-- For early-stage local setups, DB reset is acceptable if old data shape conflicts.

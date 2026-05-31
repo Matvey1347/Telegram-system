@@ -18,14 +18,25 @@ export class InvestmentsService {
     const workspaceId = await this.workspace(userId);
     return this.prisma.investment.findMany({
       where: { workspaceId },
-      include: { investor: true, account: true, transaction: true },
+      include: {
+        workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+        account: true,
+        transaction: true,
+      },
       orderBy: { date: 'desc' },
     });
   }
 
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const row = await this.prisma.investment.findFirst({ where: { id, workspaceId }, include: { investor: true, account: true, transaction: true } });
+    const row = await this.prisma.investment.findFirst({
+      where: { id, workspaceId },
+      include: {
+        workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+        account: true,
+        transaction: true,
+      },
+    });
     if (!row) throw new NotFoundException('Investment not found');
     return row;
   }
@@ -38,13 +49,13 @@ export class InvestmentsService {
 
   async create(userId: string, dto: CreateInvestmentDto) {
     const workspaceId = await this.workspace(userId);
-    const [workspace, investor, account] = await Promise.all([
+    const [workspace, workspaceMember, account] = await Promise.all([
       this.prisma.workspace.findFirst({ where: { id: workspaceId } }),
-      this.prisma.investor.findFirst({ where: { id: dto.investorId, workspaceId } }),
+      this.prisma.workspaceMember.findFirst({ where: { id: dto.workspaceMemberId, workspaceId }, include: { user: true } }),
       this.prisma.account.findFirst({ where: { id: dto.accountId, workspaceId } }),
     ]);
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!investor) throw new NotFoundException('Investor not found');
+    if (!workspaceMember) throw new NotFoundException('Workspace member not found');
     if (!account) throw new NotFoundException('Account not found');
 
     const exchangeRateToPrimary = this.resolveRate(dto.exchangeRateToPrimary, account.currency, workspace.primaryCurrency);
@@ -61,7 +72,7 @@ export class InvestmentsService {
           currency: account.currency,
           amountInPrimaryCurrency,
           exchangeRateToPrimary,
-          description: dto.notes || `Investment from ${investor.name}`,
+          description: dto.notes || `Investment from ${workspaceMember.user.name}`,
           date: new Date(dto.date),
           createdByUserId: userId,
         },
@@ -70,7 +81,7 @@ export class InvestmentsService {
       return tx.investment.create({
         data: {
           workspaceId,
-          investorId: investor.id,
+          workspaceMemberId: workspaceMember.id,
           accountId: account.id,
           transactionId: transaction.id,
           amount: dto.amount,
@@ -81,26 +92,33 @@ export class InvestmentsService {
           notes: dto.notes,
           createdByUserId: userId,
         },
-        include: { investor: true, account: true, transaction: true },
+        include: {
+          workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+          account: true,
+          transaction: true,
+        },
       });
     });
   }
 
   async update(userId: string, id: string, dto: UpdateInvestmentDto) {
     const workspaceId = await this.workspace(userId);
-    const existing = await this.prisma.investment.findFirst({ where: { id, workspaceId }, include: { investor: true } });
+    const existing = await this.prisma.investment.findFirst({
+      where: { id, workspaceId },
+      include: { workspaceMember: { include: { user: true } } },
+    });
     if (!existing) throw new NotFoundException('Investment not found');
 
-    const investorId = dto.investorId ?? existing.investorId;
+    const workspaceMemberId = dto.workspaceMemberId ?? existing.workspaceMemberId;
     const accountId = dto.accountId ?? existing.accountId;
 
-    const [workspace, investor, account] = await Promise.all([
+    const [workspace, workspaceMember, account] = await Promise.all([
       this.prisma.workspace.findFirst({ where: { id: workspaceId } }),
-      this.prisma.investor.findFirst({ where: { id: investorId, workspaceId } }),
+      this.prisma.workspaceMember.findFirst({ where: { id: workspaceMemberId, workspaceId }, include: { user: true } }),
       this.prisma.account.findFirst({ where: { id: accountId, workspaceId } }),
     ]);
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!investor) throw new NotFoundException('Investor not found');
+    if (!workspaceMember) throw new NotFoundException('Workspace member not found');
     if (!account) throw new NotFoundException('Account not found');
 
     const amount = dto.amount ?? Number(existing.amount);
@@ -119,7 +137,7 @@ export class InvestmentsService {
             currency: account.currency,
             amountInPrimaryCurrency,
             exchangeRateToPrimary,
-            description: notes || `Investment from ${investor.name}`,
+            description: notes || `Investment from ${workspaceMember.user.name}`,
             date,
           },
         });
@@ -128,7 +146,7 @@ export class InvestmentsService {
       return tx.investment.update({
         where: { id },
         data: {
-          investorId,
+          workspaceMemberId,
           accountId,
           amount,
           currency: account.currency,
@@ -137,7 +155,11 @@ export class InvestmentsService {
           date,
           notes,
         },
-        include: { investor: true, account: true, transaction: true },
+        include: {
+          workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+          account: true,
+          transaction: true,
+        },
       });
     });
   }
