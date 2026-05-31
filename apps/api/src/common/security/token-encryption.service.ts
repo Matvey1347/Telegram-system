@@ -16,11 +16,15 @@ export class TokenEncryptionService {
     try {
       key = Buffer.from(rawKey, 'base64');
     } catch {
-      throw new Error('BOT_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key');
+      throw new Error(
+        'BOT_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key',
+      );
     }
 
     if (key.length !== 32) {
-      throw new Error('BOT_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes');
+      throw new Error(
+        'BOT_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes',
+      );
     }
 
     this.key = key;
@@ -29,7 +33,10 @@ export class TokenEncryptionService {
   encrypt(plainText: string) {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
-    const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+    const encrypted = Buffer.concat([
+      cipher.update(plainText, 'utf8'),
+      cipher.final(),
+    ]);
     const authTag = cipher.getAuthTag();
 
     return {
@@ -40,7 +47,11 @@ export class TokenEncryptionService {
   }
 
   decrypt(payload: { encrypted: string; iv: string; authTag: string }) {
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(payload.iv, 'base64'));
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      this.key,
+      Buffer.from(payload.iv, 'base64'),
+    );
     decipher.setAuthTag(Buffer.from(payload.authTag, 'base64'));
     const decrypted = Buffer.concat([
       decipher.update(Buffer.from(payload.encrypted, 'base64')),

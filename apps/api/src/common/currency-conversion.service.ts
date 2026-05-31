@@ -8,17 +8,30 @@ const dec = (value: unknown) => Number(value ?? 0);
 export class CurrencyConversionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async convertCurrency(amount: number, fromCurrency: Currency, toCurrency: Currency, workspaceId: string): Promise<number | null> {
+  async convertCurrency(
+    amount: number,
+    fromCurrency: Currency,
+    toCurrency: Currency,
+    workspaceId: string,
+  ): Promise<number | null> {
     if (fromCurrency === toCurrency) return amount;
 
     const direct = await this.prisma.exchangeRate.findFirst({
-      where: { workspaceId, baseCurrency: fromCurrency, targetCurrency: toCurrency },
+      where: {
+        workspaceId,
+        baseCurrency: fromCurrency,
+        targetCurrency: toCurrency,
+      },
       orderBy: { date: 'desc' },
     });
     if (direct) return amount * dec(direct.rate);
 
     const inverse = await this.prisma.exchangeRate.findFirst({
-      where: { workspaceId, baseCurrency: toCurrency, targetCurrency: fromCurrency },
+      where: {
+        workspaceId,
+        baseCurrency: toCurrency,
+        targetCurrency: fromCurrency,
+      },
       orderBy: { date: 'desc' },
     });
     if (inverse) {

@@ -1,6 +1,15 @@
 import { CampaignStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsInt, IsOptional, IsString, IsNumber, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsNumber,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateAdCampaignDto {
   @IsString() telegramChannelId!: string;
@@ -25,4 +34,5 @@ export class UpdateAdCampaignDto extends CreateAdCampaignDto {}
 
 export class GenerateInviteLinkDto {
   @IsOptional() @IsString() telegramBotIntegrationId?: string;
+  @IsOptional() @IsString() @MaxLength(32) name?: string;
 }

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -14,7 +22,11 @@ export class TelegramSyncController {
     @Headers('x-telegram-bot-api-secret-token') secretToken: string | undefined,
     @Body() update: Record<string, any>,
   ) {
-    return this.syncService.handleWebhook(botIntegrationId, secretToken, update);
+    return this.syncService.handleWebhook(
+      botIntegrationId,
+      secretToken,
+      update,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

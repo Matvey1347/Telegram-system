@@ -1,8 +1,21 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
-import { CreateCurrencyRateDto, UpdateCurrencySettingsDto, UpdateCurrencyRateDto } from './dto';
+import {
+  CreateCurrencyRateDto,
+  UpdateCurrencySettingsDto,
+  UpdateCurrencyRateDto,
+} from './dto';
 import { CurrenciesService } from './currencies.service';
 
 @UseGuards(JwtAuthGuard)
@@ -16,7 +29,10 @@ export class CurrenciesController {
   }
 
   @Patch('settings')
-  updateSettings(@CurrentUser() user: JwtUser, @Body() dto: UpdateCurrencySettingsDto) {
+  updateSettings(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: UpdateCurrencySettingsDto,
+  ) {
     return this.service.updateSettings(user.sub, dto);
   }
 
@@ -31,7 +47,11 @@ export class CurrenciesController {
   }
 
   @Patch('rates/:id')
-  updateRate(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateCurrencyRateDto) {
+  updateRate(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateCurrencyRateDto,
+  ) {
     return this.service.updateRate(user.sub, id, dto);
   }
 

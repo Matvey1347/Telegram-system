@@ -26,7 +26,10 @@ export class AccountController {
   }
 
   @Patch('workspace')
-  updateWorkspace(@CurrentUser() user: JwtUser, @Body() dto: UpdateWorkspaceDto) {
+  updateWorkspace(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: UpdateWorkspaceDto,
+  ) {
     return this.service.updateWorkspace(user.sub, dto);
   }
 }

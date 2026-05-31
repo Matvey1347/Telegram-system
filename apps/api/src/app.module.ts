@@ -20,10 +20,14 @@ import { InvestmentsModule } from './investments/investments.module';
 import { WorkspaceMembersModule } from './workspace-members/workspace-members.module';
 import { AccountModule } from './account/account.module';
 import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
+import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-user-accounts.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['../../.env', '.env'],
+    }),
     ScheduleModule.forRoot(),
     PrismaModule,
     CommonModule,
@@ -43,6 +47,7 @@ import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
     WorkspaceMembersModule,
     AccountModule,
     TelegramSyncModule,
+    TelegramUserAccountsModule,
   ],
   controllers: [AppController],
 })

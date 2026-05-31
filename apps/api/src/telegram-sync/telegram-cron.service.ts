@@ -32,47 +32,82 @@ export class TelegramCronService {
       if (!target) continue;
 
       try {
-        const token = this.encryption.decrypt({ encrypted: bot.botTokenEncrypted, iv: bot.botTokenIv, authTag: bot.botTokenAuthTag });
+        const token = this.encryption.decrypt({
+          encrypted: bot.botTokenEncrypted,
+          iv: bot.botTokenIv,
+          authTag: bot.botTokenAuthTag,
+        });
         const chat = await this.telegramApi.getChat(token, target);
-        const membersCount = await this.telegramApi.getChatMemberCount(token, target);
-        const botMember = bot.botId ? await this.telegramApi.getChatMember(token, target, bot.botId) : null;
+        const membersCount = await this.telegramApi.getChatMemberCount(
+          token,
+          target,
+        );
+        const botMember = bot.botId
+          ? await this.telegramApi.getChatMember(token, target, bot.botId)
+          : null;
 
         await this.prisma.telegramChannel.update({
           where: { id: channel.id },
           data: {
             title: chat.title || channel.title,
-            username: chat.username ? `@${String(chat.username).replace('@', '')}` : channel.username,
+            username: chat.username
+              ? `@${String(chat.username).replace('@', '')}`
+              : channel.username,
             currentSubscribersCount: membersCount,
             botStatus: botMember?.status || channel.botStatus,
-            botIsAdmin: botMember ? ['administrator', 'creator'].includes(botMember.status) : channel.botIsAdmin,
-            botCanInviteUsers: botMember?.can_invite_users ?? channel.botCanInviteUsers,
-            botCanManageChat: botMember?.can_manage_chat ?? channel.botCanManageChat,
-            botCanPostMessages: botMember?.can_post_messages ?? channel.botCanPostMessages,
+            botIsAdmin: botMember
+              ? ['administrator', 'creator'].includes(botMember.status)
+              : channel.botIsAdmin,
+            botCanInviteUsers:
+              botMember?.can_invite_users ?? channel.botCanInviteUsers,
+            botCanManageChat:
+              botMember?.can_manage_chat ?? channel.botCanManageChat,
+            botCanPostMessages:
+              botMember?.can_post_messages ?? channel.botCanPostMessages,
             botCheckedAt: new Date(),
-            photoSmallFileId: chat.photo?.small_file_id || channel.photoSmallFileId,
+            photoSmallFileId:
+              chat.photo?.small_file_id || channel.photoSmallFileId,
             photoBigFileId: chat.photo?.big_file_id || channel.photoBigFileId,
           },
         });
       } catch (error) {
-        this.logger.warn(`Snapshot sync failed for channel=${channel.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+        this.logger.warn(
+          `Snapshot sync failed for channel=${channel.id}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
       }
     }
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async syncDailyStats() {
-    const channels = await this.prisma.telegramChannel.findMany({ where: { isActive: true } });
+    const channels = await this.prisma.telegramChannel.findMany({
+      where: { isActive: true },
+    });
     const date = new Date();
     date.setHours(0, 0, 0, 0);
 
     for (const channel of channels) {
       const [joinedCount, leftCount] = await Promise.all([
-        this.prisma.subscriberEvent.count({ where: { telegramChannelId: channel.id, eventType: 'joined', eventDate: { gte: date } } }),
-        this.prisma.subscriberEvent.count({ where: { telegramChannelId: channel.id, eventType: 'left', eventDate: { gte: date } } }),
+        this.prisma.subscriberEvent.count({
+          where: {
+            telegramChannelId: channel.id,
+            eventType: 'joined',
+            eventDate: { gte: date },
+          },
+        }),
+        this.prisma.subscriberEvent.count({
+          where: {
+            telegramChannelId: channel.id,
+            eventType: 'left',
+            eventDate: { gte: date },
+          },
+        }),
       ]);
 
       await this.prisma.telegramChannelDailyStats.upsert({
-        where: { telegramChannelId_date: { telegramChannelId: channel.id, date } },
+        where: {
+          telegramChannelId_date: { telegramChannelId: channel.id, date },
+        },
         update: {
           subscribersCount: channel.currentSubscribersCount,
           joinedCount,
@@ -96,7 +131,9 @@ export class TelegramCronService {
     const mode = (process.env.TELEGRAM_UPDATES_MODE || 'off').toLowerCase();
     if (mode !== 'polling') return;
 
-    const bots = await this.prisma.telegramBotIntegration.findMany({ where: { isActive: true } });
+    const bots = await this.prisma.telegramBotIntegration.findMany({
+      where: { isActive: true },
+    });
     for (const bot of bots) {
       if (bot.webhookActive) continue;
       await this.syncService.pollBotUpdates(bot.id);

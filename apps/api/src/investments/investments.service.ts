@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateInvestmentDto, UpdateInvestmentDto } from './dto';
@@ -19,7 +23,9 @@ export class InvestmentsService {
     return this.prisma.investment.findMany({
       where: { workspaceId },
       include: {
-        workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+        workspaceMember: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+        },
         account: true,
         transaction: true,
       },
@@ -32,7 +38,9 @@ export class InvestmentsService {
     const row = await this.prisma.investment.findFirst({
       where: { id, workspaceId },
       include: {
-        workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+        workspaceMember: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+        },
         account: true,
         transaction: true,
       },
@@ -41,9 +49,16 @@ export class InvestmentsService {
     return row;
   }
 
-  private resolveRate(rate: number | undefined, accountCurrency: string, primaryCurrency: string) {
+  private resolveRate(
+    rate: number | undefined,
+    accountCurrency: string,
+    primaryCurrency: string,
+  ) {
     if (accountCurrency === primaryCurrency) return 1;
-    if (!rate) throw new BadRequestException('exchangeRateToPrimary is required for non-primary account currency');
+    if (!rate)
+      throw new BadRequestException(
+        'exchangeRateToPrimary is required for non-primary account currency',
+      );
     return rate;
   }
 
@@ -51,14 +66,24 @@ export class InvestmentsService {
     const workspaceId = await this.workspace(userId);
     const [workspace, workspaceMember, account] = await Promise.all([
       this.prisma.workspace.findFirst({ where: { id: workspaceId } }),
-      this.prisma.workspaceMember.findFirst({ where: { id: dto.workspaceMemberId, workspaceId }, include: { user: true } }),
-      this.prisma.account.findFirst({ where: { id: dto.accountId, workspaceId } }),
+      this.prisma.workspaceMember.findFirst({
+        where: { id: dto.workspaceMemberId, workspaceId },
+        include: { user: true },
+      }),
+      this.prisma.account.findFirst({
+        where: { id: dto.accountId, workspaceId },
+      }),
     ]);
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!workspaceMember) throw new NotFoundException('Workspace member not found');
+    if (!workspaceMember)
+      throw new NotFoundException('Workspace member not found');
     if (!account) throw new NotFoundException('Account not found');
 
-    const exchangeRateToPrimary = this.resolveRate(dto.exchangeRateToPrimary, account.currency, workspace.primaryCurrency);
+    const exchangeRateToPrimary = this.resolveRate(
+      dto.exchangeRateToPrimary,
+      account.currency,
+      workspace.primaryCurrency,
+    );
     const amountInPrimaryCurrency = dto.amount * exchangeRateToPrimary;
 
     return this.prisma.$transaction(async (tx) => {
@@ -72,7 +97,8 @@ export class InvestmentsService {
           currency: account.currency,
           amountInPrimaryCurrency,
           exchangeRateToPrimary,
-          description: dto.notes || `Investment from ${workspaceMember.user.name}`,
+          description:
+            dto.notes || `Investment from ${workspaceMember.user.name}`,
           date: new Date(dto.date),
           createdByUserId: userId,
         },
@@ -93,7 +119,11 @@ export class InvestmentsService {
           createdByUserId: userId,
         },
         include: {
-          workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+          workspaceMember: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
           account: true,
           transaction: true,
         },
@@ -109,20 +139,29 @@ export class InvestmentsService {
     });
     if (!existing) throw new NotFoundException('Investment not found');
 
-    const workspaceMemberId = dto.workspaceMemberId ?? existing.workspaceMemberId;
+    const workspaceMemberId =
+      dto.workspaceMemberId ?? existing.workspaceMemberId;
     const accountId = dto.accountId ?? existing.accountId;
 
     const [workspace, workspaceMember, account] = await Promise.all([
       this.prisma.workspace.findFirst({ where: { id: workspaceId } }),
-      this.prisma.workspaceMember.findFirst({ where: { id: workspaceMemberId, workspaceId }, include: { user: true } }),
+      this.prisma.workspaceMember.findFirst({
+        where: { id: workspaceMemberId, workspaceId },
+        include: { user: true },
+      }),
       this.prisma.account.findFirst({ where: { id: accountId, workspaceId } }),
     ]);
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!workspaceMember) throw new NotFoundException('Workspace member not found');
+    if (!workspaceMember)
+      throw new NotFoundException('Workspace member not found');
     if (!account) throw new NotFoundException('Account not found');
 
     const amount = dto.amount ?? Number(existing.amount);
-    const exchangeRateToPrimary = this.resolveRate(dto.exchangeRateToPrimary ?? Number(existing.exchangeRateToPrimary), account.currency, workspace.primaryCurrency);
+    const exchangeRateToPrimary = this.resolveRate(
+      dto.exchangeRateToPrimary ?? Number(existing.exchangeRateToPrimary),
+      account.currency,
+      workspace.primaryCurrency,
+    );
     const amountInPrimaryCurrency = amount * exchangeRateToPrimary;
     const date = dto.date ? new Date(dto.date) : existing.date;
     const notes = dto.notes ?? existing.notes ?? undefined;
@@ -137,7 +176,8 @@ export class InvestmentsService {
             currency: account.currency,
             amountInPrimaryCurrency,
             exchangeRateToPrimary,
-            description: notes || `Investment from ${workspaceMember.user.name}`,
+            description:
+              notes || `Investment from ${workspaceMember.user.name}`,
             date,
           },
         });
@@ -156,7 +196,11 @@ export class InvestmentsService {
           notes,
         },
         include: {
-          workspaceMember: { include: { user: { select: { id: true, name: true, email: true } } } },
+          workspaceMember: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
           account: true,
           transaction: true,
         },
@@ -166,7 +210,9 @@ export class InvestmentsService {
 
   async remove(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const existing = await this.prisma.investment.findFirst({ where: { id, workspaceId } });
+    const existing = await this.prisma.investment.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Investment not found');
 
     return this.prisma.$transaction(async (tx) => {

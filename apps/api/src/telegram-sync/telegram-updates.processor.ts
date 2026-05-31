@@ -12,8 +12,12 @@ export class TelegramUpdatesProcessor {
     private channelsService: TelegramChannelsService,
   ) {}
 
-  async processUpdate(bot: { id: string; workspaceId: string }, update: Record<string, any>) {
-    const updateId = update?.update_id != null ? String(update.update_id) : null;
+  async processUpdate(
+    bot: { id: string; workspaceId: string },
+    update: Record<string, any>,
+  ) {
+    const updateId =
+      update?.update_id != null ? String(update.update_id) : null;
     const existing = updateId
       ? await this.prisma.telegramBotUpdateLog.findUnique({
           where: {
@@ -44,51 +48,91 @@ export class TelegramUpdatesProcessor {
 
     try {
       if (update.chat_member) {
-        await this.processChatMember(bot.workspaceId, updateId, update.chat_member);
+        await this.processChatMember(
+          bot.workspaceId,
+          updateId,
+          update.chat_member,
+        );
       } else if (update.my_chat_member) {
         await this.processMyChatMember(bot.workspaceId, update.my_chat_member);
       } else if (update.chat_join_request) {
-        this.logger.debug(`chat_join_request received for workspace=${bot.workspaceId}`);
+        this.logger.debug(
+          `chat_join_request received for workspace=${bot.workspaceId}`,
+        );
       }
 
-      await this.prisma.telegramBotUpdateLog.update({ where: { id: log.id }, data: { processed: true, errorMessage: null } });
+      await this.prisma.telegramBotUpdateLog.update({
+        where: { id: log.id },
+        data: { processed: true, errorMessage: null },
+      });
       return { ok: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to process update';
-      await this.prisma.telegramBotUpdateLog.update({ where: { id: log.id }, data: { processed: false, errorMessage: message } });
+      const message =
+        error instanceof Error ? error.message : 'Failed to process update';
+      await this.prisma.telegramBotUpdateLog.update({
+        where: { id: log.id },
+        data: { processed: false, errorMessage: message },
+      });
       throw error;
     }
   }
 
-  private async processChatMember(workspaceId: string, updateId: string | null, payload: Record<string, any>) {
+  private async processChatMember(
+    workspaceId: string,
+    updateId: string | null,
+    payload: Record<string, any>,
+  ) {
     const chatId = String(payload?.chat?.id ?? '');
     if (!chatId) return;
 
-    const channel = await this.prisma.telegramChannel.findFirst({ where: { workspaceId, telegramChatId: chatId } });
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { workspaceId, telegramChatId: chatId },
+    });
     if (!channel) {
-      this.logger.debug(`chat_member ignored; channel not found for chatId=${chatId}`);
+      this.logger.debug(
+        `chat_member ignored; channel not found for chatId=${chatId}`,
+      );
       return;
     }
 
     const oldStatus = String(payload?.old_chat_member?.status || '');
     const newStatus = String(payload?.new_chat_member?.status || '');
-    const userId = payload?.new_chat_member?.user?.id ? String(payload.new_chat_member.user.id) : null;
+    const userId = payload?.new_chat_member?.user?.id
+      ? String(payload.new_chat_member.user.id)
+      : null;
 
-    const joined = ['left', 'kicked'].includes(oldStatus) && ['member', 'administrator', 'creator'].includes(newStatus);
-    const left = ['member', 'administrator', 'creator'].includes(oldStatus) && ['left', 'kicked'].includes(newStatus);
+    const joined =
+      ['left', 'kicked'].includes(oldStatus) &&
+      ['member', 'administrator', 'creator'].includes(newStatus);
+    const left =
+      ['member', 'administrator', 'creator'].includes(oldStatus) &&
+      ['left', 'kicked'].includes(newStatus);
 
     if (!joined && !left) return;
 
-    const inviteUrl = payload?.invite_link?.invite_link ? String(payload.invite_link.invite_link) : null;
+    const inviteUrl = payload?.invite_link?.invite_link
+      ? String(payload.invite_link.invite_link)
+      : null;
     const invite = inviteUrl
-      ? await this.prisma.telegramInviteLink.findFirst({ where: { workspaceId, telegramChannelId: channel.id, url: inviteUrl } })
+      ? await this.prisma.telegramInviteLink.findFirst({
+          where: { workspaceId, telegramChannelId: channel.id, url: inviteUrl },
+        })
       : null;
 
-    const eventDate = payload?.date ? new Date(Number(payload.date) * 1000) : new Date();
+    const eventDate = payload?.date
+      ? new Date(Number(payload.date) * 1000)
+      : new Date();
     const eventType = joined ? 'joined' : 'left';
 
     await this.prisma.subscriberEvent.upsert({
-      where: { workspaceId_updateId: { workspaceId, updateId: updateId || `synthetic-${channel.id}-${eventType}-${eventDate.toISOString()}` } },
+      where: {
+        workspaceId_updateId: {
+          workspaceId,
+          updateId:
+            updateId ||
+            `synthetic-${channel.id}-${eventType}-${eventDate.toISOString()}`,
+        },
+      },
       update: {},
       create: {
         workspaceId,
@@ -105,18 +149,28 @@ export class TelegramUpdatesProcessor {
     });
 
     if (eventType === 'joined' && invite) {
-      await this.prisma.telegramInviteLink.update({ where: { id: invite.id }, data: { joinedCount: { increment: 1 }, lastSyncedAt: new Date() } });
+      await this.prisma.telegramInviteLink.update({
+        where: { id: invite.id },
+        data: { joinedCount: { increment: 1 }, lastSyncedAt: new Date() },
+      });
     }
 
     if (invite?.adCampaignId) {
-      await this.channelsService.recalculateCampaignMetricsById(invite.adCampaignId);
+      await this.channelsService.recalculateCampaignMetricsById(
+        invite.adCampaignId,
+      );
     }
   }
 
-  private async processMyChatMember(workspaceId: string, payload: Record<string, any>) {
+  private async processMyChatMember(
+    workspaceId: string,
+    payload: Record<string, any>,
+  ) {
     const chatId = String(payload?.chat?.id ?? '');
     if (!chatId) return;
-    const channel = await this.prisma.telegramChannel.findFirst({ where: { workspaceId, telegramChatId: chatId } });
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { workspaceId, telegramChatId: chatId },
+    });
     if (!channel) return;
 
     const status = String(payload?.new_chat_member?.status || '');
@@ -147,7 +201,11 @@ export class TelegramUpdatesProcessor {
   }
 
   private resolveChatId(update: Record<string, any>) {
-    const chat = update?.chat_member?.chat || update?.my_chat_member?.chat || update?.chat_join_request?.chat || update?.channel_post?.chat;
+    const chat =
+      update?.chat_member?.chat ||
+      update?.my_chat_member?.chat ||
+      update?.chat_join_request?.chat ||
+      update?.channel_post?.chat;
     return chat?.id != null ? String(chat.id) : null;
   }
 }

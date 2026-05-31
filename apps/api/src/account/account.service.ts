@@ -1,4 +1,9 @@
-import { ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,7 +22,8 @@ export class AccountService {
       where: { id: userId },
       select: { id: true, email: true, name: true, createdAt: true },
     });
-    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
     return {
       ...user,
       workspace: {
@@ -40,7 +46,8 @@ export class AccountService {
     if (dto.email !== undefined) {
       const email = dto.email.toLowerCase().trim();
       const existing = await this.prisma.user.findUnique({ where: { email } });
-      if (existing && existing.id !== userId) throw new ConflictException('Email already exists');
+      if (existing && existing.id !== userId)
+        throw new ConflictException('Email already exists');
       data.email = email;
     }
 
@@ -51,17 +58,24 @@ export class AccountService {
   }
 
   async updatePassword(userId: string, dto: UpdatePasswordDto) {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
     const valid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
-    if (!valid) throw new UnauthorizedException('Current password is incorrect');
+    if (!valid)
+      throw new UnauthorizedException('Current password is incorrect');
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
-    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
     return { success: true };
   }
 
   async updateWorkspace(userId: string, dto: UpdateWorkspaceDto) {
-    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
     if (membership.role !== WorkspaceRole.owner) {
       throw new ForbiddenException('Only owner can update workspace name');
     }

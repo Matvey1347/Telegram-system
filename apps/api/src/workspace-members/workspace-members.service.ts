@@ -1,4 +1,9 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { WorkspaceRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
@@ -14,15 +19,22 @@ export class WorkspaceMembersService {
   ) {}
 
   private async requireManager(userId: string) {
-    return this.workspaceService.requireWorkspaceRole(userId, [WorkspaceRole.owner, WorkspaceRole.admin]);
+    return this.workspaceService.requireWorkspaceRole(userId, [
+      WorkspaceRole.owner,
+      WorkspaceRole.admin,
+    ]);
   }
 
-  private toResponse<T extends { userId: string }>(row: T, currentUserId: string) {
+  private toResponse<T extends { userId: string }>(
+    row: T,
+    currentUserId: string,
+  ) {
     return { ...row, isCurrentUser: row.userId === currentUserId };
   }
 
   async list(userId: string) {
-    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
     const [rows, grouped] = await Promise.all([
       this.prisma.workspaceMember.findMany({
         where: { workspaceId: membership.workspaceId },
@@ -37,15 +49,29 @@ export class WorkspaceMembersService {
       }),
     ]);
 
-    const byMember = new Map(grouped.map((g) => [g.workspaceMemberId, { total: Number(g._sum.amountInPrimaryCurrency ?? 0), count: g._count._all }]));
-    const workspaceTotal = grouped.reduce((acc, g) => acc + Number(g._sum.amountInPrimaryCurrency ?? 0), 0);
+    const byMember = new Map(
+      grouped.map((g) => [
+        g.workspaceMemberId,
+        {
+          total: Number(g._sum.amountInPrimaryCurrency ?? 0),
+          count: g._count._all,
+        },
+      ]),
+    );
+    const workspaceTotal = grouped.reduce(
+      (acc, g) => acc + Number(g._sum.amountInPrimaryCurrency ?? 0),
+      0,
+    );
 
     return rows.map((row) => ({
       ...this.toResponse(row, userId),
       investmentSummary: {
         isInvestor: (byMember.get(row.id)?.total ?? 0) > 0,
         totalInvestedPrimary: byMember.get(row.id)?.total ?? 0,
-        investmentSharePercent: workspaceTotal > 0 ? ((byMember.get(row.id)?.total ?? 0) / workspaceTotal) * 100 : 0,
+        investmentSharePercent:
+          workspaceTotal > 0
+            ? ((byMember.get(row.id)?.total ?? 0) / workspaceTotal) * 100
+            : 0,
         investmentsCount: byMember.get(row.id)?.count ?? 0,
       },
     }));
@@ -63,7 +89,9 @@ export class WorkspaceMembersService {
       throw new ForbiddenException('Only owner can add owner role');
     }
 
-    const existingUser = await this.prisma.user.findUnique({ where: { email } });
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+    });
     let user = existingUser;
     let temporaryPassword: string | undefined;
 
@@ -80,21 +108,36 @@ export class WorkspaceMembersService {
     }
 
     const already = await this.prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId: current.workspaceId, userId: user.id } },
+      where: {
+        workspaceId_userId: {
+          workspaceId: current.workspaceId,
+          userId: user.id,
+        },
+      },
     });
-    if (already) throw new ConflictException('User is already a member of this workspace');
+    if (already)
+      throw new ConflictException('User is already a member of this workspace');
 
     const created = await this.prisma.workspaceMember.create({
       data: { workspaceId: current.workspaceId, userId: user.id, role },
       include: { user: { select: { id: true, email: true, name: true } } },
     });
 
-    return { ...this.toResponse(created, userId), temporaryPassword: dto.password ? undefined : temporaryPassword };
+    return {
+      ...this.toResponse(created, userId),
+      temporaryPassword: dto.password ? undefined : temporaryPassword,
+    };
   }
 
-  async update(userId: string, memberId: string, dto: UpdateWorkspaceMemberDto) {
+  async update(
+    userId: string,
+    memberId: string,
+    dto: UpdateWorkspaceMemberDto,
+  ) {
     const current = await this.requireManager(userId);
-    const member = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId: current.workspaceId } });
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { id: memberId, workspaceId: current.workspaceId },
+    });
     if (!member) throw new NotFoundException('Workspace member not found');
 
     if (current.role === WorkspaceRole.admin) {
@@ -106,36 +149,62 @@ export class WorkspaceMembersService {
       }
     }
 
-    if (dto.role === WorkspaceRole.owner && current.role !== WorkspaceRole.owner) {
+    if (
+      dto.role === WorkspaceRole.owner &&
+      current.role !== WorkspaceRole.owner
+    ) {
       throw new ForbiddenException('Only owner can promote to owner');
     }
 
-    if (member.role === WorkspaceRole.owner && dto.role !== WorkspaceRole.owner) {
-      const ownersCount = await this.prisma.workspaceMember.count({ where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner } });
-      if (ownersCount <= 1) throw new ForbiddenException('Cannot demote the last owner');
+    if (
+      member.role === WorkspaceRole.owner &&
+      dto.role !== WorkspaceRole.owner
+    ) {
+      const ownersCount = await this.prisma.workspaceMember.count({
+        where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner },
+      });
+      if (ownersCount <= 1)
+        throw new ForbiddenException('Cannot demote the last owner');
     }
 
-    const updated = await this.prisma.workspaceMember.update({ where: { id: memberId }, data: { role: dto.role }, include: { user: { select: { id: true, email: true, name: true } } } });
+    const updated = await this.prisma.workspaceMember.update({
+      where: { id: memberId },
+      data: { role: dto.role },
+      include: { user: { select: { id: true, email: true, name: true } } },
+    });
     return this.toResponse(updated, userId);
   }
 
   async remove(userId: string, memberId: string) {
     const current = await this.requireManager(userId);
-    const member = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId: current.workspaceId } });
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { id: memberId, workspaceId: current.workspaceId },
+    });
     if (!member) throw new NotFoundException('Workspace member not found');
 
-    if (current.role === WorkspaceRole.admin && member.role !== WorkspaceRole.member) {
+    if (
+      current.role === WorkspaceRole.admin &&
+      member.role !== WorkspaceRole.member
+    ) {
       throw new ForbiddenException('Admin cannot remove owner/admin');
     }
 
     if (member.role === WorkspaceRole.owner) {
-      const ownersCount = await this.prisma.workspaceMember.count({ where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner } });
-      if (ownersCount <= 1) throw new ForbiddenException('Cannot remove the last owner');
+      const ownersCount = await this.prisma.workspaceMember.count({
+        where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner },
+      });
+      if (ownersCount <= 1)
+        throw new ForbiddenException('Cannot remove the last owner');
     }
 
     if (member.userId === userId && member.role === WorkspaceRole.owner) {
-      const ownersCount = await this.prisma.workspaceMember.count({ where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner } });
-      if (ownersCount <= 1) throw new ForbiddenException('Cannot remove yourself as the last owner');
+      const ownersCount = await this.prisma.workspaceMember.count({
+        where: { workspaceId: current.workspaceId, role: WorkspaceRole.owner },
+      });
+      if (ownersCount <= 1)
+        throw new ForbiddenException(
+          'Cannot remove yourself as the last owner',
+        );
     }
 
     return this.prisma.workspaceMember.delete({ where: { id: memberId } });

@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -20,8 +24,12 @@ export class AuthService {
       select: { id: true, email: true, name: true },
     });
 
-    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
-    const accessToken = await this.jwtService.signAsync({ sub: user.id, email: user.email });
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      email: user.email,
+    });
 
     return {
       accessToken,
@@ -44,11 +52,19 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prisma.$transaction(async (tx) => {
-      const createdUser = await tx.user.create({ data: { email, name, passwordHash } });
+      const createdUser = await tx.user.create({
+        data: { email, name, passwordHash },
+      });
       const workspaceName = dto.workspaceName?.trim() || `${name}'s Workspace`;
-      const workspace = await tx.workspace.create({ data: { name: workspaceName } });
+      const workspace = await tx.workspace.create({
+        data: { name: workspaceName },
+      });
       await tx.workspaceMember.create({
-        data: { userId: createdUser.id, workspaceId: workspace.id, role: 'owner' },
+        data: {
+          userId: createdUser.id,
+          workspaceId: workspace.id,
+          role: 'owner',
+        },
       });
       return createdUser;
     });
@@ -74,8 +90,13 @@ export class AuthService {
       const auth = await this.authResponse(userId);
       return { user: auth.user, workspace: auth.workspace };
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new UnauthorizedException('Session is invalid. Please sign in again.');
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new UnauthorizedException(
+          'Session is invalid. Please sign in again.',
+        );
       }
       throw error;
     }

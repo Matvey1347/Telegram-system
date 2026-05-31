@@ -38,6 +38,15 @@ enum PromoStatus {
   archived
 }
 
+enum TelegramUserAccountStatus {
+  pending
+  needs_code
+  needs_password
+  connected
+  error
+  disabled
+}
+
 enum AdvertisingSourceType {
   telegram_channel
   instagram
@@ -70,6 +79,8 @@ model Workspace {
   transfers          Transfer[]
   telegramChannels   TelegramChannel[]
   telegramBotIntegrations TelegramBotIntegration[]
+  telegramUserAccountIntegrations TelegramUserAccountIntegration[]
+  telegramChannelAdminLinks TelegramChannelAdminLink[]
   telegramBotUpdateLogs TelegramBotUpdateLog[]
   promos             Promo[]
   advertisingSources AdvertisingSource[]
@@ -79,6 +90,58 @@ model Workspace {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model TelegramUserAccountIntegration {
+  id               String                    @id @default(cuid())
+  workspaceId      String
+  label            String
+  apiId            String
+  apiHashEncrypted String
+  apiHashIv        String
+  apiHashAuthTag   String
+  phoneMasked      String?
+  phoneEncrypted   String?
+  phoneIv          String?
+  phoneAuthTag     String?
+  telegramUserId   String?
+  username         String?
+  firstName        String?
+  lastName         String?
+  photoUrl         String?
+  status           TelegramUserAccountStatus @default(pending)
+  lastErrorMessage String?
+  lastCheckedAt    DateTime?
+  lastSyncedAt     DateTime?
+  isActive         Boolean                   @default(true)
+  sessionEncrypted String?
+  sessionIv        String?
+  sessionAuthTag   String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channelAdminLinks TelegramChannelAdminLink[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramChannelAdminLink {
+  id                               String @id @default(cuid())
+  workspaceId                      String
+  telegramChannelId                String
+  telegramUserAccountIntegrationId String
+  source                           String @default("mtproto")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  telegramUserAccountIntegration TelegramUserAccountIntegration @relation(fields: [telegramUserAccountIntegrationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, telegramChannelId, telegramUserAccountIntegrationId])
+  @@index([workspaceId, telegramChannelId])
+  @@index([workspaceId, telegramUserAccountIntegrationId])
 }
 
 model WorkspaceMember {
@@ -221,6 +284,7 @@ model TelegramChannel {
   adCampaigns AdCampaign[]
   inviteLinks TelegramInviteLink[]
   dailyStats  TelegramChannelDailyStats[]
+  adminLinks TelegramChannelAdminLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

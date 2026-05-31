@@ -9,9 +9,18 @@ import { TelegramUpdatesProcessor } from './telegram-updates.processor';
 import { TelegramCronService } from './telegram-cron.service';
 
 @Module({
-  imports: [PrismaModule, CommonModule, TelegramBotsModule, TelegramChannelsModule],
+  imports: [
+    PrismaModule,
+    CommonModule,
+    TelegramBotsModule,
+    TelegramChannelsModule,
+  ],
   controllers: [TelegramSyncController],
-  providers: [TelegramSyncService, TelegramUpdatesProcessor, TelegramCronService],
+  providers: [
+    TelegramSyncService,
+    TelegramUpdatesProcessor,
+    TelegramCronService,
+  ],
   exports: [TelegramSyncService, TelegramUpdatesProcessor],
 })
 export class TelegramSyncModule {}

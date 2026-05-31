@@ -1,9 +1,20 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
-import { CreateTelegramBotDto, ImportTelegramChannelsDto, UpdateTelegramBotDto } from './dto';
-import { TelegramApiError, TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
+import {
+  CreateTelegramBotDto,
+  ImportTelegramChannelsDto,
+  UpdateTelegramBotDto,
+} from './dto';
+import {
+  TelegramApiError,
+  TelegramBotApiClient,
+} from '../telegram/shared/telegram-bot-api.client';
 
 @Injectable()
 export class TelegramBotsService {
@@ -19,7 +30,11 @@ export class TelegramBotsService {
     return `${token.slice(0, 6)}...${token.slice(-4)}`;
   }
 
-  private decryptBotToken(bot: { botTokenEncrypted: string; botTokenIv: string; botTokenAuthTag: string }) {
+  private decryptBotToken(bot: {
+    botTokenEncrypted: string;
+    botTokenIv: string;
+    botTokenAuthTag: string;
+  }) {
     return this.encryptionService.decrypt({
       encrypted: bot.botTokenEncrypted,
       iv: bot.botTokenIv,
@@ -27,7 +42,14 @@ export class TelegramBotsService {
     });
   }
 
-  private safe<T extends { botTokenMasked: string; botTokenEncrypted?: string; botTokenIv?: string; botTokenAuthTag?: string }>(bot: T) {
+  private safe<
+    T extends {
+      botTokenMasked: string;
+      botTokenEncrypted?: string;
+      botTokenIv?: string;
+      botTokenAuthTag?: string;
+    },
+  >(bot: T) {
     return {
       ...bot,
       maskedToken: bot.botTokenMasked || '******',
@@ -56,7 +78,9 @@ export class TelegramBotsService {
   private normalizeChatRef(input: string) {
     const trimmed = input.trim();
     if (!trimmed) return null;
-    const tmeMatch = trimmed.match(/(?:https?:\/\/)?t\.me\/([A-Za-z0-9_]{5,})/i);
+    const tmeMatch = trimmed.match(
+      /(?:https?:\/\/)?t\.me\/([A-Za-z0-9_]{5,})/i,
+    );
     if (tmeMatch?.[1]) return `@${tmeMatch[1]}`;
     if (trimmed.startsWith('@') || trimmed.startsWith('-')) return trimmed;
     if (/^\d+$/.test(trimmed)) return trimmed;
@@ -64,7 +88,8 @@ export class TelegramBotsService {
   }
 
   async findAll(userId: string) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const rows = await this.prisma.telegramBotIntegration.findMany({
       where: { workspaceId },
       orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
@@ -73,16 +98,22 @@ export class TelegramBotsService {
   }
 
   async findOne(userId: string, id: string) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const row = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const row = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!row) throw new NotFoundException('Telegram bot not found');
     return this.safe(row);
   }
 
   async create(userId: string, dto: CreateTelegramBotDto) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const diagnostics = await this.diagnostics(dto.botToken);
-    const autoLabel = diagnostics.username ? `@${diagnostics.username.replace('@', '')}` : (diagnostics.firstName || `Bot ${diagnostics.botId}`);
+    const autoLabel = diagnostics.username
+      ? `@${diagnostics.username.replace('@', '')}`
+      : diagnostics.firstName || `Bot ${diagnostics.botId}`;
     const encrypted = this.encryptionService.encrypt(dto.botToken);
     const row = await this.prisma.telegramBotIntegration.create({
       data: {
@@ -99,8 +130,11 @@ export class TelegramBotsService {
   }
 
   async update(userId: string, id: string, dto: UpdateTelegramBotDto) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const existing = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Telegram bot not found');
 
     const token = dto.botToken || this.decryptBotToken(existing);
@@ -116,25 +150,42 @@ export class TelegramBotsService {
       Object.assign(data, await this.diagnostics(token));
     }
 
-    const row = await this.prisma.telegramBotIntegration.update({ where: { id }, data });
+    const row = await this.prisma.telegramBotIntegration.update({
+      where: { id },
+      data,
+    });
     return this.safe(row);
   }
 
   async remove(userId: string, id: string) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const existing = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Telegram bot not found');
     const row = await this.prisma.$transaction(async (tx) => {
-      const channels = await tx.telegramChannel.findMany({ where: { workspaceId, telegramBotIntegrationId: id }, select: { id: true } });
+      const channels = await tx.telegramChannel.findMany({
+        where: { workspaceId, telegramBotIntegrationId: id },
+        select: { id: true },
+      });
 
       for (const channel of channels) {
-        const campaigns = await tx.adCampaign.findMany({ where: { workspaceId, telegramChannelId: channel.id }, select: { id: true } });
+        const campaigns = await tx.adCampaign.findMany({
+          where: { workspaceId, telegramChannelId: channel.id },
+          select: { id: true },
+        });
         const campaignIds = campaigns.map((c) => c.id);
-        const inviteLinks = await tx.telegramInviteLink.findMany({ where: { workspaceId, telegramChannelId: channel.id }, select: { id: true } });
+        const inviteLinks = await tx.telegramInviteLink.findMany({
+          where: { workspaceId, telegramChannelId: channel.id },
+          select: { id: true },
+        });
         const inviteIds = inviteLinks.map((x) => x.id);
 
         if (campaignIds.length) {
-          await tx.transaction.deleteMany({ where: { workspaceId, adCampaignId: { in: campaignIds } } });
+          await tx.transaction.deleteMany({
+            where: { workspaceId, adCampaignId: { in: campaignIds } },
+          });
         }
 
         await tx.subscriberEvent.deleteMany({
@@ -142,16 +193,28 @@ export class TelegramBotsService {
             workspaceId,
             OR: [
               { telegramChannelId: channel.id },
-              campaignIds.length ? { adCampaignId: { in: campaignIds } } : undefined,
-              inviteIds.length ? { inviteLinkId: { in: inviteIds } } : undefined,
+              campaignIds.length
+                ? { adCampaignId: { in: campaignIds } }
+                : undefined,
+              inviteIds.length
+                ? { inviteLinkId: { in: inviteIds } }
+                : undefined,
             ].filter(Boolean) as any,
           },
         });
 
-        await tx.promo.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
-        await tx.telegramInviteLink.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
-        await tx.adCampaign.deleteMany({ where: { workspaceId, telegramChannelId: channel.id } });
-        await tx.telegramChannelDailyStats.deleteMany({ where: { telegramChannelId: channel.id } });
+        await tx.promo.deleteMany({
+          where: { workspaceId, telegramChannelId: channel.id },
+        });
+        await tx.telegramInviteLink.deleteMany({
+          where: { workspaceId, telegramChannelId: channel.id },
+        });
+        await tx.adCampaign.deleteMany({
+          where: { workspaceId, telegramChannelId: channel.id },
+        });
+        await tx.telegramChannelDailyStats.deleteMany({
+          where: { telegramChannelId: channel.id },
+        });
         await tx.telegramChannel.delete({ where: { id: channel.id } });
       }
 
@@ -161,11 +224,19 @@ export class TelegramBotsService {
   }
 
   async check(userId: string, id: string) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const existing = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Telegram bot not found');
-    if (!existing.botTokenEncrypted || !existing.botTokenIv || !existing.botTokenAuthTag) {
-      const message = 'Bot token is missing after migration. Reconnect bot by creating it again with a fresh token.';
+    if (
+      !existing.botTokenEncrypted ||
+      !existing.botTokenIv ||
+      !existing.botTokenAuthTag
+    ) {
+      const message =
+        'Bot token is missing after migration. Reconnect bot by creating it again with a fresh token.';
       const row = await this.prisma.telegramBotIntegration.update({
         where: { id },
         data: { lastErrorMessage: message, lastCheckedAt: new Date() },
@@ -182,15 +253,26 @@ export class TelegramBotsService {
       });
       return this.safe(row);
     } catch (error) {
-      const message = error instanceof TelegramApiError ? error.message : (error instanceof Error ? error.message : 'Failed to check bot');
-      const row = await this.prisma.telegramBotIntegration.update({ where: { id }, data: { lastErrorMessage: message, lastCheckedAt: new Date() } });
+      const message =
+        error instanceof TelegramApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Failed to check bot';
+      const row = await this.prisma.telegramBotIntegration.update({
+        where: { id },
+        data: { lastErrorMessage: message, lastCheckedAt: new Date() },
+      });
       return this.safe(row);
     }
   }
 
   async activate(userId: string, id: string) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const existing = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Telegram bot not found');
 
     const row = await this.prisma.telegramBotIntegration.update({
@@ -200,20 +282,36 @@ export class TelegramBotsService {
     return this.safe(row);
   }
 
-  async importChannels(userId: string, id: string, dto: ImportTelegramChannelsDto) {
-    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId, isActive: true } });
+  async importChannels(
+    userId: string,
+    id: string,
+    dto: ImportTelegramChannelsDto,
+  ) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const bot = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id, workspaceId, isActive: true },
+    });
     if (!bot) throw new NotFoundException('Telegram bot not found');
     const token = this.decryptBotToken(bot);
 
-    const existing = await this.prisma.telegramChannel.findMany({ where: { workspaceId }, select: { username: true, telegramChatId: true } });
+    const existing = await this.prisma.telegramChannel.findMany({
+      where: { workspaceId },
+      select: { username: true, telegramChatId: true },
+    });
     const existingKeys = new Set<string>();
     for (const row of existing) {
-      if (row.username) existingKeys.add(row.username.replace('@', '').toLowerCase());
+      if (row.username)
+        existingKeys.add(row.username.replace('@', '').toLowerCase());
       if (row.telegramChatId) existingKeys.add(row.telegramChatId);
     }
 
-    const added: Array<{ id: string; title: string; username?: string | null; telegramChatId: string }> = [];
+    const added: Array<{
+      id: string;
+      title: string;
+      username?: string | null;
+      telegramChatId: string;
+    }> = [];
     const skipped: string[] = [];
     const errors: Array<{ input: string; error: string }> = [];
 
@@ -224,32 +322,45 @@ export class TelegramBotsService {
       try {
         const chat = await this.telegramApi.getChat(token, chatRef);
         const chatId = String(chat.id);
-        const uname = chat.username ? chat.username.replace('@', '').toLowerCase() : null;
+        const uname = chat.username
+          ? chat.username.replace('@', '').toLowerCase()
+          : null;
 
         if (existingKeys.has(chatId) || (uname && existingKeys.has(uname))) {
           skipped.push(raw);
           continue;
         }
 
-        const member = await this.telegramApi.getChatMember(token, chatRef, bot.botId || '');
-        const membersCount = await this.telegramApi.getChatMemberCount(token, chatRef);
+        const member = await this.telegramApi.getChatMember(
+          token,
+          chatRef,
+          bot.botId || '',
+        );
+        const membersCount = await this.telegramApi.getChatMemberCount(
+          token,
+          chatRef,
+        );
         let photoUrl: string | null = null;
         const photoBigFileId = chat.photo?.big_file_id || null;
         const photoSmallFileId = chat.photo?.small_file_id || null;
         if (photoBigFileId) {
           const file = await this.telegramApi.getFile(token, photoBigFileId);
-          if (file.file_path) photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+          if (file.file_path)
+            photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         }
         const created = await this.prisma.telegramChannel.create({
           data: {
             workspaceId,
             title: chat.title || chat.username || `Channel ${chat.id}`,
-            username: chat.username ? `@${chat.username.replace('@', '')}` : null,
+            username: chat.username
+              ? `@${chat.username.replace('@', '')}`
+              : null,
             telegramChatId: chatId,
             telegramBotIntegrationId: bot.id,
             currentSubscribersCount: membersCount,
             botStatus: member.status,
-            botIsAdmin: member.status === 'administrator' || member.status === 'creator',
+            botIsAdmin:
+              member.status === 'administrator' || member.status === 'creator',
             botCanInviteUsers: !!member.can_invite_users,
             botCanManageChat: !!member.can_manage_chat,
             botCanPostMessages: !!member.can_post_messages,
@@ -260,11 +371,19 @@ export class TelegramBotsService {
           },
         });
 
-        added.push({ id: created.id, title: created.title, username: created.username, telegramChatId: created.telegramChatId || chatId });
+        added.push({
+          id: created.id,
+          title: created.title,
+          username: created.username,
+          telegramChatId: created.telegramChatId || chatId,
+        });
         existingKeys.add(chatId);
         if (uname) existingKeys.add(uname);
       } catch (error) {
-        const message = error instanceof TelegramApiError ? error.message : 'Unable to import channel';
+        const message =
+          error instanceof TelegramApiError
+            ? error.message
+            : 'Unable to import channel';
         errors.push({ input: raw, error: message });
       }
     }
