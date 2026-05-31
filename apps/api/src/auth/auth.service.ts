@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -69,7 +70,14 @@ export class AuthService {
   }
 
   async me(userId: string) {
-    const auth = await this.authResponse(userId);
-    return { user: auth.user, workspace: auth.workspace };
+    try {
+      const auth = await this.authResponse(userId);
+      return { user: auth.user, workspace: auth.workspace };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new UnauthorizedException('Session is invalid. Please sign in again.');
+      }
+      throw error;
+    }
   }
 }

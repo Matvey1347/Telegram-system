@@ -233,6 +233,7 @@ model TelegramChannelDailyStats {
   subscribersCount  Int?
   joinedCount       Int?
   leftCount         Int?
+  netGrowthCount    Int?
   viewsCount        Int?
   reactionsCount    Int?
   forwardsCount     Int?
@@ -366,6 +367,8 @@ model TelegramBotIntegration {
   webhookActive      Boolean  @default(false)
   hasExternalWebhook Boolean  @default(false)
   webhookSecret      String?
+  updatesMode        String?
+  lastUpdateId       Int?
   lastErrorMessage   String?
   lastCheckedAt      DateTime?
   isActive           Boolean  @default(true)
@@ -392,6 +395,8 @@ model TelegramBotUpdateLog {
 
   workspace              Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramBotIntegration TelegramBotIntegration @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: Cascade)
+
+  @@unique([telegramBotIntegrationId, updateId])
 }
 
 model SubscriberEvent {
@@ -404,11 +409,15 @@ model SubscriberEvent {
   eventType          String
   eventDate          DateTime
   source             String?
+  updateId           String?
+  rawEvent           Json?
 
   adCampaign AdCampaign?        @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
   inviteLink TelegramInviteLink? @relation(fields: [inviteLinkId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
+
+  @@unique([workspaceId, updateId])
 }
 
 model ExchangeRate {

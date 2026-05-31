@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsISO8601, IsOptional, IsString } from 'class-validator';
 
 export class CreateTelegramChannelDto {
   @IsString() title!: string;
@@ -21,4 +21,19 @@ export class UpdateTelegramChannelDto {
 
 export class CheckBotAccessDto {
   @IsOptional() @IsString() telegramBotIntegrationId?: string;
+}
+
+export class CreateInviteLinkDto {
+  @IsString() name!: string;
+  @IsOptional() @IsString() adCampaignId?: string;
+  @IsOptional() @IsISO8601() expireDate?: string;
+  @IsOptional() @Type(() => Number) @IsInt() memberLimit?: number;
+  @IsOptional() @IsBoolean() createsJoinRequest?: boolean;
+}
+
+export class UpdateInviteLinkDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsISO8601() expireDate?: string;
+  @IsOptional() @Type(() => Number) @IsInt() memberLimit?: number;
+  @IsOptional() @IsBoolean() createsJoinRequest?: boolean;
 }

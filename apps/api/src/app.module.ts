@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AccountsModule } from './accounts/accounts.module';
 import { AdCampaignsModule } from './ad-campaigns/ad-campaigns.module';
 import { AdvertisingSourcesModule } from './advertising-sources/advertising-sources.module';
@@ -18,10 +19,12 @@ import { TransfersModule } from './transfers/transfers.module';
 import { InvestmentsModule } from './investments/investments.module';
 import { WorkspaceMembersModule } from './workspace-members/workspace-members.module';
 import { AccountModule } from './account/account.module';
+import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     CommonModule,
     AuthModule,
@@ -39,6 +42,7 @@ import { AccountModule } from './account/account.module';
     InvestmentsModule,
     WorkspaceMembersModule,
     AccountModule,
+    TelegramSyncModule,
   ],
   controllers: [AppController],
 })

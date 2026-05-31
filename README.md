@@ -39,3 +39,17 @@ Key generation:
 - Bot tokens are encrypted at rest (AES-256-GCM).
 - API responses expose only masked token.
 - One bot can manage multiple channels.
+
+## Telegram sync modes
+
+- `PUBLIC_API_URL` should point to your public API base URL for webhook mode.
+- `TELEGRAM_UPDATES_MODE` supports `webhook`, `polling`, or `off`.
+- `TELEGRAM_SYNC_ENABLED=true` enables snapshot/daily sync jobs.
+- `TELEGRAM_SYNC_INTERVAL_MINUTES` controls sync interval (default implementation uses 5-minute cron).
+
+Notes:
+
+- Webhook mode requires public HTTPS.
+- Polling mode is recommended for local development and requires disabled webhook.
+- Bot should be channel admin for member/admin diagnostics and invite-link management.
+- Invite link attribution is most reliable for links created by this system bot.

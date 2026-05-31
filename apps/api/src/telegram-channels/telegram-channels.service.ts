@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
-import { CheckBotAccessDto, CreateTelegramChannelDto, UpdateTelegramChannelDto } from './dto';
+import { CheckBotAccessDto, CreateInviteLinkDto, CreateTelegramChannelDto, UpdateInviteLinkDto, UpdateTelegramChannelDto } from './dto';
 import { TelegramApiError, TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
 
 @Injectable()
@@ -146,5 +146,193 @@ export class TelegramChannelsService {
       await this.prisma.telegramChannel.update({ where: { id: channel.id }, data: diagnostics });
       return { ...diagnostics, message };
     }
+  }
+
+  async syncNow(userId: string, channelId: string) {
+    return this.checkBotAccess(userId, channelId, {});
+  }
+
+  async events(userId: string, channelId: string, page = 1, limit = 50) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    await this.findOne(userId, channelId);
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, Math.min(200, limit));
+    const skip = (safePage - 1) * safeLimit;
+    const [items, total] = await Promise.all([
+      this.prisma.subscriberEvent.findMany({
+        where: { workspaceId, telegramChannelId: channelId },
+        include: { inviteLink: true, adCampaign: true },
+        orderBy: { eventDate: 'desc' },
+        skip,
+        take: safeLimit,
+      }),
+      this.prisma.subscriberEvent.count({ where: { workspaceId, telegramChannelId: channelId } }),
+    ]);
+    return { items, total, page: safePage, limit: safeLimit };
+  }
+
+  async inviteLinks(userId: string, channelId: string) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    await this.findOne(userId, channelId);
+    return this.prisma.telegramInviteLink.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      include: { adCampaign: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async analytics(userId: string, channelId: string, from?: string, to?: string) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const channel = await this.findOne(userId, channelId);
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const toDate = to ? new Date(to) : new Date();
+
+    const [joinedTotal, leftTotal, inviteLinks, campaigns, dailyStats, recentEvents] = await Promise.all([
+      this.prisma.subscriberEvent.count({ where: { workspaceId, telegramChannelId: channelId, eventType: 'joined', eventDate: { gte: fromDate, lte: toDate } } }),
+      this.prisma.subscriberEvent.count({ where: { workspaceId, telegramChannelId: channelId, eventType: 'left', eventDate: { gte: fromDate, lte: toDate } } }),
+      this.prisma.telegramInviteLink.findMany({ where: { workspaceId, telegramChannelId: channelId }, include: { adCampaign: true } }),
+      this.prisma.adCampaign.findMany({ where: { workspaceId, telegramChannelId: channelId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.telegramChannelDailyStats.findMany({ where: { telegramChannelId: channelId, date: { gte: fromDate, lte: toDate } }, orderBy: { date: 'asc' } }),
+      this.prisma.subscriberEvent.findMany({ where: { workspaceId, telegramChannelId: channelId }, include: { inviteLink: true, adCampaign: true }, orderBy: { eventDate: 'desc' }, take: 50 }),
+    ]);
+
+    return {
+      channel: {
+        id: channel.id,
+        title: channel.title,
+        username: channel.username,
+        currentSubscribersCount: channel.currentSubscribersCount,
+        botStatus: channel.botStatus,
+        botIsAdmin: channel.botIsAdmin,
+        botCanInviteUsers: channel.botCanInviteUsers,
+        botCheckedAt: channel.botCheckedAt,
+      },
+      summary: {
+        subscribersCurrent: channel.currentSubscribersCount ?? 0,
+        joinedTotal,
+        leftTotal,
+        netGrowth: joinedTotal - leftTotal,
+        inviteLinksCount: inviteLinks.length,
+        campaignsCount: campaigns.length,
+      },
+      dailyStats,
+      inviteLinks: inviteLinks.map((x) => ({ ...x, campaignTitle: x.adCampaign?.title || null })),
+      campaigns,
+      recentEvents: recentEvents.map((x) => ({
+        id: x.id,
+        eventType: x.eventType,
+        eventDate: x.eventDate,
+        telegramUserId: x.telegramUserId,
+        inviteLinkName: x.inviteLink?.name || null,
+        campaignTitle: x.adCampaign?.title || null,
+      })),
+    };
+  }
+
+  async createInviteLink(userId: string, channelId: string, dto: CreateInviteLinkDto) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const channel = await this.prisma.telegramChannel.findFirst({ where: { id: channelId, workspaceId } });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    if (!channel.telegramBotIntegrationId) throw new BadRequestException('Channel has no assigned bot');
+
+    const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id: channel.telegramBotIntegrationId, workspaceId, isActive: true } });
+    if (!bot) throw new NotFoundException('Telegram bot not found');
+    const token = this.encryptionService.decrypt({ encrypted: bot.botTokenEncrypted, iv: bot.botTokenIv, authTag: bot.botTokenAuthTag });
+
+    const target = channel.telegramChatId || channel.username;
+    if (!target) throw new BadRequestException('Channel has no username or chatId');
+
+    const result = await this.telegramApi.createChatInviteLink(token, target, {
+      name: dto.name,
+      expire_date: dto.expireDate ? Math.floor(new Date(dto.expireDate).getTime() / 1000) : undefined,
+      member_limit: dto.memberLimit,
+      creates_join_request: dto.createsJoinRequest,
+    });
+
+    return this.prisma.telegramInviteLink.create({
+      data: {
+        workspaceId,
+        telegramChannelId: channel.id,
+        adCampaignId: dto.adCampaignId || null,
+        telegramBotIntegrationId: bot.id,
+        name: dto.name,
+        url: result.invite_link,
+        telegramInviteLinkId: result.invite_link,
+        createsJoinRequest: result.creates_join_request ?? dto.createsJoinRequest ?? false,
+        expireDate: dto.expireDate ? new Date(dto.expireDate) : null,
+        memberLimit: dto.memberLimit,
+      },
+    });
+  }
+
+  async updateInviteLink(userId: string, inviteLinkId: string, dto: UpdateInviteLinkDto) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const link = await this.prisma.telegramInviteLink.findFirst({ where: { id: inviteLinkId, workspaceId }, include: { telegramChannel: true, telegramBotIntegration: true } });
+    if (!link) throw new NotFoundException('Invite link not found');
+    if (!link.telegramBotIntegration) throw new BadRequestException('Invite link has no bot integration');
+
+    const token = this.encryptionService.decrypt({
+      encrypted: link.telegramBotIntegration.botTokenEncrypted,
+      iv: link.telegramBotIntegration.botTokenIv,
+      authTag: link.telegramBotIntegration.botTokenAuthTag,
+    });
+    const target = link.telegramChannel.telegramChatId || link.telegramChannel.username;
+    if (!target) throw new BadRequestException('Channel has no username or chatId');
+
+    const result = await this.telegramApi.editChatInviteLink(token, target, link.url, {
+      name: dto.name ?? link.name,
+      expire_date: dto.expireDate ? Math.floor(new Date(dto.expireDate).getTime() / 1000) : undefined,
+      member_limit: dto.memberLimit,
+      creates_join_request: dto.createsJoinRequest,
+    });
+
+    return this.prisma.telegramInviteLink.update({
+      where: { id: link.id },
+      data: {
+        name: dto.name ?? link.name,
+        url: result.invite_link || link.url,
+        createsJoinRequest: dto.createsJoinRequest ?? link.createsJoinRequest,
+        expireDate: dto.expireDate ? new Date(dto.expireDate) : link.expireDate,
+        memberLimit: dto.memberLimit ?? link.memberLimit,
+        lastSyncedAt: new Date(),
+      },
+    });
+  }
+
+  async revokeInviteLink(userId: string, inviteLinkId: string) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const link = await this.prisma.telegramInviteLink.findFirst({ where: { id: inviteLinkId, workspaceId }, include: { telegramChannel: true, telegramBotIntegration: true } });
+    if (!link) throw new NotFoundException('Invite link not found');
+    if (!link.telegramBotIntegration) throw new BadRequestException('Invite link has no bot integration');
+
+    const token = this.encryptionService.decrypt({
+      encrypted: link.telegramBotIntegration.botTokenEncrypted,
+      iv: link.telegramBotIntegration.botTokenIv,
+      authTag: link.telegramBotIntegration.botTokenAuthTag,
+    });
+    const target = link.telegramChannel.telegramChatId || link.telegramChannel.username;
+    if (!target) throw new BadRequestException('Channel has no username or chatId');
+
+    await this.telegramApi.revokeChatInviteLink(token, target, link.url);
+    return this.prisma.telegramInviteLink.update({ where: { id: link.id }, data: { isRevoked: true, lastSyncedAt: new Date() } });
+  }
+
+  async recalculateCampaignMetricsById(campaignId: string) {
+    const campaign = await this.prisma.adCampaign.findUnique({ where: { id: campaignId } });
+    if (!campaign) return null;
+    const [joinedCount, leftCount] = await Promise.all([
+      this.prisma.subscriberEvent.count({ where: { adCampaignId: campaignId, eventType: 'joined' } }),
+      this.prisma.subscriberEvent.count({ where: { adCampaignId: campaignId, eventType: 'left' } }),
+    ]);
+    const cpa = joinedCount > 0 ? Number(campaign.priceInPrimaryCurrency) / joinedCount : null;
+    return this.prisma.adCampaign.update({
+      where: { id: campaignId },
+      data: {
+        joinedCount,
+        leftCount,
+        netGrowthCount: joinedCount - leftCount,
+        cpa,
+      },
+    });
   }
 }
