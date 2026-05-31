@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Currency } from '@prisma/client';
+import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateAccountDto, UpdateAccountDto } from './dto';
@@ -10,9 +12,14 @@ export class AccountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
+    private readonly conversionService: CurrencyConversionService,
   ) {}
 
   private async withBalances(workspaceId: string, accounts: { id: string; name: string; currency: string; initialBalance: unknown; isActive: boolean; createdAt: Date; updatedAt: Date }[]) {
+    const workspace = await this.prisma.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { primaryCurrency: true, secondaryCurrency: true },
+    });
     const [transactions, outgoingTransfers, incomingTransfers] = await Promise.all([
       this.prisma.transaction.groupBy({
         by: ['accountId', 'type'],
@@ -31,7 +38,7 @@ export class AccountsService {
       }),
     ]);
 
-    return accounts.map((account) => {
+    return Promise.all(accounts.map(async (account) => {
       const incomes = transactions
         .filter((t) => t.accountId === account.id && t.type === 'income')
         .reduce((acc, row) => acc + dec(row._sum.amount), 0);
@@ -46,13 +53,26 @@ export class AccountsService {
         .reduce((acc, row) => acc + dec(row._sum.toAmount), 0);
 
       const balance = dec(account.initialBalance) + incomes - expenses - outgoing + incoming;
+      const convertedCurrency =
+        account.currency !== workspace.primaryCurrency
+          ? workspace.primaryCurrency
+          : workspace.secondaryCurrency;
+      const convertedBalance = await this.conversionService.convertCurrency(
+        balance,
+        account.currency as Currency,
+        convertedCurrency,
+        workspaceId,
+      );
 
       return {
         ...account,
         initialBalance: dec(account.initialBalance),
+        balance,
         calculatedBalance: balance,
+        convertedBalance,
+        convertedCurrency,
       };
-    });
+    }));
   }
 
   async findAll(userId: string) {

@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
+import { CurrenciesModule } from './currencies/currencies.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromosModule } from './promos/promos.module';
 import { TelegramChannelsModule } from './telegram-channels/telegram-channels.module';
@@ -25,6 +26,7 @@ import { InvestmentsModule } from './investments/investments.module';
     AuthModule,
     AccountsModule,
     ExchangeRatesModule,
+    CurrenciesModule,
     TransactionsModule,
     TransfersModule,
     TelegramChannelsModule,
