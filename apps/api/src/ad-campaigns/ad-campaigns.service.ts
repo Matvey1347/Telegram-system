@@ -2,6 +2,7 @@ import { Currency } from '@prisma/client';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { CreateAdCampaignDto, GenerateInviteLinkDto, UpdateAdCampaignDto } from './dto';
 import { TelegramApiError, TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
 
@@ -10,6 +11,7 @@ export class AdCampaignsService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
+    private encryptionService: TokenEncryptionService,
     private telegramApi: TelegramBotApiClient,
   ) {}
 
@@ -109,6 +111,11 @@ export class AdCampaignsService {
 
     const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id: botIntegrationId, workspaceId, isActive: true } });
     if (!bot) throw new NotFoundException('Telegram bot not found');
+    const token = this.encryptionService.decrypt({
+      encrypted: bot.botTokenEncrypted,
+      iv: bot.botTokenIv,
+      authTag: bot.botTokenAuthTag,
+    });
 
     const target = campaign.telegramChannel.telegramChatId || campaign.telegramChannel.username;
     if (!target) throw new BadRequestException('Channel has no username or chatId.');
@@ -117,7 +124,7 @@ export class AdCampaignsService {
     const linkName = `Campaign: ${campaign.title}`.slice(0, 32);
 
     try {
-      const link = await this.telegramApi.createChatInviteLink(bot.botToken, chatId, { name: linkName });
+      const link = await this.telegramApi.createChatInviteLink(token, chatId, { name: linkName });
 
       const updated = await this.prisma.$transaction(async (tx) => {
         const invite = await tx.telegramInviteLink.create({

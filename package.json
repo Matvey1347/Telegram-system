@@ -12,10 +12,10 @@
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
-    "db:migrate": "pnpm --filter api prisma migrate dev",
-    "db:generate": "pnpm --filter api prisma generate",
-    "db:studio": "pnpm --filter api prisma studio",
-    "db:seed": "pnpm --filter api prisma db seed"
+    "db:migrate": "pnpm --filter api exec prisma migrate dev",
+    "db:generate": "pnpm --filter api exec prisma generate",
+    "db:studio": "pnpm --filter api exec prisma studio",
+    "db:seed": "pnpm --filter api exec prisma db seed"
   },
   "packageManager": "pnpm@9.0.0"
 }

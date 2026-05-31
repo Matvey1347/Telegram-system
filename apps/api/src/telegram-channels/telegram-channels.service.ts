@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { CheckBotAccessDto, CreateTelegramChannelDto, UpdateTelegramChannelDto } from './dto';
 import { TelegramApiError, TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
 
@@ -9,6 +10,7 @@ export class TelegramChannelsService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
+    private encryptionService: TokenEncryptionService,
     private telegramApi: TelegramBotApiClient,
   ) {}
 
@@ -83,23 +85,28 @@ export class TelegramChannelsService {
 
     const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id: botId, workspaceId, isActive: true } });
     if (!bot) throw new NotFoundException('Telegram bot not found');
+    const token = this.encryptionService.decrypt({
+      encrypted: bot.botTokenEncrypted,
+      iv: bot.botTokenIv,
+      authTag: bot.botTokenAuthTag,
+    });
 
     const target = channel.telegramChatId || channel.username;
     if (!target) throw new BadRequestException('Channel has no username or chatId. Add one before checking bot access.');
     const chatId = target.startsWith('@') || target.startsWith('-') ? target : `@${target}`;
 
     try {
-      const chat = await this.telegramApi.getChat(bot.botToken, chatId);
-      const membersCount = await this.telegramApi.getChatMemberCount(bot.botToken, chatId);
-      const member = await this.telegramApi.getChatMember(bot.botToken, chatId, bot.botId || '');
-      const admins = await this.telegramApi.getChatAdministrators(bot.botToken, chatId);
+      const chat = await this.telegramApi.getChat(token, chatId);
+      const membersCount = await this.telegramApi.getChatMemberCount(token, chatId);
+      const member = await this.telegramApi.getChatMember(token, chatId, bot.botId || '');
+      const admins = await this.telegramApi.getChatAdministrators(token, chatId);
       const botAdmin = admins.find((a) => String(a.user.id) === String(bot.botId));
       let photoUrl: string | null = null;
       const photoBigFileId = chat.photo?.big_file_id || null;
       const photoSmallFileId = chat.photo?.small_file_id || null;
       if (photoBigFileId) {
-        const file = await this.telegramApi.getFile(bot.botToken, photoBigFileId);
-        if (file.file_path) photoUrl = `https://api.telegram.org/file/bot${bot.botToken}/${file.file_path}`;
+        const file = await this.telegramApi.getFile(token, photoBigFileId);
+        if (file.file_path) photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
       }
 
       const isAdmin = member.status === 'administrator' || member.status === 'creator';

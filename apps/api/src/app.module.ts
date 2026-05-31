@@ -15,9 +15,9 @@ import { TelegramChannelsModule } from './telegram-channels/telegram-channels.mo
 import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { TransfersModule } from './transfers/transfers.module';
-import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { InvestorsModule } from './investors/investors.module';
 import { InvestmentsModule } from './investments/investments.module';
+import { WorkspaceMembersModule } from './workspace-members/workspace-members.module';
 
 @Module({
   imports: [
@@ -36,9 +36,9 @@ import { InvestmentsModule } from './investments/investments.module';
     AdvertisingSourcesModule,
     AdCampaignsModule,
     DashboardModule,
-    BootstrapModule,
     InvestorsModule,
     InvestmentsModule,
+    WorkspaceMembersModule,
   ],
   controllers: [AppController],
 })

@@ -5,6 +5,7 @@ export class CreateInvestorDto {
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() userId?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
@@ -13,5 +14,6 @@ export class UpdateInvestorDto {
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() userId?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }

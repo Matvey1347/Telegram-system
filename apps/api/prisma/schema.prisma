@@ -9,6 +9,7 @@ datasource db {
 enum WorkspaceRole {
   owner
   admin
+  member
 }
 
 enum Currency {
@@ -53,6 +54,7 @@ model User {
   passwordHash String
   name         String
   memberships  WorkspaceMember[]
+  investors    Investor[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 }
@@ -144,6 +146,7 @@ model Transaction {
 model Investor {
   id          String   @id @default(cuid())
   workspaceId String
+  userId      String?
   name        String
   email       String?
   phone       String?
@@ -151,6 +154,7 @@ model Investor {
   isActive    Boolean  @default(true)
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   investments Investment[]
 
   createdAt DateTime @default(now())
@@ -370,7 +374,10 @@ model TelegramBotIntegration {
   id                 String   @id @default(cuid())
   workspaceId        String
   label              String
-  botToken           String
+  botTokenEncrypted  String
+  botTokenIv         String
+  botTokenAuthTag    String
+  botTokenMasked     String
   botId              String?
   username           String?
   firstName          String?

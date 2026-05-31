@@ -20,7 +20,8 @@ async function main() {
   const name = process.env.ADMIN_NAME?.trim();
 
   if (!email || !password || !name) {
-    throw new Error('ADMIN_EMAIL, ADMIN_PASSWORD and ADMIN_NAME are required');
+    console.log('Skipping admin seed: ADMIN_EMAIL/ADMIN_PASSWORD/ADMIN_NAME not provided.');
+    return;
   }
 
   const passwordHash = await bcrypt.hash(password, 10);

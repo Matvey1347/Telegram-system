@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { CreateTelegramBotDto, ImportTelegramChannelsDto, UpdateTelegramBotDto } from './dto';
 import { TelegramApiError, TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
 
@@ -9,6 +10,7 @@ export class TelegramBotsService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
+    private encryptionService: TokenEncryptionService,
     private telegramApi: TelegramBotApiClient,
   ) {}
 
@@ -17,8 +19,23 @@ export class TelegramBotsService {
     return `${token.slice(0, 6)}...${token.slice(-4)}`;
   }
 
-  private safe<T extends { botToken: string }>(bot: T) {
-    return { ...bot, maskedToken: this.maskToken(bot.botToken), botToken: undefined };
+  private decryptBotToken(bot: { botTokenEncrypted: string; botTokenIv: string; botTokenAuthTag: string }) {
+    return this.encryptionService.decrypt({
+      encrypted: bot.botTokenEncrypted,
+      iv: bot.botTokenIv,
+      authTag: bot.botTokenAuthTag,
+    });
+  }
+
+  private safe<T extends { botTokenMasked: string; botTokenEncrypted?: string; botTokenIv?: string; botTokenAuthTag?: string }>(bot: T) {
+    return {
+      ...bot,
+      maskedToken: bot.botTokenMasked || '******',
+      botTokenMasked: undefined,
+      botTokenEncrypted: undefined,
+      botTokenIv: undefined,
+      botTokenAuthTag: undefined,
+    };
   }
 
   private async diagnostics(token: string) {
@@ -63,11 +80,15 @@ export class TelegramBotsService {
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const diagnostics = await this.diagnostics(dto.botToken);
     const autoLabel = diagnostics.username ? `@${diagnostics.username.replace('@', '')}` : (diagnostics.firstName || `Bot ${diagnostics.botId}`);
+    const encrypted = this.encryptionService.encrypt(dto.botToken);
     const row = await this.prisma.telegramBotIntegration.create({
       data: {
         workspaceId,
         label: autoLabel,
-        botToken: dto.botToken,
+        botTokenEncrypted: encrypted.encrypted,
+        botTokenIv: encrypted.iv,
+        botTokenAuthTag: encrypted.authTag,
+        botTokenMasked: this.maskToken(dto.botToken),
         ...diagnostics,
       },
     });
@@ -79,11 +100,16 @@ export class TelegramBotsService {
     const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
     if (!existing) throw new NotFoundException('Telegram bot not found');
 
-    const token = dto.botToken || existing.botToken;
-    const data: Record<string, unknown> = { label: dto.label };
-    if (dto.botToken) data.botToken = dto.botToken;
+    const token = dto.botToken || this.decryptBotToken(existing);
+    const data: Record<string, unknown> = {};
+    if (dto.label) data.label = dto.label;
 
     if (dto.botToken) {
+      const encrypted = this.encryptionService.encrypt(dto.botToken);
+      data.botTokenEncrypted = encrypted.encrypted;
+      data.botTokenIv = encrypted.iv;
+      data.botTokenAuthTag = encrypted.authTag;
+      data.botTokenMasked = this.maskToken(dto.botToken);
       Object.assign(data, await this.diagnostics(token));
     }
 
@@ -137,9 +163,10 @@ export class TelegramBotsService {
     if (!existing) throw new NotFoundException('Telegram bot not found');
 
     try {
+      const token = this.decryptBotToken(existing);
       const row = await this.prisma.telegramBotIntegration.update({
         where: { id },
-        data: { ...await this.diagnostics(existing.botToken), isActive: true },
+        data: { ...await this.diagnostics(token), isActive: true },
       });
       return this.safe(row);
     } catch (error) {
@@ -153,6 +180,7 @@ export class TelegramBotsService {
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId, isActive: true } });
     if (!bot) throw new NotFoundException('Telegram bot not found');
+    const token = this.decryptBotToken(bot);
 
     const existing = await this.prisma.telegramChannel.findMany({ where: { workspaceId }, select: { username: true, telegramChatId: true } });
     const existingKeys = new Set<string>();
@@ -170,7 +198,7 @@ export class TelegramBotsService {
       if (!chatRef) continue;
 
       try {
-        const chat = await this.telegramApi.getChat(bot.botToken, chatRef);
+        const chat = await this.telegramApi.getChat(token, chatRef);
         const chatId = String(chat.id);
         const uname = chat.username ? chat.username.replace('@', '').toLowerCase() : null;
 
@@ -179,14 +207,14 @@ export class TelegramBotsService {
           continue;
         }
 
-        const member = await this.telegramApi.getChatMember(bot.botToken, chatRef, bot.botId || '');
-        const membersCount = await this.telegramApi.getChatMemberCount(bot.botToken, chatRef);
+        const member = await this.telegramApi.getChatMember(token, chatRef, bot.botId || '');
+        const membersCount = await this.telegramApi.getChatMemberCount(token, chatRef);
         let photoUrl: string | null = null;
         const photoBigFileId = chat.photo?.big_file_id || null;
         const photoSmallFileId = chat.photo?.small_file_id || null;
         if (photoBigFileId) {
-          const file = await this.telegramApi.getFile(bot.botToken, photoBigFileId);
-          if (file.file_path) photoUrl = `https://api.telegram.org/file/bot${bot.botToken}/${file.file_path}`;
+          const file = await this.telegramApi.getFile(token, photoBigFileId);
+          if (file.file_path) photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         }
         const created = await this.prisma.telegramChannel.create({
           data: {

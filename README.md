@@ -2,100 +2,43 @@
 
 Internal system for managing Telegram channels, ad campaigns, finance, currencies and analytics.
 
-## Stack
-
-- Monorepo: pnpm workspaces
-- Frontend: Next.js
-- Backend: Nest.js
-- Database: PostgreSQL
-- ORM: Prisma
-- Local DB: Docker Compose
-
-## Project structure
-
-telegram_system/
-├── apps/
-│   ├── web/
-│   └── api/
-├── packages/
-│   └── shared/
-├── docker-compose.yml
-├── pnpm-workspace.yaml
-└── package.json
-
 ## Local development
 
-1. Install dependencies:
+1. `pnpm install`
+2. `pnpm db:up`
+3. `pnpm db:migrate`
+4. `pnpm dev`
 
-    pnpm install
-
-2. Start PostgreSQL:
-
-    pnpm db:up
-
-3. Run migrations:
-
-    pnpm db:migrate
-
-4. Start frontend and backend:
-
-    pnpm dev
-
-## Database
-
-Run migration:
-
-    pnpm db:migrate
-
-Open Prisma Studio:
-
-    pnpm db:studio
-
-For API-scoped Prisma Studio:
-
-    pnpm --filter api exec prisma studio
-
-## Admin Bootstrap
-
-Backend startup now performs deterministic admin/workspace bootstrap (it is not limited to manual Prisma seed).
-
-- Reads `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME` from the root `.env`.
-- Uses a stable `User.seedKey = "default-admin"` to track the env-controlled admin even if email changes.
-- Creates or updates the seeded admin on every backend start.
-- Ensures a default workspace exists (`id = "default-workspace"`).
-- Ensures the seeded admin is attached to that workspace with `WorkspaceRole.owner`.
-- Logs only a safe message: `Default admin initialized` (no password logging).
-
-Required `.env` variables (root):
+## Required env variables
 
 - `DATABASE_URL`
 - `API_PORT`
 - `JWT_SECRET`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
-- `ADMIN_NAME`
 - `NEXT_PUBLIC_API_URL`
+- `BOT_TOKEN_ENCRYPTION_KEY`
 
-## Local URLs
+Example key generation:
 
-Frontend:
+`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 
-    http://localhost:3000
+## Auth and workspaces
 
-Backend:
+- Admin env bootstrap was removed from app startup.
+- Users register via `/api/auth/register`.
+- Registration creates:
+  - user
+  - workspace
+  - owner membership
+- One workspace supports multiple members (`owner` / `admin` / `member`).
 
-    http://localhost:4000
+## Telegram bots
 
-PostgreSQL:
+- Bot tokens are encrypted at rest (AES-256-GCM).
+- API responses never expose raw or encrypted tokens.
+- UI and API use only `maskedToken`.
+- One bot can manage multiple channels.
 
-    localhost:5432
+## Notes on migration
 
-## Telegram Bot Integration Model
-
-- One Telegram bot can manage multiple Telegram channels.
-- One Telegram channel has one selected main bot for automation.
-- Telegram Bot API cannot list all channels where bot is admin automatically.
-- Users must manually create channels in the system and assign a connected bot.
-- Bot must be admin in the channel to run automation checks and generate invite links.
-- Invite link generation requires Add Subscribers (`can_invite_users`) permission.
-- Webhook processing and live join tracking are planned for the next phase.
+- A migration is included for role update, investor-user link, and encrypted bot token fields.
+- For early-stage local setups, DB reset is acceptable if old data shape conflicts.

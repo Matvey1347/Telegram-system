@@ -16,15 +16,22 @@ export class InvestorsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
+  private async validateLinkedUser(workspaceId: string, userId?: string | null) {
+    if (!userId) return null;
+    const membership = await this.prisma.workspaceMember.findFirst({ where: { workspaceId, userId } });
+    if (!membership) throw new NotFoundException('Linked user is not a member of this workspace');
+    return userId;
+  }
+
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.investor.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    return this.prisma.investor.findMany({ where: { workspaceId }, include: { user: { select: { id: true, email: true, name: true } } }, orderBy: { createdAt: 'desc' } });
   }
 
   async findSummary(userId: string) {
     const workspaceId = await this.workspace(userId);
     const [investors, grouped] = await Promise.all([
-      this.prisma.investor.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.investor.findMany({ where: { workspaceId }, include: { user: { select: { id: true, email: true, name: true } } }, orderBy: { createdAt: 'desc' } }),
       this.prisma.investment.groupBy({ by: ['investorId'], where: { workspaceId }, _sum: { amountInPrimaryCurrency: true }, _count: { _all: true } }),
     ]);
 
@@ -53,19 +60,22 @@ export class InvestorsService {
 
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const row = await this.prisma.investor.findFirst({ where: { id, workspaceId } });
+    const row = await this.prisma.investor.findFirst({ where: { id, workspaceId }, include: { user: { select: { id: true, email: true, name: true } } } });
     if (!row) throw new NotFoundException('Investor not found');
     return row;
   }
 
   async create(userId: string, dto: CreateInvestorDto) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.investor.create({ data: { workspaceId, ...dto, isActive: dto.isActive ?? true } });
+    const linkedUserId = await this.validateLinkedUser(workspaceId, dto.userId);
+    return this.prisma.investor.create({ data: { workspaceId, ...dto, userId: linkedUserId, isActive: dto.isActive ?? true } });
   }
 
   async update(userId: string, id: string, dto: UpdateInvestorDto) {
+    const workspaceId = await this.workspace(userId);
     await this.findOne(userId, id);
-    return this.prisma.investor.update({ where: { id }, data: dto });
+    const linkedUserId = await this.validateLinkedUser(workspaceId, dto.userId);
+    return this.prisma.investor.update({ where: { id }, data: { ...dto, userId: dto.userId === undefined ? undefined : linkedUserId } });
   }
 
   async remove(userId: string, id: string) {
