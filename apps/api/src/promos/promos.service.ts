@@ -143,9 +143,21 @@ export class PromosService {
       throw new InternalServerErrorException('Failed to upload image to B2');
     }
 
-    const base = endpoint
-      ? endpoint.replace(/\/+$/, '')
-      : `${authData.downloadUrl}/file/${bucketName}`;
-    return `${base}/${fileName}`;
+    if (!endpoint) {
+      return `${authData.downloadUrl}/file/${bucketName}/${fileName}`;
+    }
+
+    const cleanEndpoint = endpoint.replace(/\/+$/, '');
+    const s3HostLike = /(^https?:\/\/)?s3\./i.test(cleanEndpoint);
+    const hasBucketInPath = new RegExp(`/${bucketName}(/|$)`, 'i').test(
+      cleanEndpoint,
+    );
+
+    // Backblaze S3 endpoint usually needs bucket in URL path.
+    if (s3HostLike && !hasBucketInPath) {
+      return `${cleanEndpoint}/${bucketName}/${fileName}`;
+    }
+
+    return `${cleanEndpoint}/${fileName}`;
   }
 }

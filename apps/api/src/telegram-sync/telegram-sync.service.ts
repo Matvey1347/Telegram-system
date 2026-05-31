@@ -185,6 +185,19 @@ export class TelegramSyncService {
       authTag: bot.botTokenAuthTag,
     });
     const info = await this.telegramApi.getWebhookInfo(token);
+    const deliveredWhere = {
+      workspaceId,
+      telegramBotIntegrationId: bot.id,
+      processed: true,
+    };
+    const [deliveredCount, lastDelivered] = await Promise.all([
+      this.prisma.telegramBotUpdateLog.count({ where: deliveredWhere }),
+      this.prisma.telegramBotUpdateLog.findFirst({
+        where: deliveredWhere,
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+    ]);
     this.logger.debug(
       `Webhook status fetched botId=${bot.id} active=${!!info.url} pending=${info.pending_update_count || 0} lastError=${info.last_error_message || 'none'}`,
     );
@@ -194,6 +207,8 @@ export class TelegramSyncService {
       webhookActive: !!info.url,
       webhookUrl: info.url || null,
       pendingUpdateCount: info.pending_update_count || 0,
+      deliveredCount,
+      lastDeliveredAt: lastDelivered?.createdAt || null,
       lastErrorMessage: info.last_error_message || null,
       updatesMode: bot.updatesMode || 'off',
     };

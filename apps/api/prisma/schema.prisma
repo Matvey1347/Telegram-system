@@ -335,7 +335,7 @@ model AdvertisingSource {
   id               String                @id @default(cuid())
   workspaceId       String
   name             String
-  type             AdvertisingSourceType
+  type             AdvertisingSourceType @default(telegram_channel)
   url              String?
   telegramUsername String?
   description      String?
@@ -343,7 +343,8 @@ model AdvertisingSource {
   notes            String?
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  adCampaigns AdCampaign[]
+  adCampaignsLegacy AdCampaign[]
+  adCampaigns       AdCampaignAdvertisingChannel[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -369,6 +370,7 @@ model AdCampaign {
   sourcePostViews          Int?
   startedAt                DateTime?
   endedAt                  DateTime?
+  placementDate            DateTime?
   joinedCount              Int            @default(0)
   leftCount                Int?
   netGrowthCount           Int?
@@ -384,12 +386,26 @@ model AdCampaign {
   account           Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   expenseTransaction Transaction? @relation("CampaignExpenseTransaction")
+  advertisingChannels AdCampaignAdvertisingChannel[]
 
   inviteLinks      TelegramInviteLink[]
   subscriberEvents SubscriberEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AdCampaignAdvertisingChannel {
+  id String @id @default(cuid())
+  adCampaignId String
+  advertisingSourceId String
+  createdAt DateTime @default(now())
+
+  adCampaign AdCampaign @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+  advertisingSource AdvertisingSource @relation(fields: [advertisingSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([adCampaignId, advertisingSourceId])
+  @@index([advertisingSourceId])
 }
 
 model TelegramInviteLink {

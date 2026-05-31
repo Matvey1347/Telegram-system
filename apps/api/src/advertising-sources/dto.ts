@@ -1,17 +1,15 @@
-import { AdvertisingSourceType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
 export class CreateAdvertisingSourceDto {
-  @IsString() name!: string;
-  @IsEnum(AdvertisingSourceType) type!: AdvertisingSourceType;
-  @IsOptional() @IsString() url?: string;
-  @IsOptional() @IsString() telegramUsername?: string;
+  @IsString() title!: string;
+  @IsOptional() @IsString() telegramUrl?: string;
+  @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() notes?: string;
 }
+
 export class UpdateAdvertisingSourceDto {
-  @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsEnum(AdvertisingSourceType) type?: AdvertisingSourceType;
-  @IsOptional() @IsString() url?: string;
-  @IsOptional() @IsString() telegramUsername?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() telegramUrl?: string;
+  @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() notes?: string;
 }

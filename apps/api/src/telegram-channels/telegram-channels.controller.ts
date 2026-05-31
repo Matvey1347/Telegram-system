@@ -114,6 +114,10 @@ export class TelegramChannelsController {
   ) {
     return this.service.inviteLinks(user.sub, id);
   }
+  @Get(':id/promos')
+  promos(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.promosByChannel(user.sub, id);
+  }
   @Get(':id/posts')
   posts(
     @CurrentUser() user: JwtUser,

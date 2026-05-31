@@ -1,38 +1,45 @@
-import { CampaignStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
-  IsEnum,
-  IsInt,
   IsOptional,
   IsString,
   IsNumber,
-  MaxLength,
   Min,
+  ArrayMinSize,
 } from 'class-validator';
 
 export class CreateAdCampaignDto {
   @IsString() telegramChannelId!: string;
-  @IsOptional() @IsString() advertisingSourceId?: string;
-  @IsOptional() @IsString() promoId?: string;
+  @IsString() promoId!: string;
+  @IsString() telegramInviteLinkId!: string;
+  @IsArray() @ArrayMinSize(1) @IsString({ each: true }) advertisingChannelIds!: string[];
+  @Type(() => Number) @IsNumber() @Min(0.000001) price!: number;
+  @IsString() currency!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) exchangeRateToPrimary?: number;
   @IsOptional() @IsString() accountId?: string;
-  @IsString() title!: string;
-  @IsOptional() @IsEnum(CampaignStatus) status?: CampaignStatus;
-  @Type(() => Number) @IsNumber() @Min(0) price!: number;
-  @Type(() => Number) @IsNumber() @Min(0) exchangeRateToPrimary!: number;
-  @IsOptional() @IsString() inviteLink?: string;
-  @IsOptional() @IsString() sourcePostUrl?: string;
-  @IsOptional() @IsInt() sourcePostViews?: number;
-  @IsOptional() @IsInt() joinedCount?: number;
-  @IsOptional() @IsInt() leftCount?: number;
+  @IsOptional() @IsDateString() placementDate?: string;
   @IsOptional() @IsDateString() startedAt?: string;
   @IsOptional() @IsDateString() endedAt?: string;
   @IsOptional() @IsString() notes?: string;
 }
 
-export class UpdateAdCampaignDto extends CreateAdCampaignDto {}
+export class UpdateAdCampaignDto {
+  @IsOptional() @IsString() telegramChannelId?: string;
+  @IsOptional() @IsString() promoId?: string;
+  @IsOptional() @IsString() telegramInviteLinkId?: string;
+  @IsOptional() @IsArray() @ArrayMinSize(1) @IsString({ each: true }) advertisingChannelIds?: string[];
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) price?: number;
+  @IsOptional() @IsString() currency?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) exchangeRateToPrimary?: number;
+  @IsOptional() @IsString() accountId?: string;
+  @IsOptional() @IsDateString() placementDate?: string;
+  @IsOptional() @IsDateString() startedAt?: string;
+  @IsOptional() @IsDateString() endedAt?: string;
+  @IsOptional() @IsString() notes?: string;
+}
 
 export class GenerateInviteLinkDto {
   @IsOptional() @IsString() telegramBotIntegrationId?: string;
-  @IsOptional() @IsString() @MaxLength(32) name?: string;
+  @IsOptional() @IsString() name?: string;
 }

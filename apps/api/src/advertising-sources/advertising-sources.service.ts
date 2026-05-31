@@ -9,36 +9,111 @@ export class AdvertisingSourcesService {
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
   ) {}
+
   private async workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
+
+  private toView(row: any) {
+    return {
+      id: row.id,
+      title: row.name,
+      telegramUrl: row.url,
+      username: row.telegramUsername,
+      notes: row.notes,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.advertisingSource.findMany({
+    const rows = await this.prisma.advertisingSource.findMany({
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
     });
+    return rows.map((row) => this.toView(row));
   }
+
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
     const row = await this.prisma.advertisingSource.findFirst({
       where: { id, workspaceId },
     });
-    if (!row) throw new NotFoundException('Advertising source not found');
-    return row;
+    if (!row) throw new NotFoundException('Advertising channel not found');
+    return this.toView(row);
   }
+
   async create(userId: string, dto: CreateAdvertisingSourceDto) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.advertisingSource.create({
-      data: { workspaceId, ...dto },
+    const row = await this.prisma.advertisingSource.create({
+      data: {
+        workspaceId,
+        name: dto.title,
+        type: 'telegram_channel',
+        url: dto.telegramUrl,
+        telegramUsername: dto.username,
+        notes: dto.notes,
+      },
     });
+    return this.toView(row);
   }
+
   async update(userId: string, id: string, dto: UpdateAdvertisingSourceDto) {
     await this.findOne(userId, id);
-    return this.prisma.advertisingSource.update({ where: { id }, data: dto });
+    const row = await this.prisma.advertisingSource.update({
+      where: { id },
+      data: {
+        name: dto.title,
+        url: dto.telegramUrl,
+        telegramUsername: dto.username,
+        notes: dto.notes,
+      },
+    });
+    return this.toView(row);
   }
+
   async remove(userId: string, id: string) {
     await this.findOne(userId, id);
     return this.prisma.advertisingSource.delete({ where: { id } });
+  }
+
+  async analytics(userId: string, id: string) {
+    const workspaceId = await this.workspace(userId);
+    const channel = await this.prisma.advertisingSource.findFirst({ where: { id, workspaceId } });
+    if (!channel) throw new NotFoundException('Advertising channel not found');
+
+    const placements = await (this.prisma as any).adCampaignAdvertisingChannel.findMany({
+      where: { advertisingSourceId: id },
+      include: { adCampaign: { include: { advertisingChannels: true } } },
+    });
+
+    const clean = placements.filter((p) => p.adCampaign.advertisingChannels.length === 1);
+    const mixed = placements.filter((p) => p.adCampaign.advertisingChannels.length > 1);
+
+    const totalCost = clean.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0);
+    const totalJoined = clean.reduce((s, p) => s + (p.adCampaign.joinedCount || 0), 0);
+    const totalLeft = clean.reduce((s, p) => s + (p.adCampaign.leftCount || 0), 0);
+    const totalNetGrowth = clean.reduce((s, p) => s + (p.adCampaign.netGrowthCount || 0), 0);
+
+    return {
+      id: channel.id,
+      title: channel.name,
+      campaignsCount: clean.length,
+      mixedCampaignsCount: mixed.length,
+      totalCost,
+      totalJoined,
+      totalLeft,
+      totalNetGrowth,
+      averageCostPerJoinedSubscriber: totalJoined > 0 ? totalCost / totalJoined : null,
+      averageCostPerNetSubscriber: totalNetGrowth > 0 ? totalCost / totalNetGrowth : null,
+      mixedCampaignsTotalCost: mixed.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0),
+    };
+  }
+
+  async analyticsSummary(userId: string) {
+    const workspaceId = await this.workspace(userId);
+    const channels = await this.prisma.advertisingSource.findMany({ where: { workspaceId } });
+    return Promise.all(channels.map((c) => this.analytics(userId, c.id)));
   }
 }

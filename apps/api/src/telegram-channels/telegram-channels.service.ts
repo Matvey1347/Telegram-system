@@ -564,6 +564,16 @@ export class TelegramChannelsService {
     });
   }
 
+  async promosByChannel(userId: string, channelId: string) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    await this.findOne(userId, channelId);
+    return this.prisma.promo.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async posts(userId: string, channelId: string, limit = 50, offset = 0) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
@@ -717,8 +727,6 @@ export class TelegramChannelsService {
       (sum, row) => sum + Number(row.joinedCount || 0),
       0,
     );
-    const joinedTotalEffective = Math.max(joinedTotal, inviteLinksJoinedTotal);
-    const netGrowthEffective = joinedTotalEffective - leftTotal;
 
     return {
       channel: {
@@ -736,11 +744,9 @@ export class TelegramChannelsService {
       summary: {
         subscribersCurrent: channel.currentSubscribersCount ?? 0,
         joinedTotal,
-        joinedTotalEffective,
         joinedHistoricalByLinks: inviteLinksJoinedTotal,
         leftTotal,
         netGrowth: joinedTotal - leftTotal,
-        netGrowthEffective,
         inviteLinksCount: inviteLinks.length,
         campaignsCount: campaigns.length,
         postsTotal: recentPosts.length,
