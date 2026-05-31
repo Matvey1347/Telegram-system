@@ -82,6 +82,7 @@ model Workspace {
   telegramUserAccountIntegrations TelegramUserAccountIntegration[]
   telegramChannelAdminLinks TelegramChannelAdminLink[]
   telegramBotUpdateLogs TelegramBotUpdateLog[]
+  telegramPosts      TelegramPost[]
   promos             Promo[]
   advertisingSources AdvertisingSource[]
   adCampaigns        AdCampaign[]
@@ -109,6 +110,7 @@ model TelegramUserAccountIntegration {
   firstName        String?
   lastName         String?
   photoUrl         String?
+  nameColor        Int?
   status           TelegramUserAccountStatus @default(pending)
   lastErrorMessage String?
   lastCheckedAt    DateTime?

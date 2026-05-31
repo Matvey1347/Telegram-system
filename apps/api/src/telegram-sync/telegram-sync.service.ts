@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -23,6 +24,8 @@ const DEFAULT_ALLOWED_UPDATES = [
 
 @Injectable()
 export class TelegramSyncService {
+  private readonly logger = new Logger(TelegramSyncService.name);
+
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
@@ -36,26 +39,49 @@ export class TelegramSyncService {
     secretToken: string | undefined,
     update: Record<string, any>,
   ) {
+    const updateId = update?.update_id != null ? String(update.update_id) : null;
+    const updateType = this.resolveUpdateType(update);
+    this.logger.log(
+      `Webhook received botIntegrationId=${botIntegrationId} updateId=${updateId ?? 'n/a'} updateType=${updateType} secretProvided=${secretToken ? 'yes' : 'no'}`,
+    );
+
     try {
       const bot = await this.prisma.telegramBotIntegration.findUnique({
         where: { id: botIntegrationId },
       });
-      if (!bot || !bot.isActive)
+      if (!bot || !bot.isActive) {
+        this.logger.warn(
+          `Webhook rejected: bot not found or inactive botIntegrationId=${botIntegrationId}`,
+        );
         throw new NotFoundException('Bot integration not found');
+      }
       if (
         !bot.webhookSecret ||
         !secretToken ||
         bot.webhookSecret !== secretToken
       ) {
+        this.logger.warn(
+          `Webhook rejected: invalid secret botIntegrationId=${botIntegrationId} hasStoredSecret=${bot.webhookSecret ? 'yes' : 'no'} provided=${secretToken ? 'yes' : 'no'}`,
+        );
         throw new UnauthorizedException('Invalid webhook secret');
       }
 
+      this.logger.log(
+        `Webhook accepted, processing update botIntegrationId=${bot.id} updateId=${updateId ?? 'n/a'} updateType=${updateType}`,
+      );
       await this.updatesProcessor.processUpdate(
         { id: bot.id, workspaceId: bot.workspaceId },
         update,
       );
+      this.logger.log(
+        `Webhook processed successfully botIntegrationId=${bot.id} updateId=${updateId ?? 'n/a'} updateType=${updateType}`,
+      );
       return { ok: true };
     } catch (error: any) {
+      this.logger.error(
+        `Webhook processing failed botIntegrationId=${botIntegrationId} updateId=${updateId ?? 'n/a'} updateType=${updateType} error=${error?.message || 'unknown'}`,
+        error?.stack,
+      );
       return {
         ok: true,
         accepted: false,
@@ -145,6 +171,7 @@ export class TelegramSyncService {
   }
 
   async getWebhookStatus(userId: string, botId: string) {
+    this.logger.debug(`Webhook status requested botId=${botId}`);
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const bot = await this.prisma.telegramBotIntegration.findFirst({
@@ -158,6 +185,9 @@ export class TelegramSyncService {
       authTag: bot.botTokenAuthTag,
     });
     const info = await this.telegramApi.getWebhookInfo(token);
+    this.logger.debug(
+      `Webhook status fetched botId=${bot.id} active=${!!info.url} pending=${info.pending_update_count || 0} lastError=${info.last_error_message || 'none'}`,
+    );
 
     return {
       botId: bot.id,
@@ -220,5 +250,17 @@ export class TelegramSyncService {
         },
       });
     }
+  }
+
+  private resolveUpdateType(update: Record<string, any>) {
+    if (update?.chat_member) return 'chat_member';
+    if (update?.my_chat_member) return 'my_chat_member';
+    if (update?.chat_join_request) return 'chat_join_request';
+    if (update?.channel_post) return 'channel_post';
+    if (update?.edited_channel_post) return 'edited_channel_post';
+    if (update?.message_reaction_count) return 'message_reaction_count';
+    if (update?.message_reaction) return 'message_reaction';
+    if (update?.message) return 'message';
+    return 'unknown';
   }
 }

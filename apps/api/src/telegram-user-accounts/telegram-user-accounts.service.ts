@@ -206,6 +206,7 @@ export class TelegramUserAccountsService {
         firstName: result.me.firstName,
         lastName: result.me.lastName,
         photoUrl: result.me.photoUrl ?? null,
+        nameColor: result.me.nameColor ?? null,
         label:
           (result.me.username && `@${String(result.me.username).replace('@', '')}`) ||
           result.me.firstName ||
@@ -249,6 +250,7 @@ export class TelegramUserAccountsService {
         firstName: result.me.firstName,
         lastName: result.me.lastName,
         photoUrl: result.me.photoUrl ?? null,
+        nameColor: result.me.nameColor ?? null,
         label:
           (result.me.username && `@${String(result.me.username).replace('@', '')}`) ||
           result.me.firstName ||
@@ -275,7 +277,7 @@ export class TelegramUserAccountsService {
     const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
     const session = this.encryptionService.decrypt({ encrypted: account.sessionEncrypted, iv: account.sessionIv, authTag: account.sessionAuthTag });
     const me = await this.mtprotoClient.getMe({ apiId: account.apiId, apiHash, session });
-    const row = await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { telegramUserId: me.id, username: me.username, firstName: me.firstName, lastName: me.lastName, photoUrl: me.photoUrl ?? null, label: (me.username && `@${String(me.username).replace('@', '')}`) || me.firstName || account.label, status: TelegramUserAccountStatus.connected, lastCheckedAt: new Date(), lastErrorMessage: null } });
+    const row = await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { telegramUserId: me.id, username: me.username, firstName: me.firstName, lastName: me.lastName, photoUrl: me.photoUrl ?? null, nameColor: me.nameColor ?? null, label: (me.username && `@${String(me.username).replace('@', '')}`) || me.firstName || account.label, status: TelegramUserAccountStatus.connected, lastCheckedAt: new Date(), lastErrorMessage: null } });
     return this.safe(row);
   }
 
@@ -320,6 +322,7 @@ export class TelegramUserAccountsService {
           firstName: me.firstName,
           lastName: me.lastName,
           photoUrl: me.photoUrl ?? null,
+          nameColor: me.nameColor ?? null,
           label:
             (me.username && `@${String(me.username).replace('@', '')}`) ||
             me.firstName ||

@@ -18,6 +18,9 @@ export class TelegramUpdatesProcessor {
   ) {
     const updateId =
       update?.update_id != null ? String(update.update_id) : null;
+    this.logger.log(
+      `Processing update started botId=${bot.id} workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+    );
     const existing = updateId
       ? await this.prisma.telegramBotUpdateLog.findUnique({
           where: {
@@ -29,10 +32,18 @@ export class TelegramUpdatesProcessor {
         })
       : null;
 
-    if (existing) return { ignored: true, reason: 'duplicate' };
+    if (existing) {
+      this.logger.debug(
+        `Update ignored as duplicate botId=${bot.id} updateId=${updateId}`,
+      );
+      return { ignored: true, reason: 'duplicate' };
+    }
 
     const updateType = this.resolveUpdateType(update);
     const chatId = this.resolveChatId(update);
+    this.logger.log(
+      `Update resolved botId=${bot.id} updateId=${updateId ?? 'n/a'} type=${updateType} chatId=${chatId ?? 'n/a'}`,
+    );
 
     const log = await this.prisma.telegramBotUpdateLog.create({
       data: {
@@ -48,38 +59,58 @@ export class TelegramUpdatesProcessor {
 
     try {
       if (update.chat_member) {
+        this.logger.debug(
+          `Dispatching chat_member handler workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+        );
         await this.processChatMember(
           bot.workspaceId,
           updateId,
           update.chat_member,
         );
       } else if (update.my_chat_member) {
+        this.logger.debug(
+          `Dispatching my_chat_member handler workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+        );
         await this.processMyChatMember(bot.workspaceId, update.my_chat_member);
       } else if (update.chat_join_request) {
+        this.logger.debug(
+          `Dispatching chat_join_request handler workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+        );
         await this.processJoinRequest(
           bot.workspaceId,
           updateId,
           update.chat_join_request,
         );
       } else if (update.channel_post || update.edited_channel_post) {
+        this.logger.debug(
+          `Dispatching channel_post handler workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+        );
         await this.processChannelPost(
           bot.workspaceId,
           bot.id,
           update.channel_post || update.edited_channel_post,
         );
       } else if (update.message_reaction_count) {
+        this.logger.debug(
+          `Dispatching message_reaction_count handler workspaceId=${bot.workspaceId} updateId=${updateId ?? 'n/a'}`,
+        );
         await this.processReactionCount(
           bot.workspaceId,
           update.message_reaction_count,
         );
       } else {
-        this.logger.debug(`Unhandled update type for workspace=${bot.workspaceId}`);
+        this.logger.debug(
+          `Unhandled update type for workspace=${bot.workspaceId} updateId=${updateId ?? 'n/a'} type=${updateType}`,
+        );
       }
 
       await this.prisma.telegramBotUpdateLog.update({
         where: { id: log.id },
         data: { processed: true, errorMessage: null },
       });
+      this.logger.log(
+        `Processing update completed botId=${bot.id} updateId=${updateId ?? 'n/a'} type=${updateType}`,
+      );
       return { ok: true };
     } catch (error) {
       const message =
@@ -88,6 +119,10 @@ export class TelegramUpdatesProcessor {
         where: { id: log.id },
         data: { processed: false, errorMessage: message },
       });
+      this.logger.error(
+        `Processing update failed botId=${bot.id} updateId=${updateId ?? 'n/a'} type=${updateType} error=${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       throw error;
     }
   }
@@ -98,7 +133,10 @@ export class TelegramUpdatesProcessor {
     payload: Record<string, any>,
   ) {
     const chatId = String(payload?.chat?.id ?? '');
-    if (!chatId) return;
+    if (!chatId) {
+      this.logger.debug('chat_member ignored: missing chatId');
+      return;
+    }
 
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { workspaceId, telegramChatId: chatId },
@@ -124,6 +162,12 @@ export class TelegramUpdatesProcessor {
       ['left', 'kicked'].includes(newStatus);
 
     if (!joined && !left) return;
+    if (!joined && !left) {
+      this.logger.debug(
+        `chat_member ignored: transition not tracked chatId=${chatId} old=${oldStatus} new=${newStatus}`,
+      );
+      return;
+    }
 
     const inviteUrl = payload?.invite_link?.invite_link
       ? String(payload.invite_link.invite_link)
@@ -162,12 +206,18 @@ export class TelegramUpdatesProcessor {
         rawEvent: payload as Prisma.InputJsonValue,
       },
     });
+    this.logger.log(
+      `subscriberEvent upserted type=${eventType} workspaceId=${workspaceId} chatId=${chatId} updateId=${updateId ?? 'n/a'} inviteMatched=${invite ? 'yes' : 'no'}`,
+    );
 
     if (eventType === 'joined' && invite) {
       await this.prisma.telegramInviteLink.update({
         where: { id: invite.id },
         data: { joinedCount: { increment: 1 }, lastSyncedAt: new Date() },
       });
+      this.logger.log(
+        `invite joinedCount incremented inviteId=${invite.id} workspaceId=${workspaceId}`,
+      );
     }
 
     if (invite?.adCampaignId) {
@@ -182,11 +232,19 @@ export class TelegramUpdatesProcessor {
     payload: Record<string, any>,
   ) {
     const chatId = String(payload?.chat?.id ?? '');
-    if (!chatId) return;
+    if (!chatId) {
+      this.logger.debug('my_chat_member ignored: missing chatId');
+      return;
+    }
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { workspaceId, telegramChatId: chatId },
     });
-    if (!channel) return;
+    if (!channel) {
+      this.logger.debug(
+        `my_chat_member ignored: channel not found for chatId=${chatId}`,
+      );
+      return;
+    }
 
     const status = String(payload?.new_chat_member?.status || '');
     const isAdmin = status === 'administrator' || status === 'creator';
@@ -202,6 +260,9 @@ export class TelegramUpdatesProcessor {
         botCheckedAt: new Date(),
       },
     });
+    this.logger.log(
+      `my_chat_member applied workspaceId=${workspaceId} chatId=${chatId} status=${status} isAdmin=${isAdmin ? 'yes' : 'no'}`,
+    );
   }
 
   private async processJoinRequest(
@@ -210,11 +271,19 @@ export class TelegramUpdatesProcessor {
     payload: Record<string, any>,
   ) {
     const chatId = String(payload?.chat?.id ?? '');
-    if (!chatId) return;
+    if (!chatId) {
+      this.logger.debug('chat_join_request ignored: missing chatId');
+      return;
+    }
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { workspaceId, telegramChatId: chatId },
     });
-    if (!channel) return;
+    if (!channel) {
+      this.logger.debug(
+        `chat_join_request ignored: channel not found for chatId=${chatId}`,
+      );
+      return;
+    }
 
     const inviteUrl = payload?.invite_link?.invite_link
       ? String(payload.invite_link.invite_link)
@@ -251,6 +320,9 @@ export class TelegramUpdatesProcessor {
         rawEvent: payload as Prisma.InputJsonValue,
       },
     });
+    this.logger.log(
+      `join_request event upserted workspaceId=${workspaceId} chatId=${chatId} updateId=${updateId ?? 'n/a'} inviteMatched=${invite ? 'yes' : 'no'}`,
+    );
   }
 
   private async processChannelPost(

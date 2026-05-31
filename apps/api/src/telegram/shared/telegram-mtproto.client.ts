@@ -7,6 +7,46 @@ type SessionParams = ApiCredentials & { session?: string };
 
 @Injectable()
 export class TelegramMtprotoClient {
+  private readonly defaultTelegramPaletteSize = 7;
+
+  private toFiniteNumber(value: unknown): number | null {
+    if (value == null) return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'bigint') return Number(value);
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (typeof value === 'object') {
+      const candidate = (value as any).value ?? (value as any).low ?? null;
+      if (candidate != null) return this.toFiniteNumber(candidate);
+    }
+    return null;
+  }
+
+  private extractNameColor(user: Api.User) {
+    const rawCandidates = [
+      (user as any)?.color?.color,
+      (user as any)?.color?.colorId,
+      (user as any)?.profileColor?.color,
+      (user as any)?.profileColor?.colorId,
+      (user as any)?.color,
+      (user as any)?.profileColor,
+    ];
+    for (const raw of rawCandidates) {
+      const numeric = this.toFiniteNumber(raw);
+      if (numeric != null) return numeric;
+    }
+
+    // Telegram may omit explicit color fields for some accounts/sessions.
+    // Fallback to a deterministic Telegram-like default bucket from user id.
+    const userIdNum = this.toFiniteNumber((user as any)?.id);
+    if (userIdNum != null) {
+      return Math.abs(userIdNum) % this.defaultTelegramPaletteSize;
+    }
+    return 0;
+  }
+
   private async createClient({ apiId, apiHash, session }: SessionParams) {
     const client = new TelegramClient(
       new StringSession(session || ''),
@@ -21,6 +61,21 @@ export class TelegramMtprotoClient {
   private saveSession(client: TelegramClient): string {
     const saved = client.session.save();
     return typeof saved === 'string' ? saved : '';
+  }
+
+  private async getSelfUserWithDetails(client: TelegramClient, fallback?: Api.User) {
+    try {
+      const full = await client.invoke(
+        new Api.users.GetFullUser({ id: new Api.InputUserSelf() }),
+      );
+      const users = ((full as any)?.users || []) as any[];
+      const meId = fallback ? String((fallback as any).id) : null;
+      const exact = meId ? users.find((u) => String(u?.id) === meId) : null;
+      const candidate = (exact || users[0] || fallback) as Api.User | undefined;
+      return candidate || fallback || null;
+    } catch {
+      return fallback || null;
+    }
   }
 
   async startLogin(apiId: string, apiHash: string, phone: string) {
@@ -66,7 +121,8 @@ export class TelegramMtprotoClient {
         if (result instanceof Api.auth.AuthorizationSignUpRequired) {
           throw new Error('This phone requires sign up and is not supported in this flow yet.');
         }
-        const user = result.user as Api.User;
+        const authUser = result.user as Api.User;
+        const user = (await this.getSelfUserWithDetails(client, authUser)) || authUser;
         return {
           session: this.saveSession(client),
           me: {
@@ -77,6 +133,7 @@ export class TelegramMtprotoClient {
             photoUrl: user.username
               ? `https://t.me/i/userpic/320/${user.username}.jpg`
               : null,
+            nameColor: this.extractNameColor(user),
           },
           needsPassword: false,
           tempSession: this.saveSession(client),
@@ -109,7 +166,7 @@ export class TelegramMtprotoClient {
       session: params.tempSession,
     });
     try {
-      const user = (await client.signInWithPassword(
+      const authUser = (await client.signInWithPassword(
         { apiId: Number(params.apiId), apiHash: params.apiHash },
         {
           password: async () => params.password,
@@ -118,6 +175,7 @@ export class TelegramMtprotoClient {
           },
         },
       )) as Api.User;
+      const user = (await this.getSelfUserWithDetails(client, authUser)) || authUser;
 
       return {
         session: this.saveSession(client),
@@ -129,6 +187,7 @@ export class TelegramMtprotoClient {
           photoUrl: user.username
             ? `https://t.me/i/userpic/320/${user.username}.jpg`
             : null,
+          nameColor: this.extractNameColor(user),
         },
       };
     } finally {
@@ -139,7 +198,8 @@ export class TelegramMtprotoClient {
   async getMe(params: { apiId: string; apiHash: string; session: string }) {
     const client = await this.createClient(params);
     try {
-      const me = (await client.getMe()) as Api.User;
+      const meRaw = (await client.getMe()) as Api.User;
+      const me = (await this.getSelfUserWithDetails(client, meRaw)) || meRaw;
       let photoUrl: string | null = null;
       if (me.username) {
         photoUrl = `https://t.me/i/userpic/320/${me.username}.jpg`;
@@ -150,6 +210,7 @@ export class TelegramMtprotoClient {
         firstName: me.firstName || null,
         lastName: me.lastName || null,
         photoUrl,
+        nameColor: this.extractNameColor(me),
       };
     } finally {
       await client.disconnect();

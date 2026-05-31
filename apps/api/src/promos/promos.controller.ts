@@ -3,11 +3,16 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -23,6 +28,18 @@ export class PromosController {
   }
   @Post() create(@CurrentUser() user: JwtUser, @Body() dto: CreatePromoDto) {
     return this.service.create(user.sub, dto);
+  }
+  @Post('upload-image')
+  @HttpCode(200)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadImage(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) throw new BadRequestException('Image file is required');
+    const imageUrl = await this.service.uploadPromoImage(file);
+    return { imageUrl };
   }
   @Get(':id') findOne(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.findOne(user.sub, id);
