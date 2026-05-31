@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
@@ -65,7 +65,10 @@ export class TelegramBotsService {
 
   async findAll(userId: string) {
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const rows = await this.prisma.telegramBotIntegration.findMany({ where: { workspaceId, isActive: true }, orderBy: { createdAt: 'desc' } });
+    const rows = await this.prisma.telegramBotIntegration.findMany({
+      where: { workspaceId },
+      orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+    });
     return rows.map((row) => this.safe(row));
   }
 
@@ -161,19 +164,40 @@ export class TelegramBotsService {
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
     if (!existing) throw new NotFoundException('Telegram bot not found');
+    if (!existing.botTokenEncrypted || !existing.botTokenIv || !existing.botTokenAuthTag) {
+      const message = 'Bot token is missing after migration. Reconnect bot by creating it again with a fresh token.';
+      const row = await this.prisma.telegramBotIntegration.update({
+        where: { id },
+        data: { lastErrorMessage: message, lastCheckedAt: new Date() },
+      });
+      return this.safe(row);
+    }
 
     try {
       const token = this.decryptBotToken(existing);
+      const diagnostics = await this.diagnostics(token);
       const row = await this.prisma.telegramBotIntegration.update({
         where: { id },
-        data: { ...await this.diagnostics(token), isActive: true },
+        data: { ...diagnostics, lastErrorMessage: null, isActive: true },
       });
       return this.safe(row);
     } catch (error) {
-      const message = error instanceof TelegramApiError ? error.message : 'Failed to check bot';
+      const message = error instanceof TelegramApiError ? error.message : (error instanceof Error ? error.message : 'Failed to check bot');
       const row = await this.prisma.telegramBotIntegration.update({ where: { id }, data: { lastErrorMessage: message, lastCheckedAt: new Date() } });
       return this.safe(row);
     }
+  }
+
+  async activate(userId: string, id: string) {
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const existing = await this.prisma.telegramBotIntegration.findFirst({ where: { id, workspaceId } });
+    if (!existing) throw new NotFoundException('Telegram bot not found');
+
+    const row = await this.prisma.telegramBotIntegration.update({
+      where: { id },
+      data: { isActive: true },
+    });
+    return this.safe(row);
   }
 
   async importChannels(userId: string, id: string, dto: ImportTelegramChannelsDto) {
