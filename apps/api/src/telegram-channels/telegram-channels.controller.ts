@@ -90,11 +90,22 @@ export class TelegramChannelsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.service.events(
+    const safePage = Number(page || 1);
+    const safeLimit = Number(limit || 50);
+    return this.service.events(user.sub, id, safePage, safeLimit);
+  }
+  @Get(':id/update-logs')
+  updateLogs(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.service.updateLogs(
       user.sub,
       id,
-      Number(page || 1),
       Number(limit || 50),
+      Number(offset || 0),
     );
   }
   @Get(':id/invite-links') inviteLinks(
@@ -102,6 +113,27 @@ export class TelegramChannelsController {
     @Param('id') id: string,
   ) {
     return this.service.inviteLinks(user.sub, id);
+  }
+  @Get(':id/posts')
+  posts(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.service.posts(
+      user.sub,
+      id,
+      Number(limit || 50),
+      Number(offset || 0),
+    );
+  }
+  @Post(':id/sync-subscribers-count')
+  syncSubscribersCount(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.syncSubscribersCount(user.sub, id);
   }
   @Post(':id/invite-links') createInviteLink(
     @CurrentUser() user: JwtUser,

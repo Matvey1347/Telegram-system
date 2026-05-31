@@ -285,6 +285,7 @@ model TelegramChannel {
   inviteLinks TelegramInviteLink[]
   dailyStats  TelegramChannelDailyStats[]
   adminLinks TelegramChannelAdminLink[]
+  posts       TelegramPost[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -443,6 +444,7 @@ model TelegramBotIntegration {
   channels             TelegramChannel[]
   inviteLinks          TelegramInviteLink[]
   updateLogs           TelegramBotUpdateLog[]
+  posts                TelegramPost[]
 }
 
 model TelegramBotUpdateLog {
@@ -461,6 +463,30 @@ model TelegramBotUpdateLog {
   telegramBotIntegration TelegramBotIntegration @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: Cascade)
 
   @@unique([telegramBotIntegrationId, updateId])
+}
+
+model TelegramPost {
+  id                       String   @id @default(cuid())
+  workspaceId              String
+  telegramChannelId        String
+  telegramBotIntegrationId String?
+  telegramMessageId        String
+  text                     String?
+  postDate                 DateTime
+  viewsCount               Int?
+  forwardsCount            Int?
+  reactionsCount           Int?
+  reactions                Json?
+  rawMessage               Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel       TelegramChannel          @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  telegramBotIntegration TelegramBotIntegration? @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: SetNull)
+
+  @@unique([telegramChannelId, telegramMessageId])
+  @@index([workspaceId, telegramChannelId, postDate])
 }
 
 model SubscriberEvent {

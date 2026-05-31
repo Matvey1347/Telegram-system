@@ -11,6 +11,7 @@ import { TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client
 import { TelegramUpdatesProcessor } from './telegram-updates.processor';
 
 const DEFAULT_ALLOWED_UPDATES = [
+  'message',
   'chat_member',
   'my_chat_member',
   'chat_join_request',
@@ -35,19 +36,32 @@ export class TelegramSyncService {
     secretToken: string | undefined,
     update: Record<string, any>,
   ) {
-    const bot = await this.prisma.telegramBotIntegration.findUnique({
-      where: { id: botIntegrationId },
-    });
-    if (!bot || !bot.isActive)
-      throw new NotFoundException('Bot integration not found');
-    if (!bot.webhookSecret || !secretToken || bot.webhookSecret !== secretToken)
-      throw new UnauthorizedException('Invalid webhook secret');
+    try {
+      const bot = await this.prisma.telegramBotIntegration.findUnique({
+        where: { id: botIntegrationId },
+      });
+      if (!bot || !bot.isActive)
+        throw new NotFoundException('Bot integration not found');
+      if (
+        !bot.webhookSecret ||
+        !secretToken ||
+        bot.webhookSecret !== secretToken
+      ) {
+        throw new UnauthorizedException('Invalid webhook secret');
+      }
 
-    await this.updatesProcessor.processUpdate(
-      { id: bot.id, workspaceId: bot.workspaceId },
-      update,
-    );
-    return { ok: true };
+      await this.updatesProcessor.processUpdate(
+        { id: bot.id, workspaceId: bot.workspaceId },
+        update,
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return {
+        ok: true,
+        accepted: false,
+        error: error?.message || 'Webhook processing failed',
+      };
+    }
   }
 
   async enableWebhook(userId: string, botId: string) {
@@ -58,12 +72,26 @@ export class TelegramSyncService {
     });
     if (!bot) throw new NotFoundException('Telegram bot not found');
 
+    const explicitWebhookBase = process.env.TELEGRAM_WEBHOOK_BASE_URL?.trim();
     const publicApiUrl = process.env.PUBLIC_API_URL?.trim();
-    if (!publicApiUrl)
-      throw new Error('PUBLIC_API_URL is required for webhook mode');
+    const nextPublicApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+    const inferredBaseFromPublic = publicApiUrl
+      ? `${publicApiUrl.replace(/\/+$/, '')}/api/telegram/webhook`
+      : '';
+    const inferredBaseFromNextPublic = nextPublicApiUrl
+      ? `${nextPublicApiUrl.replace(/\/+$/, '').replace(/\/api$/, '')}/api/telegram/webhook`
+      : '';
+    const webhookBaseUrl =
+      explicitWebhookBase ||
+      inferredBaseFromPublic ||
+      inferredBaseFromNextPublic;
+    if (!webhookBaseUrl)
+      throw new Error(
+        'Webhook base URL is missing. Set TELEGRAM_WEBHOOK_BASE_URL or PUBLIC_API_URL.',
+      );
 
     const webhookSecret = bot.webhookSecret || randomBytes(24).toString('hex');
-    const webhookUrl = `${publicApiUrl.replace(/\/+$/, '')}/api/telegram/webhook/${bot.id}`;
+    const webhookUrl = `${webhookBaseUrl.replace(/\/+$/, '')}/${bot.id}`;
 
     const token = this.encryption.decrypt({
       encrypted: bot.botTokenEncrypted,
@@ -156,7 +184,16 @@ export class TelegramSyncService {
       token,
       bot.lastUpdateId != null ? bot.lastUpdateId + 1 : undefined,
       0,
-      ['chat_member', 'my_chat_member', 'chat_join_request'],
+      [
+        'message',
+        'chat_member',
+        'my_chat_member',
+        'chat_join_request',
+        'channel_post',
+        'edited_channel_post',
+        'message_reaction',
+        'message_reaction_count',
+      ],
     );
 
     let lastUpdateId = bot.lastUpdateId ?? null;

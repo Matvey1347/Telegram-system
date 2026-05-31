@@ -43,6 +43,7 @@ Key generation:
 ## Telegram sync modes
 
 - `PUBLIC_API_URL` should point to your public API base URL for webhook mode.
+- `TELEGRAM_WEBHOOK_BASE_URL` can be used to explicitly set webhook endpoint base, e.g. `https://api.example.com/api/telegram/webhook`.
 - `TELEGRAM_UPDATES_MODE` supports `webhook`, `polling`, or `off`.
 - `TELEGRAM_SYNC_ENABLED=true` enables snapshot/daily sync jobs.
 - `TELEGRAM_SYNC_INTERVAL_MINUTES` controls sync interval (default implementation uses 5-minute cron).
@@ -53,3 +54,22 @@ Notes:
 - Polling mode is recommended for local development and requires disabled webhook.
 - Bot should be channel admin for member/admin diagnostics and invite-link management.
 - Invite link attribution is most reliable for links created by this system bot.
+
+## Telegram analytics verification checklist
+
+1. Enable webhook: `POST /api/telegram-bots/:id/webhook/enable`.
+2. Verify status: `GET /api/telegram-bots/:id/webhook/status`.
+3. Create invite link: `POST /api/telegram-channels/:id/invite-links`.
+4. Join channel from another account via created invite link.
+5. Check raw logs: `GET /api/telegram-channels/:id/update-logs?limit=50&offset=0`.
+6. Check member events: `GET /api/telegram-channels/:id/events?limit=50&offset=0`.
+7. Publish/edit a post in channel and verify posts endpoint: `GET /api/telegram-channels/:id/posts`.
+8. Sync subscriber snapshot: `POST /api/telegram-channels/:id/sync-subscribers-count`.
+9. Review aggregate analytics: `GET /api/telegram-channels/:id/analytics`.
+
+Limitations:
+
+- Bot API cannot return full subscriber list.
+- Bot API cannot restore old join/leave history.
+- Historical post metrics may require MTProto sync.
+- Webhook/polling receives only future allowed updates.

@@ -514,6 +514,45 @@ export class TelegramChannelsService {
     return { items, total, page: safePage, limit: safeLimit };
   }
 
+  async updateLogs(userId: string, channelId: string, limit = 50, offset = 0) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const channel = await this.findOne(userId, channelId);
+    if (!channel.telegramBotIntegrationId) {
+      return { items: [], total: 0, limit, offset };
+    }
+
+    const safeLimit = Math.max(1, Math.min(200, limit));
+    const safeOffset = Math.max(0, offset);
+    const [items, total] = await Promise.all([
+      this.prisma.telegramBotUpdateLog.findMany({
+        where: {
+          workspaceId,
+          telegramBotIntegrationId: channel.telegramBotIntegrationId,
+          OR: [
+            { chatId: channel.telegramChatId || undefined },
+            { updateType: { in: ['my_chat_member'] } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: safeOffset,
+        take: safeLimit,
+      }),
+      this.prisma.telegramBotUpdateLog.count({
+        where: {
+          workspaceId,
+          telegramBotIntegrationId: channel.telegramBotIntegrationId,
+          OR: [
+            { chatId: channel.telegramChatId || undefined },
+            { updateType: { in: ['my_chat_member'] } },
+          ],
+        },
+      }),
+    ]);
+
+    return { items, total, limit: safeLimit, offset: safeOffset };
+  }
+
   async inviteLinks(userId: string, channelId: string) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
@@ -523,6 +562,82 @@ export class TelegramChannelsService {
       include: { adCampaign: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async posts(userId: string, channelId: string, limit = 50, offset = 0) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const safeLimit = Math.max(1, Math.min(200, limit));
+    const safeOffset = Math.max(0, offset);
+    const channel = await this.findOne(userId, channelId);
+    if (!channel.telegramBotIntegrationId) {
+      return { items: [], total: 0, limit: safeLimit, offset: safeOffset };
+    }
+    const where = {
+      workspaceId,
+      telegramBotIntegrationId: channel.telegramBotIntegrationId,
+      chatId: channel.telegramChatId || undefined,
+      updateType: { in: ['channel_post', 'edited_channel_post', 'message_reaction_count'] },
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.telegramBotUpdateLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: safeOffset,
+        take: safeLimit,
+      }),
+      this.prisma.telegramBotUpdateLog.count({ where }),
+    ]);
+    return { items, total, limit: safeLimit, offset: safeOffset };
+  }
+
+  async syncSubscribersCount(userId: string, channelId: string) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const channel = await this.findOne(userId, channelId);
+    const botId = channel.telegramBotIntegrationId;
+    if (!botId)
+      throw new BadRequestException(
+        'Channel has no assigned bot for subscriber count sync',
+      );
+
+    const bot = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id: botId, workspaceId, isActive: true },
+    });
+    if (!bot) throw new NotFoundException('Telegram bot not found');
+    const token = this.encryptionService.decrypt({
+      encrypted: bot.botTokenEncrypted,
+      iv: bot.botTokenIv,
+      authTag: bot.botTokenAuthTag,
+    });
+    const target = channel.telegramChatId || channel.username;
+    if (!target)
+      throw new BadRequestException('Channel has no username or chatId');
+    const count = await this.telegramApi.getChatMemberCount(token, target);
+
+    await this.prisma.telegramChannel.update({
+      where: { id: channel.id },
+      data: { currentSubscribersCount: count, botCheckedAt: new Date() },
+    });
+    const today = new Date();
+    const date = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    );
+    await this.prisma.telegramChannelDailyStats.upsert({
+      where: {
+        telegramChannelId_date: { telegramChannelId: channel.id, date },
+      },
+      create: {
+        telegramChannelId: channel.id,
+        date,
+        subscribersCount: count,
+      },
+      update: {
+        subscribersCount: count,
+      },
+    });
+
+    return { success: true, subscribersCount: count, checkedAt: new Date() };
   }
 
   async analytics(
@@ -546,6 +661,7 @@ export class TelegramChannelsService {
       campaigns,
       dailyStats,
       recentEvents,
+      recentPosts,
     ] = await Promise.all([
       this.prisma.subscriberEvent.count({
         where: {
@@ -584,7 +700,25 @@ export class TelegramChannelsService {
         orderBy: { eventDate: 'desc' },
         take: 50,
       }),
+      this.prisma.telegramBotUpdateLog.findMany({
+        where: {
+          workspaceId,
+          telegramBotIntegrationId: channel.telegramBotIntegrationId || undefined,
+          chatId: channel.telegramChatId || undefined,
+          updateType: {
+            in: ['channel_post', 'edited_channel_post', 'message_reaction_count'],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
     ]);
+    const inviteLinksJoinedTotal = inviteLinks.reduce(
+      (sum, row) => sum + Number(row.joinedCount || 0),
+      0,
+    );
+    const joinedTotalEffective = Math.max(joinedTotal, inviteLinksJoinedTotal);
+    const netGrowthEffective = joinedTotalEffective - leftTotal;
 
     return {
       channel: {
@@ -602,10 +736,45 @@ export class TelegramChannelsService {
       summary: {
         subscribersCurrent: channel.currentSubscribersCount ?? 0,
         joinedTotal,
+        joinedTotalEffective,
+        joinedHistoricalByLinks: inviteLinksJoinedTotal,
         leftTotal,
         netGrowth: joinedTotal - leftTotal,
+        netGrowthEffective,
         inviteLinksCount: inviteLinks.length,
         campaignsCount: campaigns.length,
+        postsTotal: recentPosts.length,
+        viewsTotal: recentPosts.reduce(
+          (sum, p: any) =>
+            sum +
+            Number(
+              p?.rawUpdate?.channel_post?.views ||
+                p?.rawUpdate?.edited_channel_post?.views ||
+                0,
+            ),
+          0,
+        ),
+        forwardsTotal: recentPosts.reduce(
+          (sum, p: any) =>
+            sum +
+            Number(
+              p?.rawUpdate?.channel_post?.forwards ||
+                p?.rawUpdate?.edited_channel_post?.forwards ||
+                0,
+            ),
+          0,
+        ),
+        reactionsTotal: recentPosts.reduce((sum, p: any) => {
+          const list = p?.rawUpdate?.message_reaction_count?.reactions;
+          if (!Array.isArray(list)) return sum;
+          return (
+            sum +
+            list.reduce(
+              (inner: number, row: any) => inner + Number(row?.total_count || 0),
+              0,
+            )
+          );
+        }, 0),
       },
       dailyStats,
       inviteLinks: inviteLinks.map((x) => ({
@@ -620,6 +789,12 @@ export class TelegramChannelsService {
         telegramUserId: x.telegramUserId,
         inviteLinkName: x.inviteLink?.name || null,
         campaignTitle: x.adCampaign?.title || null,
+      })),
+      recentPosts: recentPosts.map((x: any) => ({
+        id: x.id,
+        updateType: x.updateType,
+        createdAt: x.createdAt,
+        rawUpdate: x.rawUpdate,
       })),
     };
   }

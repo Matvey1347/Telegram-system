@@ -56,9 +56,24 @@ export class TelegramUpdatesProcessor {
       } else if (update.my_chat_member) {
         await this.processMyChatMember(bot.workspaceId, update.my_chat_member);
       } else if (update.chat_join_request) {
-        this.logger.debug(
-          `chat_join_request received for workspace=${bot.workspaceId}`,
+        await this.processJoinRequest(
+          bot.workspaceId,
+          updateId,
+          update.chat_join_request,
         );
+      } else if (update.channel_post || update.edited_channel_post) {
+        await this.processChannelPost(
+          bot.workspaceId,
+          bot.id,
+          update.channel_post || update.edited_channel_post,
+        );
+      } else if (update.message_reaction_count) {
+        await this.processReactionCount(
+          bot.workspaceId,
+          update.message_reaction_count,
+        );
+      } else {
+        this.logger.debug(`Unhandled update type for workspace=${bot.workspaceId}`);
       }
 
       await this.prisma.telegramBotUpdateLog.update({
@@ -189,6 +204,130 @@ export class TelegramUpdatesProcessor {
     });
   }
 
+  private async processJoinRequest(
+    workspaceId: string,
+    updateId: string | null,
+    payload: Record<string, any>,
+  ) {
+    const chatId = String(payload?.chat?.id ?? '');
+    if (!chatId) return;
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { workspaceId, telegramChatId: chatId },
+    });
+    if (!channel) return;
+
+    const inviteUrl = payload?.invite_link?.invite_link
+      ? String(payload.invite_link.invite_link)
+      : null;
+    const invite = inviteUrl
+      ? await this.prisma.telegramInviteLink.findFirst({
+          where: { workspaceId, telegramChannelId: channel.id, url: inviteUrl },
+        })
+      : null;
+    const eventDate = payload?.date
+      ? new Date(Number(payload.date) * 1000)
+      : new Date();
+
+    await this.prisma.subscriberEvent.upsert({
+      where: {
+        workspaceId_updateId: {
+          workspaceId,
+          updateId:
+            updateId ||
+            `synthetic-${channel.id}-join_request-${eventDate.toISOString()}`,
+        },
+      },
+      update: {},
+      create: {
+        workspaceId,
+        telegramChannelId: channel.id,
+        adCampaignId: invite?.adCampaignId || null,
+        inviteLinkId: invite?.id || null,
+        telegramUserId: payload?.from?.id ? String(payload.from.id) : null,
+        eventType: 'join_request',
+        eventDate,
+        source: 'telegram_update',
+        updateId,
+        rawEvent: payload as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async processChannelPost(
+    workspaceId: string,
+    botIntegrationId: string,
+    payload: Record<string, any>,
+  ) {
+    const chatId = payload?.chat?.id != null ? String(payload.chat.id) : '';
+    const messageId =
+      payload?.message_id != null ? String(payload.message_id) : '';
+    if (!chatId || !messageId) return;
+
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { workspaceId, telegramChatId: chatId },
+    });
+    if (!channel) return;
+
+    const day = payload?.date
+      ? new Date(Number(payload.date) * 1000)
+      : new Date();
+    const date = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()),
+    );
+    await this.prisma.telegramChannelDailyStats.upsert({
+      where: {
+        telegramChannelId_date: { telegramChannelId: channel.id, date },
+      },
+      create: {
+        telegramChannelId: channel.id,
+        date,
+        viewsCount: payload?.views != null ? Number(payload.views) : 0,
+        forwardsCount: payload?.forwards != null ? Number(payload.forwards) : 0,
+      },
+      update: {},
+    });
+  }
+
+  private async processReactionCount(
+    workspaceId: string,
+    payload: Record<string, any>,
+  ) {
+    const chatId = payload?.chat?.id != null ? String(payload.chat.id) : '';
+    const messageId =
+      payload?.message_id != null ? String(payload.message_id) : '';
+    if (!chatId || !messageId) return;
+
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { workspaceId, telegramChatId: chatId },
+    });
+    if (!channel) return;
+
+    const reactionsList = Array.isArray(payload?.reactions) ? payload.reactions : [];
+    const reactionsCount = reactionsList.reduce(
+      (sum: number, row: any) => sum + Number(row?.total_count || 0),
+      0,
+    );
+    const day = payload?.date
+      ? new Date(Number(payload.date) * 1000)
+      : new Date();
+    const date = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()),
+    );
+    await this.prisma.telegramChannelDailyStats.upsert({
+      where: {
+        telegramChannelId_date: { telegramChannelId: channel.id, date },
+      },
+      create: {
+        telegramChannelId: channel.id,
+        date,
+        reactionsCount,
+      },
+      update: {
+        reactionsCount,
+      },
+    });
+  }
+
   private resolveUpdateType(update: Record<string, any>) {
     if (update.chat_member) return 'chat_member';
     if (update.my_chat_member) return 'my_chat_member';
@@ -205,7 +344,10 @@ export class TelegramUpdatesProcessor {
       update?.chat_member?.chat ||
       update?.my_chat_member?.chat ||
       update?.chat_join_request?.chat ||
-      update?.channel_post?.chat;
+      update?.channel_post?.chat ||
+      update?.edited_channel_post?.chat ||
+      update?.message_reaction_count?.chat ||
+      update?.message?.chat;
     return chat?.id != null ? String(chat.id) : null;
   }
 }
