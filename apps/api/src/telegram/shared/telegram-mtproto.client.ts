@@ -24,6 +24,16 @@ export class TelegramMtprotoClient {
     return null;
   }
 
+  private toTelegramDate(value: unknown): Date | null {
+    if (value instanceof Date) return value;
+    const numeric = this.toFiniteNumber(value);
+    if (numeric == null) return null;
+    // Telegram date fields are often unix seconds; detect and normalize.
+    const millis = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
   private extractNameColor(user: Api.User) {
     const rawCandidates = [
       (user as any)?.color?.color,
@@ -317,6 +327,61 @@ export class TelegramMtprotoClient {
           a.date.localeCompare(b.date),
         ),
       };
+    } finally {
+      await client.disconnect();
+    }
+  }
+
+  async getChannelPostsMetrics(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    postLimit?: number;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const entity = await client.getEntity(params.channelRef);
+      const limit = Math.max(1, Math.min(300, params.postLimit || 100));
+      const messages = await client.getMessages(entity, { limit });
+
+      return (messages as any[])
+        .filter((message) => message?.id && message?.date)
+        .map((message) => {
+          const postDate = this.toTelegramDate(message.date);
+          if (!postDate) return null;
+          const reactionRows = Array.isArray(message?.reactions?.results)
+            ? message.reactions.results
+            : [];
+          const reactions = reactionRows
+            .map((row: any) => {
+              const count = this.toFiniteNumber(row?.count) ?? 0;
+              const rawReaction = row?.reaction;
+              const reaction =
+                typeof rawReaction === 'string'
+                  ? rawReaction
+                  : rawReaction?.emoticon || rawReaction?.emoticonId || String(rawReaction || '');
+              return { reaction, count };
+            })
+            .filter((row: { reaction: string; count: number }) => !!row.reaction);
+          const reactionsCount = reactions.reduce(
+            (sum: number, row: { reaction: string; count: number }) => sum + row.count,
+            0,
+          );
+
+          return {
+            telegramMessageId: String(message.id),
+            postDate,
+            text: message.message || null,
+            viewsCount: this.toFiniteNumber(message.views),
+            forwardsCount: this.toFiniteNumber(message.forwards),
+            reactionsCount,
+            commentsCount: this.toFiniteNumber(message?.replies?.replies) ?? 0,
+            reactions,
+            rawMessage: message,
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => !!row);
     } finally {
       await client.disconnect();
     }

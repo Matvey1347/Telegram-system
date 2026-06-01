@@ -9,6 +9,6 @@ import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.clien
   imports: [TelegramBotsModule],
   controllers: [TelegramChannelsController, TelegramInviteLinksController],
   providers: [TelegramChannelsService, TelegramMtprotoClient],
-  exports: [TelegramChannelsService],
+  exports: [TelegramChannelsService, TelegramMtprotoClient],
 })
 export class TelegramChannelsModule {}

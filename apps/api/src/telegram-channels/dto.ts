@@ -70,6 +70,11 @@ export class DeepSyncDto {
   @IsOptional() @Type(() => Number) @IsInt() postLimit?: number;
 }
 
+export class SyncPostsMetricsDto {
+  @IsOptional() @IsString() telegramUserAccountId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() postLimit?: number;
+}
+
 export class AttachCampaignDto {
   @IsString() adCampaignId!: string;
 }

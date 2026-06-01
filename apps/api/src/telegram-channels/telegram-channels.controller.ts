@@ -18,6 +18,7 @@ import {
   DeepSyncDto,
   CreateTelegramChannelDto,
   HistoricalSyncDto,
+  SyncPostsMetricsDto,
   UpdateInviteLinkDto,
   UpdateTelegramChannelDto,
 } from './dto';
@@ -75,6 +76,14 @@ export class TelegramChannelsController {
     @Body() dto: DeepSyncDto,
   ) {
     return this.service.deepSync(user.sub, id, dto);
+  }
+  @Post(':id/sync-posts-metrics')
+  syncPostsMetrics(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: SyncPostsMetricsDto,
+  ) {
+    return this.service.syncPostsMetrics(user.sub, id, dto);
   }
   @Get(':id/analytics') analytics(
     @CurrentUser() user: JwtUser,

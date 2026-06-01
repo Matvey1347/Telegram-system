@@ -523,6 +523,7 @@ model TelegramPost {
   viewsCount               Int?
   forwardsCount            Int?
   reactionsCount           Int?
+  commentsCount            Int?
   reactions                Json?
   rawMessage               Json?
   createdAt                DateTime @default(now())
@@ -531,9 +532,26 @@ model TelegramPost {
   workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel       TelegramChannel          @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   telegramBotIntegration TelegramBotIntegration? @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: SetNull)
+  metricSnapshots       TelegramPostMetricSnapshot[]
 
   @@unique([telegramChannelId, telegramMessageId])
+  @@index([telegramChannelId, postDate])
   @@index([workspaceId, telegramChannelId, postDate])
+}
+
+model TelegramPostMetricSnapshot {
+  id             String   @id @default(cuid())
+  telegramPostId String
+  viewsCount     Int?
+  forwardsCount  Int?
+  reactionsCount Int?
+  commentsCount  Int?
+  reactions      Json?
+  collectedAt    DateTime @default(now())
+
+  telegramPost TelegramPost @relation(fields: [telegramPostId], references: [id], onDelete: Cascade)
+
+  @@index([telegramPostId, collectedAt])
 }
 
 model SubscriberEvent {

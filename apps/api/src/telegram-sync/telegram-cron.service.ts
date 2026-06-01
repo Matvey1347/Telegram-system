@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { TelegramBotApiClient } from '../telegram/shared/telegram-bot-api.client';
 import { TelegramSyncService } from './telegram-sync.service';
+import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
 
 @Injectable()
 export class TelegramCronService {
@@ -16,6 +17,7 @@ export class TelegramCronService {
     private telegramApi: TelegramBotApiClient,
     private syncService: TelegramSyncService,
     private configService: ConfigService,
+    private mtprotoClient: TelegramMtprotoClient,
   ) {}
 
   private async uploadChannelPhotoToB2(params: {
@@ -241,6 +243,147 @@ export class TelegramCronService {
           netGrowthCount: joinedCount - leftCount,
         },
       });
+    }
+  }
+
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async syncMtprotoPostMetrics() {
+    if (process.env.TELEGRAM_MTTPROTO_SYNC_ENABLED === 'false') return;
+
+    const channels = await this.prisma.telegramChannel.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        username: true,
+        telegramChatId: true,
+        telegramBotIntegrationId: true,
+      },
+    });
+
+    for (const channel of channels) {
+      try {
+        const link = await this.prisma.telegramChannelAdminLink.findFirst({
+          where: { workspaceId: channel.workspaceId, telegramChannelId: channel.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (!link) continue;
+        const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+          where: {
+            id: link.telegramUserAccountIntegrationId,
+            workspaceId: channel.workspaceId,
+            isActive: true,
+            status: 'connected',
+          },
+        });
+        if (!account) continue;
+
+        const apiHash = this.encryption.decrypt({
+          encrypted: account.apiHashEncrypted,
+          iv: account.apiHashIv,
+          authTag: account.apiHashAuthTag,
+        });
+        const session = this.encryption.decrypt({
+          encrypted: account.sessionEncrypted || '',
+          iv: account.sessionIv || '',
+          authTag: account.sessionAuthTag || '',
+        });
+        const channelRef = channel.username
+          ? String(channel.username).startsWith('@')
+            ? String(channel.username)
+            : `@${String(channel.username)}`
+          : channel.telegramChatId
+            ? String(channel.telegramChatId)
+            : null;
+        if (!channelRef) continue;
+
+        const posts = await this.mtprotoClient.getChannelPostsMetrics({
+          apiId: account.apiId,
+          apiHash,
+          session,
+          channelRef,
+          postLimit: 100,
+        });
+        const affectedDays = new Set<string>();
+        for (const post of posts) {
+          const row = await this.prisma.telegramPost.upsert({
+            where: {
+              telegramChannelId_telegramMessageId: {
+                telegramChannelId: channel.id,
+                telegramMessageId: post.telegramMessageId,
+              },
+            },
+            create: {
+              workspaceId: channel.workspaceId,
+              telegramChannelId: channel.id,
+              telegramBotIntegrationId: channel.telegramBotIntegrationId || null,
+              telegramMessageId: post.telegramMessageId,
+              postDate: post.postDate,
+              text: post.text,
+              viewsCount: post.viewsCount,
+              forwardsCount: post.forwardsCount,
+              reactionsCount: post.reactionsCount,
+              commentsCount: post.commentsCount,
+              reactions: post.reactions as any,
+              rawMessage: post.rawMessage as any,
+            },
+            update: {
+              postDate: post.postDate,
+              text: post.text,
+              viewsCount: post.viewsCount,
+              forwardsCount: post.forwardsCount,
+              reactionsCount: post.reactionsCount,
+              commentsCount: post.commentsCount,
+              reactions: post.reactions as any,
+              rawMessage: post.rawMessage as any,
+            },
+          });
+          await this.prisma.telegramPostMetricSnapshot.create({
+            data: {
+              telegramPostId: row.id,
+              viewsCount: post.viewsCount,
+              forwardsCount: post.forwardsCount,
+              reactionsCount: post.reactionsCount,
+              commentsCount: post.commentsCount,
+              reactions: post.reactions as any,
+            },
+          });
+          affectedDays.add(post.postDate.toISOString().slice(0, 10));
+        }
+        for (const day of affectedDays) {
+          const dayStart = new Date(`${day}T00:00:00.000Z`);
+          const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000);
+          const agg = await this.prisma.telegramPost.aggregate({
+            where: {
+              telegramChannelId: channel.id,
+              postDate: { gte: dayStart, lt: dayEnd },
+            },
+            _sum: { viewsCount: true, reactionsCount: true, forwardsCount: true },
+          });
+          await this.prisma.telegramChannelDailyStats.upsert({
+            where: {
+              telegramChannelId_date: { telegramChannelId: channel.id, date: dayStart },
+            },
+            create: {
+              telegramChannelId: channel.id,
+              date: dayStart,
+              viewsCount: agg._sum.viewsCount ?? 0,
+              reactionsCount: agg._sum.reactionsCount ?? 0,
+              forwardsCount: agg._sum.forwardsCount ?? 0,
+            },
+            update: {
+              viewsCount: agg._sum.viewsCount ?? 0,
+              reactionsCount: agg._sum.reactionsCount ?? 0,
+              forwardsCount: agg._sum.forwardsCount ?? 0,
+            },
+          });
+        }
+        this.logger.log(`MTProto metrics synced for channel=${channel.id}, posts=${posts.length}`);
+      } catch (error) {
+        this.logger.warn(
+          `MTProto metrics sync failed for channel=${channel.id}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
+      }
     }
   }
 
