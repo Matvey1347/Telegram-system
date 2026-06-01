@@ -32,34 +32,43 @@ export class WorkspaceMembersService {
     return { ...row, isCurrentUser: row.userId === currentUserId };
   }
 
+  private async investmentTransactions(workspaceId: string) {
+    return (this.prisma as any).transaction.findMany({
+      where: {
+        workspaceId,
+        type: 'income',
+        memberId: { not: null },
+        categoryRef: { key: 'investment' },
+      },
+      select: {
+        memberId: true,
+        amountInPrimaryCurrency: true,
+      },
+    });
+  }
+
   async list(userId: string) {
     const membership =
       await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
-    const [rows, grouped] = await Promise.all([
+    const [rows, investments] = await Promise.all([
       this.prisma.workspaceMember.findMany({
         where: { workspaceId: membership.workspaceId },
         include: { user: { select: { id: true, email: true, name: true } } },
         orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.investment.groupBy({
-        by: ['workspaceMemberId'],
-        where: { workspaceId: membership.workspaceId },
-        _sum: { amountInPrimaryCurrency: true },
-        _count: { _all: true },
-      }),
+      this.investmentTransactions(membership.workspaceId),
     ]);
 
-    const byMember = new Map(
-      grouped.map((g) => [
-        g.workspaceMemberId,
-        {
-          total: Number(g._sum.amountInPrimaryCurrency ?? 0),
-          count: g._count._all,
-        },
-      ]),
-    );
-    const workspaceTotal = grouped.reduce(
-      (acc, g) => acc + Number(g._sum.amountInPrimaryCurrency ?? 0),
+    const byMember = new Map<string, { total: number; count: number }>();
+    for (const tx of investments) {
+      const memberId = tx.memberId as string;
+      const prev = byMember.get(memberId) ?? { total: 0, count: 0 };
+      prev.total += Number(tx.amountInPrimaryCurrency ?? 0);
+      prev.count += 1;
+      byMember.set(memberId, prev);
+    }
+    const workspaceTotal = [...byMember.values()].reduce(
+      (acc, v) => acc + v.total,
       0,
     );
 
@@ -75,6 +84,61 @@ export class WorkspaceMembersService {
         investmentsCount: byMember.get(row.id)?.count ?? 0,
       },
     }));
+  }
+
+  async memberInvestments(userId: string, memberId: string) {
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { id: memberId, workspaceId: membership.workspaceId },
+    });
+    if (!member) throw new NotFoundException('Workspace member not found');
+
+    return (this.prisma as any).transaction.findMany({
+      where: {
+        workspaceId: membership.workspaceId,
+        memberId,
+        type: 'income',
+        categoryRef: { key: 'investment' },
+      },
+      include: { account: true, categoryRef: true },
+      orderBy: { date: 'desc' },
+    });
+  }
+
+  async investmentsSummary(userId: string) {
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const [investments, members] = await Promise.all([
+      this.investmentTransactions(membership.workspaceId),
+      this.prisma.workspaceMember.findMany({
+        where: { workspaceId: membership.workspaceId },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      }),
+    ]);
+
+    const byMember = new Map<string, { total: number; count: number }>();
+    for (const tx of investments) {
+      const memberId = tx.memberId as string;
+      const prev = byMember.get(memberId) ?? { total: 0, count: 0 };
+      prev.total += Number(tx.amountInPrimaryCurrency ?? 0);
+      prev.count += 1;
+      byMember.set(memberId, prev);
+    }
+
+    const total = [...byMember.values()].reduce((acc, v) => acc + v.total, 0);
+
+    return members
+      .filter((m) => byMember.has(m.id))
+      .map((member) => {
+        const item = byMember.get(member.id)!;
+        return {
+          member,
+          totalInvestedPrimary: item.total,
+          investmentsCount: item.count,
+          investmentSharePercent: total > 0 ? (item.total / total) * 100 : 0,
+        };
+      });
   }
 
   async create(userId: string, dto: CreateWorkspaceMemberDto) {

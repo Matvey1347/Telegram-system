@@ -24,6 +24,19 @@ export class WorkspaceMembersController {
     return this.service.list(user.sub);
   }
 
+  @Get('investments/summary')
+  investmentsSummary(@CurrentUser() user: JwtUser) {
+    return this.service.investmentsSummary(user.sub);
+  }
+
+  @Get(':memberId/investments')
+  memberInvestments(
+    @CurrentUser() user: JwtUser,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.service.memberInvestments(user.sub, memberId);
+  }
+
   @Post()
   create(@CurrentUser() user: JwtUser, @Body() dto: CreateWorkspaceMemberDto) {
     return this.service.create(user.sub, dto);

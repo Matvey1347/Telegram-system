@@ -30,11 +30,10 @@ export class DashboardService {
         this.prisma.telegramChannel.count({ where: { workspaceId } }),
       ]);
 
-    const txForDashboard = tx.filter((t) => t.category !== 'investment');
-    const income = txForDashboard
+    const income = tx
       .filter((t) => t.type === 'income')
       .reduce((a, t) => a + dec(t.amountInPrimaryCurrency), 0);
-    const expenses = txForDashboard
+    const expenses = tx
       .filter((t) => t.type === 'expense')
       .reduce((a, t) => a + dec(t.amountInPrimaryCurrency), 0);
     const adSpend = campaigns.reduce(

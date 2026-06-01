@@ -21,6 +21,9 @@ export class AdvertisingSourcesService {
       telegramUrl: row.url,
       username: row.telegramUsername,
       notes: row.notes,
+      imageUrl: row.imageUrl,
+      subscribersCount: row.subscribersCount ?? 0,
+      channelTags: Array.isArray(row.channelTags) ? row.channelTags : [],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -46,7 +49,7 @@ export class AdvertisingSourcesService {
 
   async create(userId: string, dto: CreateAdvertisingSourceDto) {
     const workspaceId = await this.workspace(userId);
-    const row = await this.prisma.advertisingSource.create({
+    const row = await (this.prisma as any).advertisingSource.create({
       data: {
         workspaceId,
         name: dto.title,
@@ -54,6 +57,9 @@ export class AdvertisingSourcesService {
         url: dto.telegramUrl,
         telegramUsername: dto.username,
         notes: dto.notes,
+        imageUrl: dto.imageUrl,
+        subscribersCount: dto.subscribersCount ?? 0,
+        channelTags: dto.channelTags ?? [],
       },
     });
     return this.toView(row);
@@ -61,13 +67,16 @@ export class AdvertisingSourcesService {
 
   async update(userId: string, id: string, dto: UpdateAdvertisingSourceDto) {
     await this.findOne(userId, id);
-    const row = await this.prisma.advertisingSource.update({
+    const row = await (this.prisma as any).advertisingSource.update({
       where: { id },
       data: {
         name: dto.title,
         url: dto.telegramUrl,
         telegramUsername: dto.username,
         notes: dto.notes,
+        imageUrl: dto.imageUrl,
+        subscribersCount: dto.subscribersCount,
+        channelTags: dto.channelTags,
       },
     });
     return this.toView(row);

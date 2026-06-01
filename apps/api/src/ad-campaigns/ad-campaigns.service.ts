@@ -1,4 +1,3 @@
-import { Currency } from '@prisma/client';
 import {
   BadRequestException,
   Injectable,
@@ -6,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import {
   CreateAdCampaignDto,
@@ -22,6 +22,7 @@ export class AdCampaignsService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
+    private financeCategoriesService: FinanceCategoriesService,
     private encryptionService: TokenEncryptionService,
     private telegramApi: TelegramBotApiClient,
   ) {}
@@ -33,6 +34,91 @@ export class AdCampaignsService {
   private async ensurePromoBelongsToChannel(workspaceId: string, promoId: string, channelId: string) {
     const promo = await this.prisma.promo.findFirst({ where: { id: promoId, workspaceId, telegramChannelId: channelId } });
     if (!promo) throw new BadRequestException('Promo must belong to selected Telegram channel');
+  }
+
+  private formatDatePart(date: Date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  private shortenBlock(value?: string | null) {
+    const words = String(value || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!words.length) return '-';
+    if (words.length <= 2) return words.join(' ');
+    return `${words[0]} ${words[1]}...`;
+  }
+
+  private sourceTypeLabel(source: any) {
+    const fromTags = Array.isArray(source?.channelTags) ? source.channelTags.find((x: string) => String(x).trim().length) : null;
+    if (fromTags) return fromTags;
+    const raw = String(source?.type || '').replace(/_/g, ' ').trim();
+    return raw || 'other';
+  }
+
+  private async generateCampaignTitle(
+    tx: any,
+    workspaceId: string,
+    placementDate: Date,
+    promoId: string | null | undefined,
+    advertisingChannelIds: string[],
+  ) {
+    const [promo, sources] = await Promise.all([
+      promoId
+        ? tx.promo.findFirst({
+            where: { id: promoId, workspaceId },
+            select: { title: true },
+          })
+        : null,
+      (tx as any).advertisingSource.findMany({
+        where: { workspaceId, id: { in: advertisingChannelIds || [] } },
+        select: { name: true, type: true, channelTags: true },
+      }),
+    ]);
+
+    const firstSource = sources?.[0];
+    const sourceLabel = this.shortenBlock(firstSource?.name || 'source');
+    const promoLabel = this.shortenBlock(promo?.title || 'promo');
+    const typeLabel = this.shortenBlock(this.sourceTypeLabel(firstSource));
+    const dateLabel = this.formatDatePart(placementDate);
+    return `${dateLabel} | ${sourceLabel} | ${promoLabel} | ${typeLabel}`;
+  }
+
+  private async resolveRateToPrimary(
+    tx: any,
+    workspaceId: string,
+    fromCurrency: string,
+    primaryCurrency: string,
+  ) {
+    if (fromCurrency === primaryCurrency) return 1;
+
+    const direct = await tx.exchangeRate.findFirst({
+      where: {
+        workspaceId,
+        baseCurrency: fromCurrency,
+        targetCurrency: primaryCurrency,
+      },
+      orderBy: { date: 'desc' },
+    });
+    if (direct?.rate) return Number(direct.rate);
+
+    const inverse = await tx.exchangeRate.findFirst({
+      where: {
+        workspaceId,
+        baseCurrency: primaryCurrency,
+        targetCurrency: fromCurrency,
+      },
+      orderBy: { date: 'desc' },
+    });
+    if (inverse?.rate) return 1 / Number(inverse.rate);
+
+    throw new BadRequestException(
+      `No exchange rate from ${fromCurrency} to ${primaryCurrency}`,
+    );
   }
 
   private async syncExpenseTransaction(
@@ -47,13 +133,20 @@ export class AdCampaignsService {
     const description = `Telegram ad campaign: ${campaign.title}`;
     const date = campaign.placementDate || campaign.startedAt || new Date();
     const existing = await tx.transaction.findFirst({ where: { adCampaignId: campaign.id } });
+    await this.financeCategoriesService.ensureSystemCategories(workspaceId, tx);
+    const advertisingCategory = await (tx as any).transactionCategory.findFirst({
+      where: { workspaceId, type: 'expense', key: 'advertising' },
+    });
+    if (!advertisingCategory) return;
 
     const payload = {
       workspaceId,
       accountId: account.id,
       adCampaignId: campaign.id,
       type: 'expense' as const,
-      category: 'advertising',
+      category: advertisingCategory.name,
+      categoryId: advertisingCategory.id,
+      memberId: null,
       amount: campaign.price,
       currency: campaign.currency,
       exchangeRateToPrimary: campaign.exchangeRateToPrimary,
@@ -71,8 +164,18 @@ export class AdCampaignsService {
 
   private async shapeCampaign(row: any) {
     const analytics = await this.campaignMetrics(row);
+    const telegramInviteLink = row.telegramInviteLinkId
+      ? await this.prisma.telegramInviteLink.findFirst({
+          where: {
+            id: row.telegramInviteLinkId,
+            workspaceId: row.workspaceId,
+          },
+          select: { id: true, name: true, url: true },
+        })
+      : null;
     return {
       ...row,
+      telegramInviteLink,
       ownTelegramChannelId: row.telegramChannelId,
       promoInviteLinkId: row.telegramInviteLinkId,
       costAmount: Number(row.price),
@@ -120,24 +223,39 @@ export class AdCampaignsService {
     const campaign = await this.prisma.$transaction(async (tx) => {
       const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
       if (!workspace) throw new NotFoundException('Workspace not found');
+      const account = await tx.account.findFirst({
+        where: { id: dto.accountId, workspaceId },
+      });
+      if (!account) throw new NotFoundException('Account not found');
 
-      const exchangeRateToPrimary = dto.exchangeRateToPrimary || 1;
+      const exchangeRateToPrimary = await this.resolveRateToPrimary(
+        tx,
+        workspaceId,
+        account.currency,
+        workspace.primaryCurrency,
+      );
+      const placementDate = dto.date ? new Date(dto.date) : new Date();
+      const generatedTitle = await this.generateCampaignTitle(
+        tx,
+        workspaceId,
+        placementDate,
+        dto.promoId,
+        dto.advertisingChannelIds || [],
+      );
       const row = await (tx.adCampaign as any).create({
         data: {
           workspaceId,
           telegramChannelId: dto.telegramChannelId,
           promoId: dto.promoId,
           telegramInviteLinkId: dto.telegramInviteLinkId,
-          title: `Campaign ${new Date().toISOString().slice(0, 10)}`,
+          title: generatedTitle,
           status: 'planned',
           price: dto.price,
-          currency: dto.currency as Currency,
+          currency: account.currency,
           exchangeRateToPrimary,
           priceInPrimaryCurrency: dto.price * exchangeRateToPrimary,
-          accountId: dto.accountId,
-          startedAt: dto.startedAt ? new Date(dto.startedAt) : undefined,
-          endedAt: dto.endedAt ? new Date(dto.endedAt) : undefined,
-          placementDate: dto.placementDate ? new Date(dto.placementDate) : undefined,
+          accountId: account.id,
+          placementDate,
           notes: dto.notes,
         },
       });
@@ -169,22 +287,50 @@ export class AdCampaignsService {
 
     await this.prisma.$transaction(async (tx) => {
       const price = dto.price ?? Number(existing.price);
-      const exchangeRateToPrimary = dto.exchangeRateToPrimary ?? Number(existing.exchangeRateToPrimary);
+      const accountId = dto.accountId ?? existing.accountId;
+      const account = accountId
+        ? await tx.account.findFirst({ where: { id: accountId, workspaceId } })
+        : null;
+      if (!account) throw new NotFoundException('Account not found');
+      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
+      if (!workspace) throw new NotFoundException('Workspace not found');
+      const exchangeRateToPrimary = await this.resolveRateToPrimary(
+        tx,
+        workspaceId,
+        account.currency,
+        workspace.primaryCurrency,
+      );
+      const nextPlacementDate = dto.date
+        ? new Date(dto.date)
+        : existing.placementDate || new Date();
+      const nextPromoId = dto.promoId ?? existing.promoId;
+      const nextAdvertisingChannelIds = dto.advertisingChannelIds ?? (
+        await (tx as any).adCampaignAdvertisingChannel.findMany({
+          where: { adCampaignId: id },
+          select: { advertisingSourceId: true },
+        })
+      ).map((x: any) => x.advertisingSourceId);
+      const generatedTitle = await this.generateCampaignTitle(
+        tx,
+        workspaceId,
+        nextPlacementDate,
+        nextPromoId,
+        nextAdvertisingChannelIds,
+      );
 
       const row = await (tx.adCampaign as any).update({
         where: { id },
         data: {
+          title: generatedTitle,
           telegramChannelId: dto.telegramChannelId,
           promoId: dto.promoId,
           telegramInviteLinkId: dto.telegramInviteLinkId,
           price,
-          currency: dto.currency as Currency | undefined,
+          currency: account.currency,
           exchangeRateToPrimary,
           priceInPrimaryCurrency: price * exchangeRateToPrimary,
-          accountId: dto.accountId,
-          startedAt: dto.startedAt ? new Date(dto.startedAt) : dto.startedAt === null ? null : undefined,
-          endedAt: dto.endedAt ? new Date(dto.endedAt) : dto.endedAt === null ? null : undefined,
-          placementDate: dto.placementDate ? new Date(dto.placementDate) : dto.placementDate === null ? null : undefined,
+          accountId: account.id,
+          placementDate: dto.date ? new Date(dto.date) : undefined,
           notes: dto.notes,
         },
       });
@@ -211,7 +357,7 @@ export class AdCampaignsService {
   }
 
   private async campaignMetrics(campaign: any) {
-    let where: any = {
+    const where: any = {
       workspaceId: campaign.workspaceId,
       inviteLinkId: campaign.telegramInviteLinkId || undefined,
     };
@@ -221,9 +367,25 @@ export class AdCampaignsService {
       where.eventDate = { gte: campaign.placementDate };
     }
 
-    const events = await this.prisma.subscriberEvent.findMany({ where });
-    const joinedCount = events.filter((e) => e.eventType === 'join').length;
-    const leftCount = events.filter((e) => e.eventType === 'leave').length;
+    const [joinedEventsCount, leftCount, inviteLink] = await Promise.all([
+      this.prisma.subscriberEvent.count({
+        where: { ...where, eventType: 'joined' },
+      }),
+      this.prisma.subscriberEvent.count({
+        where: { ...where, eventType: 'left' },
+      }),
+      campaign.telegramInviteLinkId
+        ? this.prisma.telegramInviteLink.findFirst({
+            where: {
+              id: campaign.telegramInviteLinkId,
+              workspaceId: campaign.workspaceId,
+            },
+            select: { joinedCount: true },
+          })
+        : null,
+    ]);
+    // Keep campaign metrics aligned with channel page "Subscribers by link".
+    const joinedCount = Number(inviteLink?.joinedCount ?? joinedEventsCount ?? 0);
     const netGrowth = joinedCount - leftCount;
     const costAmount = Number(campaign.price || 0);
 

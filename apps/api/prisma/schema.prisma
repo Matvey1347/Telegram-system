@@ -88,6 +88,7 @@ model Workspace {
   adCampaigns        AdCampaign[]
   exchangeRates      ExchangeRate[]
   investments        Investment[]
+  transactionCategories TransactionCategory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -155,6 +156,7 @@ model WorkspaceMember {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   investments Investment[]
+  investmentTransactions Transaction[] @relation("MemberInvestmentTransactions")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -192,6 +194,8 @@ model Transaction {
   amountInPrimaryCurrency Decimal
   exchangeRateToPrimary   Decimal
   category                String
+  categoryId              String?
+  memberId                String?
   description             String?
   date                    DateTime
   adCampaignId            String?         @unique
@@ -202,9 +206,31 @@ model Transaction {
 
   adCampaign AdCampaign? @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
   investment Investment?
+  categoryRef TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  member WorkspaceMember? @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, type, categoryId])
+  @@index([workspaceId, memberId])
+}
+
+model TransactionCategory {
+  id          String          @id @default(cuid())
+  workspaceId String
+  name        String
+  type        TransactionType
+  isSystem    Boolean         @default(false)
+  key         String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions Transaction[]  @relation
+
+  @@unique([workspaceId, type, key])
+  @@index([workspaceId, type])
 }
 
 model Investment {
@@ -341,6 +367,9 @@ model AdvertisingSource {
   description      String?
   contactInfo      String?
   notes            String?
+  imageUrl         String?
+  subscribersCount Int                   @default(0)
+  channelTags      String[]              @default([])
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adCampaignsLegacy AdCampaign[]

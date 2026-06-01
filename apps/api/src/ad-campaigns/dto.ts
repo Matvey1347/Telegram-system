@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
-  IsDateString,
   IsOptional,
   IsString,
   IsNumber,
@@ -15,12 +14,8 @@ export class CreateAdCampaignDto {
   @IsString() telegramInviteLinkId!: string;
   @IsArray() @ArrayMinSize(1) @IsString({ each: true }) advertisingChannelIds!: string[];
   @Type(() => Number) @IsNumber() @Min(0.000001) price!: number;
-  @IsString() currency!: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) exchangeRateToPrimary?: number;
-  @IsOptional() @IsString() accountId?: string;
-  @IsOptional() @IsDateString() placementDate?: string;
-  @IsOptional() @IsDateString() startedAt?: string;
-  @IsOptional() @IsDateString() endedAt?: string;
+  @IsString() accountId!: string;
+  @IsOptional() @IsString() date?: string;
   @IsOptional() @IsString() notes?: string;
 }
 
@@ -30,12 +25,8 @@ export class UpdateAdCampaignDto {
   @IsOptional() @IsString() telegramInviteLinkId?: string;
   @IsOptional() @IsArray() @ArrayMinSize(1) @IsString({ each: true }) advertisingChannelIds?: string[];
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) price?: number;
-  @IsOptional() @IsString() currency?: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) exchangeRateToPrimary?: number;
   @IsOptional() @IsString() accountId?: string;
-  @IsOptional() @IsDateString() placementDate?: string;
-  @IsOptional() @IsDateString() startedAt?: string;
-  @IsOptional() @IsDateString() endedAt?: string;
+  @IsOptional() @IsString() date?: string;
   @IsOptional() @IsString() notes?: string;
 }
 

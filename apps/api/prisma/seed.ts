@@ -79,6 +79,42 @@ async function main() {
       update: { role: 'owner' },
       create: { workspaceId: workspace.id, userId: adminUserId, role: 'owner' },
     });
+
+    await (tx as any).transactionCategory.upsert({
+      where: {
+        workspaceId_type_key: {
+          workspaceId: workspace.id,
+          type: 'income',
+          key: 'investment',
+        },
+      },
+      update: { isSystem: true, name: 'Investment' },
+      create: {
+        workspaceId: workspace.id,
+        type: 'income',
+        key: 'investment',
+        name: 'Investment',
+        isSystem: true,
+      },
+    });
+
+    await (tx as any).transactionCategory.upsert({
+      where: {
+        workspaceId_type_key: {
+          workspaceId: workspace.id,
+          type: 'expense',
+          key: 'advertising',
+        },
+      },
+      update: { isSystem: true, name: 'Advertising' },
+      create: {
+        workspaceId: workspace.id,
+        type: 'expense',
+        key: 'advertising',
+        name: 'Advertising',
+        isSystem: true,
+      },
+    });
   });
 }
 

@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Currency } from '@prisma/client';
@@ -22,6 +23,8 @@ const SUPPORTED_CURRENCIES: Currency[] = [
 
 @Injectable()
 export class CurrenciesService {
+  private readonly logger = new Logger(CurrenciesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
@@ -53,6 +56,15 @@ export class CurrenciesService {
       },
       select: { primaryCurrency: true, secondaryCurrency: true },
     });
+
+    try {
+      await this.syncRatesForWorkspace(workspaceId, workspace.primaryCurrency);
+    } catch (error) {
+      this.logger.warn(
+        `Currency settings updated for workspace ${workspaceId}, but auto-sync failed: ${(error as Error).message}`,
+      );
+    }
+
     return { ...workspace, supportedCurrencies: SUPPORTED_CURRENCIES };
   }
 
@@ -105,60 +117,93 @@ export class CurrenciesService {
     });
 
     try {
-      const response = await fetch(
-        `https://open.er-api.com/v6/latest/${workspace.primaryCurrency}`,
+      const updated = await this.syncRatesForWorkspace(
+        workspaceId,
+        workspace.primaryCurrency,
       );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = (await response.json()) as {
-        result?: string;
-        rates?: Record<string, number>;
-        error_type?: string;
-      };
-      if (payload.result !== 'success' || !payload.rates) {
-        throw new Error(payload.error_type || 'invalid_api_response');
-      }
-
-      const now = new Date();
-      let updated = 0;
-      for (const targetCurrency of SUPPORTED_CURRENCIES) {
-        if (targetCurrency === workspace.primaryCurrency) continue;
-        const rate = payload.rates[targetCurrency];
-        if (!rate || rate <= 0) continue;
-
-        const latest = await this.prisma.exchangeRate.findFirst({
-          where: {
-            workspaceId,
-            baseCurrency: workspace.primaryCurrency,
-            targetCurrency,
-          },
-          orderBy: { date: 'desc' },
-          select: { id: true },
-        });
-
-        if (latest) {
-          await this.prisma.exchangeRate.update({
-            where: { id: latest.id },
-            data: { rate, date: now, source: 'open.er-api.com' },
-          });
-        } else {
-          await this.prisma.exchangeRate.create({
-            data: {
-              workspaceId,
-              baseCurrency: workspace.primaryCurrency,
-              targetCurrency,
-              rate,
-              date: now,
-              source: 'open.er-api.com',
-            },
-          });
-        }
-        updated += 1;
-      }
       return { success: true, updated };
     } catch {
       throw new BadGatewayException(
         'Failed to sync exchange rates. Manual rates remain available.',
       );
     }
+  }
+
+  async syncRatesForAllWorkspaces() {
+    const workspaces = await this.prisma.workspace.findMany({
+      select: { id: true, primaryCurrency: true },
+    });
+
+    let synced = 0;
+    for (const workspace of workspaces) {
+      try {
+        await this.syncRatesForWorkspace(workspace.id, workspace.primaryCurrency);
+        synced += 1;
+      } catch (error) {
+        this.logger.warn(
+          `Daily auto-sync failed for workspace ${workspace.id}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    return { synced, total: workspaces.length };
+  }
+
+  private async syncRatesForWorkspace(
+    workspaceId: string,
+    primaryCurrency: Currency,
+  ) {
+    const response = await fetch(
+      `https://open.er-api.com/v6/latest/${primaryCurrency}`,
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = (await response.json()) as {
+      result?: string;
+      rates?: Record<string, number>;
+      error_type?: string;
+    };
+
+    if (payload.result !== 'success' || !payload.rates) {
+      throw new Error(payload.error_type || 'invalid_api_response');
+    }
+
+    const now = new Date();
+    const rows = SUPPORTED_CURRENCIES
+      .filter((currency) => currency !== primaryCurrency)
+      .map((targetCurrency) => ({
+        workspaceId,
+        baseCurrency: primaryCurrency,
+        targetCurrency,
+        rate: payload.rates?.[targetCurrency],
+        date: now,
+        source: 'open.er-api.com',
+      }))
+      .filter((row) => row.rate && row.rate > 0) as Array<{
+      workspaceId: string;
+      baseCurrency: Currency;
+      targetCurrency: Currency;
+      rate: number;
+      date: Date;
+      source: string;
+    }>;
+
+    if (!rows.length) return 0;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await tx.exchangeRate.deleteMany({
+          where: {
+            workspaceId,
+            baseCurrency: row.baseCurrency,
+            targetCurrency: row.targetCurrency,
+          },
+        });
+      }
+
+      await tx.exchangeRate.createMany({ data: rows });
+    });
+
+    return rows.length;
   }
 }

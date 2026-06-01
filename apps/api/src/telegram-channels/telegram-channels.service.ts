@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
@@ -31,7 +33,163 @@ export class TelegramChannelsService {
     private encryptionService: TokenEncryptionService,
     private telegramApi: TelegramBotApiClient,
     private mtprotoClient: TelegramMtprotoClient,
+    private configService: ConfigService,
   ) {}
+
+  private async uploadChannelPhotoToB2(params: {
+    fileBuffer: Buffer;
+    fileSize: number;
+    contentType?: string;
+    extension?: string;
+  }) {
+    const keyId = this.configService.get<string>('B2_KEY_ID')?.trim();
+    const appKey = this.configService.get<string>('B2_APP_KEY')?.trim();
+    const bucketName = this.configService.get<string>('B2_BUCKET_NAME')?.trim();
+    const endpoint = this.configService.get<string>('B2_ENDPOINT')?.trim();
+
+    if (!keyId || !appKey || !bucketName) {
+      throw new InternalServerErrorException(
+        'B2 env vars missing: B2_KEY_ID, B2_APP_KEY, B2_BUCKET_NAME',
+      );
+    }
+
+    const authHeader = Buffer.from(`${keyId}:${appKey}`).toString('base64');
+    const authRes = await fetch(
+      'https://api.backblazeb2.com/b2api/v2/b2_authorize_account',
+      {
+        method: 'GET',
+        headers: { Authorization: `Basic ${authHeader}` },
+      },
+    );
+    if (!authRes.ok) {
+      throw new InternalServerErrorException('Failed to authorize Backblaze B2');
+    }
+    const authData = (await authRes.json()) as {
+      apiUrl: string;
+      authorizationToken: string;
+      downloadUrl: string;
+      accountId: string;
+    };
+
+    const listBucketsRes = await fetch(
+      `${authData.apiUrl}/b2api/v2/b2_list_buckets`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: authData.authorizationToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          accountId: authData.accountId,
+          bucketName,
+        }),
+      },
+    );
+    if (!listBucketsRes.ok) {
+      throw new InternalServerErrorException('Failed to resolve B2 bucket');
+    }
+    const listBucketsData = (await listBucketsRes.json()) as {
+      buckets?: Array<{ bucketId: string; bucketName: string }>;
+    };
+    const bucket = listBucketsData.buckets?.find((b) => b.bucketName === bucketName);
+    if (!bucket?.bucketId) {
+      throw new InternalServerErrorException(`B2 bucket not found: ${bucketName}`);
+    }
+
+    const uploadUrlRes = await fetch(
+      `${authData.apiUrl}/b2api/v2/b2_get_upload_url`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: authData.authorizationToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ bucketId: bucket.bucketId }),
+      },
+    );
+    if (!uploadUrlRes.ok) {
+      throw new InternalServerErrorException('Failed to get B2 upload URL');
+    }
+    const uploadUrlData = (await uploadUrlRes.json()) as {
+      uploadUrl: string;
+      authorizationToken: string;
+    };
+
+    const safeExtension = (params.extension || 'jpg')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '') || 'jpg';
+    const fileName = `channels/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${safeExtension}`;
+
+    const uploadRes = await fetch(uploadUrlData.uploadUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: uploadUrlData.authorizationToken,
+        'X-Bz-File-Name': encodeURIComponent(fileName),
+        'Content-Type': params.contentType || 'b2/x-auto',
+        'Content-Length': String(params.fileSize),
+        'X-Bz-Content-Sha1': 'do_not_verify',
+      },
+      body: new Uint8Array(params.fileBuffer),
+    });
+    if (!uploadRes.ok) {
+      throw new InternalServerErrorException('Failed to upload image to B2');
+    }
+
+    if (!endpoint) {
+      return `${authData.downloadUrl}/file/${bucketName}/${fileName}`;
+    }
+
+    const cleanEndpoint = endpoint.replace(/\/+$/, '');
+    const s3HostLike = /(^https?:\/\/)?s3\./i.test(cleanEndpoint);
+    const hasBucketInPath = new RegExp(`/${bucketName}(/|$)`, 'i').test(
+      cleanEndpoint,
+    );
+
+    if (s3HostLike && !hasBucketInPath) {
+      return `${cleanEndpoint}/${bucketName}/${fileName}`;
+    }
+
+    return `${cleanEndpoint}/${fileName}`;
+  }
+
+  private async resolveStoredChannelPhotoUrl(params: {
+    token: string;
+    photoBigFileId: string | null;
+    currentPhotoBigFileId: string | null;
+    currentPhotoUrl: string | null;
+  }) {
+    const { token, photoBigFileId, currentPhotoBigFileId, currentPhotoUrl } = params;
+    if (!photoBigFileId) return null;
+
+    const currentIsTelegramDirect = !!currentPhotoUrl?.includes(
+      'api.telegram.org/file/',
+    );
+    const shouldRefresh =
+      photoBigFileId !== currentPhotoBigFileId ||
+      !currentPhotoUrl ||
+      currentIsTelegramDirect;
+
+    if (!shouldRefresh) return currentPhotoUrl;
+
+    const file = await this.telegramApi.getFile(token, photoBigFileId);
+    if (!file.file_path) return currentPhotoUrl || null;
+
+    const telegramFileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const fileRes = await fetch(telegramFileUrl);
+    if (!fileRes.ok) return currentPhotoUrl || null;
+    const contentType = fileRes.headers.get('content-type') || 'image/jpeg';
+    const arr = await fileRes.arrayBuffer();
+    const fileBuffer = Buffer.from(arr);
+    if (!fileBuffer.length) return currentPhotoUrl || null;
+    const extension = String(file.file_path).split('.').pop() || 'jpg';
+
+    return this.uploadChannelPhotoToB2({
+      fileBuffer,
+      fileSize: fileBuffer.length,
+      contentType,
+      extension,
+    });
+  }
 
   async findAll(userId: string) {
     const workspaceId =
@@ -224,14 +382,14 @@ export class TelegramChannelsService {
       const botAdmin = admins.find(
         (a) => String(a.user.id) === String(bot.botId),
       );
-      let photoUrl: string | null = null;
       const photoBigFileId = chat.photo?.big_file_id || null;
       const photoSmallFileId = chat.photo?.small_file_id || null;
-      if (photoBigFileId) {
-        const file = await this.telegramApi.getFile(token, photoBigFileId);
-        if (file.file_path)
-          photoUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-      }
+      const photoUrl = await this.resolveStoredChannelPhotoUrl({
+        token,
+        photoBigFileId,
+        currentPhotoBigFileId: channel.photoBigFileId,
+        currentPhotoUrl: channel.photoUrl,
+      });
 
       const isAdmin =
         member.status === 'administrator' || member.status === 'creator';
@@ -293,7 +451,60 @@ export class TelegramChannelsService {
   }
 
   async syncNow(userId: string, channelId: string) {
-    return this.checkBotAccess(userId, channelId, {});
+    const botStatus = await this.checkBotAccess(userId, channelId, {});
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+
+    const linkedAdmin = await this.prisma.telegramChannelAdminLink.findFirst({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { createdAt: 'asc' },
+      select: { telegramUserAccountIntegrationId: true },
+    });
+
+    if (!linkedAdmin?.telegramUserAccountIntegrationId) {
+      return {
+        ...botStatus,
+        inviteLinksSync: {
+          success: false,
+          reason: 'No linked Telegram user account for invite-links sync',
+        },
+      };
+    }
+
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: {
+        id: linkedAdmin.telegramUserAccountIntegrationId,
+        workspaceId,
+        isActive: true,
+      },
+      select: { id: true, status: true },
+    });
+
+    if (!account || account.status !== TelegramUserAccountStatus.connected) {
+      return {
+        ...botStatus,
+        inviteLinksSync: {
+          success: false,
+          reason: 'Linked Telegram user account is not connected',
+        },
+      };
+    }
+
+    const historical = await this.syncHistorical(userId, channelId, {
+      telegramUserAccountId: account.id,
+      syncInviteLinks: true,
+      syncPosts: false,
+      inviteLinks: [],
+    });
+
+    return {
+      ...botStatus,
+      inviteLinksSync: {
+        success: true,
+        imported: historical.imported,
+        updated: historical.updated,
+      },
+    };
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
@@ -665,29 +876,33 @@ export class TelegramChannelsService {
     const toDate = to ? new Date(to) : new Date();
 
     const [
-      joinedTotal,
-      leftTotal,
+      joinedByUser,
+      leftByUser,
       inviteLinks,
       campaigns,
       dailyStats,
       recentEvents,
       recentPosts,
     ] = await Promise.all([
-      this.prisma.subscriberEvent.count({
+      this.prisma.subscriberEvent.groupBy({
+        by: ['telegramUserId'],
         where: {
           workspaceId,
           telegramChannelId: channelId,
           eventType: 'joined',
           eventDate: { gte: fromDate, lte: toDate },
         },
+        _count: { _all: true },
       }),
-      this.prisma.subscriberEvent.count({
+      this.prisma.subscriberEvent.groupBy({
+        by: ['telegramUserId'],
         where: {
           workspaceId,
           telegramChannelId: channelId,
           eventType: 'left',
           eventDate: { gte: fromDate, lte: toDate },
         },
+        _count: { _all: true },
       }),
       this.prisma.telegramInviteLink.findMany({
         where: { workspaceId, telegramChannelId: channelId },
@@ -723,6 +938,14 @@ export class TelegramChannelsService {
         take: 50,
       }),
     ]);
+    const joinedTotal = joinedByUser.reduce(
+      (sum, row) => sum + (row.telegramUserId ? 1 : row._count._all),
+      0,
+    );
+    const leftTotal = leftByUser.reduce(
+      (sum, row) => sum + (row.telegramUserId ? 1 : row._count._all),
+      0,
+    );
     const inviteLinksJoinedTotal = inviteLinks.reduce(
       (sum, row) => sum + Number(row.joinedCount || 0),
       0,
@@ -794,6 +1017,8 @@ export class TelegramChannelsService {
         eventDate: x.eventDate,
         telegramUserId: x.telegramUserId,
         inviteLinkName: x.inviteLink?.name || null,
+        inviteLinkUrl:
+          (x.rawEvent as any)?.invite_link?.invite_link || x.inviteLink?.url || null,
         campaignTitle: x.adCampaign?.title || null,
       })),
       recentPosts: recentPosts.map((x: any) => ({

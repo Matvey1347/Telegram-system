@@ -1,0 +1,2 @@
+ALTER TABLE "AdvertisingSource"
+  ADD COLUMN IF NOT EXISTS "channelTags" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

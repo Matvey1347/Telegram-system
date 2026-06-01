@@ -1,0 +1,2 @@
+ALTER TABLE "AdvertisingSource"
+  ADD COLUMN IF NOT EXISTS "subscribersCount" INTEGER NOT NULL DEFAULT 0;
