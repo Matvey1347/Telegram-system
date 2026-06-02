@@ -1211,6 +1211,52 @@ export class TelegramChannelsService {
           )
         : null;
 
+    const campaignsWithMetrics = await Promise.all(
+      campaigns.map(async (campaign: any) => {
+        const where: any = {
+          workspaceId,
+          inviteLinkId: campaign.telegramInviteLinkId || undefined,
+        };
+        if (campaign.startedAt && campaign.endedAt) {
+          where.eventDate = { gte: campaign.startedAt, lte: campaign.endedAt };
+        } else if (campaign.placementDate) {
+          where.eventDate = { gte: campaign.placementDate };
+        }
+
+        const [joinedEventsCount, leftCount, inviteLink] = await Promise.all([
+          this.prisma.subscriberEvent.count({
+            where: { ...where, eventType: 'joined' },
+          }),
+          this.prisma.subscriberEvent.count({
+            where: { ...where, eventType: 'left' },
+          }),
+          campaign.telegramInviteLinkId
+            ? this.prisma.telegramInviteLink.findFirst({
+                where: {
+                  id: campaign.telegramInviteLinkId,
+                  workspaceId,
+                },
+                select: { joinedCount: true },
+              })
+            : null,
+        ]);
+
+        const joinedCount = Number(inviteLink?.joinedCount ?? joinedEventsCount ?? 0);
+        const netGrowth = joinedCount - leftCount;
+        const costAmount = Number(campaign.price || 0);
+        const cpa = joinedCount > 0 ? costAmount / joinedCount : null;
+
+        return {
+          ...campaign,
+          joinedCount,
+          leftCount,
+          netGrowthCount: netGrowth,
+          cpa,
+          costAmount,
+        };
+      }),
+    );
+
     return {
       channel: {
         id: channel.id,
@@ -1263,7 +1309,7 @@ export class TelegramChannelsService {
         ...x,
         campaignTitle: x.adCampaign?.title || null,
       })),
-      campaigns,
+      campaigns: campaignsWithMetrics,
       recentEvents: recentEvents.map((x) => ({
         id: x.id,
         eventType: x.eventType,
