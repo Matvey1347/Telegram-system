@@ -4,10 +4,40 @@ import { StringSession } from 'telegram/sessions';
 
 type ApiCredentials = { apiId: string; apiHash: string };
 type SessionParams = ApiCredentials & { session?: string };
+type BroadcastStatsGraphField =
+  | 'followers_graph'
+  | 'growth_graph'
+  | 'views_graph'
+  | 'shares_graph'
+  | 'languages_graph'
+  | 'mute_graph'
+  | 'views_by_source_graph'
+  | 'new_followers_by_source_graph'
+  | 'reactions_by_emotion_graph';
 
 @Injectable()
 export class TelegramMtprotoClient {
   private readonly defaultTelegramPaletteSize = 7;
+  private readonly broadcastStatsGraphFields: Array<{
+    normalized: BroadcastStatsGraphField;
+    raw: string[];
+  }> = [
+    { normalized: 'followers_graph', raw: ['followersGraph'] },
+    { normalized: 'growth_graph', raw: ['growthGraph'] },
+    { normalized: 'views_graph', raw: ['viewsGraph', 'interactionsGraph'] },
+    { normalized: 'shares_graph', raw: ['sharesGraph', 'interactionsGraph'] },
+    { normalized: 'languages_graph', raw: ['languagesGraph'] },
+    { normalized: 'mute_graph', raw: ['muteGraph'] },
+    { normalized: 'views_by_source_graph', raw: ['viewsBySourceGraph'] },
+    {
+      normalized: 'new_followers_by_source_graph',
+      raw: ['newFollowersBySourceGraph'],
+    },
+    {
+      normalized: 'reactions_by_emotion_graph',
+      raw: ['reactionsByEmotionGraph'],
+    },
+  ];
 
   private toFiniteNumber(value: unknown): number | null {
     if (value == null) return null;
@@ -66,6 +96,141 @@ export class TelegramMtprotoClient {
     );
     await client.connect();
     return client;
+  }
+
+  private toJsonSafe(value: unknown): unknown {
+    if (value == null || typeof value === 'string' || typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'bigint') return value.toString();
+    if (value instanceof Date) return value.toISOString();
+    if (Buffer.isBuffer(value)) return value.toString('base64');
+    if (Array.isArray(value)) return value.map((item) => this.toJsonSafe(item));
+    if (typeof value === 'object') {
+      const result: Record<string, unknown> = {};
+      for (const [key, item] of Object.entries(value)) {
+        if (typeof item !== 'function') result[key] = this.toJsonSafe(item);
+      }
+      return result;
+    }
+    return null;
+  }
+
+  private parseGraphJson(value: unknown) {
+    if (typeof value !== 'string') return value ?? null;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  }
+
+  private async normalizeStatsGraph(
+    client: TelegramClient,
+    field: BroadcastStatsGraphField,
+    graph: unknown,
+    warnings: string[],
+  ) {
+    let resolvedGraph = graph;
+    if (resolvedGraph instanceof Api.StatsGraphAsync) {
+      const token = resolvedGraph.token;
+      try {
+        resolvedGraph = await client.invoke(
+          new Api.stats.LoadAsyncGraph({ token }),
+        );
+      } catch (error) {
+        warnings.push(
+          `${field}: async graph could not be loaded (${this.getTelegramErrorCode(error)})`,
+        );
+        return { status: 'pending', token };
+      }
+    }
+
+    if (resolvedGraph instanceof Api.StatsGraphAsync) {
+      warnings.push(`${field}: async graph is still pending`);
+      return { status: 'pending', token: resolvedGraph.token };
+    }
+    if (resolvedGraph instanceof Api.StatsGraphError) {
+      warnings.push(`${field}: ${resolvedGraph.error}`);
+      return { status: 'error', error: resolvedGraph.error };
+    }
+    if (resolvedGraph instanceof Api.StatsGraph) {
+      return {
+        status: 'available',
+        data: this.parseGraphJson(resolvedGraph.json?.data),
+        zoomToken: resolvedGraph.zoomToken || null,
+      };
+    }
+    if (resolvedGraph == null) {
+      warnings.push(`${field}: graph was not returned`);
+      return { status: 'unavailable' };
+    }
+
+    warnings.push(`${field}: unknown graph response`);
+    return { status: 'unavailable', raw: this.toJsonSafe(resolvedGraph) };
+  }
+
+  private getErrorProperty(error: unknown, property: string) {
+    if (!error || typeof error !== 'object') return null;
+    return (error as Record<string, unknown>)[property];
+  }
+
+  private getTelegramErrorCode(error: unknown) {
+    return String(
+      this.getErrorProperty(error, 'errorMessage') ||
+        this.getErrorProperty(error, 'message') ||
+        'UNKNOWN_ERROR',
+    );
+  }
+
+  private normalizeBroadcastStatsError(error: unknown) {
+    const errorCode = this.getTelegramErrorCode(error);
+    const floodWaitSeconds = this.toFiniteNumber(
+      this.getErrorProperty(error, 'seconds'),
+    );
+    if (floodWaitSeconds != null || errorCode.includes('FLOOD_WAIT')) {
+      return {
+        status: 'flood_wait',
+        errorCode,
+        floodWaitSeconds,
+        warnings: [
+          floodWaitSeconds != null
+            ? `Telegram rate limit: retry after ${floodWaitSeconds} seconds`
+            : `Telegram rate limit: ${errorCode}`,
+        ],
+      };
+    }
+    if (
+      errorCode.includes('CHAT_ADMIN_REQUIRED') ||
+      errorCode.includes('CHANNEL_PRIVATE') ||
+      errorCode.includes('RIGHT_FORBIDDEN')
+    ) {
+      return {
+        status: 'no_admin_rights',
+        errorCode,
+        floodWaitSeconds: null,
+        warnings: [`Broadcast stats require channel admin rights: ${errorCode}`],
+      };
+    }
+    if (
+      errorCode.includes('STATS') ||
+      errorCode.includes('CHANNEL_INVALID') ||
+      errorCode.includes('BROADCAST_REQUIRED')
+    ) {
+      return {
+        status: 'unavailable',
+        errorCode,
+        floodWaitSeconds: null,
+        warnings: [`Broadcast stats are unavailable for this channel: ${errorCode}`],
+      };
+    }
+    return {
+      status: 'unavailable',
+      errorCode,
+      floodWaitSeconds: null,
+      warnings: [`Broadcast stats sync failed: ${errorCode}`],
+    };
   }
 
   private saveSession(client: TelegramClient): string {
@@ -329,6 +494,67 @@ export class TelegramMtprotoClient {
       };
     } finally {
       await client.disconnect();
+    }
+  }
+
+  async getBroadcastStats(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+  }) {
+    let client: TelegramClient | null = null;
+    try {
+      client = await this.createClient(params);
+      const entity = await client.getEntity(params.channelRef);
+      const rawStats = await client.invoke(
+        new Api.stats.GetBroadcastStats({ channel: entity }),
+      );
+      const rawStatsRecord = rawStats as unknown as Record<string, unknown>;
+      const warnings: string[] = [];
+      const graphs: Partial<Record<BroadcastStatsGraphField, unknown>> = {};
+      const availableFields: string[] = [];
+
+      for (const field of this.broadcastStatsGraphFields) {
+        const normalizedGraph = await this.normalizeStatsGraph(
+          client,
+          field.normalized,
+          field.raw
+            .map((rawField) => rawStatsRecord[rawField])
+            .find((graph) => graph != null),
+          warnings,
+        );
+        graphs[field.normalized] = normalizedGraph;
+        if (normalizedGraph.status === 'available') {
+          availableFields.push(field.normalized);
+        }
+      }
+
+      return {
+        raw: this.toJsonSafe(rawStats),
+        normalized: {
+          status: 'available',
+          period: this.toJsonSafe(rawStats.period),
+          followers: this.toJsonSafe(rawStats.followers),
+          views_per_post: this.toJsonSafe(rawStats.viewsPerPost),
+          shares_per_post: this.toJsonSafe(rawStats.sharesPerPost),
+          reactions_per_post: this.toJsonSafe(rawStats.reactionsPerPost),
+          enabled_notifications: this.toJsonSafe(rawStats.enabledNotifications),
+          graphs,
+        },
+        availableFields,
+        warnings,
+      };
+    } catch (error) {
+      const normalizedError = this.normalizeBroadcastStatsError(error);
+      return {
+        raw: { error: this.toJsonSafe(normalizedError) },
+        normalized: normalizedError,
+        availableFields: [],
+        warnings: normalizedError.warnings,
+      };
+    } finally {
+      if (client) await client.disconnect();
     }
   }
 

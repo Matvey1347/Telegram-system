@@ -471,6 +471,10 @@ export class TelegramChannelsService {
           success: false,
           reason: 'No linked Telegram user account for invite-links sync',
         },
+        channelStatsSync: {
+          success: false,
+          reason: 'No linked Telegram user account for broadcast stats sync',
+        },
       };
     }
 
@@ -490,6 +494,10 @@ export class TelegramChannelsService {
           success: false,
           reason: 'Linked Telegram user account is not connected',
         },
+        channelStatsSync: {
+          success: false,
+          reason: 'Linked Telegram user account is not connected',
+        },
       };
     }
 
@@ -505,6 +513,12 @@ export class TelegramChannelsService {
     }).catch((error: any) => ({
       error: error?.message || 'Post metrics sync failed',
     }));
+    const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
+      telegramUserAccountId: account.id,
+    }).catch((error: any) => ({
+      success: false,
+      error: error?.message || 'Broadcast stats sync failed',
+    }));
 
     return {
       ...botStatus,
@@ -514,7 +528,217 @@ export class TelegramChannelsService {
         updated: historical.updated,
       },
       postsMetricsSync,
+      channelStatsSync,
     };
+  }
+
+  async syncBroadcastStats(
+    userId: string,
+    channelId: string,
+    dto: { telegramUserAccountId?: string },
+  ) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    await this.findOne(userId, channelId);
+    const linkedAdmin = !dto.telegramUserAccountId
+      ? await this.prisma.telegramChannelAdminLink.findFirst({
+          where: { workspaceId, telegramChannelId: channelId },
+          orderBy: { createdAt: 'asc' },
+          select: { telegramUserAccountIntegrationId: true },
+        })
+      : null;
+    const accountId =
+      dto.telegramUserAccountId ||
+      linkedAdmin?.telegramUserAccountIntegrationId;
+    if (!accountId) {
+      throw new BadRequestException(
+        'No connected Telegram user account selected for broadcast stats sync',
+      );
+    }
+    return this.syncBroadcastStatsForWorkspace(workspaceId, channelId, accountId);
+  }
+
+  async syncBroadcastStatsForWorkspace(
+    workspaceId: string,
+    channelId: string,
+    accountId: string,
+  ) {
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId, isActive: true },
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id: accountId, workspaceId, isActive: true },
+    });
+    if (!account || account.status !== TelegramUserAccountStatus.connected) {
+      throw new BadRequestException('Telegram user account is not connected');
+    }
+
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
+    const session = this.encryptionService.decrypt({
+      encrypted: account.sessionEncrypted || '',
+      iv: account.sessionIv || '',
+      authTag: account.sessionAuthTag || '',
+    });
+    const channelRef = channel.username
+      ? String(channel.username).startsWith('@')
+        ? String(channel.username)
+        : `@${String(channel.username)}`
+      : channel.telegramChatId
+        ? String(channel.telegramChatId)
+        : null;
+    if (!channelRef) {
+      throw new BadRequestException('Channel must have username or chatId');
+    }
+
+    const stats = await this.mtprotoClient.getBroadcastStats({
+      apiId: account.apiId,
+      apiHash,
+      session,
+      channelRef,
+    });
+    const syncedAt = new Date();
+    const snapshotDate = this.toUtcDay(syncedAt);
+    const points = this.extractBroadcastStatsPoints({
+      workspaceId,
+      telegramChannelId: channel.id,
+      syncedAt,
+      normalizedStats: stats.normalized,
+    });
+    const snapshot = await this.prisma.telegramChannelStatsSnapshot.upsert({
+      where: {
+        telegramChannelId_snapshotDate: {
+          telegramChannelId: channel.id,
+          snapshotDate,
+        },
+      },
+      create: {
+        workspaceId,
+        telegramChannelId: channel.id,
+        syncedAt,
+        snapshotDate,
+        rawStats: stats.raw as any,
+        normalizedStats: stats.normalized as any,
+        availableFields: stats.availableFields,
+        warnings: stats.warnings,
+      },
+      update: {
+        syncedAt,
+        rawStats: stats.raw as any,
+        normalizedStats: stats.normalized as any,
+        availableFields: stats.availableFields,
+        warnings: stats.warnings,
+      },
+    });
+    await this.prisma.$transaction(
+      points.map((point) =>
+        this.prisma.telegramChannelStatsPoint.upsert({
+          where: {
+            telegramChannelId_metric_series_date: {
+              telegramChannelId: point.telegramChannelId,
+              metric: point.metric,
+              series: point.series,
+              date: point.date,
+            },
+          },
+          create: point,
+          update: {
+            seriesLabel: point.seriesLabel,
+            color: point.color,
+            graphType: point.graphType,
+            value: point.value,
+            latestSyncedAt: point.latestSyncedAt,
+          },
+        }),
+      ),
+    );
+
+    return {
+      success: stats.normalized.status === 'available',
+      snapshot,
+      pointsUpserted: points.length,
+    };
+  }
+
+  private extractBroadcastStatsPoints(params: {
+    workspaceId: string;
+    telegramChannelId: string;
+    syncedAt: Date;
+    normalizedStats: any;
+  }) {
+    const points: Array<{
+      workspaceId: string;
+      telegramChannelId: string;
+      metric: string;
+      series: string;
+      seriesLabel: string;
+      color: string | null;
+      graphType: string;
+      date: Date;
+      value: number;
+      latestSyncedAt: Date;
+    }> = [];
+    for (const [metric, graph] of Object.entries(
+      params.normalizedStats?.graphs || {},
+    )) {
+      if ((graph as any)?.status !== 'available') continue;
+      let payload = (graph as any).data;
+      if (typeof payload === 'string') {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+      }
+      if (!Array.isArray(payload?.columns)) continue;
+      const columns = payload.columns.filter(
+        (column: unknown) => Array.isArray(column) && column.length > 1,
+      ) as Array<Array<string | number>>;
+      const xColumn = columns.find((column) => column[0] === 'x');
+      if (!xColumn) continue;
+      for (const valueColumn of columns.filter((column) => column[0] !== 'x')) {
+        const series = String(valueColumn[0]);
+        for (let index = 1; index < xColumn.length; index += 1) {
+          const date = this.toTelegramStatsDay(xColumn[index]);
+          const value = Number(valueColumn[index]);
+          if (!date || !Number.isFinite(value)) continue;
+          points.push({
+            workspaceId: params.workspaceId,
+            telegramChannelId: params.telegramChannelId,
+            metric,
+            series,
+            seriesLabel: String(payload.names?.[series] || series),
+            color: payload.colors?.[series]
+              ? String(payload.colors[series])
+              : null,
+            graphType: String(payload.types?.[series] || 'line'),
+            date,
+            value,
+            latestSyncedAt: params.syncedAt,
+          });
+        }
+      }
+    }
+    return points;
+  }
+
+  private toTelegramStatsDay(value: unknown) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return null;
+    const milliseconds =
+      numericValue < 100_000_000_000 ? numericValue * 1000 : numericValue;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : this.toUtcDay(date);
+  }
+
+  private toUtcDay(value: Date) {
+    return new Date(
+      Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
+    );
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
@@ -733,6 +957,18 @@ export class TelegramChannelsService {
       }),
     ]);
     return { items, total, page: safePage, limit: safeLimit };
+  }
+
+  async channelStatsSnapshots(userId: string, channelId: string, limit = 20) {
+    const workspaceId =
+      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    await this.findOne(userId, channelId);
+    const safeLimit = Math.max(1, Math.min(100, limit));
+    return this.prisma.telegramChannelStatsSnapshot.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { syncedAt: 'desc' },
+      take: safeLimit,
+    });
   }
 
   async updateLogs(userId: string, channelId: string, limit = 50, offset = 0) {
@@ -1070,6 +1306,8 @@ export class TelegramChannelsService {
       dailyStats,
       recentEvents,
       recentPosts,
+      latestChannelStatsSnapshot,
+      channelStatsPoints,
     ] = await Promise.all([
       this.prisma.subscriberEvent.groupBy({
         by: ['telegramUserId'],
@@ -1116,6 +1354,18 @@ export class TelegramChannelsService {
         where: { workspaceId, telegramChannelId: channelId },
         orderBy: { postDate: 'desc' },
         take: 100,
+      }),
+      this.prisma.telegramChannelStatsSnapshot.findFirst({
+        where: { workspaceId, telegramChannelId: channelId },
+        orderBy: { syncedAt: 'desc' },
+      }),
+      this.prisma.telegramChannelStatsPoint.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: channelId,
+          date: { gte: fromDate, lte: toDate },
+        },
+        orderBy: [{ date: 'asc' }, { metric: 'asc' }, { series: 'asc' }],
       }),
     ]);
     const joinedTotal = joinedByUser.reduce(
@@ -1321,6 +1571,8 @@ export class TelegramChannelsService {
         campaignTitle: x.adCampaign?.title || null,
       })),
       recentPosts: recentPosts,
+      channelStatsSnapshot: latestChannelStatsSnapshot,
+      channelStatsPoints,
     };
   }
 

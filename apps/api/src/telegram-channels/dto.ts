@@ -75,6 +75,10 @@ export class SyncPostsMetricsDto {
   @IsOptional() @Type(() => Number) @IsInt() postLimit?: number;
 }
 
+export class SyncChannelStatsDto {
+  @IsOptional() @IsString() telegramUserAccountId?: string;
+}
+
 export class AttachCampaignDto {
   @IsString() adCampaignId!: string;
 }

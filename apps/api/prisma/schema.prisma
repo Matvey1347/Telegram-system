@@ -81,6 +81,8 @@ model Workspace {
   telegramBotIntegrations TelegramBotIntegration[]
   telegramUserAccountIntegrations TelegramUserAccountIntegration[]
   telegramChannelAdminLinks TelegramChannelAdminLink[]
+  telegramChannelStatsSnapshots TelegramChannelStatsSnapshot[]
+  telegramChannelStatsPoints TelegramChannelStatsPoint[]
   telegramBotUpdateLogs TelegramBotUpdateLog[]
   telegramPosts      TelegramPost[]
   promos             Promo[]
@@ -314,6 +316,8 @@ model TelegramChannel {
   dailyStats  TelegramChannelDailyStats[]
   adminLinks TelegramChannelAdminLink[]
   posts       TelegramPost[]
+  statsSnapshots TelegramChannelStatsSnapshot[]
+  statsPoints TelegramChannelStatsPoint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -336,6 +340,49 @@ model TelegramChannelDailyStats {
   createdAt DateTime @default(now())
 
   @@unique([telegramChannelId, date])
+}
+
+model TelegramChannelStatsSnapshot {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  syncedAt          DateTime @default(now())
+  snapshotDate      DateTime @db.Date
+  rawStats          Json
+  normalizedStats   Json
+  availableFields   String[] @default([])
+  warnings          String[] @default([])
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, telegramChannelId, syncedAt])
+  @@unique([telegramChannelId, snapshotDate])
+}
+
+model TelegramChannelStatsPoint {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  metric            String
+  series            String
+  seriesLabel       String
+  color             String?
+  graphType         String
+  date              DateTime @db.Date
+  value             Float
+  latestSyncedAt    DateTime @default(now())
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([telegramChannelId, metric, series, date])
+  @@index([workspaceId, telegramChannelId, date])
 }
 
 model Promo {
