@@ -26,7 +26,10 @@ export class DashboardService {
           where: { workspaceId, isActive: true },
         }),
         this.prisma.transaction.findMany({ where: { workspaceId } }),
-        this.prisma.adCampaign.findMany({ where: { workspaceId } }),
+        this.prisma.adCampaign.findMany({
+          where: { workspaceId },
+          include: { inviteLinks: { select: { joinedCount: true } } },
+        }),
         this.prisma.telegramChannel.count({ where: { workspaceId } }),
       ]);
 
@@ -40,8 +43,28 @@ export class DashboardService {
       (a, c) => a + dec(c.priceInPrimaryCurrency),
       0,
     );
-    const totalJoined = campaigns.reduce((a, c) => a + (c.joinedCount ?? 0), 0);
-    const cpas = campaigns.map((c) => dec(c.cpa)).filter((x) => x > 0);
+    const campaignsWithMtprotoMetrics = campaigns.map((campaign) => {
+      const joinedCount = campaign.inviteLinks.reduce(
+        (sum, link) => sum + link.joinedCount,
+        0,
+      );
+      return {
+        ...campaign,
+        joinedCount,
+        leftCount: null,
+        netGrowthCount: null,
+        cpa:
+          joinedCount > 0
+            ? dec(campaign.priceInPrimaryCurrency) / joinedCount
+            : null,
+        attributionSource: 'mtproto_invite_link_usage',
+      };
+    });
+    const totalJoined = campaignsWithMtprotoMetrics.reduce(
+      (sum, campaign) => sum + campaign.joinedCount,
+      0,
+    );
+    const cpas = campaignsWithMtprotoMetrics.map((c) => dec(c.cpa)).filter((x) => x > 0);
 
     const accountRows = await Promise.all(
       accounts.map(async (account) => {
@@ -105,10 +128,10 @@ export class DashboardService {
         : null,
       campaignsCount: campaigns.length,
       telegramChannelsCount: channels,
-      bestCampaigns: [...campaigns]
+      bestCampaigns: [...campaignsWithMtprotoMetrics]
         .sort((a, b) => dec(a.cpa) - dec(b.cpa))
         .slice(0, 5),
-      worstCampaigns: [...campaigns]
+      worstCampaigns: [...campaignsWithMtprotoMetrics]
         .sort((a, b) => dec(b.cpa) - dec(a.cpa))
         .slice(0, 5),
     };

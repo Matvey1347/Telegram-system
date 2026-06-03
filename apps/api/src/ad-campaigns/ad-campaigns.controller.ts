@@ -14,7 +14,6 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { AdCampaignsService } from './ad-campaigns.service';
 import {
   CreateAdCampaignDto,
-  GenerateInviteLinkDto,
   UpdateAdCampaignDto,
 } from './dto';
 
@@ -57,12 +56,4 @@ export class AdCampaignsController {
     return this.service.analytics(user.sub, id);
   }
 
-  @Post(':id/generate-invite-link')
-  generateInviteLink(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-    @Body() dto: GenerateInviteLinkDto,
-  ) {
-    return this.service.generateInviteLink(user.sub, id, dto);
-  }
 }

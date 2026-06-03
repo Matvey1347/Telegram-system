@@ -94,16 +94,23 @@ export class AdvertisingSourcesService {
 
     const placements = await (this.prisma as any).adCampaignAdvertisingChannel.findMany({
       where: { advertisingSourceId: id },
-      include: { adCampaign: { include: { advertisingChannels: true } } },
+      include: { adCampaign: { include: { advertisingChannels: true, inviteLinks: true } } },
     });
 
     const clean = placements.filter((p) => p.adCampaign.advertisingChannels.length === 1);
     const mixed = placements.filter((p) => p.adCampaign.advertisingChannels.length > 1);
 
     const totalCost = clean.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0);
-    const totalJoined = clean.reduce((s, p) => s + (p.adCampaign.joinedCount || 0), 0);
-    const totalLeft = clean.reduce((s, p) => s + (p.adCampaign.leftCount || 0), 0);
-    const totalNetGrowth = clean.reduce((s, p) => s + (p.adCampaign.netGrowthCount || 0), 0);
+    const totalJoined = clean.reduce(
+      (sum, placement) =>
+        sum +
+        placement.adCampaign.inviteLinks.reduce(
+          (linkSum: number, link: { joinedCount: number }) =>
+            linkSum + link.joinedCount,
+          0,
+        ),
+      0,
+    );
 
     return {
       id: channel.id,
@@ -112,10 +119,11 @@ export class AdvertisingSourcesService {
       mixedCampaignsCount: mixed.length,
       totalCost,
       totalJoined,
-      totalLeft,
-      totalNetGrowth,
+      totalLeft: null,
+      totalNetGrowth: null,
       averageCostPerJoinedSubscriber: totalJoined > 0 ? totalCost / totalJoined : null,
-      averageCostPerNetSubscriber: totalNetGrowth > 0 ? totalCost / totalNetGrowth : null,
+      averageCostPerNetSubscriber: null,
+      attributionSource: 'mtproto_invite_link_usage',
       mixedCampaignsTotalCost: mixed.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0),
     };
   }

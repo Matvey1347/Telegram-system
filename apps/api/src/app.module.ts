@@ -13,7 +13,6 @@ import { CurrenciesModule } from './currencies/currencies.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromosModule } from './promos/promos.module';
 import { TelegramChannelsModule } from './telegram-channels/telegram-channels.module';
-import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { FinanceCategoriesModule } from './finance-categories/finance-categories.module';
@@ -38,7 +37,6 @@ import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-us
     TransactionsModule,
     TransfersModule,
     TelegramChannelsModule,
-    TelegramBotsModule,
     PromosModule,
     AdvertisingSourcesModule,
     AdCampaignsModule,

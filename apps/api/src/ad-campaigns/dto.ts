@@ -29,8 +29,3 @@ export class UpdateAdCampaignDto {
   @IsOptional() @IsString() date?: string;
   @IsOptional() @IsString() notes?: string;
 }
-
-export class GenerateInviteLinkDto {
-  @IsOptional() @IsString() telegramBotIntegrationId?: string;
-  @IsOptional() @IsString() name?: string;
-}

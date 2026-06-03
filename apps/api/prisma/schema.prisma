@@ -83,7 +83,6 @@ model Workspace {
   telegramChannelAdminLinks TelegramChannelAdminLink[]
   telegramChannelStatsSnapshots TelegramChannelStatsSnapshot[]
   telegramChannelStatsPoints TelegramChannelStatsPoint[]
-  telegramBotUpdateLogs TelegramBotUpdateLog[]
   telegramPosts      TelegramPost[]
   promos             Promo[]
   advertisingSources AdvertisingSource[]
@@ -289,7 +288,6 @@ model TelegramChannel {
   title                   String
   username                String?
   telegramChatId           String?
-  telegramBotIntegrationId String?
   inviteLink              String?
   description             String?
   language                String?
@@ -297,18 +295,11 @@ model TelegramChannel {
   currentSubscribersCount Int?
   isActive                Boolean  @default(true)
 
-  botStatus               String?
-  botIsAdmin              Boolean?
-  botCanInviteUsers       Boolean?
-  botCanManageChat        Boolean?
-  botCanPostMessages      Boolean?
-  botCheckedAt            DateTime?
   photoSmallFileId        String?
   photoBigFileId          String?
   photoUrl                String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  telegramBotIntegration TelegramBotIntegration? @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: SetNull)
 
   promos      Promo[]
   adCampaigns AdCampaign[]
@@ -465,7 +456,6 @@ model AdCampaign {
   advertisingChannels AdCampaignAdvertisingChannel[]
 
   inviteLinks      TelegramInviteLink[]
-  subscriberEvents SubscriberEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -492,7 +482,6 @@ model TelegramInviteLink {
   name                 String
   url                  String
   telegramInviteLinkId  String?
-  telegramBotIntegrationId String?
   createdBy            String?
   createsJoinRequest   Boolean?
   expireDate           DateTime?
@@ -503,9 +492,6 @@ model TelegramInviteLink {
 
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   adCampaign      AdCampaign?     @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
-  telegramBotIntegration TelegramBotIntegration? @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: SetNull)
-
-  subscriberEvents SubscriberEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -522,12 +508,6 @@ model TelegramBotIntegration {
   botId              String?
   username           String?
   firstName          String?
-  webhookUrl         String?
-  webhookActive      Boolean  @default(false)
-  hasExternalWebhook Boolean  @default(false)
-  webhookSecret      String?
-  updatesMode        String?
-  lastUpdateId       Int?
   lastErrorMessage   String?
   lastCheckedAt      DateTime?
   isActive           Boolean  @default(true)
@@ -535,35 +515,12 @@ model TelegramBotIntegration {
   updatedAt          DateTime @updatedAt
 
   workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  channels             TelegramChannel[]
-  inviteLinks          TelegramInviteLink[]
-  updateLogs           TelegramBotUpdateLog[]
-  posts                TelegramPost[]
-}
-
-model TelegramBotUpdateLog {
-  id                       String   @id @default(cuid())
-  workspaceId              String
-  telegramBotIntegrationId String
-  updateId                 String?
-  updateType               String
-  chatId                   String?
-  rawUpdate                Json
-  processed                Boolean  @default(false)
-  errorMessage             String?
-  createdAt                DateTime @default(now())
-
-  workspace              Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  telegramBotIntegration TelegramBotIntegration @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: Cascade)
-
-  @@unique([telegramBotIntegrationId, updateId])
 }
 
 model TelegramPost {
   id                       String   @id @default(cuid())
   workspaceId              String
   telegramChannelId        String
-  telegramBotIntegrationId String?
   telegramMessageId        String
   text                     String?
   postDate                 DateTime
@@ -578,7 +535,6 @@ model TelegramPost {
 
   workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel       TelegramChannel          @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
-  telegramBotIntegration TelegramBotIntegration? @relation(fields: [telegramBotIntegrationId], references: [id], onDelete: SetNull)
   metricSnapshots       TelegramPostMetricSnapshot[]
 
   @@unique([telegramChannelId, telegramMessageId])
@@ -599,27 +555,6 @@ model TelegramPostMetricSnapshot {
   telegramPost TelegramPost @relation(fields: [telegramPostId], references: [id], onDelete: Cascade)
 
   @@index([telegramPostId, collectedAt])
-}
-
-model SubscriberEvent {
-  id                String   @id @default(cuid())
-  workspaceId        String
-  telegramChannelId  String
-  adCampaignId       String?
-  inviteLinkId       String?
-  telegramUserId     String?
-  eventType          String
-  eventDate          DateTime
-  source             String?
-  updateId           String?
-  rawEvent           Json?
-
-  adCampaign AdCampaign?        @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
-  inviteLink TelegramInviteLink? @relation(fields: [inviteLinkId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@unique([workspaceId, updateId])
 }
 
 model ExchangeRate {

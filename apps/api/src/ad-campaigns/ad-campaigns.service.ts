@@ -6,16 +6,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
-import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import {
   CreateAdCampaignDto,
-  GenerateInviteLinkDto,
   UpdateAdCampaignDto,
 } from './dto';
-import {
-  TelegramApiError,
-  TelegramBotApiClient,
-} from '../telegram/shared/telegram-bot-api.client';
 
 @Injectable()
 export class AdCampaignsService {
@@ -23,8 +17,6 @@ export class AdCampaignsService {
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
     private financeCategoriesService: FinanceCategoriesService,
-    private encryptionService: TokenEncryptionService,
-    private telegramApi: TelegramBotApiClient,
   ) {}
 
   private async workspace(userId: string) {
@@ -357,47 +349,27 @@ export class AdCampaignsService {
   }
 
   private async campaignMetrics(campaign: any) {
-    const where: any = {
-      workspaceId: campaign.workspaceId,
-      inviteLinkId: campaign.telegramInviteLinkId || undefined,
-    };
-    if (campaign.startedAt && campaign.endedAt) {
-      where.eventDate = { gte: campaign.startedAt, lte: campaign.endedAt };
-    } else if (campaign.placementDate) {
-      where.eventDate = { gte: campaign.placementDate };
-    }
-
-    const [joinedEventsCount, leftCount, inviteLink] = await Promise.all([
-      this.prisma.subscriberEvent.count({
-        where: { ...where, eventType: 'joined' },
-      }),
-      this.prisma.subscriberEvent.count({
-        where: { ...where, eventType: 'left' },
-      }),
-      campaign.telegramInviteLinkId
-        ? this.prisma.telegramInviteLink.findFirst({
-            where: {
-              id: campaign.telegramInviteLinkId,
-              workspaceId: campaign.workspaceId,
-            },
-            select: { joinedCount: true },
-          })
-        : null,
-    ]);
-    // Keep campaign metrics aligned with channel page "Subscribers by link".
-    const joinedCount = Number(inviteLink?.joinedCount ?? joinedEventsCount ?? 0);
-    const netGrowth = joinedCount - leftCount;
+    const inviteLink = campaign.telegramInviteLinkId
+      ? await this.prisma.telegramInviteLink.findFirst({
+          where: {
+            id: campaign.telegramInviteLinkId,
+            workspaceId: campaign.workspaceId,
+          },
+          select: { joinedCount: true },
+        })
+      : null;
+    const joinedCount = Number(inviteLink?.joinedCount ?? 0);
     const costAmount = Number(campaign.price || 0);
 
     return {
       joinedCount,
-      leftCount,
-      netGrowth,
+      leftCount: null,
+      netGrowth: null,
       costAmount,
       currency: campaign.currency,
       costPerJoinedSubscriber: joinedCount > 0 ? costAmount / joinedCount : null,
-      costPerNetSubscriber: netGrowth > 0 ? costAmount / netGrowth : null,
-      attributionQuality: campaign.startedAt || campaign.placementDate ? 'time-bounded' : 'weaker',
+      costPerNetSubscriber: null,
+      attributionSource: 'mtproto_invite_link_usage',
     };
   }
 
@@ -413,56 +385,4 @@ export class AdCampaignsService {
     };
   }
 
-  async generateInviteLink(
-    userId: string,
-    campaignId: string,
-    dto: GenerateInviteLinkDto,
-  ) {
-    const workspaceId = await this.workspace(userId);
-    const campaign = await this.prisma.adCampaign.findFirst({
-      where: { id: campaignId, workspaceId },
-      include: { telegramChannel: true },
-    });
-    if (!campaign) throw new NotFoundException('Campaign not found');
-
-    const botIntegrationId = dto.telegramBotIntegrationId || campaign.telegramChannel.telegramBotIntegrationId;
-    if (!botIntegrationId) throw new BadRequestException('No bot selected. Assign a bot to channel or pass telegramBotIntegrationId.');
-
-    const bot = await this.prisma.telegramBotIntegration.findFirst({ where: { id: botIntegrationId, workspaceId, isActive: true } });
-    if (!bot) throw new NotFoundException('Telegram bot not found');
-    const token = this.encryptionService.decrypt({
-      encrypted: bot.botTokenEncrypted,
-      iv: bot.botTokenIv,
-      authTag: bot.botTokenAuthTag,
-    });
-
-    const target = campaign.telegramChannel.telegramChatId || campaign.telegramChannel.username;
-    if (!target) throw new BadRequestException('Channel has no username or chatId.');
-    const chatId = target.startsWith('@') || target.startsWith('-') ? target : `@${target}`;
-
-    try {
-      const link = await this.telegramApi.createChatInviteLink(token, chatId, { name: (dto.name?.trim() || campaign.title).slice(0, 32) });
-      return this.prisma.$transaction(async (tx) => {
-        const invite = await tx.telegramInviteLink.create({
-          data: {
-            workspaceId,
-            telegramChannelId: campaign.telegramChannelId,
-            telegramBotIntegrationId: bot.id,
-            adCampaignId: campaign.id,
-            url: link.invite_link,
-            name: link.name || dto.name || campaign.title,
-            joinedCount: 0,
-          },
-        });
-        await tx.adCampaign.update({
-          where: { id: campaign.id },
-          data: { inviteLink: link.invite_link, telegramInviteLinkId: invite.id },
-        });
-        return { inviteLink: invite, campaignId: campaign.id };
-      });
-    } catch (error) {
-      const message = error instanceof TelegramApiError ? error.message : 'Failed to generate invite link';
-      throw new BadRequestException(message);
-    }
-  }
 }

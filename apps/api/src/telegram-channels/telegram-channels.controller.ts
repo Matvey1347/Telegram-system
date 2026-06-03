@@ -13,14 +13,11 @@ import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
-  CheckBotAccessDto,
-  CreateInviteLinkDto,
   DeepSyncDto,
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
-  UpdateInviteLinkDto,
   UpdateTelegramChannelDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
@@ -50,13 +47,6 @@ export class TelegramChannelsController {
   }
   @Delete(':id') remove(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.remove(user.sub, id);
-  }
-  @Post(':id/check-bot-access') checkBotAccess(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-    @Body() dto: CheckBotAccessDto,
-  ) {
-    return this.service.checkBotAccess(user.sub, id, dto);
   }
   @Post(':id/sync-now') syncNow(
     @CurrentUser() user: JwtUser,
@@ -110,30 +100,6 @@ export class TelegramChannelsController {
   ) {
     return this.service.analytics(user.sub, id, from, to);
   }
-  @Get(':id/events') events(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const safePage = Number(page || 1);
-    const safeLimit = Number(limit || 50);
-    return this.service.events(user.sub, id, safePage, safeLimit);
-  }
-  @Get(':id/update-logs')
-  updateLogs(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
-  ) {
-    return this.service.updateLogs(
-      user.sub,
-      id,
-      Number(limit || 50),
-      Number(offset || 0),
-    );
-  }
   @Get(':id/invite-links') inviteLinks(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
@@ -157,32 +123,5 @@ export class TelegramChannelsController {
       Number(limit || 50),
       Number(offset || 0),
     );
-  }
-  @Post(':id/sync-subscribers-count')
-  syncSubscribersCount(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-  ) {
-    return this.service.syncSubscribersCount(user.sub, id);
-  }
-  @Post(':id/invite-links') createInviteLink(
-    @CurrentUser() user: JwtUser,
-    @Param('id') id: string,
-    @Body() dto: CreateInviteLinkDto,
-  ) {
-    return this.service.createInviteLink(user.sub, id, dto);
-  }
-  @Patch('invite-links/:inviteLinkId') updateInviteLink(
-    @CurrentUser() user: JwtUser,
-    @Param('inviteLinkId') inviteLinkId: string,
-    @Body() dto: UpdateInviteLinkDto,
-  ) {
-    return this.service.updateInviteLink(user.sub, inviteLinkId, dto);
-  }
-  @Post('invite-links/:inviteLinkId/revoke') revokeInviteLink(
-    @CurrentUser() user: JwtUser,
-    @Param('inviteLinkId') inviteLinkId: string,
-  ) {
-    return this.service.revokeInviteLink(user.sub, inviteLinkId);
   }
 }
