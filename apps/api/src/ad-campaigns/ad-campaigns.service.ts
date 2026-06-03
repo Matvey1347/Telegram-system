@@ -46,10 +46,98 @@ export class AdCampaignsService {
   }
 
   private sourceTypeLabel(source: any) {
-    const fromTags = Array.isArray(source?.channelTags) ? source.channelTags.find((x: string) => String(x).trim().length) : null;
-    if (fromTags) return fromTags;
-    const raw = String(source?.type || '').replace(/_/g, ' ').trim();
-    return raw || 'other';
+    const raw = String(source?.sourceKind || source?.sourceType || 'telegram').replace(/_/g, ' ').trim();
+    return raw || 'telegram';
+  }
+
+  private parseAdvertisingSourceSelection(ids: string[]) {
+    const channelIds: string[] = [];
+    const sourceIds: string[] = [];
+    for (const rawId of ids || []) {
+      const raw = String(rawId || '').trim();
+      if (!raw) continue;
+      if (raw.startsWith('source:') || raw.startsWith('person:')) {
+        sourceIds.push(raw.replace(/^(source|person):/, ''));
+      } else if (raw.startsWith('channel:')) {
+        channelIds.push(raw.replace(/^channel:/, ''));
+      } else {
+        channelIds.push(raw);
+      }
+    }
+    return {
+      channelIds: [...new Set(channelIds)],
+      sourceIds: [...new Set(sourceIds)],
+    };
+  }
+
+  private normalizeTelegramChannelSource(channel: any) {
+    const isOwn =
+      Array.isArray(channel?.adminLinks) && channel.adminLinks.length > 0;
+    return {
+      ...channel,
+      selectionId: `channel:${channel.id}`,
+      sourceKind: isOwn ? 'own_channel' : 'external_channel',
+      kind: isOwn ? 'own_channel' : 'external_channel',
+      imageUrl: channel.photoUrl,
+      subscribersCount: channel.currentSubscribersCount ?? 0,
+    };
+  }
+
+  private normalizePersonSource(source: any) {
+    return {
+      id: source.id,
+      selectionId: `source:${source.id}`,
+      sourceKind: 'person',
+      kind: 'person',
+      title: source.name,
+      username: source.telegramUsername,
+      telegramUrl: source.url,
+      contactInfo: source.contactInfo,
+      notes: source.notes,
+      imageUrl: source.imageUrl,
+      subscribersCount: source.subscribersCount ?? 0,
+      createdAt: source.createdAt,
+      updatedAt: source.updatedAt,
+    };
+  }
+
+  private async ensureAdvertisingSources(
+    tx: any,
+    workspaceId: string,
+    ownTelegramChannelId: string,
+    advertisingSourceIds: string[],
+  ) {
+    const parsed = this.parseAdvertisingSourceSelection(advertisingSourceIds);
+    if (parsed.channelIds.includes(ownTelegramChannelId)) {
+      throw new BadRequestException(
+        'Advertising channel cannot be the same as own Telegram channel',
+      );
+    }
+    const [channels, people] = await Promise.all([
+      parsed.channelIds.length
+        ? tx.telegramChannel.findMany({
+            where: { workspaceId, id: { in: parsed.channelIds } },
+            select: { id: true },
+          })
+        : [],
+      parsed.sourceIds.length
+        ? tx.advertisingSource.findMany({
+            where: {
+              workspaceId,
+              id: { in: parsed.sourceIds },
+              type: { not: 'telegram_channel' },
+            },
+            select: { id: true },
+          })
+        : [],
+    ]);
+    if (channels.length !== parsed.channelIds.length) {
+      throw new BadRequestException('One or more advertising channels are invalid');
+    }
+    if (people.length !== parsed.sourceIds.length) {
+      throw new BadRequestException('One or more advertising people are invalid');
+    }
+    return parsed;
   }
 
   private async generateCampaignTitle(
@@ -57,23 +145,39 @@ export class AdCampaignsService {
     workspaceId: string,
     placementDate: Date,
     promoId: string | null | undefined,
-    advertisingChannelIds: string[],
+    advertisingSourceIds: string[],
   ) {
-    const [promo, sources] = await Promise.all([
+    const parsed = this.parseAdvertisingSourceSelection(advertisingSourceIds);
+    const [promo, channels, people] = await Promise.all([
       promoId
         ? tx.promo.findFirst({
             where: { id: promoId, workspaceId },
             select: { title: true },
           })
         : null,
-      (tx as any).advertisingSource.findMany({
-        where: { workspaceId, id: { in: advertisingChannelIds || [] } },
-        select: { name: true, type: true, channelTags: true },
+      tx.telegramChannel.findMany({
+        where: { workspaceId, id: { in: parsed.channelIds } },
+        select: { title: true, sourceType: true },
+      }),
+      tx.advertisingSource.findMany({
+        where: { workspaceId, id: { in: parsed.sourceIds } },
+        select: { name: true, type: true },
       }),
     ]);
 
+    const sources = [
+      ...channels.map((channel: any) => ({
+        title: channel.title,
+        sourceKind: 'telegram_channel',
+        sourceType: channel.sourceType,
+      })),
+      ...people.map((person: any) => ({
+        title: person.name,
+        sourceKind: 'person',
+      })),
+    ];
     const firstSource = sources?.[0];
-    const sourceLabel = this.shortenBlock(firstSource?.name || 'source');
+    const sourceLabel = this.shortenBlock(firstSource?.title || firstSource?.name || 'source');
     const promoLabel = this.shortenBlock(promo?.title || 'promo');
     const typeLabel = this.shortenBlock(this.sourceTypeLabel(firstSource));
     const dateLabel = this.formatDatePart(placementDate);
@@ -171,9 +275,17 @@ export class AdCampaignsService {
       ownTelegramChannelId: row.telegramChannelId,
       promoInviteLinkId: row.telegramInviteLinkId,
       costAmount: Number(row.price),
-      advertisingChannels: row.advertisingChannels.map((x: any) => x.advertisingSource),
-      attributionType: row.advertisingChannels.length > 1 ? 'mixed' : 'clean',
-      isMixedAttribution: row.advertisingChannels.length > 1,
+      advertisingChannels: [
+        ...row.advertisingTelegramChannels.map((x: any) =>
+          this.normalizeTelegramChannelSource(x.telegramChannel),
+        ),
+        ...row.advertisingChannels.map((x: any) =>
+          this.normalizePersonSource(x.advertisingSource),
+        ),
+      ],
+      attributionType:
+        row.advertisingTelegramChannels.length + row.advertisingChannels.length > 1 ? 'mixed' : 'clean',
+      isMixedAttribution: row.advertisingTelegramChannels.length + row.advertisingChannels.length > 1,
       analytics,
     };
   }
@@ -186,6 +298,13 @@ export class AdCampaignsService {
         telegramChannel: true,
         promo: true,
         account: true,
+        advertisingTelegramChannels: {
+          include: {
+            telegramChannel: {
+              include: { adminLinks: true },
+            },
+          },
+        },
         advertisingChannels: { include: { advertisingSource: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -201,6 +320,13 @@ export class AdCampaignsService {
         telegramChannel: true,
         promo: true,
         account: true,
+        advertisingTelegramChannels: {
+          include: {
+            telegramChannel: {
+              include: { adminLinks: true },
+            },
+          },
+        },
         advertisingChannels: { include: { advertisingSource: true } },
       },
     });
@@ -227,12 +353,21 @@ export class AdCampaignsService {
         workspace.primaryCurrency,
       );
       const placementDate = dto.date ? new Date(dto.date) : new Date();
+      const advertisingSources = await this.ensureAdvertisingSources(
+        tx,
+        workspaceId,
+        dto.telegramChannelId,
+        dto.advertisingChannelIds || [],
+      );
       const generatedTitle = await this.generateCampaignTitle(
         tx,
         workspaceId,
         placementDate,
         dto.promoId,
-        dto.advertisingChannelIds || [],
+        [
+          ...advertisingSources.channelIds.map((id) => `channel:${id}`),
+          ...advertisingSources.sourceIds.map((id) => `source:${id}`),
+        ],
       );
       const row = await (tx.adCampaign as any).create({
         data: {
@@ -252,12 +387,22 @@ export class AdCampaignsService {
         },
       });
 
-      if (dto.advertisingChannelIds?.length) {
+      if (advertisingSources.channelIds.length) {
+        await (tx as any).adCampaignTelegramChannelPlacement.createMany({
+          data: advertisingSources.channelIds.map((id) => ({
+            adCampaignId: row.id,
+            telegramChannelId: id,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      if (advertisingSources.sourceIds.length) {
         await (tx as any).adCampaignAdvertisingChannel.createMany({
-          data: dto.advertisingChannelIds.map((id) => ({
+          data: advertisingSources.sourceIds.map((id) => ({
             adCampaignId: row.id,
             advertisingSourceId: id,
           })),
+          skipDuplicates: true,
         });
       }
 
@@ -296,18 +441,32 @@ export class AdCampaignsService {
         ? new Date(dto.date)
         : existing.placementDate || new Date();
       const nextPromoId = dto.promoId ?? existing.promoId;
-      const nextAdvertisingChannelIds = dto.advertisingChannelIds ?? (
-        await (tx as any).adCampaignAdvertisingChannel.findMany({
+      const nextOwnTelegramChannelId = dto.telegramChannelId ?? existing.telegramChannelId;
+      const rawNextAdvertisingChannelIds = dto.advertisingChannelIds ?? [
+        ...(await (tx as any).adCampaignTelegramChannelPlacement.findMany({
+          where: { adCampaignId: id },
+          select: { telegramChannelId: true },
+        })).map((x: any) => `channel:${x.telegramChannelId}`),
+        ...(await (tx as any).adCampaignAdvertisingChannel.findMany({
           where: { adCampaignId: id },
           select: { advertisingSourceId: true },
-        })
-      ).map((x: any) => x.advertisingSourceId);
+        })).map((x: any) => `source:${x.advertisingSourceId}`),
+      ];
+      const nextAdvertisingSources = await this.ensureAdvertisingSources(
+        tx,
+        workspaceId,
+        nextOwnTelegramChannelId,
+        rawNextAdvertisingChannelIds,
+      );
       const generatedTitle = await this.generateCampaignTitle(
         tx,
         workspaceId,
         nextPlacementDate,
         nextPromoId,
-        nextAdvertisingChannelIds,
+        [
+          ...nextAdvertisingSources.channelIds.map((sourceId) => `channel:${sourceId}`),
+          ...nextAdvertisingSources.sourceIds.map((sourceId) => `source:${sourceId}`),
+        ],
       );
 
       const row = await (tx.adCampaign as any).update({
@@ -328,12 +487,21 @@ export class AdCampaignsService {
       });
 
       if (dto.advertisingChannelIds) {
+        await (tx as any).adCampaignTelegramChannelPlacement.deleteMany({ where: { adCampaignId: id } });
         await (tx as any).adCampaignAdvertisingChannel.deleteMany({ where: { adCampaignId: id } });
+        await (tx as any).adCampaignTelegramChannelPlacement.createMany({
+          data: nextAdvertisingSources.channelIds.map((sourceId) => ({
+            adCampaignId: id,
+            telegramChannelId: sourceId,
+          })),
+          skipDuplicates: true,
+        });
         await (tx as any).adCampaignAdvertisingChannel.createMany({
-          data: dto.advertisingChannelIds.map((sourceId) => ({
+          data: nextAdvertisingSources.sourceIds.map((sourceId) => ({
             adCampaignId: id,
             advertisingSourceId: sourceId,
           })),
+          skipDuplicates: true,
         });
       }
 

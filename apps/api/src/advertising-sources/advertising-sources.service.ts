@@ -15,11 +15,15 @@ export class AdvertisingSourcesService {
   }
 
   private toView(row: any) {
+    const isPerson = row.type !== 'telegram_channel';
     return {
       id: row.id,
+      selectionId: `source:${row.id}`,
+      kind: isPerson ? 'person' : 'legacy_channel',
       title: row.name,
       telegramUrl: row.url,
       username: row.telegramUsername,
+      contactInfo: row.contactInfo,
       notes: row.notes,
       imageUrl: row.imageUrl,
       subscribersCount: row.subscribersCount ?? 0,
@@ -32,7 +36,7 @@ export class AdvertisingSourcesService {
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
     const rows = await this.prisma.advertisingSource.findMany({
-      where: { workspaceId },
+      where: { workspaceId, type: { not: 'telegram_channel' } },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.toView(row));
@@ -53,9 +57,10 @@ export class AdvertisingSourcesService {
       data: {
         workspaceId,
         name: dto.title,
-        type: 'telegram_channel',
+        type: dto.kind === 'channel' ? 'telegram_channel' : 'direct',
         url: dto.telegramUrl,
         telegramUsername: dto.username,
+        contactInfo: dto.contactInfo,
         notes: dto.notes,
         imageUrl: dto.imageUrl,
         subscribersCount: dto.subscribersCount ?? 0,
@@ -71,8 +76,10 @@ export class AdvertisingSourcesService {
       where: { id },
       data: {
         name: dto.title,
+        type: dto.kind === 'channel' ? 'telegram_channel' : dto.kind === 'person' ? 'direct' : undefined,
         url: dto.telegramUrl,
         telegramUsername: dto.username,
+        contactInfo: dto.contactInfo,
         notes: dto.notes,
         imageUrl: dto.imageUrl,
         subscribersCount: dto.subscribersCount,

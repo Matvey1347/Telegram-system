@@ -22,6 +22,10 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @Type(() => Number) @IsInt() currentSubscribersCount?: number;
 }
 
+export class ImportTelegramChannelDto {
+  @IsString() input!: string;
+}
+
 export class HistoricalSyncDto {
   @IsOptional() @IsString() telegramUserAccountId?: string;
   @IsOptional() @IsBoolean() syncInviteLinks?: boolean;

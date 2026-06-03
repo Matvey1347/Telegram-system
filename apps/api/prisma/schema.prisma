@@ -298,11 +298,14 @@ model TelegramChannel {
   photoSmallFileId        String?
   photoBigFileId          String?
   photoUrl                String?
+  sourceType              String?  @default("telegram")
+  lastPublicSyncedAt      DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   promos      Promo[]
   adCampaigns AdCampaign[]
+  adPlacements AdCampaignTelegramChannelPlacement[]
   inviteLinks TelegramInviteLink[]
   dailyStats  TelegramChannelDailyStats[]
   adminLinks TelegramChannelAdminLink[]
@@ -312,6 +315,9 @@ model TelegramChannel {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, username])
+  @@index([workspaceId, telegramChatId])
 }
 
 model TelegramChannelDailyStats {
@@ -454,6 +460,7 @@ model AdCampaign {
 
   expenseTransaction Transaction? @relation("CampaignExpenseTransaction")
   advertisingChannels AdCampaignAdvertisingChannel[]
+  advertisingTelegramChannels AdCampaignTelegramChannelPlacement[]
 
   inviteLinks      TelegramInviteLink[]
 
@@ -472,6 +479,19 @@ model AdCampaignAdvertisingChannel {
 
   @@unique([adCampaignId, advertisingSourceId])
   @@index([advertisingSourceId])
+}
+
+model AdCampaignTelegramChannelPlacement {
+  id                String @id @default(cuid())
+  adCampaignId      String
+  telegramChannelId String
+  createdAt         DateTime @default(now())
+
+  adCampaign      AdCampaign      @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  @@unique([adCampaignId, telegramChannelId])
+  @@index([telegramChannelId])
 }
 
 model TelegramInviteLink {

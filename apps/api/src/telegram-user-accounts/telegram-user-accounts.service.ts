@@ -301,7 +301,7 @@ export class TelegramUserAccountsService {
     ]);
 
     const workspaceChannels = await this.prisma.telegramChannel.findMany({
-      where: { workspaceId },
+      where: { workspaceId, isActive: true },
       select: { id: true, username: true },
     });
     const channelByUsername = new Map(

@@ -15,6 +15,7 @@ import {
   CreateTelegramChannelDto,
   DeepSyncDto,
   HistoricalSyncDto,
+  ImportTelegramChannelDto,
   UpdateTelegramChannelDto,
 } from './dto';
 
@@ -46,6 +47,35 @@ export class TelegramChannelsService {
         : `@${channel.username}`;
     }
     return channel.telegramChatId || null;
+  }
+
+  private normalizeUsername(value?: string | null) {
+    const normalized = String(value || '')
+      .trim()
+      .replace(/^@/, '')
+      .toLowerCase();
+    return normalized || null;
+  }
+
+  private normalizeChatId(value?: string | null) {
+    const digits = String(value || '').trim();
+    if (!digits) return null;
+    return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+  }
+
+  private normalizePublicChannelInput(input: string) {
+    const trimmed = String(input || '').trim();
+    if (!trimmed) throw new BadRequestException('Telegram channel input is required');
+    let normalized = trimmed.replace(/^https?:\/\//i, '').replace(/^tg:\/\//i, '');
+    normalized = normalized.replace(/^www\./i, '');
+    if (/^(t\.me|telegram\.me)\//i.test(normalized)) {
+      normalized = normalized.replace(/^(t\.me|telegram\.me)\//i, '');
+    }
+    normalized = normalized.split(/[?#]/)[0].replace(/^s\//i, '').replace(/\/+$/, '');
+    const firstPathPart = normalized.split('/')[0] || normalized;
+    const username = this.normalizeUsername(firstPathPart);
+    if (!username) throw new BadRequestException('Telegram channel input is invalid');
+    return `@${username}`;
   }
 
   private async connectedAccount(
@@ -99,10 +129,125 @@ export class TelegramChannelsService {
     };
   }
 
+  private async firstConnectedAccount(workspaceId: string) {
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: {
+        workspaceId,
+        isActive: true,
+        status: TelegramUserAccountStatus.connected,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!account) {
+      throw new BadRequestException(
+        'Connect an active Telegram user account before importing public channels',
+      );
+    }
+    return account;
+  }
+
+  private async findMatchingChannels(
+    workspaceId: string,
+    username: string | null,
+    telegramChatId: string | null,
+  ) {
+    if (!username && !telegramChatId) return [];
+    const normalizedChatId = this.normalizeChatId(telegramChatId);
+    const candidates = await this.prisma.telegramChannel.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          ...(username ? [{ username: { not: null } }] : []),
+          ...(telegramChatId ? [{ telegramChatId: { not: null } }] : []),
+        ],
+      },
+      include: { adminLinks: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return candidates.filter((channel) => {
+      const sameUsername =
+        username && this.normalizeUsername(channel.username) === username;
+      const sameChatId =
+        normalizedChatId &&
+        this.normalizeChatId(channel.telegramChatId) === normalizedChatId;
+      return Boolean(sameUsername || sameChatId);
+    });
+  }
+
+  private pickCanonicalChannel(channels: Array<{ id: string; adminLinks?: unknown[]; createdAt: Date }>) {
+    return [...channels].sort((left, right) => {
+      const leftAdmin = (left.adminLinks?.length || 0) > 0 ? 0 : 1;
+      const rightAdmin = (right.adminLinks?.length || 0) > 0 ? 0 : 1;
+      if (leftAdmin !== rightAdmin) return leftAdmin - rightAdmin;
+      return left.createdAt.getTime() - right.createdAt.getTime();
+    })[0];
+  }
+
+  private async mergeDuplicateChannels(
+    tx: any,
+    workspaceId: string,
+    canonicalId: string,
+    duplicateIds: string[],
+  ) {
+    if (!duplicateIds.length) return;
+    const adminLinks = await tx.telegramChannelAdminLink.findMany({
+      where: { workspaceId, telegramChannelId: { in: duplicateIds } },
+      select: { telegramUserAccountIntegrationId: true, source: true },
+    });
+    if (adminLinks.length) {
+      await tx.telegramChannelAdminLink.createMany({
+        data: adminLinks.map((link: any) => ({
+          workspaceId,
+          telegramChannelId: canonicalId,
+          telegramUserAccountIntegrationId: link.telegramUserAccountIntegrationId,
+          source: link.source || 'mtproto',
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    const placements = await tx.adCampaignTelegramChannelPlacement.findMany({
+      where: { telegramChannelId: { in: duplicateIds } },
+      select: { adCampaignId: true },
+    });
+    if (placements.length) {
+      await tx.adCampaignTelegramChannelPlacement.createMany({
+        data: placements.map((placement: any) => ({
+          adCampaignId: placement.adCampaignId,
+          telegramChannelId: canonicalId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    await tx.telegramChannelAdminLink.deleteMany({
+      where: { workspaceId, telegramChannelId: { in: duplicateIds } },
+    });
+    await tx.adCampaignTelegramChannelPlacement.deleteMany({
+      where: { telegramChannelId: { in: duplicateIds } },
+    });
+    await tx.adCampaign.updateMany({
+      where: { workspaceId, telegramChannelId: { in: duplicateIds } },
+      data: { telegramChannelId: canonicalId },
+    });
+    await tx.telegramInviteLink.updateMany({
+      where: { workspaceId, telegramChannelId: { in: duplicateIds } },
+      data: { telegramChannelId: canonicalId },
+    });
+    await tx.promo.updateMany({
+      where: { workspaceId, telegramChannelId: { in: duplicateIds } },
+      data: { telegramChannelId: canonicalId },
+    });
+    await tx.telegramChannel.updateMany({
+      where: { workspaceId, id: { in: duplicateIds } },
+      data: { isActive: false },
+    });
+  }
+
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
     return this.prisma.telegramChannel.findMany({
-      where: { workspaceId },
+      where: { workspaceId, isActive: true },
       include: {
         adminLinks: { include: { telegramUserAccountIntegration: true } },
       },
@@ -124,12 +269,77 @@ export class TelegramChannelsService {
 
   async create(userId: string, dto: CreateTelegramChannelDto) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.telegramChannel.create({ data: { workspaceId, ...dto } });
+    return this.prisma.telegramChannel.create({
+      data: {
+        workspaceId,
+        ...dto,
+        username: this.normalizeUsername(dto.username),
+      },
+    });
   }
 
   async update(userId: string, id: string, dto: UpdateTelegramChannelDto) {
     await this.findOne(userId, id);
-    return this.prisma.telegramChannel.update({ where: { id }, data: dto });
+    return this.prisma.telegramChannel.update({
+      where: { id },
+      data: {
+        ...dto,
+        username:
+          dto.username === undefined ? undefined : this.normalizeUsername(dto.username),
+      },
+    });
+  }
+
+  async importChannel(userId: string, dto: ImportTelegramChannelDto) {
+    const workspaceId = await this.workspace(userId);
+    const account = await this.firstConnectedAccount(workspaceId);
+    const channelRef = this.normalizePublicChannelInput(dto.input);
+    const info = await this.mtprotoClient.getPublicChannelInfo({
+      ...this.accountCredentials(account),
+      channelRef,
+    });
+    const username = this.normalizeUsername(info.username);
+    const telegramChatId = info.telegramChatId || null;
+    const matchingChannels = await this.findMatchingChannels(
+      workspaceId,
+      username,
+      telegramChatId,
+    );
+    const existing = this.pickCanonicalChannel(matchingChannels);
+    const payload = {
+      title: info.title,
+      username,
+      telegramChatId,
+      description: info.description,
+      currentSubscribersCount: info.participantsCount,
+      photoUrl: info.photoUrl,
+      sourceType: 'telegram',
+      lastPublicSyncedAt: new Date(),
+    };
+    const channel = await this.prisma.$transaction(async (tx) => {
+      if (!existing) {
+        return tx.telegramChannel.create({
+          data: {
+            workspaceId,
+            ...payload,
+          },
+        });
+      }
+      const duplicateIds = matchingChannels
+        .filter((candidate) => candidate.id !== existing.id)
+        .map((candidate) => candidate.id);
+      await this.mergeDuplicateChannels(
+        tx,
+        workspaceId,
+        existing.id,
+        duplicateIds,
+      );
+      return tx.telegramChannel.update({
+        where: { id: existing.id },
+        data: { ...payload, isActive: true },
+      });
+    });
+    return this.findOne(userId, channel.id);
   }
 
   async remove(userId: string, id: string) {

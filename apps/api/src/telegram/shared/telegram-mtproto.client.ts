@@ -184,6 +184,10 @@ export class TelegramMtprotoClient {
     );
   }
 
+  private telegramPublicPhotoUrl(username: string | null) {
+    return username ? `https://t.me/i/userpic/320/${username}.jpg` : null;
+  }
+
   private normalizeBroadcastStatsError(error: unknown) {
     const errorCode = this.getTelegramErrorCode(error);
     const floodWaitSeconds = this.toFiniteNumber(
@@ -412,6 +416,56 @@ export class TelegramMtprotoClient {
           username: d.entity?.username || null,
           isCreator: !!d.entity?.creator,
         }));
+    } finally {
+      await client.disconnect();
+    }
+  }
+
+  async getPublicChannelInfo(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const entity = (await client.getEntity(params.channelRef)) as any;
+      let fullChannel: any = null;
+      try {
+        const full = await client.invoke(
+          new Api.channels.GetFullChannel({ channel: entity }),
+        );
+        fullChannel = (full as any)?.fullChat || null;
+      } catch {
+        fullChannel = null;
+      }
+
+      const username = entity?.username
+        ? String(entity.username).replace(/^@/, '').toLowerCase()
+        : null;
+      const participantsCount =
+        this.toFiniteNumber(fullChannel?.participantsCount) ??
+        this.toFiniteNumber(entity?.participantsCount);
+      return {
+        telegramChatId: entity?.id != null ? String(entity.id) : '',
+        title: entity?.title || username || params.channelRef,
+        username,
+        description: fullChannel?.about || null,
+        participantsCount,
+        photoUrl: this.telegramPublicPhotoUrl(username),
+        raw: {
+          entity: this.toJsonSafe({
+            id: entity?.id,
+            title: entity?.title,
+            username: entity?.username,
+            participantsCount: entity?.participantsCount,
+          }),
+          fullChannel: this.toJsonSafe({
+            about: fullChannel?.about,
+            participantsCount: fullChannel?.participantsCount,
+          }),
+        },
+      };
     } finally {
       await client.disconnect();
     }
