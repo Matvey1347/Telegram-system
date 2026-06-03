@@ -15,7 +15,8 @@
     "db:migrate": "pnpm --filter api exec prisma migrate dev",
     "db:generate": "pnpm --filter api exec prisma generate",
     "db:studio": "pnpm --filter api exec prisma studio",
-    "db:seed": "pnpm --filter api exec prisma db seed"
+    "db:seed": "pnpm --filter api exec prisma db seed",
+    "archive": "zip -r telegram-system.zip . -x 'telegram-system.zip' 'node_modules/*' '*/node_modules/*' '.next/*' '*/.next/*' 'dist/*' '*/dist/*' '.env' '*/.env'"
   },
   "packageManager": "pnpm@9.0.0"
 }
