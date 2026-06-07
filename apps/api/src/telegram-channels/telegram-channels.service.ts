@@ -5,11 +5,17 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { TelegramUserAccountStatus } from '@prisma/client';
+import {
+  TelegramChannelDataType,
+  TelegramDataSourceStatus,
+  TelegramSourceType,
+  TelegramUserAccountStatus,
+} from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
+import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
 import {
   AttachCampaignDto,
   CreateTelegramChannelDto,
@@ -28,6 +34,7 @@ export class TelegramChannelsService {
     private workspaceService: WorkspaceService,
     private encryptionService: TokenEncryptionService,
     private mtprotoClient: TelegramMtprotoClient,
+    private sourceAccessService: TelegramSourceAccessService,
   ) {}
 
   private workspace(userId: string) {
@@ -103,6 +110,30 @@ export class TelegramChannelsService {
       throw new BadRequestException('Telegram user account is not connected');
     }
     return account;
+  }
+
+  private sourceDisplayName(account: {
+    label: string;
+    username: string | null;
+    firstName: string | null;
+    phoneMasked?: string | null;
+  }) {
+    return account.username
+      ? `@${account.username}`
+      : account.firstName || account.label || account.phoneMasked || 'MTProto account';
+  }
+
+  private async bestMtprotoAccountId(
+    workspaceId: string,
+    channelId: string,
+    dataType: TelegramChannelDataType,
+  ) {
+    const best = await this.sourceAccessService.bestMtprotoSource(
+      workspaceId,
+      channelId,
+      dataType,
+    );
+    return best?.sourceId;
   }
 
   private accountCredentials(account: {
@@ -318,6 +349,18 @@ export class TelegramChannelsService {
     return channel;
   }
 
+  async channelSources(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    return this.sourceAccessService.sourcesForChannel(workspaceId, channelId);
+  }
+
+  async analyticsSources(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    return this.sourceAccessService.analyticsSources(workspaceId, channelId);
+  }
+
   async create(userId: string, dto: CreateTelegramChannelDto) {
     const workspaceId = await this.workspace(userId);
     return this.prisma.telegramChannel.create({
@@ -398,6 +441,16 @@ export class TelegramChannelsService {
         data: { ...payload, isActive: true },
       });
     });
+    await this.sourceAccessService.recordDataSource({
+      workspaceId,
+      channelId: channel.id,
+      sourceId: account.id,
+      sourceType: TelegramSourceType.MTPROTO,
+      dataType: TelegramChannelDataType.CHANNEL_INFO,
+      status: TelegramDataSourceStatus.SUCCESS,
+      sourceDisplayName: this.sourceDisplayName(account),
+      metadata: { source: 'public_channel_import' },
+    });
     return this.findOne(userId, channel.id);
   }
 
@@ -429,7 +482,16 @@ export class TelegramChannelsService {
 
   async syncNow(userId: string, channelId: string) {
     const workspaceId = await this.workspace(userId);
-    const account = await this.connectedAccount(workspaceId, channelId);
+    const account = await this.connectedAccount(
+      workspaceId,
+      channelId,
+      await this.bestMtprotoAccountId(workspaceId, channelId, TelegramChannelDataType.STATS),
+    );
+    const publicInfo = await this.syncPublicChannelInfo(
+      workspaceId,
+      channelId,
+      account,
+    );
     const historical = await this.syncHistorical(userId, channelId, {
       telegramUserAccountId: account.id,
       syncInviteLinks: true,
@@ -442,7 +504,7 @@ export class TelegramChannelsService {
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
-    return { source: 'mtproto', historical, postsMetricsSync, channelStatsSync };
+    return { source: 'mtproto', publicInfo, historical, postsMetricsSync, channelStatsSync };
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
@@ -450,7 +512,13 @@ export class TelegramChannelsService {
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
-      dto.telegramUserAccountId,
+      dto.telegramUserAccountId ||
+        (await this.bestMtprotoAccountId(workspaceId, channelId, TelegramChannelDataType.STATS)),
+    );
+    const publicInfo = await this.syncPublicChannelInfo(
+      workspaceId,
+      channelId,
+      account,
     );
     const historical = await this.syncHistorical(userId, channelId, {
       telegramUserAccountId: account.id,
@@ -468,9 +536,74 @@ export class TelegramChannelsService {
     return {
       message: 'Deep MTProto sync completed',
       source: 'mtproto',
+      publicInfo,
       historical,
       postsMetricsSync,
       channelStatsSync,
+    };
+  }
+
+  private async syncPublicChannelInfo(
+    workspaceId: string,
+    channelId: string,
+    account: {
+      id: string;
+      apiId: string;
+      apiHashEncrypted: string;
+      apiHashIv: string;
+      apiHashAuthTag: string;
+      sessionEncrypted: string | null;
+      sessionIv: string | null;
+      sessionAuthTag: string | null;
+      label: string;
+      username: string | null;
+      firstName: string | null;
+      phoneMasked: string | null;
+    },
+  ) {
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId, isActive: true },
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    const channelRef = this.channelRef(channel);
+    if (!channelRef) throw new BadRequestException('Channel must have username or chatId');
+    const info = await this.mtprotoClient.getPublicChannelInfo({
+      ...this.accountCredentials(account),
+      channelRef,
+    });
+    if (info.kind !== 'channel') {
+      return { updated: false, reason: 'Resolved Telegram entity is not a channel' };
+    }
+    const updated = await this.prisma.telegramChannel.update({
+      where: { id: channelId },
+      data: {
+        title: info.title,
+        username: this.normalizeUsername(info.username),
+        telegramChatId: info.telegramChatId || channel.telegramChatId,
+        description: info.description,
+        currentSubscribersCount: info.participantsCount,
+        photoUrl: info.photoUrl,
+        lastPublicSyncedAt: new Date(),
+      },
+    });
+    await this.sourceAccessService.recordDataSource({
+      workspaceId,
+      channelId,
+      sourceId: account.id,
+      sourceType: TelegramSourceType.MTPROTO,
+      dataType: TelegramChannelDataType.CHANNEL_INFO,
+      status: TelegramDataSourceStatus.SUCCESS,
+      sourceDisplayName: this.sourceDisplayName(account),
+      metadata: {
+        source: 'sync_public_channel_info',
+        subscribersCount: updated.currentSubscribersCount,
+      },
+    });
+    return {
+      updated: true,
+      title: updated.title,
+      subscribersCount: updated.currentSubscribersCount,
+      username: updated.username,
     };
   }
 
@@ -528,6 +661,16 @@ export class TelegramChannelsService {
       for (const campaignId of affectedCampaignIds) {
         await this.recalculateCampaignMetricsById(campaignId);
       }
+      await this.sourceAccessService.recordDataSource({
+        workspaceId,
+        channelId,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        dataType: TelegramChannelDataType.INVITE_LINKS,
+        status: TelegramDataSourceStatus.SUCCESS,
+        sourceDisplayName: this.sourceDisplayName(account),
+        metadata: { imported, updated },
+      });
     }
     let postsUpdated = 0;
     if (dto.syncPosts) {
@@ -550,6 +693,16 @@ export class TelegramChannelsService {
         });
         postsUpdated += 1;
       }
+      await this.sourceAccessService.recordDataSource({
+        workspaceId,
+        channelId,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        dataType: TelegramChannelDataType.POSTS,
+        status: TelegramDataSourceStatus.SUCCESS,
+        sourceDisplayName: this.sourceDisplayName(account),
+        metadata: { postsUpdated },
+      });
     }
     return {
       message: 'Historical MTProto sync completed',
@@ -637,6 +790,22 @@ export class TelegramChannelsService {
         affectedDays.add(post.postDate.toISOString().slice(0, 10));
       }
       await this.recalculateDailyStatsFromPosts(channel.id, [...affectedDays]);
+      for (const dataType of [
+        TelegramChannelDataType.POSTS,
+        TelegramChannelDataType.VIEWS,
+        TelegramChannelDataType.REACTIONS,
+      ]) {
+        await this.sourceAccessService.recordDataSource({
+          workspaceId,
+          channelId,
+          sourceId: account.id,
+          sourceType: TelegramSourceType.MTPROTO,
+          dataType,
+          status: TelegramDataSourceStatus.SUCCESS,
+          sourceDisplayName: this.sourceDisplayName(account),
+          metadata: { syncedPosts: metrics.length },
+        });
+      }
       return { source: 'mtproto', syncedPosts: metrics.length };
     } catch (error) {
       this.logger.error(
@@ -752,6 +921,25 @@ export class TelegramChannelsService {
         }),
       ),
     );
+    await this.sourceAccessService.recordDataSource({
+      workspaceId,
+      channelId,
+      sourceId: account.id,
+      sourceType: TelegramSourceType.MTPROTO,
+      dataType: TelegramChannelDataType.STATS,
+      status:
+        stats.normalized.status === 'available'
+          ? TelegramDataSourceStatus.SUCCESS
+          : TelegramDataSourceStatus.FAILED,
+      sourceDisplayName: this.sourceDisplayName(account),
+      errorMessage:
+        stats.normalized.status === 'available'
+          ? null
+          : Array.isArray(stats.warnings)
+            ? stats.warnings.join('; ')
+            : 'Stats unavailable from this source',
+      metadata: { availableFields: stats.availableFields, warnings: stats.warnings },
+    });
     return { source: 'mtproto', success: stats.normalized.status === 'available', snapshot, pointsUpserted: points.length };
   }
 

@@ -425,6 +425,7 @@ export class TelegramMtprotoClient {
           title: d.title || 'Untitled',
           username: d.entity?.username || null,
           isCreator: !!d.entity?.creator,
+          adminRights: this.toJsonSafe(d.entity?.adminRights) as Record<string, unknown> | null,
         }));
     } finally {
       await client.disconnect();

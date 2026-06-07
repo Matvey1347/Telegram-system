@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { TelegramUserAccountStatus } from '@prisma/client';
+import { TelegramSourceType, TelegramUserAccountStatus } from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
+import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
 import {
   Confirm2faPasswordDto,
   ConfirmLoginCodeDto,
@@ -25,6 +26,7 @@ export class TelegramUserAccountsService {
     private readonly workspaceService: WorkspaceService,
     private readonly encryptionService: TokenEncryptionService,
     private readonly mtprotoClient: TelegramMtprotoClient,
+    private readonly sourceAccessService: TelegramSourceAccessService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -76,6 +78,19 @@ export class TelegramUserAccountsService {
     const row = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException('Telegram user account not found');
     return this.safe(row);
+  }
+
+  async channels(userId: string, id: string) {
+    const workspaceId = await this.getWorkspaceId(userId);
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!account) throw new NotFoundException('Telegram user account not found');
+    return this.sourceAccessService.channelsForSource(
+      workspaceId,
+      id,
+      TelegramSourceType.MTPROTO,
+    );
   }
 
   async create(userId: string, dto: CreateTelegramUserAccountDto) {
@@ -309,9 +324,12 @@ export class TelegramUserAccountsService {
         .map((c) => [this.normalizeUsername(c.username), c.id] as const)
         .filter(([username]) => !!username),
     );
-    const matchedChannelIds = channels
-      .map((c) => channelByUsername.get(this.normalizeUsername(c.username)))
-      .filter((v): v is string => !!v);
+    const matchedChannels = channels
+      .map((channel) => ({
+        channel,
+        id: channelByUsername.get(this.normalizeUsername(channel.username)),
+      }))
+      .filter((row): row is { channel: (typeof channels)[number]; id: string } => !!row.id);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.telegramUserAccountIntegration.update({
@@ -336,9 +354,9 @@ export class TelegramUserAccountsService {
       await tx.telegramChannelAdminLink.deleteMany({
         where: { workspaceId, telegramUserAccountIntegrationId: account.id },
       });
-      if (matchedChannelIds.length) {
+      if (matchedChannels.length) {
         await tx.telegramChannelAdminLink.createMany({
-          data: matchedChannelIds.map((telegramChannelId) => ({
+          data: matchedChannels.map(({ id: telegramChannelId }) => ({
             workspaceId,
             telegramChannelId,
             telegramUserAccountIntegrationId: account.id,
@@ -348,14 +366,30 @@ export class TelegramUserAccountsService {
         });
       }
     });
+    for (const { channel, id: telegramChannelId } of matchedChannels) {
+      const rawPermissions = {
+        isCreator: channel.isCreator,
+        adminRights: channel.adminRights || null,
+      };
+      const normalized = this.sourceAccessService.normalizeMtprotoPermissions(rawPermissions);
+      await this.sourceAccessService.upsertAccess({
+        workspaceId,
+        channelId: telegramChannelId,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        role: normalized.role,
+        permissions: normalized.permissions,
+        rawPermissions,
+      });
+    }
 
     return {
       success: true,
       channels,
-      matchedChannels: matchedChannelIds.length,
+      matchedChannels: matchedChannels.length,
       message:
-        matchedChannelIds.length > 0
-          ? `Linked admin to ${matchedChannelIds.length} workspace channels`
+        matchedChannels.length > 0
+          ? `Linked admin to ${matchedChannels.length} workspace channels`
           : 'No matching workspace channels by username',
     };
   }

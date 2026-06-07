@@ -30,6 +30,10 @@ export class TelegramBotsController {
     return this.service.check(user.sub, id);
   }
 
+  @Get(':id/channels') channels(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.channels(user.sub, id);
+  }
+
   @Delete(':id') remove(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.remove(user.sub, id);
   }

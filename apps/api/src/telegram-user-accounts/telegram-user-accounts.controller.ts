@@ -17,6 +17,7 @@ export class TelegramUserAccountsController {
   constructor(private readonly service: TelegramUserAccountsService) {}
 
   @Get() findAll(@CurrentUser() user: JwtUser) { return this.service.findAll(user.sub); }
+  @Get(':id/channels') channels(@CurrentUser() user: JwtUser, @Param('id') id: string) { return this.service.channels(user.sub, id); }
   @Get(':id') findOne(@CurrentUser() user: JwtUser, @Param('id') id: string) { return this.service.findOne(user.sub, id); }
   @Post() create(@CurrentUser() user: JwtUser, @Body() dto: CreateTelegramUserAccountDto) { return this.service.create(user.sub, dto); }
   @Patch(':id') update(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateTelegramUserAccountDto) { return this.service.update(user.sub, id, dto); }

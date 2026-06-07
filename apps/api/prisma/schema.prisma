@@ -47,6 +47,36 @@ enum TelegramUserAccountStatus {
   disabled
 }
 
+enum TelegramSourceType {
+  BOT
+  MTPROTO
+}
+
+enum TelegramChannelSourceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  UNKNOWN
+}
+
+enum TelegramChannelDataType {
+  CHANNEL_INFO
+  POSTS
+  INVITE_LINKS
+  STATS
+  MEMBERS
+  REACTIONS
+  VIEWS
+  OTHER
+}
+
+enum TelegramDataSourceStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+  SKIPPED
+}
+
 enum AdvertisingSourceType {
   telegram_channel
   instagram
@@ -81,6 +111,8 @@ model Workspace {
   telegramBotIntegrations TelegramBotIntegration[]
   telegramUserAccountIntegrations TelegramUserAccountIntegration[]
   telegramChannelAdminLinks TelegramChannelAdminLink[]
+  telegramChannelSourceAccesses TelegramChannelSourceAccess[]
+  telegramChannelDataSources TelegramChannelDataSource[]
   telegramChannelStatsSnapshots TelegramChannelStatsSnapshot[]
   telegramChannelStatsPoints TelegramChannelStatsPoint[]
   telegramPosts      TelegramPost[]
@@ -146,6 +178,55 @@ model TelegramChannelAdminLink {
   @@unique([workspaceId, telegramChannelId, telegramUserAccountIntegrationId])
   @@index([workspaceId, telegramChannelId])
   @@index([workspaceId, telegramUserAccountIntegrationId])
+}
+
+model TelegramChannelSourceAccess {
+  id                   String                    @id @default(cuid())
+  workspaceId           String
+  channelId             String
+  sourceId              String
+  sourceType            TelegramSourceType
+  role                 TelegramChannelSourceRole @default(UNKNOWN)
+  canPostMessages       Boolean                   @default(false)
+  canEditMessages       Boolean                   @default(false)
+  canDeleteMessages     Boolean                   @default(false)
+  canInviteUsers        Boolean                   @default(false)
+  canManageInviteLinks  Boolean                   @default(false)
+  canViewStats          Boolean                   @default(false)
+  rawPermissions        Json?
+  lastCheckedAt         DateTime?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   TelegramChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, sourceId, sourceType])
+  @@index([workspaceId, channelId])
+  @@index([workspaceId, sourceId, sourceType])
+}
+
+model TelegramChannelDataSource {
+  id                String                   @id @default(cuid())
+  workspaceId       String
+  channelId         String
+  sourceId          String
+  sourceType        TelegramSourceType
+  dataType          TelegramChannelDataType
+  status            TelegramDataSourceStatus @default(SUCCESS)
+  sourceDisplayName String?
+  errorMessage      String?
+  metadata          Json?
+  syncedAt          DateTime                 @default(now())
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel   TelegramChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, channelId])
+  @@index([workspaceId, sourceId, sourceType])
+  @@index([workspaceId, channelId, dataType])
 }
 
 model WorkspaceMember {
@@ -309,6 +390,8 @@ model TelegramChannel {
   inviteLinks TelegramInviteLink[]
   dailyStats  TelegramChannelDailyStats[]
   adminLinks TelegramChannelAdminLink[]
+  sourceAccesses TelegramChannelSourceAccess[]
+  dataSources TelegramChannelDataSource[]
   posts       TelegramPost[]
   statsSnapshots TelegramChannelStatsSnapshot[]
   statsPoints TelegramChannelStatsPoint[]
