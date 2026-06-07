@@ -18,6 +18,7 @@ type BroadcastStatsGraphField =
 
 @Injectable()
 export class TelegramMtprotoClient {
+  private readonly maxPostBackfillLimit = 10_000;
   private readonly defaultTelegramPaletteSize = 7;
   private readonly broadcastStatsGraphFields: Array<{
     normalized: BroadcastStatsGraphField;
@@ -148,19 +149,66 @@ export class TelegramMtprotoClient {
     }
   }
 
+  private graphTimestampToDate(value: unknown) {
+    const timestamp = this.toFiniteNumber(value);
+    if (timestamp == null) return null;
+    return this.toTelegramDate(
+      timestamp < 100_000_000_000 ? timestamp * 1000 : timestamp,
+    );
+  }
+
+  private extractGraphStatsPeriod(
+    graphs: Partial<Record<BroadcastStatsGraphField, unknown>>,
+  ) {
+    let minDate: Date | null = null;
+    let maxDate: Date | null = null;
+
+    for (const graph of Object.values(graphs)) {
+      if ((graph as any)?.status !== 'available') continue;
+      const columns = (graph as any)?.data?.columns;
+      if (!Array.isArray(columns)) continue;
+      const dates = columns.find(
+        (column: unknown) => Array.isArray(column) && column[0] === 'x',
+      );
+      if (!Array.isArray(dates)) continue;
+      for (const value of dates.slice(1)) {
+        const date = this.graphTimestampToDate(value);
+        if (!date) continue;
+        if (!minDate || date < minDate) minDate = date;
+        if (!maxDate || date > maxDate) maxDate = date;
+      }
+    }
+
+    if (!minDate || !maxDate) return null;
+    return {
+      minDate: minDate.toISOString(),
+      maxDate: maxDate.toISOString(),
+      source: 'graphs',
+    };
+  }
+
   private async normalizeStatsGraph(
     client: TelegramClient,
     field: BroadcastStatsGraphField,
     graph: unknown,
     warnings: string[],
+    statsDcId?: number | null,
   ) {
     let resolvedGraph = graph;
     if (resolvedGraph instanceof Api.StatsGraphAsync) {
       const token = resolvedGraph.token;
       try {
-        resolvedGraph = await client.invoke(
-          new Api.stats.LoadAsyncGraph({ token }),
+        const response = await this.invokeWithStatsDcMigration(
+          client,
+          () => new Api.stats.LoadAsyncGraph({ token }),
+          statsDcId,
         );
+        resolvedGraph = response.result;
+        if (response.migrated) {
+          warnings.push(
+            `${field}: async graph request was retried on Telegram stats DC ${response.dcId}`,
+          );
+        }
       } catch (error) {
         warnings.push(
           `${field}: async graph could not be loaded (${this.getTelegramErrorCode(error)})`,
@@ -206,6 +254,56 @@ export class TelegramMtprotoClient {
     );
   }
 
+  private getMigrationDc(error: unknown) {
+    const newDc = this.toFiniteNumber(this.getErrorProperty(error, 'newDc'));
+    if (newDc != null) return newDc;
+
+    const errorCode = this.getTelegramErrorCode(error);
+    const match = errorCode.match(/(?:^|_)MIGRATE_(\d+)(?:\b|$)/);
+    return match ? this.toFiniteNumber(match[1]) : null;
+  }
+
+  private async invokeWithStatsDcMigration<R extends Api.AnyRequest>(
+    client: TelegramClient,
+    requestFactory: () => R,
+    statsDcId?: number | null,
+  ): Promise<{
+    result: R['__response'];
+    dcId: number | null;
+    migrated: boolean;
+  }> {
+    const initialDcId = statsDcId ?? null;
+    try {
+      return {
+        result: await client.invoke(requestFactory(), initialDcId ?? undefined),
+        dcId: initialDcId,
+        migrated: false,
+      };
+    } catch (error) {
+      const migrationDc = this.getMigrationDc(error);
+      if (migrationDc == null || migrationDc === initialDcId) throw error;
+      return {
+        result: await client.invoke(requestFactory(), migrationDc),
+        dcId: migrationDc,
+        migrated: true,
+      };
+    }
+  }
+
+  private async getBroadcastStatsDc(
+    client: TelegramClient,
+    entity: unknown,
+  ): Promise<number | null> {
+    try {
+      const full = await client.invoke(
+        new Api.channels.GetFullChannel({ channel: entity as any }),
+      );
+      return this.toFiniteNumber((full as any)?.fullChat?.statsDc);
+    } catch {
+      return null;
+    }
+  }
+
   private telegramPublicPhotoUrl(username: string | null) {
     return username ? `https://t.me/i/userpic/320/${username}.jpg` : null;
   }
@@ -224,6 +322,7 @@ export class TelegramMtprotoClient {
 
   private normalizeBroadcastStatsError(error: unknown) {
     const errorCode = this.getTelegramErrorCode(error);
+    const migrationDc = this.getMigrationDc(error);
     const floodWaitSeconds = this.toFiniteNumber(
       this.getErrorProperty(error, 'seconds'),
     );
@@ -236,6 +335,17 @@ export class TelegramMtprotoClient {
           floodWaitSeconds != null
             ? `Telegram rate limit: retry after ${floodWaitSeconds} seconds`
             : `Telegram rate limit: ${errorCode}`,
+        ],
+      };
+    }
+    if (migrationDc != null) {
+      return {
+        status: 'dc_migrate_required',
+        errorCode,
+        floodWaitSeconds: null,
+        dcId: migrationDc,
+        warnings: [
+          `Telegram asked to retry broadcast stats on DC ${migrationDc}: ${errorCode}`,
         ],
       };
     }
@@ -539,7 +649,10 @@ export class TelegramMtprotoClient {
     const client = await this.createClient(params);
     try {
       const entity = await client.getEntity(params.channelRef);
-      const limit = Math.max(1, Math.min(300, params.postLimit || 100));
+      const limit = Math.max(
+        1,
+        Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
+      );
       const posts = await client.getMessages(entity, { limit });
       const dailyMap = new Map<
         string,
@@ -624,11 +737,21 @@ export class TelegramMtprotoClient {
     try {
       client = await this.createClient(params);
       const entity = await client.getEntity(params.channelRef);
-      const rawStats = await client.invoke(
-        new Api.stats.GetBroadcastStats({ channel: entity }),
-      );
-      const rawStatsRecord = rawStats as unknown as Record<string, unknown>;
       const warnings: string[] = [];
+      const preferredStatsDcId = await this.getBroadcastStatsDc(client, entity);
+      const statsResponse = await this.invokeWithStatsDcMigration(
+        client,
+        () => new Api.stats.GetBroadcastStats({ channel: entity as any }),
+        preferredStatsDcId,
+      );
+      const rawStats = statsResponse.result;
+      const statsDcId = statsResponse.dcId;
+      if (statsResponse.migrated) {
+        warnings.push(
+          `Broadcast stats request was retried on Telegram stats DC ${statsDcId}`,
+        );
+      }
+      const rawStatsRecord = rawStats as unknown as Record<string, unknown>;
       const graphs: Partial<Record<BroadcastStatsGraphField, unknown>> = {};
       const availableFields: string[] = [];
 
@@ -640,18 +763,21 @@ export class TelegramMtprotoClient {
             .map((rawField) => rawStatsRecord[rawField])
             .find((graph) => graph != null),
           warnings,
+          statsDcId,
         );
         graphs[field.normalized] = normalizedGraph;
         if (normalizedGraph.status === 'available') {
           availableFields.push(field.normalized);
         }
       }
+      const graphPeriod = this.extractGraphStatsPeriod(graphs);
 
       return {
         raw: this.toJsonSafe(rawStats),
         normalized: {
           status: 'available',
-          period: this.toJsonSafe(rawStats.period),
+          period: graphPeriod || this.toJsonSafe(rawStats.period),
+          raw_period: this.toJsonSafe(rawStats.period),
           followers: this.toJsonSafe(rawStats.followers),
           views_per_post: this.toJsonSafe(rawStats.viewsPerPost),
           shares_per_post: this.toJsonSafe(rawStats.sharesPerPost),
@@ -681,12 +807,20 @@ export class TelegramMtprotoClient {
     session: string;
     channelRef: string;
     postLimit?: number;
+    beforeMessageId?: string | number | null;
   }) {
     const client = await this.createClient(params);
     try {
       const entity = await client.getEntity(params.channelRef);
-      const limit = Math.max(1, Math.min(300, params.postLimit || 100));
-      const messages = await client.getMessages(entity, { limit });
+      const limit = Math.max(
+        1,
+        Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
+      );
+      const offsetId =
+        this.toFiniteNumber(params.beforeMessageId) != null
+          ? Number(this.toFiniteNumber(params.beforeMessageId))
+          : 0;
+      const messages = await client.getMessages(entity, { limit, offsetId });
 
       return (messages as any[])
         .filter((message) => message?.id && message?.date)

@@ -28,6 +28,9 @@ import {
 @Injectable()
 export class TelegramChannelsService {
   private readonly logger = new Logger(TelegramChannelsService.name);
+  private readonly defaultPostSyncLimit = 100;
+  private readonly initialPostBackfillLimit = 10_000;
+  private readonly olderPostBackfillMaxPages = 5;
 
   constructor(
     private prisma: PrismaService,
@@ -171,6 +174,72 @@ export class TelegramChannelsService {
         authTag: account.sessionAuthTag || '',
       }),
     };
+  }
+
+  private async postSyncLimitForChannel(channelId: string) {
+    const existingPosts = await this.prisma.telegramPost.count({
+      where: { telegramChannelId: channelId },
+    });
+    return existingPosts > 0
+      ? this.defaultPostSyncLimit
+      : this.initialPostBackfillLimit;
+  }
+
+  private async runInitialImportBackfill(params: {
+    userId: string;
+    workspaceId: string;
+    channelId: string;
+    accountId: string;
+  }) {
+    try {
+      const historical = await this.syncHistorical(
+        params.userId,
+        params.channelId,
+        {
+          telegramUserAccountId: params.accountId,
+          syncInviteLinks: true,
+          syncPosts: true,
+          postLimit: this.initialPostBackfillLimit,
+        },
+      );
+      const postsMetricsSync = await this.syncPostsMetricsForWorkspace(
+        params.workspaceId,
+        params.channelId,
+        {
+          telegramUserAccountId: params.accountId,
+          postLimit: this.initialPostBackfillLimit,
+        },
+      );
+      const olderPostsBackfill =
+        await this.syncOlderPostsMetricsBackfillForWorkspace(
+          params.workspaceId,
+          params.channelId,
+          {
+            telegramUserAccountId: params.accountId,
+            maxPages: this.olderPostBackfillMaxPages,
+          },
+        );
+      const channelStatsSync = await this.syncBroadcastStatsForWorkspace(
+        params.workspaceId,
+        params.channelId,
+        params.accountId,
+      );
+      return {
+        success: true,
+        historical,
+        postsMetricsSync,
+        olderPostsBackfill,
+        channelStatsSync,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Initial Telegram import backfill skipped for channel=${params.channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'unknown error',
+      };
+    }
   }
 
   private async firstConnectedAccount(workspaceId: string) {
@@ -469,7 +538,14 @@ export class TelegramChannelsService {
       sourceDisplayName: this.sourceDisplayName(account),
       metadata: { source: 'public_channel_import' },
     });
-    return this.findOne(userId, channel.id);
+    const importedChannel = await this.findOne(userId, channel.id);
+    const initialSync = await this.runInitialImportBackfill({
+      userId,
+      workspaceId,
+      channelId: channel.id,
+      accountId: account.id,
+    });
+    return { ...importedChannel, initialSync };
   }
 
   async remove(userId: string, id: string) {
@@ -516,15 +592,29 @@ export class TelegramChannelsService {
       channelId,
       account,
     );
+    const postLimit = await this.postSyncLimitForChannel(channelId);
     const historical = await this.syncHistorical(userId, channelId, {
       telegramUserAccountId: account.id,
       syncInviteLinks: true,
       syncPosts: true,
+      postLimit,
     });
     const postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
       telegramUserAccountId: account.id,
-      postLimit: 100,
+      postLimit,
     });
+    const olderPostsBackfill =
+      await this.syncOlderPostsMetricsBackfillForWorkspace(
+        workspaceId,
+        channelId,
+        {
+          telegramUserAccountId: account.id,
+          maxPages:
+            postLimit === this.initialPostBackfillLimit
+              ? this.olderPostBackfillMaxPages
+              : 1,
+        },
+      );
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
@@ -533,6 +623,7 @@ export class TelegramChannelsService {
       publicInfo,
       historical,
       postsMetricsSync,
+      olderPostsBackfill,
       channelStatsSync,
     };
   }
@@ -558,12 +649,21 @@ export class TelegramChannelsService {
       telegramUserAccountId: account.id,
       syncInviteLinks: true,
       syncPosts: true,
-      postLimit: dto.postLimit || 300,
+      postLimit: dto.postLimit || this.initialPostBackfillLimit,
     });
     const postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
       telegramUserAccountId: account.id,
-      postLimit: dto.postLimit || 300,
+      postLimit: dto.postLimit || this.initialPostBackfillLimit,
     });
+    const olderPostsBackfill =
+      await this.syncOlderPostsMetricsBackfillForWorkspace(
+        workspaceId,
+        channelId,
+        {
+          telegramUserAccountId: account.id,
+          maxPages: this.olderPostBackfillMaxPages,
+        },
+      );
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
@@ -573,6 +673,7 @@ export class TelegramChannelsService {
       publicInfo,
       historical,
       postsMetricsSync,
+      olderPostsBackfill,
       channelStatsSync,
     };
   }
@@ -663,7 +764,7 @@ export class TelegramChannelsService {
     const historical = await this.mtprotoClient.getChannelHistorical({
       ...this.accountCredentials(account),
       channelRef,
-      postLimit: dto.postLimit || 100,
+      postLimit: dto.postLimit || this.defaultPostSyncLimit,
     });
     let imported = 0;
     let updated = 0;
@@ -789,54 +890,9 @@ export class TelegramChannelsService {
       const metrics = await this.mtprotoClient.getChannelPostsMetrics({
         ...this.accountCredentials(account),
         channelRef,
-        postLimit: dto.postLimit || 100,
+        postLimit: dto.postLimit || this.defaultPostSyncLimit,
       });
-      const affectedDays = new Set<string>();
-      for (const post of metrics) {
-        const upserted = await this.prisma.telegramPost.upsert({
-          where: {
-            telegramChannelId_telegramMessageId: {
-              telegramChannelId: channel.id,
-              telegramMessageId: post.telegramMessageId,
-            },
-          },
-          create: {
-            workspaceId,
-            telegramChannelId: channel.id,
-            telegramMessageId: post.telegramMessageId,
-            postDate: post.postDate,
-            text: post.text,
-            viewsCount: post.viewsCount,
-            forwardsCount: post.forwardsCount,
-            reactionsCount: post.reactionsCount,
-            commentsCount: post.commentsCount,
-            reactions: post.reactions,
-            rawMessage: post.rawMessage,
-          },
-          update: {
-            postDate: post.postDate,
-            text: post.text,
-            viewsCount: post.viewsCount,
-            forwardsCount: post.forwardsCount,
-            reactionsCount: post.reactionsCount,
-            commentsCount: post.commentsCount,
-            reactions: post.reactions,
-            rawMessage: post.rawMessage,
-          },
-        });
-        await this.prisma.telegramPostMetricSnapshot.create({
-          data: {
-            telegramPostId: upserted.id,
-            viewsCount: post.viewsCount,
-            forwardsCount: post.forwardsCount,
-            reactionsCount: post.reactionsCount,
-            commentsCount: post.commentsCount,
-            reactions: post.reactions,
-          },
-        });
-        affectedDays.add(post.postDate.toISOString().slice(0, 10));
-      }
-      await this.recalculateDailyStatsFromPosts(channel.id, [...affectedDays]);
+      await this.persistPostMetrics(workspaceId, channel.id, metrics);
       for (const dataType of [
         TelegramChannelDataType.POSTS,
         TelegramChannelDataType.VIEWS,
@@ -862,6 +918,155 @@ export class TelegramChannelsService {
         'Failed to sync channel post metrics',
       );
     }
+  }
+
+  private async persistPostMetrics(
+    workspaceId: string,
+    channelId: string,
+    metrics: any[],
+  ) {
+    const affectedDays = new Set<string>();
+    for (const post of metrics) {
+      const upserted = await this.prisma.telegramPost.upsert({
+        where: {
+          telegramChannelId_telegramMessageId: {
+            telegramChannelId: channelId,
+            telegramMessageId: post.telegramMessageId,
+          },
+        },
+        create: {
+          workspaceId,
+          telegramChannelId: channelId,
+          telegramMessageId: post.telegramMessageId,
+          postDate: post.postDate,
+          text: post.text,
+          viewsCount: post.viewsCount,
+          forwardsCount: post.forwardsCount,
+          reactionsCount: post.reactionsCount,
+          commentsCount: post.commentsCount,
+          reactions: post.reactions,
+          rawMessage: post.rawMessage,
+        },
+        update: {
+          postDate: post.postDate,
+          text: post.text,
+          viewsCount: post.viewsCount,
+          forwardsCount: post.forwardsCount,
+          reactionsCount: post.reactionsCount,
+          commentsCount: post.commentsCount,
+          reactions: post.reactions,
+          rawMessage: post.rawMessage,
+        },
+      });
+      await this.prisma.telegramPostMetricSnapshot.create({
+        data: {
+          telegramPostId: upserted.id,
+          viewsCount: post.viewsCount,
+          forwardsCount: post.forwardsCount,
+          reactionsCount: post.reactionsCount,
+          commentsCount: post.commentsCount,
+          reactions: post.reactions,
+        },
+      });
+      affectedDays.add(post.postDate.toISOString().slice(0, 10));
+    }
+    await this.recalculateDailyStatsFromPosts(channelId, [...affectedDays]);
+    return { affectedDays: affectedDays.size };
+  }
+
+  private oldestMessageId(metrics: Array<{ telegramMessageId: string }>) {
+    return metrics.reduce<string | null>((oldest, post) => {
+      const current = this.toFiniteMessageId(post.telegramMessageId);
+      const previous = this.toFiniteMessageId(oldest);
+      if (current == null) return oldest;
+      if (previous == null || current < previous) return post.telegramMessageId;
+      return oldest;
+    }, null);
+  }
+
+  private toFiniteMessageId(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private async syncOlderPostsMetricsBackfillForWorkspace(
+    workspaceId: string,
+    channelId: string,
+    dto: { telegramUserAccountId?: string; maxPages?: number },
+  ) {
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId, isActive: true },
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    const account = await this.connectedAccount(
+      workspaceId,
+      channelId,
+      dto.telegramUserAccountId,
+    );
+    const channelRef = this.channelRef(channel);
+    if (!channelRef)
+      throw new BadRequestException('Channel must have username or chatId');
+
+    const oldestStored = await this.prisma.telegramPost.findFirst({
+      where: { telegramChannelId: channel.id },
+      orderBy: [{ postDate: 'asc' }, { telegramMessageId: 'asc' }],
+      select: { telegramMessageId: true, postDate: true },
+    });
+    if (!oldestStored?.telegramMessageId) {
+      return { source: 'mtproto', syncedPosts: 0, pagesFetched: 0 };
+    }
+    let beforeMessageId = oldestStored.telegramMessageId;
+    const backfillStart = oldestStored;
+
+    let syncedPosts = 0;
+    let pagesFetched = 0;
+    const maxPages = Math.max(1, dto.maxPages || 1);
+    for (let page = 0; page < maxPages; page += 1) {
+      const metrics = await this.mtprotoClient.getChannelPostsMetrics({
+        ...this.accountCredentials(account),
+        channelRef,
+        postLimit: this.initialPostBackfillLimit,
+        beforeMessageId,
+      });
+      if (!metrics.length) break;
+      await this.persistPostMetrics(workspaceId, channel.id, metrics);
+      syncedPosts += metrics.length;
+      pagesFetched += 1;
+
+      const nextBeforeMessageId = this.oldestMessageId(metrics);
+      const next = this.toFiniteMessageId(nextBeforeMessageId);
+      const current = this.toFiniteMessageId(beforeMessageId);
+      if (
+        !nextBeforeMessageId ||
+        next == null ||
+        current == null ||
+        next >= current
+      )
+        break;
+      beforeMessageId = nextBeforeMessageId;
+    }
+
+    if (syncedPosts > 0) {
+      await this.sourceAccessService.recordDataSource({
+        workspaceId,
+        channelId,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        dataType: TelegramChannelDataType.POSTS,
+        status: TelegramDataSourceStatus.SUCCESS,
+        sourceDisplayName: this.sourceDisplayName(account),
+        metadata: { olderSyncedPosts: syncedPosts, pagesFetched },
+      });
+    }
+
+    return {
+      source: 'mtproto',
+      syncedPosts,
+      pagesFetched,
+      fromMessageId: backfillStart.telegramMessageId,
+      fromDate: backfillStart.postDate,
+      nextBeforeMessageId: beforeMessageId,
+    };
   }
 
   private async recalculateDailyStatsFromPosts(
