@@ -20,6 +20,15 @@ END $$;
 `);
 
     await this.prisma.$executeRawUnsafe(`
+DO $$
+BEGIN
+  CREATE TYPE "CurrencyDisplayMode" AS ENUM ('code', 'symbol');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
 CREATE TABLE IF NOT EXISTS "Icon" (
   "id" TEXT NOT NULL,
   "workspaceId" TEXT,
