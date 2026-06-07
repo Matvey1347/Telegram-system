@@ -188,6 +188,16 @@ export class TelegramMtprotoClient {
     return username ? `https://t.me/i/userpic/320/${username}.jpg` : null;
   }
 
+  private async profilePhotoDataUrl(client: TelegramClient, entity: unknown) {
+    try {
+      const photo = await client.downloadProfilePhoto(entity as any, { isBig: true });
+      if (!Buffer.isBuffer(photo) || photo.length === 0) return null;
+      return `data:image/jpeg;base64,${photo.toString('base64')}`;
+    } catch {
+      return null;
+    }
+  }
+
   private normalizeBroadcastStatsError(error: unknown) {
     const errorCode = this.getTelegramErrorCode(error);
     const floodWaitSeconds = this.toFiniteNumber(
@@ -443,20 +453,29 @@ export class TelegramMtprotoClient {
       const username = entity?.username
         ? String(entity.username).replace(/^@/, '').toLowerCase()
         : null;
+      const firstName = entity?.firstName ? String(entity.firstName) : null;
+      const lastName = entity?.lastName ? String(entity.lastName) : null;
+      const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
       const participantsCount =
         this.toFiniteNumber(fullChannel?.participantsCount) ??
         this.toFiniteNumber(entity?.participantsCount);
+      const photoUrl =
+        (await this.profilePhotoDataUrl(client, entity)) ||
+        this.telegramPublicPhotoUrl(username);
       return {
+        kind: entity instanceof Api.User ? 'person' : 'channel',
         telegramChatId: entity?.id != null ? String(entity.id) : '',
-        title: entity?.title || username || params.channelRef,
+        title: entity?.title || fullName || username || params.channelRef,
         username,
         description: fullChannel?.about || null,
         participantsCount,
-        photoUrl: this.telegramPublicPhotoUrl(username),
+        photoUrl,
         raw: {
           entity: this.toJsonSafe({
             id: entity?.id,
             title: entity?.title,
+            firstName,
+            lastName,
             username: entity?.username,
             participantsCount: entity?.participantsCount,
           }),

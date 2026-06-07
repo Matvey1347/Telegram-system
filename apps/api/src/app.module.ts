@@ -20,6 +20,7 @@ import { WorkspaceMembersModule } from './workspace-members/workspace-members.mo
 import { AccountModule } from './account/account.module';
 import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
 import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-user-accounts.module';
+import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-us
     AccountModule,
     TelegramSyncModule,
     TelegramUserAccountsModule,
+    TelegramBotsModule,
   ],
   controllers: [AppController],
 })
