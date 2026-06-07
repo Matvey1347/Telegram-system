@@ -20,11 +20,6 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TelegramUserAccountsService {
-  private readonly loginState = new Map<
-    string,
-    { phone: string; phoneCodeHash: string; tempSession?: string }
-  >();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
@@ -43,13 +38,65 @@ export class TelegramUserAccountsService {
   private safe<T extends Record<string, unknown>>(row: T) {
     return {
       ...row,
+      phoneEncrypted: undefined,
+      phoneIv: undefined,
+      phoneAuthTag: undefined,
       apiHashEncrypted: undefined,
       apiHashIv: undefined,
       apiHashAuthTag: undefined,
       sessionEncrypted: undefined,
       sessionIv: undefined,
       sessionAuthTag: undefined,
+      loginPhoneCodeHash: undefined,
+      loginTempSessionEncrypted: undefined,
+      loginTempSessionIv: undefined,
+      loginTempSessionAuthTag: undefined,
+      loginStartedAt: undefined,
     };
+  }
+
+  private encryptLoginTempSession(tempSession?: string | null) {
+    if (!tempSession) return null;
+    const encrypted = this.encryptionService.encrypt(tempSession);
+    return {
+      loginTempSessionEncrypted: encrypted.encrypted,
+      loginTempSessionIv: encrypted.iv,
+      loginTempSessionAuthTag: encrypted.authTag,
+    };
+  }
+
+  private decryptLoginTempSession(account: {
+    loginTempSessionEncrypted?: string | null;
+    loginTempSessionIv?: string | null;
+    loginTempSessionAuthTag?: string | null;
+  }) {
+    if (
+      !account.loginTempSessionEncrypted ||
+      !account.loginTempSessionIv ||
+      !account.loginTempSessionAuthTag
+    ) {
+      return null;
+    }
+    return this.encryptionService.decrypt({
+      encrypted: account.loginTempSessionEncrypted,
+      iv: account.loginTempSessionIv,
+      authTag: account.loginTempSessionAuthTag,
+    });
+  }
+
+  private decryptPhone(account: {
+    phoneEncrypted?: string | null;
+    phoneIv?: string | null;
+    phoneAuthTag?: string | null;
+  }) {
+    if (!account.phoneEncrypted || !account.phoneIv || !account.phoneAuthTag) {
+      return null;
+    }
+    return this.encryptionService.decrypt({
+      encrypted: account.phoneEncrypted,
+      iv: account.phoneIv,
+      authTag: account.phoneAuthTag,
+    });
   }
 
   private async getWorkspaceId(userId: string) {
@@ -156,7 +203,6 @@ export class TelegramUserAccountsService {
     const row = await this.prisma.telegramUserAccountIntegration.delete({
       where: { id },
     });
-    this.loginState.delete(id);
     return this.safe(row);
   }
 
@@ -189,11 +235,7 @@ export class TelegramUserAccountsService {
       apiHash,
       phone,
     );
-    this.loginState.set(account.id, {
-      phone,
-      phoneCodeHash: started.phoneCodeHash,
-      tempSession: started.tempSession,
-    });
+    const loginTempSession = this.encryptLoginTempSession(started.tempSession);
 
     await this.prisma.telegramUserAccountIntegration.update({
       where: { id: account.id },
@@ -202,6 +244,11 @@ export class TelegramUserAccountsService {
         lastErrorMessage: null,
         lastCheckedAt: new Date(),
         phoneMasked: this.maskPhone(phone),
+        loginPhoneCodeHash: started.phoneCodeHash,
+        loginStartedAt: new Date(),
+        loginTempSessionEncrypted: loginTempSession?.loginTempSessionEncrypted,
+        loginTempSessionIv: loginTempSession?.loginTempSessionIv,
+        loginTempSessionAuthTag: loginTempSession?.loginTempSessionAuthTag,
       },
     });
     return { success: true, status: TelegramUserAccountStatus.needs_code };
@@ -215,13 +262,19 @@ export class TelegramUserAccountsService {
     if (!account)
       throw new NotFoundException('Telegram user account not found');
 
-    const state = this.loginState.get(account.id);
-    if (!state) {
+    const statePhoneCodeHash = account.loginPhoneCodeHash;
+    const stateTempSession = this.decryptLoginTempSession(account);
+    if (!statePhoneCodeHash) {
       await this.prisma.telegramUserAccountIntegration.update({
         where: { id: account.id },
         data: {
           status: TelegramUserAccountStatus.error,
           lastErrorMessage: 'Login session expired. Start login again.',
+          loginPhoneCodeHash: null,
+          loginTempSessionEncrypted: null,
+          loginTempSessionIv: null,
+          loginTempSessionAuthTag: null,
+          loginStartedAt: null,
         },
       });
       return { success: false, status: TelegramUserAccountStatus.error };
@@ -232,13 +285,17 @@ export class TelegramUserAccountsService {
       iv: account.apiHashIv,
       authTag: account.apiHashAuthTag,
     });
+    const phone = this.decryptPhone(account);
+    if (!phone) {
+      throw new BadRequestException('Phone is required to confirm login code.');
+    }
     const result = await this.mtprotoClient.signInWithCode({
       apiId: account.apiId,
       apiHash,
-      phone: state.phone,
-      phoneCodeHash: state.phoneCodeHash,
+      phone,
+      phoneCodeHash: statePhoneCodeHash,
       code: dto.code,
-      tempSession: state.tempSession,
+      tempSession: stateTempSession ?? undefined,
     });
 
     if (result.needsPassword) {
@@ -247,11 +304,9 @@ export class TelegramUserAccountsService {
         data: {
           status: TelegramUserAccountStatus.needs_password,
           lastErrorMessage: null,
+          loginPhoneCodeHash: statePhoneCodeHash,
+          ...(result.tempSession ? this.encryptLoginTempSession(result.tempSession) : {}),
         },
-      });
-      this.loginState.set(account.id, {
-        ...state,
-        tempSession: result.tempSession,
       });
       return {
         success: true,
@@ -284,6 +339,11 @@ export class TelegramUserAccountsService {
         lastSyncedAt: new Date(),
         lastCheckedAt: new Date(),
         lastErrorMessage: null,
+        loginPhoneCodeHash: null,
+        loginTempSessionEncrypted: null,
+        loginTempSessionIv: null,
+        loginTempSessionAuthTag: null,
+        loginStartedAt: null,
       },
     });
     return this.safe(row);
@@ -301,13 +361,19 @@ export class TelegramUserAccountsService {
     if (!account)
       throw new NotFoundException('Telegram user account not found');
 
-    const state = this.loginState.get(account.id);
-    if (!state) {
+    const statePhoneCodeHash = account.loginPhoneCodeHash;
+    const stateTempSession = this.decryptLoginTempSession(account);
+    if (!statePhoneCodeHash) {
       await this.prisma.telegramUserAccountIntegration.update({
         where: { id: account.id },
         data: {
           status: TelegramUserAccountStatus.error,
           lastErrorMessage: 'Login session expired. Start login again.',
+          loginPhoneCodeHash: null,
+          loginTempSessionEncrypted: null,
+          loginTempSessionIv: null,
+          loginTempSessionAuthTag: null,
+          loginStartedAt: null,
         },
       });
       return { success: false, status: TelegramUserAccountStatus.error };
@@ -322,7 +388,7 @@ export class TelegramUserAccountsService {
       apiId: account.apiId,
       apiHash,
       password: dto.password,
-      tempSession: state.tempSession,
+      tempSession: stateTempSession ?? undefined,
     });
     const encryptedSession = this.encryptionService.encrypt(result.session);
     const row = await this.prisma.telegramUserAccountIntegration.update({
@@ -346,6 +412,11 @@ export class TelegramUserAccountsService {
         lastSyncedAt: new Date(),
         lastCheckedAt: new Date(),
         lastErrorMessage: null,
+        loginPhoneCodeHash: null,
+        loginTempSessionEncrypted: null,
+        loginTempSessionIv: null,
+        loginTempSessionAuthTag: null,
+        loginStartedAt: null,
       },
     });
     return this.safe(row);

@@ -161,6 +161,11 @@ model TelegramUserAccountIntegration {
   sessionEncrypted String?
   sessionIv        String?
   sessionAuthTag   String?
+  loginPhoneCodeHash String?
+  loginTempSessionEncrypted String?
+  loginTempSessionIv String?
+  loginTempSessionAuthTag String?
+  loginStartedAt   DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   channelAdminLinks TelegramChannelAdminLink[]

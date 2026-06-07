@@ -79,6 +79,31 @@ ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);
 
     await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "loginPhoneCodeHash" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "loginTempSessionEncrypted" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "loginTempSessionIv" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "loginTempSessionAuthTag" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "loginStartedAt" TIMESTAMP(3);
+`);
+
+    await this.prisma.$executeRawUnsafe(`
 ALTER TABLE "Transaction"
 ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);
