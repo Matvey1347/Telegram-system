@@ -47,7 +47,10 @@ export class TelegramChannelsService {
     );
   }
 
-  private channelRef(channel: { username: string | null; telegramChatId: string | null }) {
+  private channelRef(channel: {
+    username: string | null;
+    telegramChatId: string | null;
+  }) {
     if (channel.username) {
       return channel.username.startsWith('@')
         ? channel.username
@@ -72,16 +75,23 @@ export class TelegramChannelsService {
 
   private normalizePublicChannelInput(input: string) {
     const trimmed = String(input || '').trim();
-    if (!trimmed) throw new BadRequestException('Telegram channel input is required');
-    let normalized = trimmed.replace(/^https?:\/\//i, '').replace(/^tg:\/\//i, '');
+    if (!trimmed)
+      throw new BadRequestException('Telegram channel input is required');
+    let normalized = trimmed
+      .replace(/^https?:\/\//i, '')
+      .replace(/^tg:\/\//i, '');
     normalized = normalized.replace(/^www\./i, '');
     if (/^(t\.me|telegram\.me)\//i.test(normalized)) {
       normalized = normalized.replace(/^(t\.me|telegram\.me)\//i, '');
     }
-    normalized = normalized.split(/[?#]/)[0].replace(/^s\//i, '').replace(/\/+$/, '');
+    normalized = normalized
+      .split(/[?#]/)[0]
+      .replace(/^s\//i, '')
+      .replace(/\/+$/, '');
     const firstPathPart = normalized.split('/')[0] || normalized;
     const username = this.normalizeUsername(firstPathPart);
-    if (!username) throw new BadRequestException('Telegram channel input is invalid');
+    if (!username)
+      throw new BadRequestException('Telegram channel input is invalid');
     return `@${username}`;
   }
 
@@ -120,7 +130,10 @@ export class TelegramChannelsService {
   }) {
     return account.username
       ? `@${account.username}`
-      : account.firstName || account.label || account.phoneMasked || 'MTProto account';
+      : account.firstName ||
+          account.label ||
+          account.phoneMasked ||
+          'MTProto account';
   }
 
   private async bestMtprotoAccountId(
@@ -256,7 +269,9 @@ export class TelegramChannelsService {
     };
   }
 
-  private pickCanonicalChannel(channels: Array<{ id: string; adminLinks?: unknown[]; createdAt: Date }>) {
+  private pickCanonicalChannel(
+    channels: Array<{ id: string; adminLinks?: unknown[]; createdAt: Date }>,
+  ) {
     return [...channels].sort((left, right) => {
       const leftAdmin = (left.adminLinks?.length || 0) > 0 ? 0 : 1;
       const rightAdmin = (right.adminLinks?.length || 0) > 0 ? 0 : 1;
@@ -281,7 +296,8 @@ export class TelegramChannelsService {
         data: adminLinks.map((link: any) => ({
           workspaceId,
           telegramChannelId: canonicalId,
-          telegramUserAccountIntegrationId: link.telegramUserAccountIntegrationId,
+          telegramUserAccountIntegrationId:
+            link.telegramUserAccountIntegrationId,
           source: link.source || 'mtproto',
         })),
         skipDuplicates: true,
@@ -379,7 +395,9 @@ export class TelegramChannelsService {
       data: {
         ...dto,
         username:
-          dto.username === undefined ? undefined : this.normalizeUsername(dto.username),
+          dto.username === undefined
+            ? undefined
+            : this.normalizeUsername(dto.username),
       },
     });
   }
@@ -468,7 +486,9 @@ export class TelegramChannelsService {
           where: { workspaceId, adCampaignId: { in: campaignIds } },
         });
       }
-      await tx.promo.deleteMany({ where: { workspaceId, telegramChannelId: id } });
+      await tx.promo.deleteMany({
+        where: { workspaceId, telegramChannelId: id },
+      });
       await tx.telegramInviteLink.deleteMany({
         where: { workspaceId, telegramChannelId: id },
       });
@@ -485,7 +505,11 @@ export class TelegramChannelsService {
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
-      await this.bestMtprotoAccountId(workspaceId, channelId, TelegramChannelDataType.STATS),
+      await this.bestMtprotoAccountId(
+        workspaceId,
+        channelId,
+        TelegramChannelDataType.STATS,
+      ),
     );
     const publicInfo = await this.syncPublicChannelInfo(
       workspaceId,
@@ -504,7 +528,13 @@ export class TelegramChannelsService {
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
-    return { source: 'mtproto', publicInfo, historical, postsMetricsSync, channelStatsSync };
+    return {
+      source: 'mtproto',
+      publicInfo,
+      historical,
+      postsMetricsSync,
+      channelStatsSync,
+    };
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
@@ -513,7 +543,11 @@ export class TelegramChannelsService {
       workspaceId,
       channelId,
       dto.telegramUserAccountId ||
-        (await this.bestMtprotoAccountId(workspaceId, channelId, TelegramChannelDataType.STATS)),
+        (await this.bestMtprotoAccountId(
+          workspaceId,
+          channelId,
+          TelegramChannelDataType.STATS,
+        )),
     );
     const publicInfo = await this.syncPublicChannelInfo(
       workspaceId,
@@ -566,13 +600,17 @@ export class TelegramChannelsService {
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
     const channelRef = this.channelRef(channel);
-    if (!channelRef) throw new BadRequestException('Channel must have username or chatId');
+    if (!channelRef)
+      throw new BadRequestException('Channel must have username or chatId');
     const info = await this.mtprotoClient.getPublicChannelInfo({
       ...this.accountCredentials(account),
       channelRef,
     });
     if (info.kind !== 'channel') {
-      return { updated: false, reason: 'Resolved Telegram entity is not a channel' };
+      return {
+        updated: false,
+        reason: 'Resolved Telegram entity is not a channel',
+      };
     }
     const updated = await this.prisma.telegramChannel.update({
       where: { id: channelId },
@@ -607,7 +645,11 @@ export class TelegramChannelsService {
     };
   }
 
-  async syncHistorical(userId: string, channelId: string, dto: HistoricalSyncDto) {
+  async syncHistorical(
+    userId: string,
+    channelId: string,
+    dto: HistoricalSyncDto,
+  ) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const account = await this.connectedAccount(
@@ -616,7 +658,8 @@ export class TelegramChannelsService {
       dto.telegramUserAccountId,
     );
     const channelRef = this.channelRef(channel);
-    if (!channelRef) throw new BadRequestException('Channel must have username or chatId');
+    if (!channelRef)
+      throw new BadRequestException('Channel must have username or chatId');
     const historical = await this.mtprotoClient.getChannelHistorical({
       ...this.accountCredentials(account),
       channelRef,
@@ -641,7 +684,8 @@ export class TelegramChannelsService {
             },
           });
           updated += 1;
-          if (existing.adCampaignId) affectedCampaignIds.add(existing.adCampaignId);
+          if (existing.adCampaignId)
+            affectedCampaignIds.add(existing.adCampaignId);
         } else {
           await this.prisma.telegramInviteLink.create({
             data: {
@@ -677,7 +721,9 @@ export class TelegramChannelsService {
       for (const row of historical.dailyStats || []) {
         const date = new Date(`${row.date}T00:00:00.000Z`);
         await this.prisma.telegramChannelDailyStats.upsert({
-          where: { telegramChannelId_date: { telegramChannelId: channelId, date } },
+          where: {
+            telegramChannelId_date: { telegramChannelId: channelId, date },
+          },
           create: {
             telegramChannelId: channelId,
             date,
@@ -737,7 +783,8 @@ export class TelegramChannelsService {
       dto.telegramUserAccountId,
     );
     const channelRef = this.channelRef(channel);
-    if (!channelRef) throw new BadRequestException('Channel must have username or chatId');
+    if (!channelRef)
+      throw new BadRequestException('Channel must have username or chatId');
     try {
       const metrics = await this.mtprotoClient.getChannelPostsMetrics({
         ...this.accountCredentials(account),
@@ -763,8 +810,8 @@ export class TelegramChannelsService {
             forwardsCount: post.forwardsCount,
             reactionsCount: post.reactionsCount,
             commentsCount: post.commentsCount,
-            reactions: post.reactions as any,
-            rawMessage: post.rawMessage as any,
+            reactions: post.reactions,
+            rawMessage: post.rawMessage,
           },
           update: {
             postDate: post.postDate,
@@ -773,8 +820,8 @@ export class TelegramChannelsService {
             forwardsCount: post.forwardsCount,
             reactionsCount: post.reactionsCount,
             commentsCount: post.commentsCount,
-            reactions: post.reactions as any,
-            rawMessage: post.rawMessage as any,
+            reactions: post.reactions,
+            rawMessage: post.rawMessage,
           },
         });
         await this.prisma.telegramPostMetricSnapshot.create({
@@ -784,7 +831,7 @@ export class TelegramChannelsService {
             forwardsCount: post.forwardsCount,
             reactionsCount: post.reactionsCount,
             commentsCount: post.commentsCount,
-            reactions: post.reactions as any,
+            reactions: post.reactions,
           },
         });
         affectedDays.add(post.postDate.toISOString().slice(0, 10));
@@ -811,20 +858,30 @@ export class TelegramChannelsService {
       this.logger.error(
         `MTProto post metrics sync failed for channel=${channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
-      throw new InternalServerErrorException('Failed to sync channel post metrics');
+      throw new InternalServerErrorException(
+        'Failed to sync channel post metrics',
+      );
     }
   }
 
-  private async recalculateDailyStatsFromPosts(channelId: string, dates: string[]) {
+  private async recalculateDailyStatsFromPosts(
+    channelId: string,
+    dates: string[],
+  ) {
     for (const value of dates) {
       const date = new Date(`${value}T00:00:00.000Z`);
       const nextDate = new Date(date.getTime() + 24 * 3600 * 1000);
       const aggregate = await this.prisma.telegramPost.aggregate({
-        where: { telegramChannelId: channelId, postDate: { gte: date, lt: nextDate } },
+        where: {
+          telegramChannelId: channelId,
+          postDate: { gte: date, lt: nextDate },
+        },
         _sum: { viewsCount: true, reactionsCount: true, forwardsCount: true },
       });
       await this.prisma.telegramChannelDailyStats.upsert({
-        where: { telegramChannelId_date: { telegramChannelId: channelId, date } },
+        where: {
+          telegramChannelId_date: { telegramChannelId: channelId, date },
+        },
         create: {
           telegramChannelId: channelId,
           date,
@@ -852,7 +909,11 @@ export class TelegramChannelsService {
       channelId,
       dto.telegramUserAccountId,
     );
-    return this.syncBroadcastStatsForWorkspace(workspaceId, channelId, account.id);
+    return this.syncBroadcastStatsForWorkspace(
+      workspaceId,
+      channelId,
+      account.id,
+    );
   }
 
   async syncBroadcastStatsForWorkspace(
@@ -864,9 +925,14 @@ export class TelegramChannelsService {
       where: { id: channelId, workspaceId, isActive: true },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const account = await this.connectedAccount(workspaceId, channelId, accountId);
+    const account = await this.connectedAccount(
+      workspaceId,
+      channelId,
+      accountId,
+    );
     const channelRef = this.channelRef(channel);
-    if (!channelRef) throw new BadRequestException('Channel must have username or chatId');
+    if (!channelRef)
+      throw new BadRequestException('Channel must have username or chatId');
     const stats = await this.mtprotoClient.getBroadcastStats({
       ...this.accountCredentials(account),
       channelRef,
@@ -874,7 +940,12 @@ export class TelegramChannelsService {
     const syncedAt = new Date();
     const snapshotDate = this.toUtcDay(syncedAt);
     const snapshot = await this.prisma.telegramChannelStatsSnapshot.upsert({
-      where: { telegramChannelId_snapshotDate: { telegramChannelId: channel.id, snapshotDate } },
+      where: {
+        telegramChannelId_snapshotDate: {
+          telegramChannelId: channel.id,
+          snapshotDate,
+        },
+      },
       create: {
         workspaceId,
         telegramChannelId: channel.id,
@@ -938,9 +1009,17 @@ export class TelegramChannelsService {
           : Array.isArray(stats.warnings)
             ? stats.warnings.join('; ')
             : 'Stats unavailable from this source',
-      metadata: { availableFields: stats.availableFields, warnings: stats.warnings },
+      metadata: {
+        availableFields: stats.availableFields,
+        warnings: stats.warnings,
+      },
     });
-    return { source: 'mtproto', success: stats.normalized.status === 'available', snapshot, pointsUpserted: points.length };
+    return {
+      source: 'mtproto',
+      success: stats.normalized.status === 'available',
+      snapshot,
+      pointsUpserted: points.length,
+    };
   }
 
   private extractBroadcastStatsPoints(
@@ -950,14 +1029,20 @@ export class TelegramChannelsService {
     normalizedStats: any,
   ) {
     const points: any[] = [];
-    for (const [metric, graph] of Object.entries(normalizedStats?.graphs || {})) {
+    for (const [metric, graph] of Object.entries(
+      normalizedStats?.graphs || {},
+    )) {
       if ((graph as any)?.status !== 'available') continue;
       const payload = (graph as any).data;
       if (!Array.isArray(payload?.columns)) continue;
-      const columns = payload.columns.filter((column: unknown) => Array.isArray(column));
+      const columns = payload.columns.filter((column: unknown) =>
+        Array.isArray(column),
+      );
       const dates = columns.find((column: any[]) => column[0] === 'x');
       if (!dates) continue;
-      for (const values of columns.filter((column: any[]) => column[0] !== 'x')) {
+      for (const values of columns.filter(
+        (column: any[]) => column[0] !== 'x',
+      )) {
         for (let index = 1; index < dates.length; index += 1) {
           const timestamp = Number(dates[index]);
           const value = Number(values[index]);
@@ -970,7 +1055,11 @@ export class TelegramChannelsService {
             seriesLabel: String(payload.names?.[values[0]] || values[0]),
             color: payload.colors?.[values[0]] || null,
             graphType: String(payload.types?.[values[0]] || 'line'),
-            date: this.toUtcDay(new Date(timestamp < 100_000_000_000 ? timestamp * 1000 : timestamp)),
+            date: this.toUtcDay(
+              new Date(
+                timestamp < 100_000_000_000 ? timestamp * 1000 : timestamp,
+              ),
+            ),
             value,
             latestSyncedAt: syncedAt,
           });
@@ -1016,45 +1105,76 @@ export class TelegramChannelsService {
     const safeOffset = Math.max(0, offset);
     const where = { workspaceId, telegramChannelId: channelId };
     const [items, total] = await Promise.all([
-      this.prisma.telegramPost.findMany({ where, orderBy: { postDate: 'desc' }, skip: safeOffset, take: safeLimit }),
+      this.prisma.telegramPost.findMany({
+        where,
+        orderBy: { postDate: 'desc' },
+        skip: safeOffset,
+        take: safeLimit,
+      }),
       this.prisma.telegramPost.count({ where }),
     ]);
-    return { source: 'mtproto', items, total, limit: safeLimit, offset: safeOffset };
+    return {
+      source: 'mtproto',
+      items,
+      total,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
   }
 
-  async analytics(userId: string, channelId: string, from?: string, to?: string) {
+  async analytics(
+    userId: string,
+    channelId: string,
+    from?: string,
+    to?: string,
+  ) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const fromDate = from
+      ? new Date(from)
+      : new Date(Date.now() - 30 * 24 * 3600 * 1000);
     const toDate = to ? new Date(to) : new Date();
-    const [dailyStats, inviteLinks, campaigns, recentPosts, channelStatsSnapshot, channelStatsPoints] =
-      await Promise.all([
-        this.prisma.telegramChannelDailyStats.findMany({
-          where: { telegramChannelId: channelId, date: { gte: fromDate, lte: toDate } },
-          orderBy: { date: 'asc' },
-        }),
-        this.prisma.telegramInviteLink.findMany({
-          where: { workspaceId, telegramChannelId: channelId },
-          include: { adCampaign: true },
-        }),
-        this.prisma.adCampaign.findMany({
-          where: { workspaceId, telegramChannelId: channelId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.telegramPost.findMany({
-          where: { workspaceId, telegramChannelId: channelId },
-          orderBy: { postDate: 'desc' },
-          take: 100,
-        }),
-        this.prisma.telegramChannelStatsSnapshot.findFirst({
-          where: { workspaceId, telegramChannelId: channelId },
-          orderBy: { syncedAt: 'desc' },
-        }),
-        this.prisma.telegramChannelStatsPoint.findMany({
-          where: { workspaceId, telegramChannelId: channelId, date: { gte: fromDate, lte: toDate } },
-          orderBy: [{ date: 'asc' }, { metric: 'asc' }, { series: 'asc' }],
-        }),
-      ]);
+    const [
+      dailyStats,
+      inviteLinks,
+      campaigns,
+      recentPosts,
+      channelStatsSnapshot,
+      channelStatsPoints,
+    ] = await Promise.all([
+      this.prisma.telegramChannelDailyStats.findMany({
+        where: {
+          telegramChannelId: channelId,
+          date: { gte: fromDate, lte: toDate },
+        },
+        orderBy: { date: 'asc' },
+      }),
+      this.prisma.telegramInviteLink.findMany({
+        where: { workspaceId, telegramChannelId: channelId },
+        include: { adCampaign: true },
+      }),
+      this.prisma.adCampaign.findMany({
+        where: { workspaceId, telegramChannelId: channelId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.telegramPost.findMany({
+        where: { workspaceId, telegramChannelId: channelId },
+        orderBy: { postDate: 'desc' },
+        take: 100,
+      }),
+      this.prisma.telegramChannelStatsSnapshot.findFirst({
+        where: { workspaceId, telegramChannelId: channelId },
+        orderBy: { syncedAt: 'desc' },
+      }),
+      this.prisma.telegramChannelStatsPoint.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: channelId,
+          date: { gte: fromDate, lte: toDate },
+        },
+        orderBy: [{ date: 'asc' }, { metric: 'asc' }, { series: 'asc' }],
+      }),
+    ]);
     const linksById = new Map(inviteLinks.map((link) => [link.id, link]));
     const campaignsWithMetrics = campaigns.map((campaign) => {
       const joinedCount = Number(
@@ -1089,9 +1209,18 @@ export class TelegramChannelsService {
         inviteLinksCount: inviteLinks.length,
         campaignsCount: campaigns.length,
         postsTotal: recentPosts.length,
-        viewsTotal: recentPosts.reduce((sum, post) => sum + Number(post.viewsCount || 0), 0),
-        forwardsTotal: recentPosts.reduce((sum, post) => sum + Number(post.forwardsCount || 0), 0),
-        reactionsTotal: recentPosts.reduce((sum, post) => sum + Number(post.reactionsCount || 0), 0),
+        viewsTotal: recentPosts.reduce(
+          (sum, post) => sum + Number(post.viewsCount || 0),
+          0,
+        ),
+        forwardsTotal: recentPosts.reduce(
+          (sum, post) => sum + Number(post.forwardsCount || 0),
+          0,
+        ),
+        reactionsTotal: recentPosts.reduce(
+          (sum, post) => sum + Number(post.reactionsCount || 0),
+          0,
+        ),
       },
       dailyStats,
       inviteLinks,
@@ -1103,16 +1232,26 @@ export class TelegramChannelsService {
     };
   }
 
-  async attachInviteLinkCampaign(userId: string, inviteLinkId: string, dto: AttachCampaignDto) {
+  async attachInviteLinkCampaign(
+    userId: string,
+    inviteLinkId: string,
+    dto: AttachCampaignDto,
+  ) {
     const workspaceId = await this.workspace(userId);
     const [link, campaign] = await Promise.all([
-      this.prisma.telegramInviteLink.findFirst({ where: { id: inviteLinkId, workspaceId } }),
-      this.prisma.adCampaign.findFirst({ where: { id: dto.adCampaignId, workspaceId } }),
+      this.prisma.telegramInviteLink.findFirst({
+        where: { id: inviteLinkId, workspaceId },
+      }),
+      this.prisma.adCampaign.findFirst({
+        where: { id: dto.adCampaignId, workspaceId },
+      }),
     ]);
     if (!link) throw new NotFoundException('Invite link not found');
     if (!campaign) throw new NotFoundException('Campaign not found');
     if (campaign.telegramChannelId !== link.telegramChannelId) {
-      throw new BadRequestException('Campaign and invite link must belong to the same channel');
+      throw new BadRequestException(
+        'Campaign and invite link must belong to the same channel',
+      );
     }
     const updated = await this.prisma.telegramInviteLink.update({
       where: { id: link.id },
@@ -1134,12 +1273,15 @@ export class TelegramChannelsService {
       data: { adCampaignId: null, lastSyncedAt: new Date() },
       include: { adCampaign: true },
     });
-    if (link.adCampaignId) await this.recalculateCampaignMetricsById(link.adCampaignId);
+    if (link.adCampaignId)
+      await this.recalculateCampaignMetricsById(link.adCampaignId);
     return updated;
   }
 
   async recalculateCampaignMetricsById(campaignId: string) {
-    const campaign = await this.prisma.adCampaign.findUnique({ where: { id: campaignId } });
+    const campaign = await this.prisma.adCampaign.findUnique({
+      where: { id: campaignId },
+    });
     if (!campaign) return null;
     const links = await this.prisma.telegramInviteLink.findMany({
       where: { adCampaignId: campaignId },
@@ -1152,7 +1294,10 @@ export class TelegramChannelsService {
         joinedCount,
         leftCount: null,
         netGrowthCount: null,
-        cpa: joinedCount > 0 ? Number(campaign.priceInPrimaryCurrency) / joinedCount : null,
+        cpa:
+          joinedCount > 0
+            ? Number(campaign.priceInPrimaryCurrency) / joinedCount
+            : null,
       },
     });
   }

@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Currency } from '@prisma/client';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -23,6 +22,14 @@ export class AccountsService {
       currency: string;
       initialBalance: unknown;
       isActive: boolean;
+      iconId?: string | null;
+      icon?: {
+        id: string;
+        type: 'emoji' | 'image';
+        name: string;
+        emoji?: string | null;
+        imageUrl?: string | null;
+      } | null;
       createdAt: Date;
       updatedAt: Date;
     }[],
@@ -83,7 +90,7 @@ export class AccountsService {
             : workspace.secondaryCurrency;
         const convertedBalance = await this.conversionService.convertCurrency(
           balance,
-          account.currency as Currency,
+          account.currency,
           convertedCurrency,
           workspaceId,
         );
@@ -105,6 +112,17 @@ export class AccountsService {
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const accounts = await this.prisma.account.findMany({
       where: { workspaceId },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     return this.withBalances(workspaceId, accounts);
@@ -115,6 +133,17 @@ export class AccountsService {
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const account = await this.prisma.account.findFirst({
       where: { id, workspaceId },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
+      },
     });
     if (!account) throw new NotFoundException('Account not found');
     return (await this.withBalances(workspaceId, [account]))[0];
@@ -123,6 +152,12 @@ export class AccountsService {
   async create(userId: string, dto: CreateAccountDto) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    if (dto.iconId !== undefined && dto.iconId !== null) {
+      const icon = await this.prisma.icon.findFirst({
+        where: { id: dto.iconId, workspaceId },
+      });
+      if (!icon) throw new NotFoundException('Icon not found');
+    }
     const account = await this.prisma.account.create({
       data: {
         workspaceId,
@@ -130,6 +165,18 @@ export class AccountsService {
         currency: dto.currency,
         initialBalance: dto.initialBalance,
         isActive: dto.isActive ?? true,
+        iconId: dto.iconId ?? undefined,
+      },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
       },
     });
     return account;
@@ -143,9 +190,30 @@ export class AccountsService {
     });
     if (!account) throw new NotFoundException('Account not found');
 
+    if (dto.iconId !== undefined && dto.iconId !== null) {
+      const icon = await this.prisma.icon.findFirst({
+        where: { id: dto.iconId, workspaceId },
+      });
+      if (!icon) throw new NotFoundException('Icon not found');
+    }
+
     return this.prisma.account.update({
       where: { id },
-      data: dto,
+      data: {
+        ...dto,
+        iconId: dto.iconId === undefined ? undefined : dto.iconId,
+      },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
+      },
     });
   }
 

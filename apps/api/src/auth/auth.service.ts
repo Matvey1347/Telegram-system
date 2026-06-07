@@ -3,6 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -38,6 +39,7 @@ export class AuthService {
         id: membership.workspace.id,
         name: membership.workspace.name,
         role: membership.role,
+        avatarIcon: membership.workspace.avatarIcon ?? null,
       },
     };
   }
@@ -56,13 +58,24 @@ export class AuthService {
         data: { email, name, passwordHash },
       });
       const workspaceName = dto.workspaceName?.trim() || `${name}'s Workspace`;
-      const workspace = await tx.workspace.create({
-        data: { name: workspaceName },
-      });
+      const workspaceId = randomUUID();
+      await tx.$executeRaw(
+        Prisma.sql`
+          INSERT INTO "Workspace" (
+            "id",
+            "name",
+            "primaryCurrency",
+            "secondaryCurrency",
+            "createdAt",
+            "updatedAt"
+          )
+          VALUES (${workspaceId}, ${workspaceName}, 'USD', 'UAH', NOW(), NOW())
+        `,
+      );
       await tx.workspaceMember.create({
         data: {
           userId: createdUser.id,
-          workspaceId: workspace.id,
+          workspaceId,
           role: 'owner',
         },
       });

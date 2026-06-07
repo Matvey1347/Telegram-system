@@ -76,7 +76,12 @@ export class AdvertisingSourcesService {
       where: { id },
       data: {
         name: dto.title,
-        type: dto.kind === 'channel' ? 'telegram_channel' : dto.kind === 'person' ? 'direct' : undefined,
+        type:
+          dto.kind === 'channel'
+            ? 'telegram_channel'
+            : dto.kind === 'person'
+              ? 'direct'
+              : undefined,
         url: dto.telegramUrl,
         telegramUsername: dto.username,
         contactInfo: dto.contactInfo,
@@ -96,18 +101,33 @@ export class AdvertisingSourcesService {
 
   async analytics(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const channel = await this.prisma.advertisingSource.findFirst({ where: { id, workspaceId } });
+    const channel = await this.prisma.advertisingSource.findFirst({
+      where: { id, workspaceId },
+    });
     if (!channel) throw new NotFoundException('Advertising channel not found');
 
-    const placements = await (this.prisma as any).adCampaignAdvertisingChannel.findMany({
+    const placements = await (
+      this.prisma as any
+    ).adCampaignAdvertisingChannel.findMany({
       where: { advertisingSourceId: id },
-      include: { adCampaign: { include: { advertisingChannels: true, inviteLinks: true } } },
+      include: {
+        adCampaign: {
+          include: { advertisingChannels: true, inviteLinks: true },
+        },
+      },
     });
 
-    const clean = placements.filter((p) => p.adCampaign.advertisingChannels.length === 1);
-    const mixed = placements.filter((p) => p.adCampaign.advertisingChannels.length > 1);
+    const clean = placements.filter(
+      (p) => p.adCampaign.advertisingChannels.length === 1,
+    );
+    const mixed = placements.filter(
+      (p) => p.adCampaign.advertisingChannels.length > 1,
+    );
 
-    const totalCost = clean.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0);
+    const totalCost = clean.reduce(
+      (s, p) => s + Number(p.adCampaign.price || 0),
+      0,
+    );
     const totalJoined = clean.reduce(
       (sum, placement) =>
         sum +
@@ -128,16 +148,22 @@ export class AdvertisingSourcesService {
       totalJoined,
       totalLeft: null,
       totalNetGrowth: null,
-      averageCostPerJoinedSubscriber: totalJoined > 0 ? totalCost / totalJoined : null,
+      averageCostPerJoinedSubscriber:
+        totalJoined > 0 ? totalCost / totalJoined : null,
       averageCostPerNetSubscriber: null,
       attributionSource: 'mtproto_invite_link_usage',
-      mixedCampaignsTotalCost: mixed.reduce((s, p) => s + Number(p.adCampaign.price || 0), 0),
+      mixedCampaignsTotalCost: mixed.reduce(
+        (s, p) => s + Number(p.adCampaign.price || 0),
+        0,
+      ),
     };
   }
 
   async analyticsSummary(userId: string) {
     const workspaceId = await this.workspace(userId);
-    const channels = await this.prisma.advertisingSource.findMany({ where: { workspaceId } });
+    const channels = await this.prisma.advertisingSource.findMany({
+      where: { workspaceId },
+    });
     return Promise.all(channels.map((c) => this.analytics(userId, c.id)));
   }
 }

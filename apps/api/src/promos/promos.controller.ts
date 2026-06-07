@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -16,15 +17,15 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
-import { CreatePromoDto, UpdatePromoDto } from './dto';
+import { CreatePromoDto, PromoQueryDto, UpdatePromoDto } from './dto';
 import { PromosService } from './promos.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('promos')
 export class PromosController {
   constructor(private service: PromosService) {}
-  @Get() findAll(@CurrentUser() user: JwtUser) {
-    return this.service.findAll(user.sub);
+  @Get() findAll(@CurrentUser() user: JwtUser, @Query() query: PromoQueryDto) {
+    return this.service.findAll(user.sub, query);
   }
   @Post() create(@CurrentUser() user: JwtUser, @Body() dto: CreatePromoDto) {
     return this.service.create(user.sub, dto);

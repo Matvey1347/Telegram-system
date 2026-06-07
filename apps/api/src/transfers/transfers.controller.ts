@@ -6,20 +6,24 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
-import { CreateTransferDto, UpdateTransferDto } from './dto';
+import { CreateTransferDto, TransferQueryDto, UpdateTransferDto } from './dto';
 import { TransfersService } from './transfers.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('transfers')
 export class TransfersController {
   constructor(private service: TransfersService) {}
-  @Get() findAll(@CurrentUser() user: JwtUser) {
-    return this.service.findAll(user.sub);
+  @Get() findAll(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TransferQueryDto,
+  ) {
+    return this.service.findAll(user.sub, query);
   }
   @Post() create(@CurrentUser() user: JwtUser, @Body() dto: CreateTransferDto) {
     return this.service.create(user.sub, dto);

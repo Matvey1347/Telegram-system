@@ -22,10 +22,7 @@ export class FinanceCategoriesController {
   constructor(private readonly service: FinanceCategoriesService) {}
 
   @Get()
-  list(
-    @CurrentUser() user: JwtUser,
-    @Query('type') type?: TransactionType,
-  ) {
+  list(@CurrentUser() user: JwtUser, @Query('type') type?: TransactionType) {
     return this.service.list(user.sub, type);
   }
 

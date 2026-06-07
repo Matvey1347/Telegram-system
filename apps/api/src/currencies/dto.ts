@@ -1,28 +1,44 @@
-import { Currency } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { CurrencyDisplayMode } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 
-export class UpdateCurrencySettingsDto {
-  @IsEnum(Currency)
-  primaryCurrency!: Currency;
+const normalizeCurrency = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
 
-  @IsEnum(Currency)
-  secondaryCurrency!: Currency;
+export class UpdateCurrencySettingsDto {
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  primaryCurrency!: string;
+
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  secondaryCurrency!: string;
+
+  @IsOptional()
+  @IsEnum(CurrencyDisplayMode)
+  currencyDisplayMode?: CurrencyDisplayMode;
 }
 
 export class CreateCurrencyRateDto {
-  @IsEnum(Currency)
-  baseCurrency!: Currency;
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  baseCurrency!: string;
 
-  @IsEnum(Currency)
-  targetCurrency!: Currency;
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  targetCurrency!: string;
 
   @Type(() => Number)
   @IsNumber()

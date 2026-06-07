@@ -24,4 +24,8 @@ export class UpdateWorkspaceDto {
   @IsString()
   @MinLength(2)
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  avatarIconId?: string | null;
 }

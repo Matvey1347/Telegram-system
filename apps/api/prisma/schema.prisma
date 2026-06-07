@@ -12,16 +12,14 @@ enum WorkspaceRole {
   member
 }
 
-enum Currency {
-  UAH
-  USD
-  EUR
-  PLN
-}
-
 enum TransactionType {
   income
   expense
+}
+
+enum CurrencyDisplayMode {
+  code
+  symbol
 }
 
 enum CampaignStatus {
@@ -86,6 +84,11 @@ enum AdvertisingSourceType {
   other
 }
 
+enum IconType {
+  emoji
+  image
+}
+
 model User {
   id           String            @id @default(cuid())
   email        String            @unique
@@ -93,6 +96,7 @@ model User {
   passwordHash String
   name         String
   memberships  WorkspaceMember[]
+  icons        Icon[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 }
@@ -100,8 +104,10 @@ model User {
 model Workspace {
   id                String   @id @default(cuid())
   name              String
-  primaryCurrency   Currency @default(USD)
-  secondaryCurrency Currency @default(UAH)
+  primaryCurrency   String   @default("USD") @db.VarChar(3)
+  secondaryCurrency String   @default("UAH") @db.VarChar(3)
+  currencyDisplayMode CurrencyDisplayMode @default(code)
+  avatarIconId      String?
 
   members            WorkspaceMember[]
   accounts           Account[]
@@ -122,6 +128,8 @@ model Workspace {
   exchangeRates      ExchangeRate[]
   investments        Investment[]
   transactionCategories TransactionCategory[]
+  icons              Icon[]
+  avatarIcon         Icon? @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -250,11 +258,13 @@ model Account {
   id             String   @id @default(cuid())
   workspaceId    String
   name           String
-  currency       Currency
+  currency       String   @db.VarChar(3)
   initialBalance Decimal  @default(0)
   isActive       Boolean  @default(true)
+  iconId         String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  icon      Icon?     @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   transactions      Transaction[]
   outgoingTransfers Transfer[] @relation("OutgoingTransfers")
@@ -272,7 +282,7 @@ model Transaction {
   accountId                String
   type                    TransactionType
   amount                  Decimal
-  currency                Currency
+  currency                String          @db.VarChar(3)
   amountInPrimaryCurrency Decimal
   exchangeRateToPrimary   Decimal
   category                String
@@ -282,6 +292,7 @@ model Transaction {
   date                    DateTime
   adCampaignId            String?         @unique
   createdByUserId         String?
+  iconId                  String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   account   Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
@@ -290,6 +301,7 @@ model Transaction {
   investment Investment?
   categoryRef TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   member WorkspaceMember? @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
+  icon Icon? @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -305,11 +317,13 @@ model TransactionCategory {
   type        TransactionType
   isSystem    Boolean         @default(false)
   key         String?
+  iconId      String?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   transactions Transaction[]  @relation
+  icon        Icon?           @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, type, key])
   @@index([workspaceId, type])
@@ -322,7 +336,7 @@ model Investment {
   accountId               String
   transactionId           String?  @unique
   amount                  Decimal
-  currency                Currency
+  currency                String   @db.VarChar(3)
   amountInPrimaryCurrency Decimal
   exchangeRateToPrimary   Decimal
   date                    DateTime
@@ -344,13 +358,13 @@ model Transfer {
   fromAccountId        String
   toAccountId          String
   fromAmount           Decimal
-  fromCurrency         Currency
+  fromCurrency         String    @db.VarChar(3)
   toAmount             Decimal
-  toCurrency           Currency
+  toCurrency           String    @db.VarChar(3)
   exchangeRate         Decimal?
   expectedToAmount     Decimal?
   transferLossAmount   Decimal?
-  transferLossCurrency Currency?
+  transferLossCurrency String?   @db.VarChar(3)
   date                 DateTime
   description          String?
   createdByUserId      String?
@@ -517,7 +531,7 @@ model AdCampaign {
   title                    String
   status                   CampaignStatus @default(planned)
   price                    Decimal
-  currency                 Currency
+  currency                 String         @db.VarChar(3)
   priceInPrimaryCurrency   Decimal
   exchangeRateToPrimary    Decimal
   inviteLink               String?
@@ -663,8 +677,8 @@ model TelegramPostMetricSnapshot {
 model ExchangeRate {
   id             String   @id @default(cuid())
   workspaceId     String
-  baseCurrency    Currency
-  targetCurrency  Currency
+  baseCurrency    String   @db.VarChar(3)
+  targetCurrency  String   @db.VarChar(3)
   rate           Decimal
   date           DateTime
   source         String?
@@ -675,4 +689,29 @@ model ExchangeRate {
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, baseCurrency, targetCurrency, date])
+}
+
+model Icon {
+  id             String   @id @default(cuid())
+  workspaceId    String?
+  type           IconType
+  name           String
+  emoji          String?
+  imageUrl       String?
+  createdByUserId String?
+
+  workspace      Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  createdByUser  User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workspaceAvatars Workspace[] @relation("WorkspaceAvatarIcon")
+  accounts       Account[]
+  transactions   Transaction[]
+  transactionCategories TransactionCategory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, name, type])
+  @@index([workspaceId, type])
+  @@index([createdByUserId])
+  @@unique([workspaceId, type, name])
 }

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TelegramSourceType } from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
@@ -41,21 +45,31 @@ export class TelegramBotsService {
       result?: { id?: number; username?: string; first_name?: string };
     };
     if (!response.ok || !payload.ok || !payload.result?.id) {
-      throw new BadRequestException(payload.description || 'Invalid Telegram bot token');
+      throw new BadRequestException(
+        payload.description || 'Invalid Telegram bot token',
+      );
     }
     return payload.result;
   }
 
-  private channelChatRef(channel: { username: string | null; telegramChatId: string | null }) {
-    if (channel.username) return `@${String(channel.username).replace(/^@/, '')}`;
+  private channelChatRef(channel: {
+    username: string | null;
+    telegramChatId: string | null;
+  }) {
+    if (channel.username)
+      return `@${String(channel.username).replace(/^@/, '')}`;
     if (!channel.telegramChatId) return null;
-    const normalized = String(channel.telegramChatId).replace(/^-100/, '').replace(/^-/, '');
+    const normalized = String(channel.telegramChatId)
+      .replace(/^-100/, '')
+      .replace(/^-/, '');
     return normalized ? `-100${normalized}` : null;
   }
 
   private async getChatMember(token: string, chatId: string, userId: string) {
     const search = new URLSearchParams({ chat_id: chatId, user_id: userId });
-    const response = await fetch(`https://api.telegram.org/bot${token}/getChatMember?${search}`);
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/getChatMember?${search}`,
+    );
     const payload = (await response.json()) as {
       ok?: boolean;
       result?: Record<string, unknown>;
@@ -63,7 +77,12 @@ export class TelegramBotsService {
     return response.ok && payload.ok ? payload.result || null : null;
   }
 
-  private async syncKnownChannelAccess(workspaceId: string, botId: string, token: string, telegramBotId: string) {
+  private async syncKnownChannelAccess(
+    workspaceId: string,
+    botId: string,
+    token: string,
+    telegramBotId: string,
+  ) {
     const channels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
       select: { id: true, username: true, telegramChatId: true },
@@ -74,7 +93,8 @@ export class TelegramBotsService {
       if (!chatRef) continue;
       const member = await this.getChatMember(token, chatRef, telegramBotId);
       if (!member) continue;
-      const normalized = this.sourceAccessService.normalizeBotPermissions(member);
+      const normalized =
+        this.sourceAccessService.normalizeBotPermissions(member);
       await this.sourceAccessService.upsertAccess({
         workspaceId,
         channelId: channel.id,
@@ -139,7 +159,12 @@ export class TelegramBotsService {
         lastErrorMessage: null,
       },
     });
-    await this.syncKnownChannelAccess(workspaceId, row.id, dto.botToken, String(bot.id));
+    await this.syncKnownChannelAccess(
+      workspaceId,
+      row.id,
+      dto.botToken,
+      String(bot.id),
+    );
     return this.safe(row);
   }
 
@@ -186,7 +211,12 @@ export class TelegramBotsService {
         lastErrorMessage: null,
       },
     });
-    await this.syncKnownChannelAccess(existing.workspaceId, row.id, token, String(bot.id));
+    await this.syncKnownChannelAccess(
+      existing.workspaceId,
+      row.id,
+      token,
+      String(bot.id),
+    );
     return this.safe(row);
   }
 

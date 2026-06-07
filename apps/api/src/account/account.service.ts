@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -30,6 +31,7 @@ export class AccountService {
         id: membership.workspace.id,
         name: membership.workspace.name,
         role: membership.role,
+        avatarIcon: membership.workspace.avatarIcon ?? null,
       },
     };
   }
@@ -80,9 +82,22 @@ export class AccountService {
       throw new ForbiddenException('Only owner can update workspace name');
     }
 
+    if (dto.avatarIconId !== undefined && dto.avatarIconId !== null) {
+      const icon = await this.prisma.icon.findFirst({
+        where: { id: dto.avatarIconId, workspaceId: membership.workspaceId },
+      });
+      if (!icon) {
+        throw new NotFoundException('Icon not found');
+      }
+    }
+
     await this.prisma.workspace.update({
       where: { id: membership.workspaceId },
-      data: { name: dto.name.trim() },
+      data: {
+        name: dto.name.trim(),
+        avatarIconId:
+          dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
+      },
     });
 
     return this.me(userId);

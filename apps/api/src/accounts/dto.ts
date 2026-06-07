@@ -1,20 +1,28 @@
-import { Currency } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
-  IsEnum,
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
+
+const normalizeCurrency = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
 
 export class CreateAccountDto {
   @IsString()
   name!: string;
 
-  @IsEnum(Currency)
-  currency!: Currency;
+  @IsOptional()
+  @IsString()
+  iconId?: string | null;
+
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  currency!: string;
 
   @Type(() => Number)
   @IsNumber()
@@ -31,8 +39,14 @@ export class UpdateAccountDto {
   name?: string;
 
   @IsOptional()
-  @IsEnum(Currency)
-  currency?: Currency;
+  @IsString()
+  iconId?: string | null;
+
+  @IsOptional()
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  currency?: string;
 
   @IsOptional()
   @Type(() => Number)

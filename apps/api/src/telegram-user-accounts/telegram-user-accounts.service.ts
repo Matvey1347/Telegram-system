@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { TelegramSourceType, TelegramUserAccountStatus } from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
@@ -69,13 +73,18 @@ export class TelegramUserAccountsService {
 
   async findAll(userId: string) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const rows = await this.prisma.telegramUserAccountIntegration.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const rows = await this.prisma.telegramUserAccountIntegration.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'desc' },
+    });
     return rows.map((row) => this.safe(row));
   }
 
   async findOne(userId: string, id: string) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const row = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
+    const row = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
     if (!row) throw new NotFoundException('Telegram user account not found');
     return this.safe(row);
   }
@@ -85,7 +94,8 @@ export class TelegramUserAccountsService {
     const account = await this.prisma.telegramUserAccountIntegration.findFirst({
       where: { id, workspaceId },
     });
-    if (!account) throw new NotFoundException('Telegram user account not found');
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
     return this.sourceAccessService.channelsForSource(
       workspaceId,
       id,
@@ -118,8 +128,11 @@ export class TelegramUserAccountsService {
 
   async update(userId: string, id: string, dto: UpdateTelegramUserAccountDto) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const existing = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
-    if (!existing) throw new NotFoundException('Telegram user account not found');
+    const existing = await this.prisma.telegramUserAccountIntegration.findFirst(
+      { where: { id, workspaceId } },
+    );
+    if (!existing)
+      throw new NotFoundException('Telegram user account not found');
     const data: Record<string, unknown> = {
       label: dto.label,
       apiId: dto.apiId,
@@ -131,23 +144,35 @@ export class TelegramUserAccountsService {
       data.apiHashIv = encrypted.iv;
       data.apiHashAuthTag = encrypted.authTag;
     }
-    const row = await this.prisma.telegramUserAccountIntegration.update({ where: { id }, data });
+    const row = await this.prisma.telegramUserAccountIntegration.update({
+      where: { id },
+      data,
+    });
     return this.safe(row);
   }
 
   async remove(userId: string, id: string) {
     await this.findOne(userId, id);
-    const row = await this.prisma.telegramUserAccountIntegration.delete({ where: { id } });
+    const row = await this.prisma.telegramUserAccountIntegration.delete({
+      where: { id },
+    });
     this.loginState.delete(id);
     return this.safe(row);
   }
 
   async startLogin(userId: string, id: string, dto: StartLoginDto) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
-    if (!account) throw new NotFoundException('Telegram user account not found');
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
 
-    const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
     const phone =
       dto.phone ||
       (account.phoneEncrypted && account.phoneIv && account.phoneAuthTag
@@ -158,9 +183,7 @@ export class TelegramUserAccountsService {
           })
         : null);
     if (!phone)
-      throw new BadRequestException(
-        'Phone is required to start login.',
-      );
+      throw new BadRequestException('Phone is required to start login.');
     const started = await this.mtprotoClient.startLogin(
       account.apiId,
       apiHash,
@@ -172,22 +195,43 @@ export class TelegramUserAccountsService {
       tempSession: started.tempSession,
     });
 
-    await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { status: TelegramUserAccountStatus.needs_code, lastErrorMessage: null, lastCheckedAt: new Date(), phoneMasked: this.maskPhone(phone) } });
+    await this.prisma.telegramUserAccountIntegration.update({
+      where: { id: account.id },
+      data: {
+        status: TelegramUserAccountStatus.needs_code,
+        lastErrorMessage: null,
+        lastCheckedAt: new Date(),
+        phoneMasked: this.maskPhone(phone),
+      },
+    });
     return { success: true, status: TelegramUserAccountStatus.needs_code };
   }
 
   async confirmCode(userId: string, id: string, dto: ConfirmLoginCodeDto) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
-    if (!account) throw new NotFoundException('Telegram user account not found');
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
 
     const state = this.loginState.get(account.id);
     if (!state) {
-      await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { status: TelegramUserAccountStatus.error, lastErrorMessage: 'Login session expired. Start login again.' } });
+      await this.prisma.telegramUserAccountIntegration.update({
+        where: { id: account.id },
+        data: {
+          status: TelegramUserAccountStatus.error,
+          lastErrorMessage: 'Login session expired. Start login again.',
+        },
+      });
       return { success: false, status: TelegramUserAccountStatus.error };
     }
 
-    const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
     const result = await this.mtprotoClient.signInWithCode({
       apiId: account.apiId,
       apiHash,
@@ -198,12 +242,21 @@ export class TelegramUserAccountsService {
     });
 
     if (result.needsPassword) {
-      await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { status: TelegramUserAccountStatus.needs_password, lastErrorMessage: null } });
+      await this.prisma.telegramUserAccountIntegration.update({
+        where: { id: account.id },
+        data: {
+          status: TelegramUserAccountStatus.needs_password,
+          lastErrorMessage: null,
+        },
+      });
       this.loginState.set(account.id, {
         ...state,
         tempSession: result.tempSession,
       });
-      return { success: true, status: TelegramUserAccountStatus.needs_password };
+      return {
+        success: true,
+        status: TelegramUserAccountStatus.needs_password,
+      };
     }
     if (!result.me || !result.session) {
       throw new BadRequestException('Telegram authorization failed');
@@ -223,7 +276,8 @@ export class TelegramUserAccountsService {
         photoUrl: result.me.photoUrl ?? null,
         nameColor: result.me.nameColor ?? null,
         label:
-          (result.me.username && `@${String(result.me.username).replace('@', '')}`) ||
+          (result.me.username &&
+            `@${String(result.me.username).replace('@', '')}`) ||
           result.me.firstName ||
           account.label,
         status: TelegramUserAccountStatus.connected,
@@ -235,18 +289,35 @@ export class TelegramUserAccountsService {
     return this.safe(row);
   }
 
-  async confirmPassword(userId: string, id: string, dto: Confirm2faPasswordDto) {
+  async confirmPassword(
+    userId: string,
+    id: string,
+    dto: Confirm2faPasswordDto,
+  ) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
-    if (!account) throw new NotFoundException('Telegram user account not found');
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
 
     const state = this.loginState.get(account.id);
     if (!state) {
-      await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { status: TelegramUserAccountStatus.error, lastErrorMessage: 'Login session expired. Start login again.' } });
+      await this.prisma.telegramUserAccountIntegration.update({
+        where: { id: account.id },
+        data: {
+          status: TelegramUserAccountStatus.error,
+          lastErrorMessage: 'Login session expired. Start login again.',
+        },
+      });
       return { success: false, status: TelegramUserAccountStatus.error };
     }
 
-    const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
     const result = await this.mtprotoClient.signInWithPassword({
       apiId: account.apiId,
       apiHash,
@@ -267,7 +338,8 @@ export class TelegramUserAccountsService {
         photoUrl: result.me.photoUrl ?? null,
         nameColor: result.me.nameColor ?? null,
         label:
-          (result.me.username && `@${String(result.me.username).replace('@', '')}`) ||
+          (result.me.username &&
+            `@${String(result.me.username).replace('@', '')}`) ||
           result.me.firstName ||
           account.label,
         status: TelegramUserAccountStatus.connected,
@@ -281,31 +353,89 @@ export class TelegramUserAccountsService {
 
   async check(userId: string, id: string) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId } });
-    if (!account) throw new NotFoundException('Telegram user account not found');
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
 
-    if (!account.sessionEncrypted || !account.sessionIv || !account.sessionAuthTag) {
-      const row = await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { status: TelegramUserAccountStatus.pending, lastCheckedAt: new Date(), lastErrorMessage: 'Account is not connected yet' } });
+    if (
+      !account.sessionEncrypted ||
+      !account.sessionIv ||
+      !account.sessionAuthTag
+    ) {
+      const row = await this.prisma.telegramUserAccountIntegration.update({
+        where: { id: account.id },
+        data: {
+          status: TelegramUserAccountStatus.pending,
+          lastCheckedAt: new Date(),
+          lastErrorMessage: 'Account is not connected yet',
+        },
+      });
       return this.safe(row);
     }
 
-    const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
-    const session = this.encryptionService.decrypt({ encrypted: account.sessionEncrypted, iv: account.sessionIv, authTag: account.sessionAuthTag });
-    const me = await this.mtprotoClient.getMe({ apiId: account.apiId, apiHash, session });
-    const row = await this.prisma.telegramUserAccountIntegration.update({ where: { id: account.id }, data: { telegramUserId: me.id, username: me.username, firstName: me.firstName, lastName: me.lastName, photoUrl: me.photoUrl ?? null, nameColor: me.nameColor ?? null, label: (me.username && `@${String(me.username).replace('@', '')}`) || me.firstName || account.label, status: TelegramUserAccountStatus.connected, lastCheckedAt: new Date(), lastErrorMessage: null } });
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
+    const session = this.encryptionService.decrypt({
+      encrypted: account.sessionEncrypted,
+      iv: account.sessionIv,
+      authTag: account.sessionAuthTag,
+    });
+    const me = await this.mtprotoClient.getMe({
+      apiId: account.apiId,
+      apiHash,
+      session,
+    });
+    const row = await this.prisma.telegramUserAccountIntegration.update({
+      where: { id: account.id },
+      data: {
+        telegramUserId: me.id,
+        username: me.username,
+        firstName: me.firstName,
+        lastName: me.lastName,
+        photoUrl: me.photoUrl ?? null,
+        nameColor: me.nameColor ?? null,
+        label:
+          (me.username && `@${String(me.username).replace('@', '')}`) ||
+          me.firstName ||
+          account.label,
+        status: TelegramUserAccountStatus.connected,
+        lastCheckedAt: new Date(),
+        lastErrorMessage: null,
+      },
+    });
     return this.safe(row);
   }
 
   async syncDialogs(userId: string, id: string) {
     const workspaceId = await this.getWorkspaceId(userId);
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({ where: { id, workspaceId, isActive: true } });
-    if (!account) throw new NotFoundException('Telegram user account not found');
-    if (!account.sessionEncrypted || !account.sessionIv || !account.sessionAuthTag) {
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId, isActive: true },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
+    if (
+      !account.sessionEncrypted ||
+      !account.sessionIv ||
+      !account.sessionAuthTag
+    ) {
       return { success: false, message: 'Connect account first', channels: [] };
     }
 
-    const apiHash = this.encryptionService.decrypt({ encrypted: account.apiHashEncrypted, iv: account.apiHashIv, authTag: account.apiHashAuthTag });
-    const session = this.encryptionService.decrypt({ encrypted: account.sessionEncrypted, iv: account.sessionIv, authTag: account.sessionAuthTag });
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
+    const session = this.encryptionService.decrypt({
+      encrypted: account.sessionEncrypted,
+      iv: account.sessionIv,
+      authTag: account.sessionAuthTag,
+    });
     const [channels, me] = await Promise.all([
       this.mtprotoClient.getAdminChannels({
         apiId: account.apiId,
@@ -329,7 +459,10 @@ export class TelegramUserAccountsService {
         channel,
         id: channelByUsername.get(this.normalizeUsername(channel.username)),
       }))
-      .filter((row): row is { channel: (typeof channels)[number]; id: string } => !!row.id);
+      .filter(
+        (row): row is { channel: (typeof channels)[number]; id: string } =>
+          !!row.id,
+      );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.telegramUserAccountIntegration.update({
@@ -371,7 +504,8 @@ export class TelegramUserAccountsService {
         isCreator: channel.isCreator,
         adminRights: channel.adminRights || null,
       };
-      const normalized = this.sourceAccessService.normalizeMtprotoPermissions(rawPermissions);
+      const normalized =
+        this.sourceAccessService.normalizeMtprotoPermissions(rawPermissions);
       await this.sourceAccessService.upsertAccess({
         workspaceId,
         channelId: telegramChannelId,

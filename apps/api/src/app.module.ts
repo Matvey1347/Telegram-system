@@ -21,6 +21,8 @@ import { AccountModule } from './account/account.module';
 import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
 import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-user-accounts.module';
 import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
+import { IconsModule } from './icons/icons.module';
 
 @Module({
   imports: [
@@ -48,6 +50,8 @@ import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
     TelegramSyncModule,
     TelegramUserAccountsModule,
     TelegramBotsModule,
+    WorkspacesModule,
+    IconsModule,
   ],
   controllers: [AppController],
 })

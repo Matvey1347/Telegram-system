@@ -95,7 +95,11 @@ export class TelegramChannelsController {
     @Param('id') id: string,
     @Query('limit') limit?: string,
   ) {
-    return this.service.channelStatsSnapshots(user.sub, id, Number(limit || 20));
+    return this.service.channelStatsSnapshots(
+      user.sub,
+      id,
+      Number(limit || 20),
+    );
   }
   @Get(':id/sources')
   sources(@CurrentUser() user: JwtUser, @Param('id') id: string) {

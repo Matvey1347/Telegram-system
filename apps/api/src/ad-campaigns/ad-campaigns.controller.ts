@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { AdCampaignsService } from './ad-campaigns.service';
 import {
   CreateAdCampaignDto,
+  AdCampaignQueryDto,
   UpdateAdCampaignDto,
 } from './dto';
 
@@ -23,8 +25,8 @@ export class AdCampaignsController {
   constructor(private service: AdCampaignsService) {}
 
   @Get()
-  findAll(@CurrentUser() user: JwtUser) {
-    return this.service.findAll(user.sub);
+  findAll(@CurrentUser() user: JwtUser, @Query() query: AdCampaignQueryDto) {
+    return this.service.findAll(user.sub, query);
   }
 
   @Post()
@@ -55,5 +57,4 @@ export class AdCampaignsController {
   analytics(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.analytics(user.sub, id);
   }
-
 }

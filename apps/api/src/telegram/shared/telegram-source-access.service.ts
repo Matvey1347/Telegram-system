@@ -66,7 +66,10 @@ export class TelegramSourceAccessService {
   }
 
   normalizeMtprotoPermissions(raw: Record<string, unknown> | null | undefined) {
-    const adminRights = raw?.adminRights as Record<string, unknown> | null | undefined;
+    const adminRights = raw?.adminRights as
+      | Record<string, unknown>
+      | null
+      | undefined;
     const role = raw?.isCreator
       ? TelegramChannelSourceRole.OWNER
       : adminRights
@@ -77,9 +80,13 @@ export class TelegramSourceAccessService {
       permissions: {
         canPostMessages: Boolean(raw?.isCreator || adminRights?.postMessages),
         canEditMessages: Boolean(raw?.isCreator || adminRights?.editMessages),
-        canDeleteMessages: Boolean(raw?.isCreator || adminRights?.deleteMessages),
+        canDeleteMessages: Boolean(
+          raw?.isCreator || adminRights?.deleteMessages,
+        ),
         canInviteUsers: Boolean(raw?.isCreator || adminRights?.inviteUsers),
-        canManageInviteLinks: Boolean(raw?.isCreator || adminRights?.inviteUsers),
+        canManageInviteLinks: Boolean(
+          raw?.isCreator || adminRights?.inviteUsers,
+        ),
         canViewStats: Boolean(raw?.isCreator || adminRights),
       },
     };
@@ -98,17 +105,28 @@ export class TelegramSourceAccessService {
     return {
       role,
       permissions: {
-        canPostMessages: Boolean(raw?.can_post_messages || status === 'creator'),
-        canEditMessages: Boolean(raw?.can_edit_messages || status === 'creator'),
-        canDeleteMessages: Boolean(raw?.can_delete_messages || status === 'creator'),
+        canPostMessages: Boolean(
+          raw?.can_post_messages || status === 'creator',
+        ),
+        canEditMessages: Boolean(
+          raw?.can_edit_messages || status === 'creator',
+        ),
+        canDeleteMessages: Boolean(
+          raw?.can_delete_messages || status === 'creator',
+        ),
         canInviteUsers: Boolean(raw?.can_invite_users || status === 'creator'),
-        canManageInviteLinks: Boolean(raw?.can_invite_users || status === 'creator'),
+        canManageInviteLinks: Boolean(
+          raw?.can_invite_users || status === 'creator',
+        ),
         canViewStats: false,
       },
     };
   }
 
-  canBeUsedForAnalytics(permissions: TelegramSourcePermissions, role: TelegramChannelSourceRole) {
+  canBeUsedForAnalytics(
+    permissions: TelegramSourcePermissions,
+    role: TelegramChannelSourceRole,
+  ) {
     return (
       role === TelegramChannelSourceRole.OWNER ||
       role === TelegramChannelSourceRole.ADMIN ||
@@ -165,7 +183,11 @@ export class TelegramSourceAccessService {
     });
   }
 
-  async channelsForSource(workspaceId: string, sourceId: string, sourceType: TelegramSourceType) {
+  async channelsForSource(
+    workspaceId: string,
+    sourceId: string,
+    sourceType: TelegramSourceType,
+  ) {
     const rows = await this.prisma.telegramChannelSourceAccess.findMany({
       where: { workspaceId, sourceId, sourceType },
       include: { channel: true },
@@ -183,7 +205,10 @@ export class TelegramSourceAccessService {
       permissions: this.permissionsFromRow(row),
       rawPermissions: row.rawPermissions,
       lastCheckedAt: row.lastCheckedAt,
-      canBeUsedForAnalytics: this.canBeUsedForAnalytics(this.permissionsFromRow(row), row.role),
+      canBeUsedForAnalytics: this.canBeUsedForAnalytics(
+        this.permissionsFromRow(row),
+        row.role,
+      ),
     }));
   }
 
@@ -194,14 +219,30 @@ export class TelegramSourceAccessService {
     });
     const [bots, accounts] = await Promise.all([
       this.prisma.telegramBotIntegration.findMany({
-        where: { workspaceId, id: { in: rows.filter((row) => row.sourceType === TelegramSourceType.BOT).map((row) => row.sourceId) } },
+        where: {
+          workspaceId,
+          id: {
+            in: rows
+              .filter((row) => row.sourceType === TelegramSourceType.BOT)
+              .map((row) => row.sourceId),
+          },
+        },
       }),
       this.prisma.telegramUserAccountIntegration.findMany({
-        where: { workspaceId, id: { in: rows.filter((row) => row.sourceType === TelegramSourceType.MTPROTO).map((row) => row.sourceId) } },
+        where: {
+          workspaceId,
+          id: {
+            in: rows
+              .filter((row) => row.sourceType === TelegramSourceType.MTPROTO)
+              .map((row) => row.sourceId),
+          },
+        },
       }),
     ]);
     const botById = new Map(bots.map((bot) => [bot.id, bot]));
-    const accountById = new Map(accounts.map((account) => [account.id, account]));
+    const accountById = new Map(
+      accounts.map((account) => [account.id, account]),
+    );
     return rows.map((row) => {
       const permissions = this.permissionsFromRow(row);
       return {
@@ -219,7 +260,10 @@ export class TelegramSourceAccessService {
         permissions,
         rawPermissions: row.rawPermissions,
         lastCheckedAt: row.lastCheckedAt,
-        canBeUsedForAnalytics: this.canBeUsedForAnalytics(permissions, row.role),
+        canBeUsedForAnalytics: this.canBeUsedForAnalytics(
+          permissions,
+          row.role,
+        ),
       };
     });
   }
@@ -239,47 +283,64 @@ export class TelegramSourceAccessService {
     const latestByType = new Map<TelegramChannelDataType, typeof dataRows>();
     for (const row of dataRows) {
       const rows = latestByType.get(row.dataType) || [];
-      if (!rows.length || rows[0]?.syncedAt.getTime() === row.syncedAt.getTime()) {
+      if (
+        !rows.length ||
+        rows[0]?.syncedAt.getTime() === row.syncedAt.getTime()
+      ) {
         rows.push(row);
         latestByType.set(row.dataType, rows);
       }
     }
     const usedBySource = new Map<string, Set<TelegramChannelDataType>>();
-    for (const row of dataRows.filter((item) => item.status !== TelegramDataSourceStatus.FAILED)) {
+    for (const row of dataRows.filter(
+      (item) => item.status !== TelegramDataSourceStatus.FAILED,
+    )) {
       const key = `${row.sourceType}:${row.sourceId}`;
       const set = usedBySource.get(key) || new Set<TelegramChannelDataType>();
       set.add(row.dataType);
       usedBySource.set(key, set);
     }
-    const dataAttribution = Object.values(TelegramChannelDataType).map((dataType) => {
-      const rows = latestByType.get(dataType) || [];
-      return {
-        dataType,
-        label: dataTypeLabels[dataType],
-        status: rows[0]?.status || TelegramDataSourceStatus.SKIPPED,
-        sources: rows
-          .filter((row) => row.status !== TelegramDataSourceStatus.FAILED)
-          .map((row) => ({
-            sourceId: row.sourceId,
-            sourceType: row.sourceType,
-            displayName: row.sourceDisplayName || null,
-          })),
-        syncedAt: rows[0]?.syncedAt || null,
-        errorMessage: rows.find((row) => row.errorMessage)?.errorMessage || (rows.length ? null : 'No connected source has required permission'),
-      };
-    });
+    const dataAttribution = Object.values(TelegramChannelDataType).map(
+      (dataType) => {
+        const rows = latestByType.get(dataType) || [];
+        return {
+          dataType,
+          label: dataTypeLabels[dataType],
+          status: rows[0]?.status || TelegramDataSourceStatus.SKIPPED,
+          sources: rows
+            .filter((row) => row.status !== TelegramDataSourceStatus.FAILED)
+            .map((row) => ({
+              sourceId: row.sourceId,
+              sourceType: row.sourceType,
+              displayName: row.sourceDisplayName || null,
+            })),
+          syncedAt: rows[0]?.syncedAt || null,
+          errorMessage:
+            rows.find((row) => row.errorMessage)?.errorMessage ||
+            (rows.length
+              ? null
+              : 'No connected source has required permission'),
+        };
+      },
+    );
     return {
       channel,
       sources: sources.map((source) => ({
         ...source,
-        usedFor: Array.from(usedBySource.get(`${source.sourceType}:${source.sourceId}`) || []),
+        usedFor: Array.from(
+          usedBySource.get(`${source.sourceType}:${source.sourceId}`) || [],
+        ),
       })),
       dataAttribution,
     };
   }
 
   scoreSource(
-    source: { sourceType: TelegramSourceType; role: TelegramChannelSourceRole; permissions: TelegramSourcePermissions },
+    source: {
+      sourceType: TelegramSourceType;
+      role: TelegramChannelSourceRole;
+      permissions: TelegramSourcePermissions;
+    },
     dataType?: TelegramChannelDataType,
   ) {
     const roleScore = {
@@ -295,22 +356,37 @@ export class TelegramSourceAccessService {
       (source.permissions.canManageInviteLinks ? 15 : 0) +
       (source.permissions.canViewStats ? 25 : 0);
     const typeScore =
-      dataType === TelegramChannelDataType.STATS && source.sourceType === TelegramSourceType.MTPROTO
+      dataType === TelegramChannelDataType.STATS &&
+      source.sourceType === TelegramSourceType.MTPROTO
         ? 20
-        : dataType === TelegramChannelDataType.POSTS && source.sourceType === TelegramSourceType.BOT
+        : dataType === TelegramChannelDataType.POSTS &&
+            source.sourceType === TelegramSourceType.BOT
           ? 10
           : 0;
     return roleScore + permissionScore + typeScore;
   }
 
-  async bestMtprotoSource(workspaceId: string, channelId: string, dataType: TelegramChannelDataType) {
+  async bestMtprotoSource(
+    workspaceId: string,
+    channelId: string,
+    dataType: TelegramChannelDataType,
+  ) {
     const sources = await this.sourcesForChannel(workspaceId, channelId);
     return sources
-      .filter((source) => source.sourceType === TelegramSourceType.MTPROTO && source.canBeUsedForAnalytics)
-      .sort((left, right) => this.scoreSource(right, dataType) - this.scoreSource(left, dataType))[0];
+      .filter(
+        (source) =>
+          source.sourceType === TelegramSourceType.MTPROTO &&
+          source.canBeUsedForAnalytics,
+      )
+      .sort(
+        (left, right) =>
+          this.scoreSource(right, dataType) - this.scoreSource(left, dataType),
+      )[0];
   }
 
-  private permissionsFromRow(row: TelegramSourcePermissions): TelegramSourcePermissions {
+  private permissionsFromRow(
+    row: TelegramSourcePermissions,
+  ): TelegramSourcePermissions {
     return {
       canPostMessages: row.canPostMessages,
       canEditMessages: row.canEditMessages,
@@ -321,13 +397,30 @@ export class TelegramSourceAccessService {
     };
   }
 
-  private botDisplayName(bot?: { label: string; username: string | null; firstName: string | null; botTokenMasked: string }) {
+  private botDisplayName(bot?: {
+    label: string;
+    username: string | null;
+    firstName: string | null;
+    botTokenMasked: string;
+  }) {
     if (!bot) return 'Telegram bot';
-    return bot.username ? `@${bot.username}` : bot.firstName || bot.label || bot.botTokenMasked;
+    return bot.username
+      ? `@${bot.username}`
+      : bot.firstName || bot.label || bot.botTokenMasked;
   }
 
-  private accountDisplayName(account?: { label: string; username: string | null; phoneMasked: string | null; firstName: string | null }) {
+  private accountDisplayName(account?: {
+    label: string;
+    username: string | null;
+    phoneMasked: string | null;
+    firstName: string | null;
+  }) {
     if (!account) return 'MTProto account';
-    return account.username ? `@${account.username}` : account.firstName || account.label || account.phoneMasked || 'MTProto account';
+    return account.username
+      ? `@${account.username}`
+      : account.firstName ||
+          account.label ||
+          account.phoneMasked ||
+          'MTProto account';
   }
 }

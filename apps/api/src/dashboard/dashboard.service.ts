@@ -16,22 +16,21 @@ export class DashboardService {
   async summary(userId: string) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const [workspace, accounts, tx, campaigns, channels] =
-      await Promise.all([
-        this.prisma.workspace.findUniqueOrThrow({
-          where: { id: workspaceId },
-          select: { primaryCurrency: true, secondaryCurrency: true },
-        }),
-        this.prisma.account.findMany({
-          where: { workspaceId, isActive: true },
-        }),
-        this.prisma.transaction.findMany({ where: { workspaceId } }),
-        this.prisma.adCampaign.findMany({
-          where: { workspaceId },
-          include: { inviteLinks: { select: { joinedCount: true } } },
-        }),
-        this.prisma.telegramChannel.count({ where: { workspaceId } }),
-      ]);
+    const [workspace, accounts, tx, campaigns, channels] = await Promise.all([
+      this.prisma.workspace.findUniqueOrThrow({
+        where: { id: workspaceId },
+        select: { primaryCurrency: true, secondaryCurrency: true },
+      }),
+      this.prisma.account.findMany({
+        where: { workspaceId, isActive: true },
+      }),
+      this.prisma.transaction.findMany({ where: { workspaceId } }),
+      this.prisma.adCampaign.findMany({
+        where: { workspaceId },
+        include: { inviteLinks: { select: { joinedCount: true } } },
+      }),
+      this.prisma.telegramChannel.count({ where: { workspaceId } }),
+    ]);
 
     const income = tx
       .filter((t) => t.type === 'income')
@@ -64,7 +63,15 @@ export class DashboardService {
       (sum, campaign) => sum + campaign.joinedCount,
       0,
     );
-    const cpas = campaignsWithMtprotoMetrics.map((c) => dec(c.cpa)).filter((x) => x > 0);
+    const cpas = campaignsWithMtprotoMetrics
+      .map((c) => dec(c.cpa))
+      .filter((x) => x > 0);
+    const rankedCampaigns = campaignsWithMtprotoMetrics.filter(
+      (campaign) =>
+        campaign.joinedCount > 0 &&
+        dec(campaign.priceInPrimaryCurrency) > 0 &&
+        campaign.cpa !== null,
+    );
 
     const accountRows = await Promise.all(
       accounts.map(async (account) => {
@@ -128,10 +135,10 @@ export class DashboardService {
         : null,
       campaignsCount: campaigns.length,
       telegramChannelsCount: channels,
-      bestCampaigns: [...campaignsWithMtprotoMetrics]
+      bestCampaigns: [...rankedCampaigns]
         .sort((a, b) => dec(a.cpa) - dec(b.cpa))
         .slice(0, 5),
-      worstCampaigns: [...campaignsWithMtprotoMetrics]
+      worstCampaigns: [...rankedCampaigns]
         .sort((a, b) => dec(b.cpa) - dec(a.cpa))
         .slice(0, 5),
     };

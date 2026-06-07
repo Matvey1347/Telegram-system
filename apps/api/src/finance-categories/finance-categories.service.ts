@@ -19,7 +19,11 @@ export class FinanceCategoriesService {
     const client = tx ?? this.prisma;
     await (client as any).transactionCategory.upsert({
       where: {
-        workspaceId_type_key: { workspaceId, type: 'income', key: 'investment' },
+        workspaceId_type_key: {
+          workspaceId,
+          type: 'income',
+          key: 'investment',
+        },
       },
       update: { isSystem: true, name: 'Investment' },
       create: {
@@ -28,6 +32,7 @@ export class FinanceCategoriesService {
         key: 'investment',
         isSystem: true,
         name: 'Investment',
+        iconId: undefined,
       },
     });
 
@@ -46,6 +51,7 @@ export class FinanceCategoriesService {
         key: 'advertising',
         isSystem: true,
         name: 'Advertising',
+        iconId: undefined,
       },
     });
   }
@@ -57,6 +63,17 @@ export class FinanceCategoriesService {
 
     return (this.prisma as any).transactionCategory.findMany({
       where: { workspaceId, type },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
+      },
       orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
     });
   }
@@ -70,6 +87,18 @@ export class FinanceCategoriesService {
         workspaceId,
         type: dto.type,
         name: dto.name.trim(),
+        iconId: dto.iconId ?? undefined,
+      },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
       },
     });
   }
@@ -82,13 +111,38 @@ export class FinanceCategoriesService {
     });
     if (!category) throw new NotFoundException('Category not found');
 
-    if (category.isSystem && dto.name === undefined) {
+    if (
+      category.isSystem &&
+      dto.name === undefined &&
+      dto.iconId === undefined
+    ) {
       throw new BadRequestException('System category fields are protected');
+    }
+
+    if (dto.iconId !== undefined && dto.iconId !== null) {
+      const icon = await this.prisma.icon.findFirst({
+        where: { id: dto.iconId, workspaceId },
+      });
+      if (!icon) throw new NotFoundException('Icon not found');
     }
 
     return (this.prisma as any).transactionCategory.update({
       where: { id },
-      data: { name: dto.name?.trim() },
+      data: {
+        name: dto.name?.trim(),
+        iconId: dto.iconId === undefined ? undefined : dto.iconId,
+      },
+      include: {
+        icon: {
+          select: {
+            id: true,
+            type: true,
+            name: true,
+            emoji: true,
+            imageUrl: true,
+          },
+        },
+      },
     });
   }
 

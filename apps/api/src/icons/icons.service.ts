@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -6,54 +7,139 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
-import { CreatePromoDto, PromoQueryDto, UpdatePromoDto } from './dto';
+import {
+  CreateCustomIconDto,
+  CreateEmojiIconDto,
+  ListIconsQueryDto,
+} from './dto';
 
 @Injectable()
-export class PromosService {
+export class IconsService {
   constructor(
-    private prisma: PrismaService,
-    private workspaceService: WorkspaceService,
-    private configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly workspaceService: WorkspaceService,
+    private readonly configService: ConfigService,
   ) {}
-  private async workspace(userId: string) {
+
+  private iconSelect = {
+    id: true,
+    workspaceId: true,
+    type: true,
+    name: true,
+    emoji: true,
+    imageUrl: true,
+    createdByUserId: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
+  private async workspaceId(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
-  async findAll(userId: string, query: PromoQueryDto = {}) {
-    const workspaceId = await this.workspace(userId);
-    return this.prisma.promo.findMany({
+
+  async findAll(userId: string, query: ListIconsQueryDto = {}) {
+    const workspaceId = await this.workspaceId(userId);
+    const search = query.search?.trim();
+
+    return this.prisma.icon.findMany({
       where: {
         workspaceId,
-        telegramChannelId: query.telegramChannelId || undefined,
+        ...(search
+          ? {
+              name: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            }
+          : {}),
       },
-      include: { telegramChannel: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      select: this.iconSelect,
     });
-  }
-  async findOne(userId: string, id: string) {
-    const workspaceId = await this.workspace(userId);
-    const row = await this.prisma.promo.findFirst({
-      where: { id, workspaceId },
-      include: { telegramChannel: true },
-    });
-    if (!row) throw new NotFoundException('Promo not found');
-    return row;
-  }
-  async create(userId: string, dto: CreatePromoDto) {
-    const workspaceId = await this.workspace(userId);
-    return this.prisma.promo.create({
-      data: { workspaceId, ...dto, text: dto.text ?? '' },
-    });
-  }
-  async update(userId: string, id: string, dto: UpdatePromoDto) {
-    await this.findOne(userId, id);
-    return this.prisma.promo.update({ where: { id }, data: dto });
-  }
-  async remove(userId: string, id: string) {
-    await this.findOne(userId, id);
-    return this.prisma.promo.delete({ where: { id } });
   }
 
-  async uploadPromoImage(file: Express.Multer.File) {
+  async findOne(userId: string, id: string) {
+    const workspaceId = await this.workspaceId(userId);
+    const icon = await this.prisma.icon.findFirst({
+      where: { id, workspaceId },
+      select: this.iconSelect,
+    });
+    if (!icon) throw new NotFoundException('Icon not found');
+    return icon;
+  }
+
+  async createCustom(userId: string, dto: CreateCustomIconDto) {
+    const workspaceId = await this.workspaceId(userId);
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException('Name is required');
+    const imageUrl = dto.imageUrl.trim();
+    if (!imageUrl) throw new BadRequestException('Image URL is required');
+
+    return this.prisma.icon.upsert({
+      where: {
+        workspaceId_type_name: {
+          workspaceId,
+          type: 'image',
+          name,
+        },
+      },
+      update: {
+        imageUrl,
+        createdByUserId: userId,
+      },
+      create: {
+        workspaceId,
+        type: 'image',
+        name,
+        imageUrl,
+        createdByUserId: userId,
+      },
+      select: this.iconSelect,
+    });
+  }
+
+  async createEmoji(userId: string, dto: CreateEmojiIconDto) {
+    const workspaceId = await this.workspaceId(userId);
+    const name = dto.name.trim();
+    const emoji = dto.emoji.trim();
+    if (!name) throw new BadRequestException('Name is required');
+    if (!emoji) throw new BadRequestException('Emoji is required');
+
+    const existingByEmoji = await this.prisma.icon.findFirst({
+      where: { workspaceId, type: 'emoji', emoji },
+    });
+    if (existingByEmoji) {
+      return this.prisma.icon.update({
+        where: { id: existingByEmoji.id },
+        data: { name, createdByUserId: userId },
+        select: this.iconSelect,
+      });
+    }
+
+    return this.prisma.icon.upsert({
+      where: {
+        workspaceId_type_name: {
+          workspaceId,
+          type: 'emoji',
+          name,
+        },
+      },
+      update: {
+        emoji,
+        createdByUserId: userId,
+      },
+      create: {
+        workspaceId,
+        type: 'emoji',
+        name,
+        emoji,
+        createdByUserId: userId,
+      },
+      select: this.iconSelect,
+    });
+  }
+
+  async uploadImage(file: Express.Multer.File) {
     const keyId = this.configService.get<string>('B2_KEY_ID')?.trim();
     const appKey = this.configService.get<string>('B2_APP_KEY')?.trim();
     const bucketName = this.configService.get<string>('B2_BUCKET_NAME')?.trim();
@@ -63,6 +149,10 @@ export class PromosService {
       throw new InternalServerErrorException(
         'B2 env vars missing: B2_KEY_ID, B2_APP_KEY, B2_BUCKET_NAME',
       );
+    }
+
+    if (!file.mimetype?.startsWith('image/')) {
+      throw new BadRequestException('Image file is required');
     }
 
     const authHeader = Buffer.from(`${keyId}:${appKey}`).toString('base64');
@@ -139,7 +229,7 @@ export class PromosService {
         .pop()
         ?.toLowerCase()
         .replace(/[^a-z0-9]/g, '') || 'bin';
-    const fileName = `promos/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+    const fileName = `icons/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
 
     const uploadRes = await fetch(uploadUrlData.uploadUrl, {
       method: 'POST',
@@ -166,11 +256,19 @@ export class PromosService {
       cleanEndpoint,
     );
 
-    // Backblaze S3 endpoint usually needs bucket in URL path.
     if (s3HostLike && !hasBucketInPath) {
       return `${cleanEndpoint}/${bucketName}/${fileName}`;
     }
 
     return `${cleanEndpoint}/${fileName}`;
+  }
+
+  async remove(userId: string, id: string) {
+    const workspaceId = await this.workspaceId(userId);
+    const icon = await this.prisma.icon.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!icon) throw new NotFoundException('Icon not found');
+    return this.prisma.icon.delete({ where: { id } });
   }
 }

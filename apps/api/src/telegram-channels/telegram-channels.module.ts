@@ -6,7 +6,15 @@ import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-
 
 @Module({
   controllers: [TelegramChannelsController],
-  providers: [TelegramChannelsService, TelegramMtprotoClient, TelegramSourceAccessService],
-  exports: [TelegramChannelsService, TelegramMtprotoClient, TelegramSourceAccessService],
+  providers: [
+    TelegramChannelsService,
+    TelegramMtprotoClient,
+    TelegramSourceAccessService,
+  ],
+  exports: [
+    TelegramChannelsService,
+    TelegramMtprotoClient,
+    TelegramSourceAccessService,
+  ],
 })
 export class TelegramChannelsModule {}

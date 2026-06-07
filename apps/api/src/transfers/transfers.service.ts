@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
-import { CreateTransferDto, UpdateTransferDto } from './dto';
+import { CreateTransferDto, TransferQueryDto, UpdateTransferDto } from './dto';
 
 @Injectable()
 export class TransfersService {
@@ -16,12 +17,28 @@ export class TransfersService {
       expectedToAmount !== null ? expectedToAmount - toAmount : null;
     return { exchangeRate, expectedToAmount, transferLossAmount };
   }
-  async findAll(userId: string) {
+  async findAll(userId: string, query: TransferQueryDto = {}) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const where: Prisma.TransferWhereInput = { workspaceId };
+    if (query.dateFrom || query.dateTo) {
+      where.date = {};
+      if (query.dateFrom) where.date.gte = new Date(query.dateFrom);
+      if (query.dateTo) {
+        const end = new Date(query.dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.date.lte = end;
+      }
+    }
+    if (query.accountId) {
+      where.OR = [
+        { fromAccountId: query.accountId },
+        { toAccountId: query.accountId },
+      ];
+    }
     return this.prisma.transfer.findMany({
-      where: { workspaceId },
-      orderBy: { date: 'desc' },
+      where,
+      orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
       include: { fromAccount: true, toAccount: true },
     });
   }

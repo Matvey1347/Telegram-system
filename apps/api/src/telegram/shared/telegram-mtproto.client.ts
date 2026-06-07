@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Api, TelegramClient } from 'telegram';
+import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { StringSession } from 'telegram/sessions';
 
 type ApiCredentials = { apiId: string; apiHash: string };
@@ -92,14 +93,35 @@ export class TelegramMtprotoClient {
       new StringSession(session || ''),
       Number(apiId),
       apiHash,
-      { connectionRetries: 3 },
+      {
+        autoReconnect: false,
+        baseLogger: new GramJsLogger(LogLevel.NONE),
+        connectionRetries: 3,
+        reconnectRetries: 0,
+      },
     );
     await client.connect();
     return client;
   }
 
+  private async closeClient(client: TelegramClient) {
+    try {
+      await client.destroy();
+    } catch {
+      try {
+        await client.disconnect();
+      } catch {
+        // Best-effort cleanup for short-lived MTProto clients.
+      }
+    }
+  }
+
   private toJsonSafe(value: unknown): unknown {
-    if (value == null || typeof value === 'string' || typeof value === 'boolean') {
+    if (
+      value == null ||
+      typeof value === 'string' ||
+      typeof value === 'boolean'
+    ) {
       return value;
     }
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -190,7 +212,9 @@ export class TelegramMtprotoClient {
 
   private async profilePhotoDataUrl(client: TelegramClient, entity: unknown) {
     try {
-      const photo = await client.downloadProfilePhoto(entity as any, { isBig: true });
+      const photo = await client.downloadProfilePhoto(entity as any, {
+        isBig: true,
+      });
       if (!Buffer.isBuffer(photo) || photo.length === 0) return null;
       return `data:image/jpeg;base64,${photo.toString('base64')}`;
     } catch {
@@ -224,7 +248,9 @@ export class TelegramMtprotoClient {
         status: 'no_admin_rights',
         errorCode,
         floodWaitSeconds: null,
-        warnings: [`Broadcast stats require channel admin rights: ${errorCode}`],
+        warnings: [
+          `Broadcast stats require channel admin rights: ${errorCode}`,
+        ],
       };
     }
     if (
@@ -236,7 +262,9 @@ export class TelegramMtprotoClient {
         status: 'unavailable',
         errorCode,
         floodWaitSeconds: null,
-        warnings: [`Broadcast stats are unavailable for this channel: ${errorCode}`],
+        warnings: [
+          `Broadcast stats are unavailable for this channel: ${errorCode}`,
+        ],
       };
     }
     return {
@@ -252,7 +280,10 @@ export class TelegramMtprotoClient {
     return typeof saved === 'string' ? saved : '';
   }
 
-  private async getSelfUserWithDetails(client: TelegramClient, fallback?: Api.User) {
+  private async getSelfUserWithDetails(
+    client: TelegramClient,
+    fallback?: Api.User,
+  ) {
     try {
       const full = await client.invoke(
         new Api.users.GetFullUser({ id: new Api.InputUserSelf() }),
@@ -280,7 +311,7 @@ export class TelegramMtprotoClient {
         tempSession: this.saveSession(client),
       };
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -308,10 +339,13 @@ export class TelegramMtprotoClient {
         );
 
         if (result instanceof Api.auth.AuthorizationSignUpRequired) {
-          throw new Error('This phone requires sign up and is not supported in this flow yet.');
+          throw new Error(
+            'This phone requires sign up and is not supported in this flow yet.',
+          );
         }
         const authUser = result.user as Api.User;
-        const user = (await this.getSelfUserWithDetails(client, authUser)) || authUser;
+        const user =
+          (await this.getSelfUserWithDetails(client, authUser)) || authUser;
         return {
           session: this.saveSession(client),
           me: {
@@ -339,7 +373,7 @@ export class TelegramMtprotoClient {
         throw error;
       }
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -364,7 +398,8 @@ export class TelegramMtprotoClient {
           },
         },
       )) as Api.User;
-      const user = (await this.getSelfUserWithDetails(client, authUser)) || authUser;
+      const user =
+        (await this.getSelfUserWithDetails(client, authUser)) || authUser;
 
       return {
         session: this.saveSession(client),
@@ -380,14 +415,14 @@ export class TelegramMtprotoClient {
         },
       };
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
   async getMe(params: { apiId: string; apiHash: string; session: string }) {
     const client = await this.createClient(params);
     try {
-      const meRaw = (await client.getMe()) as Api.User;
+      const meRaw = await client.getMe();
       const me = (await this.getSelfUserWithDetails(client, meRaw)) || meRaw;
       let photoUrl: string | null = null;
       if (me.username) {
@@ -402,7 +437,7 @@ export class TelegramMtprotoClient {
         nameColor: this.extractNameColor(me),
       };
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -417,7 +452,7 @@ export class TelegramMtprotoClient {
       return dialogs
         .filter((d: any) => {
           if (!d?.isChannel) return false;
-          const entity = d.entity as any;
+          const entity = d.entity;
           return !!(entity?.creator || entity?.adminRights);
         })
         .map((d: any) => ({
@@ -425,10 +460,13 @@ export class TelegramMtprotoClient {
           title: d.title || 'Untitled',
           username: d.entity?.username || null,
           isCreator: !!d.entity?.creator,
-          adminRights: this.toJsonSafe(d.entity?.adminRights) as Record<string, unknown> | null,
+          adminRights: this.toJsonSafe(d.entity?.adminRights) as Record<
+            string,
+            unknown
+          > | null,
         }));
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -487,7 +525,7 @@ export class TelegramMtprotoClient {
         },
       };
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -505,7 +543,12 @@ export class TelegramMtprotoClient {
       const posts = await client.getMessages(entity, { limit });
       const dailyMap = new Map<
         string,
-        { date: string; viewsCount: number; reactionsCount: number; forwardsCount: number }
+        {
+          date: string;
+          viewsCount: number;
+          reactionsCount: number;
+          forwardsCount: number;
+        }
       >();
       for (const post of posts as any[]) {
         if (!post?.date) continue;
@@ -567,7 +610,7 @@ export class TelegramMtprotoClient {
         ),
       };
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 
@@ -628,7 +671,7 @@ export class TelegramMtprotoClient {
         warnings: normalizedError.warnings,
       };
     } finally {
-      if (client) await client.disconnect();
+      if (client) await this.closeClient(client);
     }
   }
 
@@ -660,12 +703,17 @@ export class TelegramMtprotoClient {
               const reaction =
                 typeof rawReaction === 'string'
                   ? rawReaction
-                  : rawReaction?.emoticon || rawReaction?.emoticonId || String(rawReaction || '');
+                  : rawReaction?.emoticon ||
+                    rawReaction?.emoticonId ||
+                    String(rawReaction || '');
               return { reaction, count };
             })
-            .filter((row: { reaction: string; count: number }) => !!row.reaction);
+            .filter(
+              (row: { reaction: string; count: number }) => !!row.reaction,
+            );
           const reactionsCount = reactions.reduce(
-            (sum: number, row: { reaction: string; count: number }) => sum + row.count,
+            (sum: number, row: { reaction: string; count: number }) =>
+              sum + row.count,
             0,
           );
 
@@ -683,7 +731,7 @@ export class TelegramMtprotoClient {
         })
         .filter((row): row is NonNullable<typeof row> => !!row);
     } finally {
-      await client.disconnect();
+      await this.closeClient(client);
     }
   }
 }

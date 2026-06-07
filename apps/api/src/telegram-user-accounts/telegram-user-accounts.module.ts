@@ -6,7 +6,11 @@ import { TelegramUserAccountsService } from './telegram-user-accounts.service';
 
 @Module({
   controllers: [TelegramUserAccountsController],
-  providers: [TelegramUserAccountsService, TelegramMtprotoClient, TelegramSourceAccessService],
+  providers: [
+    TelegramUserAccountsService,
+    TelegramMtprotoClient,
+    TelegramSourceAccessService,
+  ],
   exports: [TelegramUserAccountsService],
 })
 export class TelegramUserAccountsModule {}

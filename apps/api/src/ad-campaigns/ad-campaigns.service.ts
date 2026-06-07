@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
 import {
+  AdCampaignQueryDto,
   CreateAdCampaignDto,
   UpdateAdCampaignDto,
 } from './dto';
@@ -23,9 +24,18 @@ export class AdCampaignsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
-  private async ensurePromoBelongsToChannel(workspaceId: string, promoId: string, channelId: string) {
-    const promo = await this.prisma.promo.findFirst({ where: { id: promoId, workspaceId, telegramChannelId: channelId } });
-    if (!promo) throw new BadRequestException('Promo must belong to selected Telegram channel');
+  private async ensurePromoBelongsToChannel(
+    workspaceId: string,
+    promoId: string,
+    channelId: string,
+  ) {
+    const promo = await this.prisma.promo.findFirst({
+      where: { id: promoId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!promo)
+      throw new BadRequestException(
+        'Promo must belong to selected Telegram channel',
+      );
   }
 
   private formatDatePart(date: Date) {
@@ -46,7 +56,9 @@ export class AdCampaignsService {
   }
 
   private sourceTypeLabel(source: any) {
-    const raw = String(source?.sourceKind || source?.sourceType || 'telegram').replace(/_/g, ' ').trim();
+    const raw = String(source?.sourceKind || source?.sourceType || 'telegram')
+      .replace(/_/g, ' ')
+      .trim();
     return raw || 'telegram';
   }
 
@@ -132,10 +144,14 @@ export class AdCampaignsService {
         : [],
     ]);
     if (channels.length !== parsed.channelIds.length) {
-      throw new BadRequestException('One or more advertising channels are invalid');
+      throw new BadRequestException(
+        'One or more advertising channels are invalid',
+      );
     }
     if (people.length !== parsed.sourceIds.length) {
-      throw new BadRequestException('One or more advertising people are invalid');
+      throw new BadRequestException(
+        'One or more advertising people are invalid',
+      );
     }
     return parsed;
   }
@@ -177,7 +193,9 @@ export class AdCampaignsService {
       })),
     ];
     const firstSource = sources?.[0];
-    const sourceLabel = this.shortenBlock(firstSource?.title || firstSource?.name || 'source');
+    const sourceLabel = this.shortenBlock(
+      firstSource?.title || firstSource?.name || 'source',
+    );
     const promoLabel = this.shortenBlock(promo?.title || 'promo');
     const typeLabel = this.shortenBlock(this.sourceTypeLabel(firstSource));
     const dateLabel = this.formatDatePart(placementDate);
@@ -223,14 +241,18 @@ export class AdCampaignsService {
     campaign: any,
     accountId?: string,
   ) {
-    const account = await tx.account.findFirst({ where: { id: accountId || campaign.accountId, workspaceId } });
+    const account = await tx.account.findFirst({
+      where: { id: accountId || campaign.accountId, workspaceId },
+    });
     if (!account) return;
 
     const description = `Telegram ad campaign: ${campaign.title}`;
     const date = campaign.placementDate || campaign.startedAt || new Date();
-    const existing = await tx.transaction.findFirst({ where: { adCampaignId: campaign.id } });
+    const existing = await tx.transaction.findFirst({
+      where: { adCampaignId: campaign.id },
+    });
     await this.financeCategoriesService.ensureSystemCategories(workspaceId, tx);
-    const advertisingCategory = await (tx as any).transactionCategory.findFirst({
+    const advertisingCategory = await tx.transactionCategory.findFirst({
       where: { workspaceId, type: 'expense', key: 'advertising' },
     });
     if (!advertisingCategory) return;
@@ -252,7 +274,10 @@ export class AdCampaignsService {
     };
 
     if (existing) {
-      await tx.transaction.update({ where: { id: existing.id }, data: payload });
+      await tx.transaction.update({
+        where: { id: existing.id },
+        data: payload,
+      });
     } else {
       await tx.transaction.create({ data: payload });
     }
@@ -284,16 +309,26 @@ export class AdCampaignsService {
         ),
       ],
       attributionType:
-        row.advertisingTelegramChannels.length + row.advertisingChannels.length > 1 ? 'mixed' : 'clean',
-      isMixedAttribution: row.advertisingTelegramChannels.length + row.advertisingChannels.length > 1,
+        row.advertisingTelegramChannels.length +
+          row.advertisingChannels.length >
+        1
+          ? 'mixed'
+          : 'clean',
+      isMixedAttribution:
+        row.advertisingTelegramChannels.length +
+          row.advertisingChannels.length >
+        1,
       analytics,
     };
   }
 
-  async findAll(userId: string) {
+  async findAll(userId: string, query: AdCampaignQueryDto = {}) {
     const workspaceId = await this.workspace(userId);
     const rows = await (this.prisma.adCampaign as any).findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        telegramChannelId: query.telegramChannelId || undefined,
+      },
       include: {
         telegramChannel: true,
         promo: true,
@@ -336,10 +371,16 @@ export class AdCampaignsService {
 
   async create(userId: string, dto: CreateAdCampaignDto) {
     const workspaceId = await this.workspace(userId);
-    await this.ensurePromoBelongsToChannel(workspaceId, dto.promoId, dto.telegramChannelId);
+    await this.ensurePromoBelongsToChannel(
+      workspaceId,
+      dto.promoId,
+      dto.telegramChannelId,
+    );
 
     const campaign = await this.prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
+      const workspace = await tx.workspace.findUnique({
+        where: { id: workspaceId },
+      });
       if (!workspace) throw new NotFoundException('Workspace not found');
       const account = await tx.account.findFirst({
         where: { id: dto.accountId, workspaceId },
@@ -359,15 +400,13 @@ export class AdCampaignsService {
         dto.telegramChannelId,
         dto.advertisingChannelIds || [],
       );
+      const rawAdvertisingSourceIds = dto.advertisingChannelIds || [];
       const generatedTitle = await this.generateCampaignTitle(
         tx,
         workspaceId,
         placementDate,
         dto.promoId,
-        [
-          ...advertisingSources.channelIds.map((id) => `channel:${id}`),
-          ...advertisingSources.sourceIds.map((id) => `source:${id}`),
-        ],
+        rawAdvertisingSourceIds,
       );
       const row = await (tx.adCampaign as any).create({
         data: {
@@ -415,11 +454,17 @@ export class AdCampaignsService {
 
   async update(userId: string, id: string, dto: UpdateAdCampaignDto) {
     const workspaceId = await this.workspace(userId);
-    const existing = await this.prisma.adCampaign.findFirst({ where: { id, workspaceId } });
+    const existing = await this.prisma.adCampaign.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException('Campaign not found');
 
     if (dto.telegramChannelId && dto.promoId) {
-      await this.ensurePromoBelongsToChannel(workspaceId, dto.promoId, dto.telegramChannelId);
+      await this.ensurePromoBelongsToChannel(
+        workspaceId,
+        dto.promoId,
+        dto.telegramChannelId,
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -429,7 +474,9 @@ export class AdCampaignsService {
         ? await tx.account.findFirst({ where: { id: accountId, workspaceId } })
         : null;
       if (!account) throw new NotFoundException('Account not found');
-      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
+      const workspace = await tx.workspace.findUnique({
+        where: { id: workspaceId },
+      });
       if (!workspace) throw new NotFoundException('Workspace not found');
       const exchangeRateToPrimary = await this.resolveRateToPrimary(
         tx,
@@ -441,16 +488,21 @@ export class AdCampaignsService {
         ? new Date(dto.date)
         : existing.placementDate || new Date();
       const nextPromoId = dto.promoId ?? existing.promoId;
-      const nextOwnTelegramChannelId = dto.telegramChannelId ?? existing.telegramChannelId;
+      const nextOwnTelegramChannelId =
+        dto.telegramChannelId ?? existing.telegramChannelId;
       const rawNextAdvertisingChannelIds = dto.advertisingChannelIds ?? [
-        ...(await (tx as any).adCampaignTelegramChannelPlacement.findMany({
-          where: { adCampaignId: id },
-          select: { telegramChannelId: true },
-        })).map((x: any) => `channel:${x.telegramChannelId}`),
-        ...(await (tx as any).adCampaignAdvertisingChannel.findMany({
-          where: { adCampaignId: id },
-          select: { advertisingSourceId: true },
-        })).map((x: any) => `source:${x.advertisingSourceId}`),
+        ...(
+          await (tx as any).adCampaignTelegramChannelPlacement.findMany({
+            where: { adCampaignId: id },
+            select: { telegramChannelId: true },
+          })
+        ).map((x: any) => `channel:${x.telegramChannelId}`),
+        ...(
+          await (tx as any).adCampaignAdvertisingChannel.findMany({
+            where: { adCampaignId: id },
+            select: { advertisingSourceId: true },
+          })
+        ).map((x: any) => `source:${x.advertisingSourceId}`),
       ];
       const nextAdvertisingSources = await this.ensureAdvertisingSources(
         tx,
@@ -464,8 +516,12 @@ export class AdCampaignsService {
         nextPlacementDate,
         nextPromoId,
         [
-          ...nextAdvertisingSources.channelIds.map((sourceId) => `channel:${sourceId}`),
-          ...nextAdvertisingSources.sourceIds.map((sourceId) => `source:${sourceId}`),
+          ...nextAdvertisingSources.channelIds.map(
+            (sourceId) => `channel:${sourceId}`,
+          ),
+          ...nextAdvertisingSources.sourceIds.map(
+            (sourceId) => `source:${sourceId}`,
+          ),
         ],
       );
 
@@ -487,8 +543,12 @@ export class AdCampaignsService {
       });
 
       if (dto.advertisingChannelIds) {
-        await (tx as any).adCampaignTelegramChannelPlacement.deleteMany({ where: { adCampaignId: id } });
-        await (tx as any).adCampaignAdvertisingChannel.deleteMany({ where: { adCampaignId: id } });
+        await (tx as any).adCampaignTelegramChannelPlacement.deleteMany({
+          where: { adCampaignId: id },
+        });
+        await (tx as any).adCampaignAdvertisingChannel.deleteMany({
+          where: { adCampaignId: id },
+        });
         await (tx as any).adCampaignTelegramChannelPlacement.createMany({
           data: nextAdvertisingSources.channelIds.map((sourceId) => ({
             adCampaignId: id,
@@ -513,7 +573,10 @@ export class AdCampaignsService {
 
   async remove(userId: string, id: string) {
     await this.findOne(userId, id);
-    return this.prisma.adCampaign.update({ where: { id }, data: { status: 'archived' } });
+    return this.prisma.adCampaign.update({
+      where: { id },
+      data: { status: 'archived' },
+    });
   }
 
   private async campaignMetrics(campaign: any) {
@@ -535,7 +598,8 @@ export class AdCampaignsService {
       netGrowth: null,
       costAmount,
       currency: campaign.currency,
-      costPerJoinedSubscriber: joinedCount > 0 ? costAmount / joinedCount : null,
+      costPerJoinedSubscriber:
+        joinedCount > 0 ? costAmount / joinedCount : null,
       costPerNetSubscriber: null,
       attributionSource: 'mtproto_invite_link_usage',
     };
@@ -552,5 +616,4 @@ export class AdCampaignsService {
       ...campaign.analytics,
     };
   }
-
 }

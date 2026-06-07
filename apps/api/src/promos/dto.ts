@@ -15,3 +15,7 @@ export class UpdatePromoDto {
   @IsOptional() @IsString() imageData?: string;
   @IsOptional() @IsEnum(PromoStatus) status?: PromoStatus;
 }
+
+export class PromoQueryDto {
+  @IsOptional() @IsString() telegramChannelId?: string;
+}
