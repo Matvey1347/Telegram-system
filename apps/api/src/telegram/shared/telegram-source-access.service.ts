@@ -221,6 +221,7 @@ export class TelegramSourceAccessService {
       this.prisma.telegramBotIntegration.findMany({
         where: {
           workspaceId,
+          isActive: true,
           id: {
             in: rows
               .filter((row) => row.sourceType === TelegramSourceType.BOT)
@@ -231,6 +232,7 @@ export class TelegramSourceAccessService {
       this.prisma.telegramUserAccountIntegration.findMany({
         where: {
           workspaceId,
+          isActive: true,
           id: {
             in: rows
               .filter((row) => row.sourceType === TelegramSourceType.MTPROTO)
@@ -243,29 +245,35 @@ export class TelegramSourceAccessService {
     const accountById = new Map(
       accounts.map((account) => [account.id, account]),
     );
-    return rows.map((row) => {
-      const permissions = this.permissionsFromRow(row);
-      return {
-        sourceId: row.sourceId,
-        sourceType: row.sourceType,
-        displayName:
-          row.sourceType === TelegramSourceType.BOT
-            ? this.botDisplayName(botById.get(row.sourceId))
-            : this.accountDisplayName(accountById.get(row.sourceId)),
-        avatarUrl:
-          row.sourceType === TelegramSourceType.BOT
-            ? null
-            : accountById.get(row.sourceId)?.photoUrl || null,
-        role: row.role,
-        permissions,
-        rawPermissions: row.rawPermissions,
-        lastCheckedAt: row.lastCheckedAt,
-        canBeUsedForAnalytics: this.canBeUsedForAnalytics(
+    return rows
+      .filter((row) =>
+        row.sourceType === TelegramSourceType.BOT
+          ? botById.has(row.sourceId)
+          : accountById.has(row.sourceId),
+      )
+      .map((row) => {
+        const permissions = this.permissionsFromRow(row);
+        return {
+          sourceId: row.sourceId,
+          sourceType: row.sourceType,
+          displayName:
+            row.sourceType === TelegramSourceType.BOT
+              ? this.botDisplayName(botById.get(row.sourceId))
+              : this.accountDisplayName(accountById.get(row.sourceId)),
+          avatarUrl:
+            row.sourceType === TelegramSourceType.BOT
+              ? null
+              : accountById.get(row.sourceId)?.photoUrl || null,
+          role: row.role,
           permissions,
-          row.role,
-        ),
-      };
-    });
+          rawPermissions: row.rawPermissions,
+          lastCheckedAt: row.lastCheckedAt,
+          canBeUsedForAnalytics: this.canBeUsedForAnalytics(
+            permissions,
+            row.role,
+          ),
+        };
+      });
   }
 
   async analyticsSources(workspaceId: string, channelId: string) {
@@ -292,8 +300,13 @@ export class TelegramSourceAccessService {
       }
     }
     const usedBySource = new Map<string, Set<TelegramChannelDataType>>();
+    const visibleSourceKeys = new Set(
+      sources.map((source) => `${source.sourceType}:${source.sourceId}`),
+    );
     for (const row of dataRows.filter(
-      (item) => item.status !== TelegramDataSourceStatus.FAILED,
+      (item) =>
+        item.status !== TelegramDataSourceStatus.FAILED &&
+        visibleSourceKeys.has(`${item.sourceType}:${item.sourceId}`),
     )) {
       const key = `${row.sourceType}:${row.sourceId}`;
       const set = usedBySource.get(key) || new Set<TelegramChannelDataType>();

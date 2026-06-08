@@ -1,9 +1,14 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { TelegramSourceType, TelegramUserAccountStatus } from '@prisma/client';
+import {
+  TelegramChannelDataType,
+  TelegramSourceType,
+  TelegramUserAccountStatus,
+} from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +18,7 @@ import {
   Confirm2faPasswordDto,
   ConfirmLoginCodeDto,
   CreateTelegramUserAccountDto,
+  ImportUserAccountChannelsDto,
   StartLoginDto,
   UpdateTelegramUserAccountDto,
 } from './dto';
@@ -20,6 +26,8 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TelegramUserAccountsService {
+  private readonly logger = new Logger(TelegramUserAccountsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
@@ -103,8 +111,62 @@ export class TelegramUserAccountsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
+  private async syncDialogsAfterConnect(userId: string, id: string) {
+    try {
+      return await this.syncDialogs(userId, id);
+    } catch (error) {
+      this.logger.warn(
+        `MTProto channel access auto-sync skipped for account=${id}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return {
+        success: false,
+        message:
+          'Account connected, but channel access auto-sync failed. Run Sync channels manually.',
+        channels: [],
+      };
+    }
+  }
+
   private normalizeUsername(value: string | null | undefined) {
     return (value || '').replace('@', '').trim().toLowerCase();
+  }
+
+  private normalizeChatId(value: string | null | undefined) {
+    const digits = String(value || '').trim();
+    if (!digits) return null;
+    return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+  }
+
+  private sourceDisplayName(account: {
+    username?: string | null;
+    firstName?: string | null;
+    label: string;
+  }) {
+    return (
+      (account.username && `@${String(account.username).replace('@', '')}`) ||
+      account.firstName ||
+      account.label
+    );
+  }
+
+  private channelRawPermissions(channel: {
+    isCreator?: boolean;
+    adminRights?: Record<string, unknown> | null;
+  }) {
+    return {
+      isCreator: Boolean(channel.isCreator),
+      adminRights: channel.adminRights || null,
+    };
+  }
+
+  private channelAccessPayload(channel: {
+    isCreator?: boolean;
+    adminRights?: Record<string, unknown> | null;
+  }) {
+    const rawPermissions = this.channelRawPermissions(channel);
+    const normalized =
+      this.sourceAccessService.normalizeMtprotoPermissions(rawPermissions);
+    return { rawPermissions, normalized };
   }
 
   private resolveApiCredentials(dto: CreateTelegramUserAccountDto) {
@@ -199,9 +261,33 @@ export class TelegramUserAccountsService {
   }
 
   async remove(userId: string, id: string) {
-    await this.findOne(userId, id);
-    const row = await this.prisma.telegramUserAccountIntegration.delete({
-      where: { id },
+    const workspaceId = await this.getWorkspaceId(userId);
+    const existing = await this.prisma.telegramUserAccountIntegration.findFirst(
+      {
+        where: { id, workspaceId },
+      },
+    );
+    if (!existing)
+      throw new NotFoundException('Telegram user account not found');
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.telegramChannelAdminLink.deleteMany({
+        where: { workspaceId, telegramUserAccountIntegrationId: id },
+      });
+      await tx.telegramChannelSourceAccess.deleteMany({
+        where: {
+          workspaceId,
+          sourceId: id,
+          sourceType: TelegramSourceType.MTPROTO,
+        },
+      });
+      await tx.telegramChannelDataSource.deleteMany({
+        where: {
+          workspaceId,
+          sourceId: id,
+          sourceType: TelegramSourceType.MTPROTO,
+        },
+      });
+      return tx.telegramUserAccountIntegration.delete({ where: { id } });
     });
     return this.safe(row);
   }
@@ -305,7 +391,9 @@ export class TelegramUserAccountsService {
           status: TelegramUserAccountStatus.needs_password,
           lastErrorMessage: null,
           loginPhoneCodeHash: statePhoneCodeHash,
-          ...(result.tempSession ? this.encryptLoginTempSession(result.tempSession) : {}),
+          ...(result.tempSession
+            ? this.encryptLoginTempSession(result.tempSession)
+            : {}),
         },
       });
       return {
@@ -346,7 +434,9 @@ export class TelegramUserAccountsService {
         loginStartedAt: null,
       },
     });
-    return this.safe(row);
+    const channelSync = await this.syncDialogsAfterConnect(userId, account.id);
+    const safeRow = this.safe(row as unknown as Record<string, unknown>);
+    return { ...safeRow, channelSync };
   }
 
   async confirmPassword(
@@ -419,7 +509,9 @@ export class TelegramUserAccountsService {
         loginStartedAt: null,
       },
     });
-    return this.safe(row);
+    const channelSync = await this.syncDialogsAfterConnect(userId, account.id);
+    const safeRow = this.safe(row as unknown as Record<string, unknown>);
+    return { ...safeRow, channelSync };
   }
 
   async check(userId: string, id: string) {
@@ -518,22 +610,67 @@ export class TelegramUserAccountsService {
 
     const workspaceChannels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
-      select: { id: true, username: true },
+      select: { id: true, username: true, telegramChatId: true },
     });
     const channelByUsername = new Map(
       workspaceChannels
         .map((c) => [this.normalizeUsername(c.username), c.id] as const)
         .filter(([username]) => !!username),
     );
+    const channelByChatId = new Map(
+      workspaceChannels
+        .map((c) => [this.normalizeChatId(c.telegramChatId), c.id] as const)
+        .filter(([chatId]) => !!chatId),
+    );
     const matchedChannels = channels
       .map((channel) => ({
         channel,
-        id: channelByUsername.get(this.normalizeUsername(channel.username)),
+        id:
+          channelByUsername.get(this.normalizeUsername(channel.username)) ||
+          channelByChatId.get(this.normalizeChatId(channel.id)),
       }))
       .filter(
         (row): row is { channel: (typeof channels)[number]; id: string } =>
           !!row.id,
       );
+    const matchedChannelIds = new Set(matchedChannels.map(({ channel }) => channel.id));
+    const formatSyncedChannel = ({
+      channel,
+      id: workspaceChannelId,
+    }: {
+      channel: (typeof channels)[number];
+      id: string;
+    }) => {
+      const access = this.channelAccessPayload(channel);
+      return {
+        channelId: channel.id,
+        workspaceChannelId,
+        telegramChannelId: channel.id,
+        title: channel.title,
+        username: channel.username,
+        role: access.normalized.role,
+        permissions: access.normalized.permissions,
+        canBeUsedForAnalytics: this.sourceAccessService.canBeUsedForAnalytics(
+          access.normalized.permissions,
+          access.normalized.role,
+        ),
+      };
+    };
+    const formatAvailableChannel = (channel: (typeof channels)[number]) => {
+      const access = this.channelAccessPayload(channel);
+      return {
+        channelId: channel.id,
+        telegramChannelId: channel.id,
+        title: channel.title,
+        username: channel.username,
+        role: access.normalized.role,
+        permissions: access.normalized.permissions,
+        canBeUsedForAnalytics: this.sourceAccessService.canBeUsedForAnalytics(
+          access.normalized.permissions,
+          access.normalized.role,
+        ),
+      };
+    };
 
     await this.prisma.$transaction(async (tx) => {
       await tx.telegramUserAccountIntegration.update({
@@ -571,12 +708,7 @@ export class TelegramUserAccountsService {
       }
     });
     for (const { channel, id: telegramChannelId } of matchedChannels) {
-      const rawPermissions = {
-        isCreator: channel.isCreator,
-        adminRights: channel.adminRights || null,
-      };
-      const normalized =
-        this.sourceAccessService.normalizeMtprotoPermissions(rawPermissions);
+      const { rawPermissions, normalized } = this.channelAccessPayload(channel);
       await this.sourceAccessService.upsertAccess({
         workspaceId,
         channelId: telegramChannelId,
@@ -591,11 +723,171 @@ export class TelegramUserAccountsService {
     return {
       success: true,
       channels,
+      syncedChannels: matchedChannels.map(formatSyncedChannel),
+      availableChannels: channels
+        .filter((channel) => !matchedChannelIds.has(channel.id))
+        .map(formatAvailableChannel),
       matchedChannels: matchedChannels.length,
       message:
         matchedChannels.length > 0
           ? `Linked admin to ${matchedChannels.length} workspace channels`
           : 'No matching workspace channels by username',
+    };
+  }
+
+  async importChannels(
+    userId: string,
+    id: string,
+    dto: ImportUserAccountChannelsDto,
+  ) {
+    const workspaceId = await this.getWorkspaceId(userId);
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id, workspaceId, isActive: true },
+    });
+    if (!account)
+      throw new NotFoundException('Telegram user account not found');
+    if (
+      !account.sessionEncrypted ||
+      !account.sessionIv ||
+      !account.sessionAuthTag
+    ) {
+      return { success: false, message: 'Connect account first', channels: [] };
+    }
+
+    const apiHash = this.encryptionService.decrypt({
+      encrypted: account.apiHashEncrypted,
+      iv: account.apiHashIv,
+      authTag: account.apiHashAuthTag,
+    });
+    const session = this.encryptionService.decrypt({
+      encrypted: account.sessionEncrypted,
+      iv: account.sessionIv,
+      authTag: account.sessionAuthTag,
+    });
+    const dialogs = await this.mtprotoClient.getAdminChannels({
+      apiId: account.apiId,
+      apiHash,
+      session,
+    });
+    const selectedIds = new Set(dto.channelIds.map((value) => String(value)));
+    const selectedChannels = dialogs.filter((channel) =>
+      selectedIds.has(channel.id),
+    );
+    if (!selectedChannels.length) {
+      return { success: true, channels: [], message: 'No channels selected' };
+    }
+
+    const existingChannels = await this.prisma.telegramChannel.findMany({
+      where: { workspaceId, isActive: true },
+      select: { id: true, username: true, telegramChatId: true },
+    });
+    const findExistingId = (channel: (typeof dialogs)[number]) =>
+      existingChannels.find(
+        (existing) =>
+          (this.normalizeUsername(existing.username) &&
+            this.normalizeUsername(existing.username) ===
+              this.normalizeUsername(channel.username)) ||
+          (this.normalizeChatId(existing.telegramChatId) &&
+            this.normalizeChatId(existing.telegramChatId) ===
+              this.normalizeChatId(channel.id)),
+      )?.id;
+
+    const imported: Array<{
+      channelId: string;
+      workspaceChannelId: string;
+      title: string;
+      username: string | null;
+      role: ReturnType<
+        TelegramSourceAccessService['normalizeMtprotoPermissions']
+      >['role'];
+      permissions: ReturnType<
+        TelegramSourceAccessService['normalizeMtprotoPermissions']
+      >['permissions'];
+      canBeUsedForAnalytics: boolean;
+    }> = [];
+    for (const channel of selectedChannels) {
+      const { rawPermissions, normalized } = this.channelAccessPayload(channel);
+      const existingId = findExistingId(channel);
+      const workspaceChannel = existingId
+        ? await this.prisma.telegramChannel.update({
+            where: { id: existingId },
+            data: {
+              title: channel.title,
+              username: this.normalizeUsername(channel.username),
+              telegramChatId: channel.id,
+              isActive: true,
+            },
+          })
+        : await this.prisma.telegramChannel.create({
+            data: {
+              workspaceId,
+              title: channel.title,
+              username: this.normalizeUsername(channel.username),
+              telegramChatId: channel.id,
+              sourceType: 'telegram',
+              lastPublicSyncedAt: new Date(),
+            },
+          });
+      await this.prisma.telegramChannelAdminLink.upsert({
+        where: {
+          workspaceId_telegramChannelId_telegramUserAccountIntegrationId: {
+            workspaceId,
+            telegramChannelId: workspaceChannel.id,
+            telegramUserAccountIntegrationId: account.id,
+          },
+        },
+        create: {
+          workspaceId,
+          telegramChannelId: workspaceChannel.id,
+          telegramUserAccountIntegrationId: account.id,
+          source: 'mtproto',
+        },
+        update: { source: 'mtproto' },
+      });
+      await this.sourceAccessService.upsertAccess({
+        workspaceId,
+        channelId: workspaceChannel.id,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        role: normalized.role,
+        permissions: normalized.permissions,
+        rawPermissions,
+      });
+      imported.push({
+        channelId: channel.id,
+        workspaceChannelId: workspaceChannel.id,
+        title: workspaceChannel.title,
+        username: workspaceChannel.username,
+        role: normalized.role,
+        permissions: normalized.permissions,
+        canBeUsedForAnalytics: this.sourceAccessService.canBeUsedForAnalytics(
+          normalized.permissions,
+          normalized.role,
+        ),
+      });
+    }
+
+    await Promise.all(
+      imported.map((channel) =>
+        this.sourceAccessService.recordDataSource({
+          workspaceId,
+          channelId: channel.workspaceChannelId,
+          sourceId: account.id,
+          sourceType: TelegramSourceType.MTPROTO,
+          dataType: TelegramChannelDataType.CHANNEL_INFO,
+          sourceDisplayName: this.sourceDisplayName(account),
+          metadata: {
+            source: 'mtproto_dialog_import',
+            telegramDialogChannelId: channel.channelId,
+          },
+        }),
+      ),
+    );
+
+    return {
+      success: true,
+      channels: imported,
+      message: `Added ${imported.length} channels from ${this.sourceDisplayName(account)}`,
     };
   }
 }

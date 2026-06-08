@@ -15,6 +15,7 @@ import {
   Confirm2faPasswordDto,
   ConfirmLoginCodeDto,
   CreateTelegramUserAccountDto,
+  ImportUserAccountChannelsDto,
   StartLoginDto,
   UpdateTelegramUserAccountDto,
 } from './dto';
@@ -86,5 +87,12 @@ export class TelegramUserAccountsController {
     @Param('id') id: string,
   ) {
     return this.service.syncDialogs(user.sub, id);
+  }
+  @Post(':id/channels/import') importChannels(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ImportUserAccountChannelsDto,
+  ) {
+    return this.service.importChannels(user.sub, id, dto);
   }
 }
