@@ -6,5 +6,6 @@ import { CurrenciesCronService } from './currencies-cron.service';
 @Module({
   controllers: [CurrenciesController],
   providers: [CurrenciesService, CurrenciesCronService],
+  exports: [CurrenciesService],
 })
 export class CurrenciesModule {}

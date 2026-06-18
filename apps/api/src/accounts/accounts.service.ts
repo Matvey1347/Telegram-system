@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
+import { CurrenciesService } from '../currencies/currencies.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateAccountDto, UpdateAccountDto } from './dto';
@@ -12,6 +13,7 @@ export class AccountsService {
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
     private readonly conversionService: CurrencyConversionService,
+    private readonly currenciesService: CurrenciesService,
   ) {}
 
   private async withBalances(
@@ -162,7 +164,7 @@ export class AccountsService {
       data: {
         workspaceId,
         name: dto.name,
-        currency: dto.currency,
+        currency: dto.currency.toUpperCase(),
         initialBalance: dto.initialBalance,
         isActive: dto.isActive ?? true,
         iconId: dto.iconId ?? undefined,
@@ -179,6 +181,7 @@ export class AccountsService {
         },
       },
     });
+    await this.currenciesService.ensureRatesForWorkspace(workspaceId);
     return account;
   }
 
@@ -197,10 +200,11 @@ export class AccountsService {
       if (!icon) throw new NotFoundException('Icon not found');
     }
 
-    return this.prisma.account.update({
+    const updated = await this.prisma.account.update({
       where: { id },
       data: {
         ...dto,
+        currency: dto.currency?.toUpperCase(),
         iconId: dto.iconId === undefined ? undefined : dto.iconId,
       },
       include: {
@@ -215,6 +219,10 @@ export class AccountsService {
         },
       },
     });
+    if (dto.currency && dto.currency.toUpperCase() !== account.currency) {
+      await this.currenciesService.ensureRatesForWorkspace(workspaceId);
+    }
+    return updated;
   }
 
   async remove(userId: string, id: string) {

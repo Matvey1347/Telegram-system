@@ -36,6 +36,14 @@ const SUPPORTED_CURRENCIES = [
   'KZT',
 ] as const;
 
+const getSupportedCurrencies = () => {
+  const intl = Intl as unknown as {
+    supportedValuesOf?: (key: 'currency') => string[];
+  };
+  const intlCurrencies = intl.supportedValuesOf?.('currency') ?? [];
+  return Array.from(new Set([...SUPPORTED_CURRENCIES, ...intlCurrencies])).sort();
+};
+
 @Injectable()
 export class CurrenciesService {
   private readonly logger = new Logger(CurrenciesService.name);
@@ -53,12 +61,12 @@ export class CurrenciesService {
       select: {
         primaryCurrency: true,
         secondaryCurrency: true,
+        currencyDisplayMode: true,
       },
     });
     return {
       ...workspace,
-      currencyDisplayMode: 'code' as const,
-      supportedCurrencies: SUPPORTED_CURRENCIES,
+      supportedCurrencies: getSupportedCurrencies(),
     };
   }
 
@@ -75,10 +83,12 @@ export class CurrenciesService {
       data: {
         primaryCurrency: dto.primaryCurrency,
         secondaryCurrency: dto.secondaryCurrency,
+        currencyDisplayMode: dto.currencyDisplayMode,
       },
       select: {
         primaryCurrency: true,
         secondaryCurrency: true,
+        currencyDisplayMode: true,
       },
     });
 
@@ -92,8 +102,7 @@ export class CurrenciesService {
 
     return {
       ...workspace,
-      currencyDisplayMode: dto.currencyDisplayMode ?? 'code',
-      supportedCurrencies: SUPPORTED_CURRENCIES,
+      supportedCurrencies: getSupportedCurrencies(),
     };
   }
 
@@ -161,6 +170,25 @@ export class CurrenciesService {
       throw new BadGatewayException(
         'Failed to sync exchange rates. Manual rates remain available.',
       );
+    }
+  }
+
+  async ensureRatesForWorkspace(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { primaryCurrency: true },
+    });
+
+    try {
+      return await this.syncRatesForWorkspace(
+        workspaceId,
+        workspace.primaryCurrency,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Currency auto-sync failed for workspace ${workspaceId}: ${(error as Error).message}`,
+      );
+      return 0;
     }
   }
 
