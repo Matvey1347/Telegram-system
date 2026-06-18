@@ -3,7 +3,13 @@ import { clearAccessToken, getAccessToken } from './auth';
 
 function resolveApiBaseUrl() {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  if (!raw && process.env.NODE_ENV === 'production') {
+    throw new Error('NEXT_PUBLIC_API_URL is not defined');
+  }
+
   const base = raw || 'http://localhost:4000/api';
+
   return base.endsWith('/api') ? base : `${base.replace(/\/+$/, '')}/api`;
 }
 
