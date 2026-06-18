@@ -12,3 +12,4 @@ coverage
 
 # Prisma
 apps/api/prisma/migrations/dev.db
+.vercel
