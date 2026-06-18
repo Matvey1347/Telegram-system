@@ -18,5 +18,10 @@
     "db:seed": "pnpm --filter api exec prisma db seed",
     "archive": "zip -r telegram-system.zip . -x 'telegram-system.zip' 'node_modules/*' '*/node_modules/*' '.next/*' '*/.next/*' 'dist/*' '*/dist/*' '.env' '*/.env'"
   },
-  "packageManager": "pnpm@9.0.0"
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "next": "16.2.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  }
 }
