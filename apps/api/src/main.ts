@@ -12,12 +12,20 @@ async function bootstrap() {
 
   const frontendUrl = configService.get<string>('FRONTEND_URL');
 
+  const allowedOrigins = [
+    'http://localhost:3000',
+    frontendUrl,
+  ].filter(Boolean) as string[];
+
+  console.log('PORT:', port);
+  console.log('FRONTEND_URL:', frontendUrl);
+  console.log('Allowed CORS origins:', allowedOrigins);
+
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      frontendUrl,
-    ].filter(Boolean),
+    origin: allowedOrigins,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   app.setGlobalPrefix('api');
