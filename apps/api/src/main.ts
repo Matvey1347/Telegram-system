@@ -7,10 +7,16 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('API_PORT') || 4000;
+
+  const port = Number(process.env.PORT || configService.get<number>('API_PORT') || 4000);
+
+  const frontendUrl = configService.get<string>('FRONTEND_URL');
 
   app.enableCors({
-    origin: ['http://localhost:3000'],
+    origin: [
+      'http://localhost:3000',
+      frontendUrl,
+    ].filter(Boolean),
     credentials: true,
   });
 
@@ -24,8 +30,9 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(port);
-  console.log(`API is running on http://localhost:${port}/api`);
+  await app.listen(port, '0.0.0.0');
+
+  console.log(`API is running on port ${port}`);
 }
 
 bootstrap();
