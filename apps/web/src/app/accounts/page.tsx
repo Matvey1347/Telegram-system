@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { Account, accountsApi, currenciesApi } from '@/lib/api';
+import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { formatMoney } from '@/lib/money';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
@@ -29,7 +30,7 @@ export default function AccountsPage() {
     {isLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load accounts</div> : null}
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2">{a.iconId ? <IconPicker compact iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /> : null}<span>{a.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
+      {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><span>{a.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
         <div className="mb-2 flex items-center justify-between gap-2">
           <p className="text-2xl font-semibold text-white">{formatMoney(a.balance ?? a.calculatedBalance, a.currency, settings?.currencyDisplayMode)}</p>
           <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{a.currency}</span>

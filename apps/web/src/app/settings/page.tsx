@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
+import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { Button, Card, ConfirmDeleteModal, Input, LoadingState, PageHeader } from '@/components/ui/primitives';
 import { accountApi, authApi, getDashboardSummary, workspacesApi } from '@/lib/api';
-import { IconPicker } from '@/components/icons/icon-picker';
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -65,7 +65,7 @@ export default function SettingsPage() {
           <h3 className="text-lg font-semibold">Workspace</h3>
           <div className="mt-4 space-y-3">
             <div className="flex items-center gap-3">
-              <IconPicker compact iconId={workspaceIconId} onChange={setWorkspaceIconId} className="h-12 w-12" />
+              <InlineIconPicker iconId={workspaceIconId} onChange={setWorkspaceIconId} className="text-2xl" />
               <div>
                 <p className="text-sm font-medium">{me.data?.workspace.name}</p>
                 <p className="text-xs text-neutral-400">Workspace avatar and name</p>

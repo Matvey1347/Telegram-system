@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
+import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { transactionCategoriesApi, type TransactionCategory, type TransactionType } from '@/lib/api';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
@@ -73,7 +74,7 @@ export default function CategoriesPage() {
     {error ? <div className="text-red-300">Failed to load categories</div> : null}
 
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {data?.map((c) => <EntityCard key={c.id} title={<div className="flex items-center gap-2">{c.iconId ? <IconPicker compact iconId={c.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: c.id, iconId })} /> : null}<span>{c.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} disabled={Boolean(c.isSystem)} /></div>}>
+      {data?.map((c) => <EntityCard key={c.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={c.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: c.id, iconId })} /><span>{c.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} disabled={Boolean(c.isSystem)} /></div>}>
         <p>Type: <span className={`font-medium ${typeClass(c.type)}`}>{c.type}</span></p>
         <p>Key: {c.key || '-'}</p>
         <p>System: {c.isSystem ? 'yes' : 'no'}</p>

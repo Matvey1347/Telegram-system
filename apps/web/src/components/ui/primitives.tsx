@@ -297,7 +297,7 @@ export function CustomSelect({
       >
         <span className="flex min-w-0 items-center gap-2">
           {selected?.iconUrl ? <img src={selected.iconUrl} alt="" className="h-5 w-5 rounded-full object-cover" /> : null}
-          {!selected?.iconUrl && selected?.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[11px]">{selected.iconEmoji}</span> : null}
+          {!selected?.iconUrl && selected?.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center text-[15px] leading-none">{selected.iconEmoji}</span> : null}
           <span className={`truncate ${selected ? toneClass(selected.tone) : 'text-neutral-400'}`}>{selected?.label || placeholder}</span>
         </span>
         <ChevronDown size={16} className="text-neutral-400" />
@@ -318,7 +318,7 @@ export function CustomSelect({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {opt.iconUrl ? <img src={opt.iconUrl} alt="" className="h-5 w-5 rounded-full object-cover" /> : null}
-                  {!opt.iconUrl && opt.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[11px]">{opt.iconEmoji}</span> : null}
+                  {!opt.iconUrl && opt.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center text-[15px] leading-none">{opt.iconEmoji}</span> : null}
                   <span className={`truncate ${toneClass(opt.tone)}`}>{opt.label}</span>
                 </span>
                 {isSelected ? <Check size={14} className="text-blue-300" /> : null}

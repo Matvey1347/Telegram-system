@@ -113,19 +113,52 @@ export class AdCampaignsService {
     };
   }
 
-  private async ensureAdvertisingSources(
+  private normalizeUsername(value?: string | null) {
+    const normalized = String(value || '')
+      .trim()
+      .replace(/^@/, '')
+      .toLowerCase();
+    return normalized || null;
+  }
+
+  private async resolveLegacyTelegramChannelSource(
     tx: any,
     workspaceId: string,
-    ownTelegramChannelId: string,
-    advertisingSourceIds: string[],
+    source: any,
   ) {
-    const parsed = this.parseAdvertisingSourceSelection(advertisingSourceIds);
-    if (parsed.channelIds.includes(ownTelegramChannelId)) {
-      throw new BadRequestException(
-        'Advertising channel cannot be the same as own Telegram channel',
-      );
-    }
-    const [channels, people] = await Promise.all([
+    const username = this.normalizeUsername(source?.telegramUsername);
+    const channel = await tx.telegramChannel.findFirst({
+      where: {
+        workspaceId,
+        OR: [
+          ...(username ? [{ username: { equals: username, mode: 'insensitive' } }] : []),
+          ...(source?.name ? [{ title: source.name }] : []),
+        ],
+      },
+      include: { adminLinks: true },
+    });
+    return channel ? this.normalizeTelegramChannelSource(channel) : null;
+  }
+
+  private dedupeAdvertisingSources(sources: any[]) {
+    const seen = new Set<string>();
+    return sources.filter((source) => {
+      const key =
+        source.selectionId ||
+        `${source.sourceKind || source.kind || 'unknown'}:${source.id || source.title || source.name || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private async resolveAdvertisingSourceSelection(
+    tx: any,
+    workspaceId: string,
+    rawIds: string[],
+  ) {
+    const parsed = this.parseAdvertisingSourceSelection(rawIds);
+    const [channels, sourceRows] = await Promise.all([
       parsed.channelIds.length
         ? tx.telegramChannel.findMany({
             where: { workspaceId, id: { in: parsed.channelIds } },
@@ -134,23 +167,73 @@ export class AdCampaignsService {
         : [],
       parsed.sourceIds.length
         ? tx.advertisingSource.findMany({
-            where: {
-              workspaceId,
-              id: { in: parsed.sourceIds },
-              type: { not: 'telegram_channel' },
+            where: { workspaceId, id: { in: parsed.sourceIds } },
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              telegramUsername: true,
             },
-            select: { id: true },
           })
         : [],
     ]);
+
     if (channels.length !== parsed.channelIds.length) {
       throw new BadRequestException(
         'One or more advertising channels are invalid',
       );
     }
-    if (people.length !== parsed.sourceIds.length) {
+
+    if (sourceRows.length !== parsed.sourceIds.length) {
       throw new BadRequestException(
         'One or more advertising people are invalid',
+      );
+    }
+
+    const people = sourceRows.filter(
+      (source: any) => source.type !== 'telegram_channel',
+    );
+    const legacyChannelSources = sourceRows.filter(
+      (source: any) => source.type === 'telegram_channel',
+    );
+
+    const resolvedLegacyChannels = await Promise.all(
+      legacyChannelSources.map((source: any) =>
+        this.resolveLegacyTelegramChannelSource(tx, workspaceId, source),
+      ),
+    );
+
+    if (resolvedLegacyChannels.some((channel) => !channel?.id)) {
+      throw new BadRequestException(
+        'One or more advertising channels are invalid',
+      );
+    }
+
+    return {
+      channelIds: [
+        ...new Set([
+          ...parsed.channelIds,
+          ...resolvedLegacyChannels.map((channel: any) => channel.id),
+        ]),
+      ],
+      sourceIds: [...new Set(people.map((source: any) => source.id))],
+    };
+  }
+
+  private async ensureAdvertisingSources(
+    tx: any,
+    workspaceId: string,
+    ownTelegramChannelId: string,
+    advertisingSourceIds: string[],
+  ) {
+    const parsed = await this.resolveAdvertisingSourceSelection(
+      tx,
+      workspaceId,
+      advertisingSourceIds,
+    );
+    if (parsed.channelIds.includes(ownTelegramChannelId)) {
+      throw new BadRequestException(
+        'Advertising channel cannot be the same as own Telegram channel',
       );
     }
     return parsed;
@@ -294,20 +377,32 @@ export class AdCampaignsService {
           select: { id: true, name: true, url: true },
         })
       : null;
+    const normalizedLegacySources = await Promise.all(
+      row.advertisingChannels.map(async (x: any) => {
+        const source = x.advertisingSource;
+        if (source?.type === 'telegram_channel') {
+          const legacyChannel = await this.resolveLegacyTelegramChannelSource(
+            this.prisma,
+            row.workspaceId,
+            source,
+          );
+          if (legacyChannel) return legacyChannel;
+        }
+        return this.normalizePersonSource(source);
+      }),
+    );
     return {
       ...row,
       telegramInviteLink,
       ownTelegramChannelId: row.telegramChannelId,
       promoInviteLinkId: row.telegramInviteLinkId,
       costAmount: Number(row.price),
-      advertisingChannels: [
+      advertisingChannels: this.dedupeAdvertisingSources([
         ...row.advertisingTelegramChannels.map((x: any) =>
           this.normalizeTelegramChannelSource(x.telegramChannel),
         ),
-        ...row.advertisingChannels.map((x: any) =>
-          this.normalizePersonSource(x.advertisingSource),
-        ),
-      ],
+        ...normalizedLegacySources,
+      ]),
       attributionType:
         row.advertisingTelegramChannels.length +
           row.advertisingChannels.length >

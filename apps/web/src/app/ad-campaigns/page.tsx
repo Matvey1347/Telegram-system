@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi } from '@/lib/api';
 import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
+import { useAppToast } from '@/providers/toast-provider';
 
 type CampaignValues = {
   telegramChannelId: string;
@@ -38,6 +39,7 @@ function toInputDate(value?: string | Date | null) {
 
 export default function AdCampaignsPage() {
   const qc = useQueryClient();
+  const { pushToast } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [deleting, setDeleting] = useState<any | null>(null);
@@ -49,9 +51,33 @@ export default function AdCampaignsPage() {
     queryFn: () => adCampaignsApi.list(channelFilter ? { telegramChannelId: channelFilter } : undefined),
   });
 
-  const createMutation = useMutation({ mutationFn: adCampaignsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['ad-campaigns'] }); setCreateOpen(false); } });
-  const updateMutation = useMutation({ mutationFn: ({ id, payload }: any) => adCampaignsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['ad-campaigns'] }); setEditing(null); } });
-  const deleteMutation = useMutation({ mutationFn: (id: string) => adCampaignsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['ad-campaigns'] }); setDeleting(null); } });
+  const createMutation = useMutation({
+    mutationFn: adCampaignsApi.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      setCreateOpen(false);
+      pushToast('Campaign created.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to create campaign.'), 'error'),
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: any) => adCampaignsApi.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      setEditing(null);
+      pushToast('Campaign updated.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update campaign.'), 'error'),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => adCampaignsApi.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      setDeleting(null);
+      pushToast('Campaign archived.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to archive campaign.'), 'error'),
+  });
 
   return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by own channel, promo link and external advertising channels" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
     {(channels?.length ?? 0) > 1 ? <Card className="mb-4"><FormField label="Channel"><Select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}><option value="">All channels</option>{channels?.map((channel: any) => <option key={channel.id} value={channel.id}>{channel.title}</option>)}</Select></FormField></Card> : null}
@@ -93,6 +119,13 @@ export default function AdCampaignsPage() {
     <CampaignModal open={!!editing} title="Edit Campaign" channels={channels ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v: any) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
   </AppShell>;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  const responseMessage = (error as any)?.response?.data?.message;
+  if (Array.isArray(responseMessage)) return responseMessage.join(', ');
+  if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage;
+  return fallback;
 }
 
 function MultiChannelSelect({ value, onChange, options }: { value: string[]; onChange: (v: string[]) => void; options: any[] }) {

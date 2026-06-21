@@ -8,6 +8,7 @@ import { Account, Transaction, TransactionQuery, WorkspaceMember, accountsApi, c
 import { formatMoney } from '@/lib/money';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
+import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 
 type Values = { accountId: string; type: 'income' | 'expense'; amount: number; categoryId: string; memberId?: string; description?: string; date: string; iconId?: string | null };
 
@@ -35,8 +36,8 @@ export default function TransactionsPage() {
   const createMutation = useMutation({ mutationFn: transactionsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setCreateOpen(false); } });
   const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transactionsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setEditing(null); } });
   const updateTransactionIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionsApi.update(id, { iconId }), onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }) });
-  const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }) });
-  const updateCategoryIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionCategoriesApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transaction-categories'] }); qc.invalidateQueries({ queryKey: ['transaction-categories-admin'] }); } });
+  const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
+  const updateCategoryIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionCategoriesApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transaction-categories'] }); qc.invalidateQueries({ queryKey: ['transaction-categories-admin'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setDeleting(null); } });
 
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value, ...(key === 'type' ? { categoryId: '' } : {}) }));
@@ -57,24 +58,52 @@ export default function TransactionsPage() {
     </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transactions</div> : null}
     <div className="overflow-x-auto rounded-lg border border-neutral-800">
-      <table className="min-w-[1100px] w-full text-left text-sm">
+      <table className="min-w-[760px] w-full text-left text-sm">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
-          <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Icon</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Primary</th><th className="px-3 py-2">Account</th><th className="px-3 py-2">Category</th><th className="px-3 py-2">Linked entity</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Actions</th></tr>
+          <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Price</th><th className="px-3 py-2">Category</th><th className="px-3 py-2">Account</th><th className="px-3 py-2">Actions</th></tr>
         </thead>
         <tbody className="divide-y divide-neutral-800">
           {data?.map((t) => (
             <tr key={t.id} className="bg-neutral-950">
-              <td className="px-3 py-2">{new Date(t.date).toLocaleDateString()}</td>
-              <td className={`px-3 py-2 font-semibold ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>{t.type}</td>
-              <td className="px-3 py-2">
-                {t.iconId ? <IconPicker compact iconId={t.iconId ?? null} onChange={(iconId) => updateTransactionIconMutation.mutate({ id: t.id, iconId })} /> : null}
+              <td className="px-3 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <InlineIconPicker
+                      iconId={t.iconId ?? null}
+                      onChange={(iconId) => updateTransactionIconMutation.mutate({ id: t.id, iconId })}
+                      className="shrink-0"
+                    />
+                    <div className="truncate font-medium text-white">{getTransactionTitle(t)}</div>
+                  </div>
+                  <div className={`mt-1 text-xs ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {t.type} • {new Date(t.date).toLocaleDateString()}
+                  </div>
+                </div>
               </td>
-              <td className="whitespace-nowrap px-3 py-2">{formatMoney(t.amount, t.currency, displayMode)}</td>
-              <td className="px-3 py-2">{formatMoney(t.amountInPrimaryCurrency, primaryCurrency, displayMode)}</td>
-              <td className="px-3 py-2"><span className="inline-flex items-center gap-2">{t.account?.iconId ? <IconPicker compact iconId={t.account.iconId ?? null} onChange={(iconId) => t.account?.id && updateAccountIconMutation.mutate({ id: t.account.id, iconId })} /> : null}<span>{t.account?.name ?? '-'}</span></span></td>
-              <td className="px-3 py-2"><span className="inline-flex items-center gap-2">{t.categoryRef?.iconId ? <IconPicker compact iconId={t.categoryRef.iconId ?? null} onChange={(iconId) => t.categoryRef?.id && updateCategoryIconMutation.mutate({ id: t.categoryRef.id, iconId })} /> : null}<span>{t.categoryRef?.name ?? t.category}</span></span></td>
-              <td className="px-3 py-2">{t.adCampaign?.title ?? t.investment?.notes ?? t.member?.user?.name ?? '-'}</td>
-              <td className="max-w-[220px] truncate px-3 py-2">{t.description || '-'}</td>
+              <td className="whitespace-nowrap px-3 py-3">
+                <div className={`font-semibold ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>{formatMoney(t.amount, t.currency, displayMode)}</div>
+                <div className="text-xs text-neutral-400">{formatMoney(t.amountInPrimaryCurrency, primaryCurrency, displayMode)}</div>
+              </td>
+              <td className="px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <InlineIconPicker
+                    iconId={t.categoryRef?.iconId ?? null}
+                    onChange={(iconId) => t.categoryRef?.id && updateCategoryIconMutation.mutate({ id: t.categoryRef.id, iconId })}
+                    className="shrink-0"
+                  />
+                  <span>{t.categoryRef?.name ?? t.category}</span>
+                </div>
+              </td>
+              <td className="px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <InlineIconPicker
+                    iconId={t.account?.iconId ?? null}
+                    onChange={(iconId) => t.account?.id && updateAccountIconMutation.mutate({ id: t.account.id, iconId })}
+                    className="shrink-0"
+                  />
+                  <span>{t.account?.name ?? '-'}</span>
+                </div>
+              </td>
               <td className="px-3 py-2"><div className="flex gap-2"><IconButton onClick={() => setEditing(t)} /><IconButton kind="delete" onClick={() => setDeleting(t)} /></div></td>
             </tr>
           ))}
@@ -86,6 +115,16 @@ export default function TransactionsPage() {
     <TransactionModal open={!!editing} title="Edit Transaction" onClose={() => setEditing(null)} members={members ?? []} accounts={accounts ?? []} initial={editing ?? undefined} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, amount: Number(v.amount), memberId: v.memberId || undefined } })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${deleting.type} ${Number(deleting.amount).toFixed(2)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} />
   </AppShell>;
+}
+
+function getTransactionTitle(transaction: Transaction) {
+  return transaction.description?.trim()
+    || transaction.adCampaign?.title?.trim()
+    || transaction.investment?.notes?.trim()
+    || transaction.member?.user?.name?.trim()
+    || transaction.categoryRef?.name
+    || transaction.category
+    || 'Transaction';
 }
 
 function transactionDefaults(initial?: Transaction): Values {

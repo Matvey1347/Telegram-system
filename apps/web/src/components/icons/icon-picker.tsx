@@ -15,6 +15,7 @@ type IconPickerProps = {
   buttonLabel?: string;
   className?: string;
   compact?: boolean;
+  bare?: boolean;
 };
 
 type UploadState = {
@@ -46,7 +47,7 @@ type RecentIcon = RecentStandardIcon | RecentSavedIcon;
 const tabOrder = ['icons', 'upload'] as const;
 type Tab = (typeof tabOrder)[number];
 
-type IconSection = 'recent' | EmojiCategory | 'saved';
+type IconSection = 'recent' | EmojiCategory | 'custom';
 
 const sectionTabs = [
   { section: 'recent', icon: Clock3, label: 'Recent' },
@@ -58,7 +59,7 @@ const sectionTabs = [
   { section: 'objects', icon: Package, label: 'Objects' },
   { section: 'symbols', icon: Shapes, label: 'Symbols' },
   { section: 'flags', icon: Flag, label: 'Flags' },
-  { section: 'saved', icon: Grid2x2, label: 'Saved' },
+  { section: 'custom', icon: Grid2x2, label: 'Custom' },
 ] as const;
 
 function stripExtension(fileName: string) {
@@ -90,19 +91,20 @@ function matchesSearch(icon: EmojiIcon, search: string) {
   return haystack.includes(search);
 }
 
-export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', className = '', compact = false }: IconPickerProps) {
+export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', className = '', compact = false, bare = false }: IconPickerProps) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('icons');
   const [search, setSearch] = useState('');
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [uploadName, setUploadName] = useState('');
-  const [recentIcons, setRecentIcons] = useState<RecentIcon[]>([]);
+  const [recentIcons, setRecentIcons] = useState<RecentIcon[]>(() => loadRecentIcons());
   const [activeSection, setActiveSection] = useState<IconSection>('recent');
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef<Partial<Record<IconSection, HTMLDivElement | null>>>({});
 
   const { data: selectedIcon } = useQuery({
@@ -116,6 +118,11 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     queryFn: () => iconsApi.list(search || undefined),
     enabled: open && tab === 'icons',
   });
+
+  const customIcons = useMemo(
+    () => (iconsQuery.data ?? []).filter((icon) => icon.type === 'image'),
+    [iconsQuery.data],
+  );
 
   const createEmojiMutation = useMutation({
     mutationFn: async (payload: EmojiIcon) => ({
@@ -191,10 +198,6 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
   const currentIcon = selectedIcon ?? null;
 
   useEffect(() => {
-    setRecentIcons(loadRecentIcons());
-  }, []);
-
-  useEffect(() => {
     if (typeof window === 'undefined') return;
     localStorage.setItem(RECENT_KEY, JSON.stringify(recentIcons.slice(0, RECENT_LIMIT)));
   }, [recentIcons]);
@@ -206,8 +209,8 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
       if (!triggerRect) return;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
-      const width = 548;
-      const height = 560;
+      const width = 360;
+      const height = 360;
       const gap = 8;
       const left = Math.min(Math.max(16, triggerRect.left), Math.max(16, viewportWidth - width - 16));
       const spaceBelow = viewportHeight - triggerRect.bottom;
@@ -285,6 +288,29 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     sectionRefs.current[section]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  useEffect(() => {
+    if (!open || tab !== 'icons') return;
+
+    const root = scrollAreaRef.current;
+    if (!root) return;
+
+    const updateActiveSection = () => {
+      const entries = (Object.entries(sectionRefs.current) as Array<[IconSection, HTMLDivElement | null]>)
+        .filter(([, node]) => Boolean(node))
+        .map(([section, node]) => ({
+          section,
+          top: Math.abs((node?.offsetTop ?? 0) - root.scrollTop - 12),
+        }))
+        .sort((a, b) => a.top - b.top);
+
+      if (entries[0]) setActiveSection(entries[0].section);
+    };
+
+    updateActiveSection();
+    root.addEventListener('scroll', updateActiveSection, { passive: true });
+    return () => root.removeEventListener('scroll', updateActiveSection);
+  }, [open, tab, standardRecent.length, savedRecent.length, filteredStandardIcons.length, customIcons.length]);
+
   const closePicker = () => {
     setOpen(false);
     setTab('icons');
@@ -300,12 +326,14 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
         type="button"
         ref={triggerRef}
         onClick={() => setOpen(true)}
-        className={compact
-          ? `flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800 ${className}`
-          : `flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${className}`}
+        className={bare
+          ? `inline-flex items-center justify-center text-neutral-100 hover:opacity-80 ${className}`
+          : compact
+            ? `flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800 ${className}`
+            : `flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${className}`}
       >
-        {currentIcon ? <IconAvatar icon={currentIcon} label={currentIcon.name} size={compact ? 'sm' : 'xs'} bordered={!compact} /> : <Plus size={16} />}
-        {!compact ? <span>{currentIcon ? 'Change icon' : buttonLabel}</span> : null}
+        {currentIcon ? <IconAvatar icon={currentIcon} label={currentIcon.name} size={compact ? 'sm' : 'xs'} bordered={!(compact || bare)} className={bare ? '!h-5 !w-5 !bg-transparent !border-0 !rounded-none !text-base' : ''} /> : <Plus size={bare ? 14 : 16} />}
+        {!compact && !bare ? <span>{currentIcon ? 'Change icon' : buttonLabel}</span> : null}
       </button>
 
       {open && typeof document !== 'undefined' ? createPortal(
@@ -314,8 +342,8 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
           style={panelStyle}
           className="z-50 flex overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-900 shadow-2xl"
         >
-          <div className="flex min-h-0 flex-1 flex-col p-5">
-            <div className="space-y-4">
+          <div className="flex min-h-0 flex-1 flex-col p-3">
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
                   {tabOrder.map((item) => (
@@ -323,7 +351,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                       key={item}
                       type="button"
                       onClick={() => setTab(item)}
-                      className={`rounded-md px-3 py-1.5 text-sm capitalize ${tab === item ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
+                      className={`rounded-md px-2.5 py-1 text-sm capitalize ${tab === item ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
                     >
                       {item}
                     </button>
@@ -335,20 +363,20 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                     onChange(null);
                     closePicker();
                   }}
-                  className="text-sm text-neutral-400 hover:text-white"
+                  className="mr-1 text-sm text-neutral-400 hover:text-white"
                 >
                   Remove
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="mb-1.5 flex items-center gap-2">
                 <div className="relative min-w-0 flex-1">
                   <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
                   <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search icon by name"
-                    className="pl-9"
+                    placeholder={tab === 'upload' ? 'Enter a name for the new icon' : 'Search icon by name'}
+                    className="pl-9 py-2"
                   />
                 </div>
                 {tab === 'upload' ? (
@@ -374,19 +402,19 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
 
             {tab === 'icons' ? (
               <>
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950 p-3 pr-2">
+                <div ref={scrollAreaRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-neutral-950 px-3 py-2 [scrollbar-gutter:stable] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {standardRecent.length || savedRecent.length ? (
                     <div ref={(node) => { sectionRefs.current.recent = node; }} className="scroll-mt-3">
-                      <div className="mb-2 flex items-center justify-between">
+                      <div className="mb-1.5 flex items-center justify-between">
                         <p className="text-sm font-medium text-neutral-300">Recent</p>
                         <p className="text-xs text-neutral-500">{standardRecent.length + savedRecent.length} items</p>
                       </div>
-                      <div className="grid grid-cols-8 gap-2 sm:grid-cols-10">
+                      <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
                         {standardRecent.map((item) => (
                           <button
                             key={`recent-${item.kind}-${item.emoji}`}
                             type="button"
-                            className="group flex h-11 w-11 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-2xl hover:border-blue-500 hover:bg-neutral-800"
+                            className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
                             title={item.name}
                             onClick={() => selectRecentStandard(item)}
                           >
@@ -397,19 +425,19 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                           <button
                             key={`recent-${item.kind}-${item.icon.id}`}
                             type="button"
-                            className="group flex h-11 w-11 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 hover:border-blue-500 hover:bg-neutral-800"
+                            className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
                             title={item.icon.name}
                             onClick={() => selectRecentSaved(item)}
                           >
-                            <IconAvatar icon={item.icon} label={item.icon.name} size="xs" />
+                            <IconAvatar icon={item.icon} label={item.icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
                           </button>
                         ))}
                       </div>
                     </div>
                   ) : null}
 
-                  <div className={standardRecent.length || savedRecent.length ? 'mt-4' : ''}>
-                    <div className="mb-2 flex items-center justify-between">
+                  <div className={standardRecent.length || savedRecent.length ? 'mt-3' : ''}>
+                    <div className="mb-1.5 flex items-center justify-between">
                       <p className="text-sm font-medium text-neutral-300">Standard</p>
                       <p className="text-xs text-neutral-500">{filteredStandardIcons.length} results</p>
                     </div>
@@ -425,16 +453,16 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                             }}
                             className={`scroll-mt-3 ${standardRecent.length ? 'pt-2' : ''}`}
                           >
-                            <div className="mb-2 flex items-center justify-between">
+                            <div className="mb-1 flex items-center justify-between">
                               <p className="text-xs uppercase tracking-wide text-neutral-500">{label}</p>
                               <p className="text-xs text-neutral-500">{items.length}</p>
                             </div>
-                            <div className="grid grid-cols-8 gap-2 sm:grid-cols-10">
+                            <div className="mt-2 grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
                               {items.map((item) => (
                                 <button
                                   key={`${item.category}-${item.name}-${item.emoji}`}
                                   type="button"
-                                  className="group flex h-11 w-11 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-2xl hover:border-blue-500 hover:bg-neutral-800"
+                                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
                                   title={item.name}
                                   onClick={() => createEmojiMutation.mutate(item)}
                                 >
@@ -450,18 +478,18 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                     )}
                   </div>
 
-                  <div ref={(node) => { sectionRefs.current.saved = node; }} className="mt-4 scroll-mt-3 border-t border-neutral-800 pt-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-sm font-medium text-neutral-300">Saved</p>
-                      <p className="text-xs text-neutral-500">{iconsQuery.data?.length ?? 0} results</p>
+                  <div ref={(node) => { sectionRefs.current.custom = node; }} className="mt-3 scroll-mt-3 border-t border-neutral-800/70 pt-2.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-sm font-medium text-neutral-300">Custom</p>
+                      <p className="text-xs text-neutral-500">{customIcons.length} results</p>
                     </div>
-                    {iconsQuery.isLoading ? <p className="text-sm text-neutral-400">Loading saved icons...</p> : null}
-                    <div className="grid grid-cols-8 gap-2 sm:grid-cols-10">
-                      {(iconsQuery.data ?? []).map((icon) => (
+                    {iconsQuery.isLoading ? <p className="text-sm text-neutral-400">Loading custom icons...</p> : null}
+                    <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                      {customIcons.map((icon) => (
                         <button
                           key={icon.id}
                           type="button"
-                          className="group flex h-11 w-11 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 hover:border-blue-500 hover:bg-neutral-800"
+                          className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
                           title={icon.name}
                           onClick={() => {
                             const recentItem: RecentSavedIcon = {
@@ -473,24 +501,24 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                             setOpen(false);
                           }}
                         >
-                          <IconAvatar icon={icon} label={icon.name} size="xs" />
+                          <IconAvatar icon={icon} label={icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
                         </button>
                       ))}
                     </div>
-                    {!iconsQuery.isLoading && !(iconsQuery.data ?? []).length ? (
-                      <p className="mt-3 text-sm text-neutral-400">No saved icons yet.</p>
+                    {!iconsQuery.isLoading && !customIcons.length ? (
+                      <p className="mt-3 text-sm text-neutral-400">No custom icons yet.</p>
                     ) : null}
                   </div>
                 </div>
 
-                <div className="shrink-0 border-t border-neutral-800 bg-neutral-900/95 px-1.5 py-3 backdrop-blur">
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="mt-2 shrink-0 bg-neutral-900/95 px-1 py-1 backdrop-blur">
+                  <div className="flex items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap">
                     {sectionTabs.map(({ section, icon: Icon, label }) => {
                       const disabled =
                         section === 'recent'
                           ? !standardRecent.length && !savedRecent.length
-                          : section === 'saved'
-                            ? !(iconsQuery.data?.length ?? 0)
+                          : section === 'custom'
+                            ? !customIcons.length
                             : false;
                       return (
                         <button
@@ -500,13 +528,13 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                           title={label}
                           aria-label={label}
                           onClick={() => scrollToSection(section)}
-                          className={`flex h-9 w-9 items-center justify-center rounded-full border transition ${
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
                             activeSection === section
                               ? 'border-blue-500 bg-blue-500/15 text-blue-200'
                               : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:border-neutral-700 hover:text-white'
                           } disabled:cursor-not-allowed disabled:opacity-40`}
                         >
-                          <Icon size={16} />
+                          <Icon size={14} />
                         </button>
                       );
                     })}
@@ -517,7 +545,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
 
             {tab === 'upload' ? (
               <div
-                className="min-h-0 flex-1 rounded-xl border border-dashed border-neutral-700 bg-neutral-950 p-4"
+                className="min-h-0 flex-1 rounded-xl border border-dashed border-neutral-700 bg-neutral-950 p-3"
                 onDragOver={(event) => {
                   event.preventDefault();
                 }}
