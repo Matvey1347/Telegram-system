@@ -91,6 +91,17 @@ function matchesSearch(icon: EmojiIcon, search: string) {
   return haystack.includes(search);
 }
 
+function matchesRecentStandard(item: RecentStandardIcon, search: string) {
+  if (!search) return true;
+  const haystack = `${item.name} ${item.keywords.join(' ')} ${emojiCategoryLabels[item.category]}`.toLowerCase();
+  return haystack.includes(search);
+}
+
+function matchesRecentSaved(item: RecentSavedIcon, search: string) {
+  if (!search) return true;
+  return item.icon.name.toLowerCase().includes(search);
+}
+
 export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', className = '', compact = false, bare = false }: IconPickerProps) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -175,6 +186,9 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     const value = search.trim().toLowerCase();
     return emojiIcons.filter((item) => matchesSearch(item, value));
   }, [search]);
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const isSearching = normalizedSearch.length > 0;
 
   const emojiByCategory = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -267,8 +281,16 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
 
   const uploadDisabled = uploadMutation.isPending || createCustomMutation.isPending;
 
-  const standardRecent = recentIcons.filter(isStandardRecent);
-  const savedRecent = recentIcons.filter((icon) => icon.kind === 'saved');
+  const standardRecent = useMemo(
+    () => recentIcons.filter(isStandardRecent).filter((item) => matchesRecentStandard(item, normalizedSearch)),
+    [normalizedSearch, recentIcons],
+  );
+  const savedRecent = useMemo(
+    () => recentIcons.filter((icon): icon is RecentSavedIcon => icon.kind === 'saved').filter((item) => matchesRecentSaved(item, normalizedSearch)),
+    [normalizedSearch, recentIcons],
+  );
+  const hasRecentItems = standardRecent.length > 0 || savedRecent.length > 0;
+  const totalSearchResults = filteredStandardIcons.length + customIcons.length;
 
   const selectRecentStandard = (item: RecentStandardIcon) => {
     createEmojiMutation.mutate(item);
@@ -342,7 +364,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
           style={panelStyle}
           className="z-50 flex overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-900 shadow-2xl"
         >
-          <div className="flex min-h-0 flex-1 flex-col p-3">
+          <div className="flex min-h-0 flex-1 flex-col px-3 py-3">
             <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
@@ -402,144 +424,194 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
 
             {tab === 'icons' ? (
               <>
-                <div ref={scrollAreaRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-neutral-950 px-3 py-2 [scrollbar-gutter:stable] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {standardRecent.length || savedRecent.length ? (
-                    <div ref={(node) => { sectionRefs.current.recent = node; }} className="scroll-mt-3">
+                <div ref={scrollAreaRef} className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-neutral-950 px-4 py-2 [scrollbar-gutter:stable] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {isSearching ? (
+                    <div>
                       <div className="mb-1.5 flex items-center justify-between">
-                        <p className="text-sm font-medium text-neutral-300">Recent</p>
-                        <p className="text-xs text-neutral-500">{standardRecent.length + savedRecent.length} items</p>
+                        <p className="text-sm font-medium text-neutral-300">Results</p>
+                        <p className="text-xs text-neutral-500">{totalSearchResults} items</p>
                       </div>
-                      <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
-                        {standardRecent.map((item) => (
-                          <button
-                            key={`recent-${item.kind}-${item.emoji}`}
-                            type="button"
-                            className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
-                            title={item.name}
-                            onClick={() => selectRecentStandard(item)}
-                          >
-                            {item.emoji}
-                          </button>
-                        ))}
-                        {savedRecent.map((item) => (
-                          <button
-                            key={`recent-${item.kind}-${item.icon.id}`}
-                            type="button"
-                            className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
-                            title={item.icon.name}
-                            onClick={() => selectRecentSaved(item)}
-                          >
-                            <IconAvatar icon={item.icon} label={item.icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
-                          </button>
-                        ))}
-                      </div>
+                      {iconsQuery.isLoading ? <p className="text-sm text-neutral-400">Loading icons...</p> : null}
+                      {totalSearchResults ? (
+                        <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                          {filteredStandardIcons.map((item) => (
+                            <button
+                              key={`${item.category}-${item.name}-${item.emoji}`}
+                              type="button"
+                              className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
+                              title={item.name}
+                              onClick={() => createEmojiMutation.mutate(item)}
+                            >
+                              {item.emoji}
+                            </button>
+                          ))}
+                          {customIcons.map((icon) => (
+                            <button
+                              key={icon.id}
+                              type="button"
+                              className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
+                              title={icon.name}
+                              onClick={() => {
+                                const recentItem: RecentSavedIcon = {
+                                  kind: 'saved',
+                                  icon: { id: icon.id, type: icon.type, name: icon.name, emoji: icon.emoji, imageUrl: icon.imageUrl },
+                                };
+                                setRecentIcons((prev) => [recentItem, ...prev.filter((current) => !(current.kind === 'saved' && current.icon.id === icon.id))].slice(0, RECENT_LIMIT));
+                                onChange(icon.id);
+                                setOpen(false);
+                              }}
+                            >
+                              <IconAvatar icon={icon} label={icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-sm text-neutral-400">No icons found.</p>
+                      )}
                     </div>
-                  ) : null}
-
-                  <div className={standardRecent.length || savedRecent.length ? 'mt-3' : ''}>
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <p className="text-sm font-medium text-neutral-300">Standard</p>
-                      <p className="text-xs text-neutral-500">{filteredStandardIcons.length} results</p>
-                    </div>
-                    {filteredStandardIcons.length ? (
-                      Object.entries(emojiCategoryLabels).map(([category, label]) => {
-                        const items = emojiByCategory[category as EmojiCategory];
-                        if (!items.length) return null;
-                        return (
-                          <div
-                            key={category}
-                            ref={(node) => {
-                              sectionRefs.current[category as IconSection] = node;
-                            }}
-                            className={`scroll-mt-3 ${standardRecent.length ? 'pt-2' : ''}`}
-                          >
-                            <div className="mb-1 flex items-center justify-between">
-                              <p className="text-xs uppercase tracking-wide text-neutral-500">{label}</p>
-                              <p className="text-xs text-neutral-500">{items.length}</p>
-                            </div>
-                            <div className="mt-2 grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
-                              {items.map((item) => (
-                                <button
-                                  key={`${item.category}-${item.name}-${item.emoji}`}
-                                  type="button"
-                                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
-                                  title={item.name}
-                                  onClick={() => createEmojiMutation.mutate(item)}
-                                >
-                                  {item.emoji}
-                                </button>
-                              ))}
-                            </div>
+                  ) : (
+                    <>
+                      {hasRecentItems ? (
+                        <div ref={(node) => { sectionRefs.current.recent = node; }} className="scroll-mt-3">
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <p className="text-sm font-medium text-neutral-300">Recent</p>
+                            <p className="text-xs text-neutral-500">{standardRecent.length + savedRecent.length} items</p>
                           </div>
+                          <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                            {standardRecent.map((item) => (
+                              <button
+                                key={`recent-${item.kind}-${item.emoji}`}
+                                type="button"
+                                className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
+                                title={item.name}
+                                onClick={() => selectRecentStandard(item)}
+                              >
+                                {item.emoji}
+                              </button>
+                            ))}
+                            {savedRecent.map((item) => (
+                              <button
+                                key={`recent-${item.kind}-${item.icon.id}`}
+                                type="button"
+                                className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
+                                title={item.icon.name}
+                                onClick={() => selectRecentSaved(item)}
+                              >
+                                <IconAvatar icon={item.icon} label={item.icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className={hasRecentItems ? 'mt-3' : ''}>
+                        <div className="mb-1.5 flex items-center justify-between">
+                          <p className="text-sm font-medium text-neutral-300">Standard</p>
+                          <p className="text-xs text-neutral-500">{filteredStandardIcons.length} results</p>
+                        </div>
+                        {filteredStandardIcons.length ? (
+                          Object.entries(emojiCategoryLabels).map(([category, label]) => {
+                            const items = emojiByCategory[category as EmojiCategory];
+                            if (!items.length) return null;
+                            return (
+                              <div
+                                key={category}
+                                ref={(node) => {
+                                  sectionRefs.current[category as IconSection] = node;
+                                }}
+                                className={`scroll-mt-3 ${standardRecent.length ? 'pt-2' : ''}`}
+                              >
+                                <div className="mb-1 flex items-center justify-between">
+                                  <p className="text-xs uppercase tracking-wide text-neutral-500">{label}</p>
+                                  <p className="text-xs text-neutral-500">{items.length}</p>
+                                </div>
+                                <div className="mt-2 grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                                  {items.map((item) => (
+                                    <button
+                                      key={`${item.category}-${item.name}-${item.emoji}`}
+                                      type="button"
+                                      className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
+                                      title={item.name}
+                                      onClick={() => createEmojiMutation.mutate(item)}
+                                    >
+                                      {item.emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="mt-3 text-sm text-neutral-400">No standard icons found.</p>
+                        )}
+                      </div>
+
+                      <div ref={(node) => { sectionRefs.current.custom = node; }} className="mt-3 scroll-mt-3 border-t border-neutral-800/70 pt-2.5">
+                        <div className="mb-1.5 flex items-center justify-between">
+                          <p className="text-sm font-medium text-neutral-300">Custom</p>
+                          <p className="text-xs text-neutral-500">{customIcons.length} results</p>
+                        </div>
+                        {iconsQuery.isLoading ? <p className="text-sm text-neutral-400">Loading custom icons...</p> : null}
+                        <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                          {customIcons.map((icon) => (
+                            <button
+                              key={icon.id}
+                              type="button"
+                              className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
+                              title={icon.name}
+                              onClick={() => {
+                                const recentItem: RecentSavedIcon = {
+                                  kind: 'saved',
+                                  icon: { id: icon.id, type: icon.type, name: icon.name, emoji: icon.emoji, imageUrl: icon.imageUrl },
+                                };
+                                setRecentIcons((prev) => [recentItem, ...prev.filter((current) => !(current.kind === 'saved' && current.icon.id === icon.id))].slice(0, RECENT_LIMIT));
+                                onChange(icon.id);
+                                setOpen(false);
+                              }}
+                            >
+                              <IconAvatar icon={icon} label={icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
+                            </button>
+                          ))}
+                        </div>
+                        {!iconsQuery.isLoading && !customIcons.length ? (
+                          <p className="mt-3 text-sm text-neutral-400">No custom icons yet.</p>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {!isSearching ? (
+                <div className="mt-2 shrink-0 bg-neutral-900/95 py-1 backdrop-blur">
+                    <div className="flex items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap">
+                      {sectionTabs.map(({ section, icon: Icon, label }) => {
+                        const disabled =
+                          section === 'recent'
+                            ? !hasRecentItems
+                            : section === 'custom'
+                              ? !customIcons.length
+                              : false;
+                        return (
+                          <button
+                            key={section}
+                            type="button"
+                            disabled={disabled}
+                            title={label}
+                            aria-label={label}
+                            onClick={() => scrollToSection(section)}
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+                              activeSection === section
+                                ? 'border-blue-500 bg-blue-500/15 text-blue-200'
+                                : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:border-neutral-700 hover:text-white'
+                            } disabled:cursor-not-allowed disabled:opacity-40`}
+                          >
+                            <Icon size={14} />
+                          </button>
                         );
-                      })
-                    ) : (
-                      <p className="mt-3 text-sm text-neutral-400">No standard icons found.</p>
-                    )}
-                  </div>
-
-                  <div ref={(node) => { sectionRefs.current.custom = node; }} className="mt-3 scroll-mt-3 border-t border-neutral-800/70 pt-2.5">
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <p className="text-sm font-medium text-neutral-300">Custom</p>
-                      <p className="text-xs text-neutral-500">{customIcons.length} results</p>
+                      })}
                     </div>
-                    {iconsQuery.isLoading ? <p className="text-sm text-neutral-400">Loading custom icons...</p> : null}
-                    <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
-                      {customIcons.map((icon) => (
-                        <button
-                          key={icon.id}
-                          type="button"
-                          className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
-                          title={icon.name}
-                          onClick={() => {
-                            const recentItem: RecentSavedIcon = {
-                              kind: 'saved',
-                              icon: { id: icon.id, type: icon.type, name: icon.name, emoji: icon.emoji, imageUrl: icon.imageUrl },
-                            };
-                            setRecentIcons((prev) => [recentItem, ...prev.filter((current) => !(current.kind === 'saved' && current.icon.id === icon.id))].slice(0, RECENT_LIMIT));
-                            onChange(icon.id);
-                            setOpen(false);
-                          }}
-                        >
-                          <IconAvatar icon={icon} label={icon.name} size="xs" bordered={false} className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0" />
-                        </button>
-                      ))}
-                    </div>
-                    {!iconsQuery.isLoading && !customIcons.length ? (
-                      <p className="mt-3 text-sm text-neutral-400">No custom icons yet.</p>
-                    ) : null}
                   </div>
-                </div>
-
-                <div className="mt-2 shrink-0 bg-neutral-900/95 px-1 py-1 backdrop-blur">
-                  <div className="flex items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap">
-                    {sectionTabs.map(({ section, icon: Icon, label }) => {
-                      const disabled =
-                        section === 'recent'
-                          ? !standardRecent.length && !savedRecent.length
-                          : section === 'custom'
-                            ? !customIcons.length
-                            : false;
-                      return (
-                        <button
-                          key={section}
-                          type="button"
-                          disabled={disabled}
-                          title={label}
-                          aria-label={label}
-                          onClick={() => scrollToSection(section)}
-                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
-                            activeSection === section
-                              ? 'border-blue-500 bg-blue-500/15 text-blue-200'
-                              : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:border-neutral-700 hover:text-white'
-                          } disabled:cursor-not-allowed disabled:opacity-40`}
-                        >
-                          <Icon size={14} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                ) : null}
               </>
             ) : null}
 

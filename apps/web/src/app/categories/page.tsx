@@ -114,9 +114,9 @@ export default function CategoriesPage() {
             key={tab.value}
             type="button"
             onClick={() => setActiveType(tab.value)}
-            className={`inline-flex items-center gap-2 rounded-full border px-5 py-3 text-lg font-semibold transition ${active ? 'border-neutral-600 bg-neutral-800 text-white' : tab.value === 'expense' ? 'border-transparent bg-transparent text-rose-300 hover:border-neutral-800 hover:bg-neutral-900 hover:text-rose-200' : 'border-transparent bg-transparent text-neutral-400 hover:border-neutral-800 hover:bg-neutral-900 hover:text-white'}`}
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-base font-semibold transition ${active ? 'border-neutral-600 bg-neutral-800 text-white' : tab.value === 'expense' ? 'border-transparent bg-transparent text-rose-300 hover:border-neutral-800 hover:bg-neutral-900 hover:text-rose-200' : 'border-transparent bg-transparent text-neutral-400 hover:border-neutral-800 hover:bg-neutral-900 hover:text-white'}`}
           >
-            <Icon size={22} className={tab.value === 'income' ? 'text-emerald-300' : 'text-rose-300'} />
+            <Icon size={20} className={tab.value === 'income' ? 'text-emerald-300' : 'text-rose-300'} />
             <span>{tab.label}</span>
           </button>
         );
@@ -134,7 +134,7 @@ export default function CategoriesPage() {
           <EntityCard
             key={c.id}
             title={<div className="flex items-center gap-2"><InlineIconPicker iconId={c.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: c.id, iconId })} /><span>{c.name}</span></div>}
-            actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} disabled={Boolean(c.isSystem)} /></div>}
+            actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} />{!c.isSystem ? <IconButton kind="delete" onClick={() => setDeleting(c)} /> : null}</div>}
           >
             <div className="space-y-3">
               <div>
@@ -216,15 +216,21 @@ function CategoryModal({
 
   return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
     <IconPicker iconId={iconId ?? null} onChange={(nextIconId) => setValue('iconId', nextIconId, { shouldDirty: true, shouldValidate: true })} />
-    <FormField label="Name" required error={errors.name ? 'Required field' : undefined}>
-      <Input {...register('name', { required: true })} disabled={readOnlyName} />
-    </FormField>
-    <FormField label="Type" required>
-      <Select {...register('type')} disabled={disableType}>
-        <option value="income">Income</option>
-        <option value="expense">Expense</option>
-      </Select>
-    </FormField>
-    <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit" disabled={readOnlyName}>Save</Button></div>
+    {!readOnlyName ? (
+      <>
+        <FormField label="Name" required error={errors.name ? 'Required field' : undefined}>
+          <Input {...register('name', { required: true })} />
+        </FormField>
+        {!disableType ? (
+          <FormField label="Type" required>
+            <Select {...register('type')}>
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+            </Select>
+          </FormField>
+        ) : null}
+      </>
+    ) : null}
+    <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div>
   </form></Modal>;
 }
