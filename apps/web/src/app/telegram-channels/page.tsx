@@ -274,11 +274,15 @@ function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
           />
           <div>
             <p className="text-slate-500">KPI</p>
-            <span
-              className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
-            >
-              {summary?.kpiLabel || "-"}
-            </span>
+            {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (
+              <span
+                className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary.kpiStatus)}`}
+              >
+                {summary.kpiLabel || "-"}
+              </span>
+            ) : (
+              <p className="mt-1 text-xs text-slate-200">-</p>
+            )}
           </div>
         </div>
       )}

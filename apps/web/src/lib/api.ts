@@ -141,6 +141,71 @@ export type TelegramChannelFinancialSummary = {
   kpiLabel: string;
   kpiCurrency?: string | null;
 };
+export type TelegramChannelNetworkKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type TelegramChannelNetworkSummary = {
+  channelsCount: number;
+  totalSubscribers: number;
+  activeSubscribersEstimate: number;
+  paidActiveSubscribersEstimate: number;
+  viewRate: number | null;
+  totalAdSpend: number;
+  campaignsCount: number;
+  totalJoinedSubscribers: number;
+  avgCpa: number | null;
+  activeCpa: number | null;
+  kpiStatus: TelegramChannelNetworkKpiStatus;
+  kpiLabel: string;
+};
+export type TelegramChannelNetworkMember = {
+  id: string;
+  title: string;
+  name?: string;
+  username?: string | null;
+  subscribersCount?: number | null;
+  currentSubscribersCount?: number | null;
+  activeSubscribersEstimate?: number | null;
+};
+export type TelegramChannelNetworkChannelSummary = {
+  channelId: string;
+  id: string;
+  title: string;
+  name?: string;
+  username?: string | null;
+  subscribersCount?: number | null;
+  currentSubscribersCount?: number | null;
+  activeSubscribersEstimate?: number | null;
+  paidActiveSubscribersEstimate?: number | null;
+  viewRate?: number | null;
+  totalAdSpend: number;
+  campaignsCount: number;
+  totalJoinedSubscribers: number;
+  avgCpa: number | null;
+  activeCpa: number | null;
+  kpiStatus: TelegramChannelNetworkKpiStatus;
+  kpiLabel?: string;
+};
+export type TelegramChannelNetwork = {
+  id: string;
+  name: string;
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  channels: TelegramChannelNetworkMember[];
+  summary: TelegramChannelNetworkSummary;
+};
+export type TelegramChannelNetworkDetail = TelegramChannelNetwork & {
+  channelSummaries: TelegramChannelNetworkChannelSummary[];
+};
+export type CreateTelegramChannelNetworkPayload = {
+  name: string;
+  description?: string | null;
+  telegramChannelIds: string[];
+};
+export type UpdateTelegramChannelNetworkPayload = {
+  name?: string;
+  description?: string | null;
+  telegramChannelIds?: string[];
+};
 export type TelegramPostAnalyticsItem = {
   id: string;
   telegramMessageId: string;
@@ -335,6 +400,14 @@ export const telegramChannelsApi = {
   audienceSnapshots: async (id: string, limit?: number) => (await api.get<TelegramChannelAudienceSnapshot[]>(`/telegram-channels/${id}/audience-snapshots`, { params: limit ? { limit } : undefined })).data,
   financialSummary: async (id: string) => (await api.get<TelegramChannelFinancialSummary>(`/telegram-channels/${id}/financial-summary`)).data,
   updatePostManualMetrics: async (channelId: string, postId: string, payload: { manualOwnViews?: number; manualOwnReactions?: number; excludeFromAnalytics?: boolean }) => (await api.patch<TelegramPost>(`/telegram-channels/${channelId}/posts/${postId}/manual-metrics`, payload)).data,
+};
+export const telegramChannelNetworksApi = {
+  list: async () => (await api.get<TelegramChannelNetwork[]>('/telegram-channel-networks')).data,
+  get: async (id: string) => (await api.get<TelegramChannelNetworkDetail>(`/telegram-channel-networks/${id}`)).data,
+  create: async (payload: CreateTelegramChannelNetworkPayload) => (await api.post<TelegramChannelNetworkDetail>('/telegram-channel-networks', payload)).data,
+  update: async (id: string, payload: UpdateTelegramChannelNetworkPayload) => (await api.patch<TelegramChannelNetworkDetail>(`/telegram-channel-networks/${id}`, payload)).data,
+  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/telegram-channel-networks/${id}`)).data,
+  summary: async (id: string) => (await api.get<TelegramChannelNetworkSummary>(`/telegram-channel-networks/${id}/summary`)).data,
 };
 export const telegramUserAccountsApi = {
   ...crud<TelegramUserAccount>('/telegram-user-accounts'),

@@ -121,6 +121,8 @@ model Workspace {
   telegramChannelDataSources       TelegramChannelDataSource[]
   telegramChannelStatsSnapshots    TelegramChannelStatsSnapshot[]
   telegramChannelAudienceSnapshots TelegramChannelAudienceSnapshot[]
+  telegramChannelNetworks          TelegramChannelNetwork[]
+  telegramChannelNetworkMembers    TelegramChannelNetworkMember[]
   telegramChannelStatsPoints       TelegramChannelStatsPoint[]
   telegramPosts                    TelegramPost[]
   promos                           Promo[]
@@ -421,6 +423,7 @@ model TelegramChannel {
   posts             TelegramPost[]
   statsSnapshots    TelegramChannelStatsSnapshot[]
   audienceSnapshots TelegramChannelAudienceSnapshot[]
+  networkMembers    TelegramChannelNetworkMember[]
   statsPoints       TelegramChannelStatsPoint[]
 
   createdAt DateTime @default(now())
@@ -513,6 +516,40 @@ model TelegramChannelAudienceSnapshot {
 
   @@index([workspaceId, telegramChannelId, collectedAt])
   @@index([telegramChannelId, collectedAt])
+}
+
+model TelegramChannelNetwork {
+  id          String  @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+
+  workspace Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channels  TelegramChannelNetworkMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model TelegramChannelNetworkMember {
+  id                String @id @default(cuid())
+  workspaceId       String
+  networkId         String
+  telegramChannelId String
+
+  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  network         TelegramChannelNetwork @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel        @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([networkId, telegramChannelId])
+  @@index([workspaceId])
+  @@index([networkId])
+  @@index([telegramChannelId])
 }
 
 model Promo {
