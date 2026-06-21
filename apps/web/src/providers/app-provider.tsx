@@ -3,11 +3,14 @@
 import { PropsWithChildren } from 'react';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { QueryProvider } from './query-provider';
+import { ToastProvider } from './toast-provider';
 
 export function AppProvider({ children }: PropsWithChildren) {
   return (
     <QueryProvider>
-      <ProtectedRoute>{children}</ProtectedRoute>
+      <ToastProvider>
+        <ProtectedRoute>{children}</ProtectedRoute>
+      </ToastProvider>
     </QueryProvider>
   );
 }

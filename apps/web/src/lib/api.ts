@@ -15,6 +15,10 @@ function resolveApiBaseUrl() {
 
 export const api = axios.create({ baseURL: resolveApiBaseUrl(), withCredentials: true });
 
+export function isApiNetworkError(error: unknown) {
+  return axios.isAxiosError(error) && (!error.response || error.code === 'ERR_NETWORK');
+}
+
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;

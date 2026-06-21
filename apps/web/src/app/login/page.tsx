@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import axios from 'axios';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { authApi } from '@/lib/api';
+import { authApi, isApiNetworkError } from '@/lib/api';
 import { setAccessToken } from '@/lib/auth';
 import { Button, FormError, Input } from '@/components/ui/primitives';
 
@@ -21,8 +22,24 @@ export default function LoginPage() {
       const result = await authApi.login(values.email, values.password);
       setAccessToken(result.accessToken);
       router.replace('/');
-    } catch {
-      setError('Invalid email or password');
+    } catch (error) {
+      if (isApiNetworkError(error)) {
+        setError('Unable to connect to the server. Please try again later.');
+        return;
+      }
+
+      if (axios.isAxiosError(error)) {
+        if (error.response.status === 401) {
+          setError('Invalid email or password');
+          return;
+        }
+
+        const message = typeof error.response.data?.message === 'string' ? error.response.data.message : '';
+        setError(message || 'Sign in failed. Please try again.');
+        return;
+      }
+
+      setError('Sign in failed. Please try again.');
     }
   });
 

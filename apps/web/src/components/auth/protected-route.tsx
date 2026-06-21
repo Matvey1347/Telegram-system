@@ -1,19 +1,37 @@
 'use client';
 
-import { PropsWithChildren, useEffect, useState } from 'react';
+import { PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
+import { isApiNetworkError } from '@/lib/api';
+import { useAppToast } from '@/providers/toast-provider';
 
 export function ProtectedRoute({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const router = useRouter();
-  const { token, isLoading, isAuthenticated } = useAuth();
+  const { token, isLoading, isAuthenticated, error } = useAuth();
+  const { pushToast } = useAppToast();
   const isAuthPage = pathname === '/login' || pathname === '/register';
   const [mounted, setMounted] = useState(false);
+  const hasShownConnectionAlertRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
+    if (token && isApiNetworkError(error)) {
+      if (!hasShownConnectionAlertRef.current) {
+        hasShownConnectionAlertRef.current = true;
+        pushToast('Unable to connect to the server. Please try again later.', 'error');
+      }
+      return;
+    }
+
+    hasShownConnectionAlertRef.current = false;
+  }, [mounted, token, error, pushToast]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -35,10 +53,14 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
       return;
     }
 
+    if (token && isApiNetworkError(error)) {
+      return;
+    }
+
     if (!isLoading && token && !isAuthenticated) {
       router.replace('/login');
     }
-  }, [mounted, token, isLoading, isAuthenticated, isAuthPage, router, pathname]);
+  }, [mounted, token, isLoading, isAuthenticated, isAuthPage, router, pathname, error]);
 
   if (!mounted) {
     return <div className="flex min-h-screen items-center justify-center text-neutral-300">Loading...</div>;

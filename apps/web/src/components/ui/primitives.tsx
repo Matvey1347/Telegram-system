@@ -468,9 +468,14 @@ export function ToastStack({ items, onClose }: { items: ToastItem[]; onClose: (i
         const toneClass = item.tone === 'success' ? 'border-emerald-700 text-emerald-200' : item.tone === 'error' ? 'border-red-700 text-red-200' : 'border-blue-700 text-blue-200';
         return (
           <div key={item.id} className={`rounded-lg border bg-neutral-900 p-3 shadow-xl ${toneClass}`}>
-            <div className="flex items-start justify-between gap-3">
-              <p className="whitespace-pre-line text-sm">{item.message}</p>
-              <button className="text-neutral-400 hover:text-white" onClick={() => onClose(item.id)}><X size={14} /></button>
+            <div className="flex items-center justify-between gap-3">
+              <p className="min-w-0 flex-1 whitespace-pre-line text-sm">{item.message}</p>
+              <button
+                className="flex h-6 w-6 shrink-0 items-center justify-center text-neutral-400 hover:text-white"
+                onClick={() => onClose(item.id)}
+              >
+                <X size={14} />
+              </button>
             </div>
           </div>
         );

@@ -6,6 +6,19 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+   app.use((req, res, next) => {
+    const startedAt = Date.now();
+
+    console.log(`[REQ] ${req.method} ${req.originalUrl}`);
+
+    res.on('finish', () => {
+      const duration = Date.now() - startedAt;
+      console.log(`[RES] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+    });
+
+    next();
+  });
+
   const configService = app.get(ConfigService);
 
   const port = Number(process.env.PORT || configService.get<number>('API_PORT') || 4000);
@@ -14,6 +27,7 @@ async function bootstrap() {
 
   const allowedOrigins = [
     'http://localhost:3000',
+    'http://localhost:4000',
     frontendUrl,
   ].filter(Boolean) as string[];
 
@@ -25,7 +39,12 @@ async function bootstrap() {
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Workspace-Id',
+      'ngrok-skip-browser-warning',
+    ],
   });
 
   app.setGlobalPrefix('api');
