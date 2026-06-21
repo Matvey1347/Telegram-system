@@ -297,7 +297,51 @@ export type TelegramInviteLink = { id: string; telegramChannelId: string; adCamp
 export type Promo = { id: string; telegramChannelId: string; title: string; text?: string; imageData?: string; status: 'draft' | 'active' | 'archived'; telegramChannel?: TelegramChannel };
 export type AdvertisingChannel = { id: string; selectionId?: string; kind?: 'person' | 'legacy_channel'; title: string; telegramUrl?: string; username?: string; contactInfo?: string; notes?: string; imageUrl?: string; subscribersCount?: number; channelTags?: string[]; createdAt?: string; updatedAt?: string };
 export type ImportedTelegramSource = TelegramChannel | AdvertisingChannel;
-export type AdCampaign = { id: string; title: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; advertisingChannels: TelegramChannel[]; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; notes?: string; isMixedAttribution?: boolean; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdCampaignHypothesisLink = { id: string; hypothesis: { id: string; name: string; status: AdHypothesisStatus } };
+export type AdCampaign = { id: string; title: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdHypothesisStatus = 'testing' | 'winner' | 'loser' | 'paused' | 'archived';
+export type AdHypothesisKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type AdHypothesisCampaignSummary = {
+  id: string;
+  campaignId: string;
+  title: string;
+  status: string;
+  currency: Currency;
+  spend: number;
+  joinedSubscribers: number;
+  leftSubscribers?: number | null;
+  cpa?: number | null;
+  views?: number | null;
+  reactions?: number | null;
+  engagementRate?: number | null;
+  activeSubscribersEstimate?: number | null;
+  activeCpa?: number | null;
+  targetChannel?: { id: string; title: string; username?: string | null; photoUrl?: string | null } | null;
+  source?: string | null;
+  sourcePostUrl?: string | null;
+  kpiStatus: AdHypothesisKpiStatus;
+};
+export type AdHypothesisSummary = {
+  campaignsCount: number;
+  totalSpend: number;
+  totalJoinedSubscribers: number;
+  avgCpa?: number | null;
+  activeSubscribersEstimate?: number | null;
+  activeCpa?: number | null;
+  avgActiveRate?: number | null;
+  totalViews?: number | null;
+  totalReactions?: number | null;
+  engagementRate?: number | null;
+  bestCampaign?: AdHypothesisCampaignSummary | null;
+  worstCampaign?: AdHypothesisCampaignSummary | null;
+  kpiStatus: AdHypothesisKpiStatus;
+  decision: string;
+};
+export type AdHypothesis = { id: string; name: string; description?: string | null; status: AdHypothesisStatus; conclusion?: string | null; createdAt: string; updatedAt: string; campaignsCount: number; summary: AdHypothesisSummary };
+export type AdHypothesisCampaign = { id: string; adCampaignId: string; adCampaign: AdCampaign };
+export type AdHypothesisDetail = AdHypothesis & { campaigns: AdCampaign[]; campaignSummaries: AdHypothesisCampaignSummary[] };
+export type CreateAdHypothesisPayload = { name: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds: string[] };
+export type UpdateAdHypothesisPayload = { name?: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds?: string[] };
 export type DashboardSummary = {
   totalBalancePrimary: number;
   totalBalanceSecondary: number;
@@ -441,6 +485,14 @@ export const advertisingChannelsApi = crud<AdvertisingChannel>('/advertising-cha
 export const adCampaignsApi = {
   ...crud<AdCampaign>('/ad-campaigns'),
   list: async (params?: { telegramChannelId?: string }) => (await api.get<AdCampaign[]>('/ad-campaigns', { params })).data,
+};
+export const adHypothesesApi = {
+  list: async () => (await api.get<AdHypothesis[]>('/ad-hypotheses')).data,
+  get: async (id: string) => (await api.get<AdHypothesisDetail>(`/ad-hypotheses/${id}`)).data,
+  create: async (payload: CreateAdHypothesisPayload) => (await api.post<AdHypothesisDetail>('/ad-hypotheses', payload)).data,
+  update: async (id: string, payload: UpdateAdHypothesisPayload) => (await api.patch<AdHypothesisDetail>(`/ad-hypotheses/${id}`, payload)).data,
+  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/ad-hypotheses/${id}`)).data,
+  summary: async (id: string) => (await api.get<AdHypothesisSummary>(`/ad-hypotheses/${id}/summary`)).data,
 };
 export const exchangeRatesApi = crud('/exchange-rates');
 

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 
 type Values = { fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; date: string; description?: string };
@@ -18,6 +18,7 @@ export default function TransfersPage() {
   const [filters, setFilters] = useState({ dateFrom: '', dateTo: '', accountId: '', sort: 'date_desc' });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
   const { data, isLoading, error } = useQuery({
     queryKey: ['transfers', filters],
     queryFn: () => transfersApi.list(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) as TransferQuery),
@@ -27,8 +28,6 @@ export default function TransfersPage() {
   const deleteMutation = useMutation({ mutationFn: (id: string) => transfersApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); setDeleting(null); } });
   const nameOf = (id: string) => accounts?.find((a) => a.id === id)?.name ?? id;
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value }));
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
-
   return <AppShell><PageHeader title="Transfers" subtitle="Move funds between accounts" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
     <Card className="mb-4">
       <div className="grid gap-3 md:grid-cols-4">
@@ -49,11 +48,11 @@ export default function TransfersPage() {
             <tr key={t.id} className="bg-neutral-950">
               <td className="px-3 py-2">{new Date(t.date).toLocaleDateString()}</td>
               <td className="px-3 py-2">{t.fromAccount?.name ?? nameOf(t.fromAccountId)}</td>
-              <td className="px-3 py-2">{formatMoney(t.fromAmount, t.fromCurrency, displayMode)}</td>
+              <td className="px-3 py-2"><MoneyStack amount={t.fromAmount} currency={t.fromCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
               <td className="px-3 py-2">{t.toAccount?.name ?? nameOf(t.toAccountId)}</td>
-              <td className="px-3 py-2">{formatMoney(t.toAmount, t.toCurrency, displayMode)}</td>
+              <td className="px-3 py-2"><MoneyStack amount={t.toAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
               <td className="px-3 py-2">{t.exchangeRate ? Number(t.exchangeRate).toFixed(6) : '-'}</td>
-              <td className="px-3 py-2">{t.transferLossAmount ? formatMoney(t.transferLossAmount, t.toCurrency, displayMode) : '-'}</td>
+              <td className="px-3 py-2">{t.transferLossAmount ? <MoneyStack amount={t.transferLossAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /> : '-'}</td>
               <td className="max-w-[240px] truncate px-3 py-2">{t.description || '-'}</td>
               <td className="px-3 py-2"><div className="flex gap-2"><IconButton onClick={() => setEditing(t)} /><IconButton kind="delete" onClick={() => setDeleting(t)} /></div></td>
             </tr>

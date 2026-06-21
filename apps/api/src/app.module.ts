@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AccountsModule } from './accounts/accounts.module';
 import { AdCampaignsModule } from './ad-campaigns/ad-campaigns.module';
+import { AdHypothesesModule } from './ad-hypotheses/ad-hypotheses.module';
 import { AdvertisingSourcesModule } from './advertising-sources/advertising-sources.module';
 import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
@@ -45,6 +46,7 @@ import { IconsModule } from './icons/icons.module';
     PromosModule,
     AdvertisingSourcesModule,
     AdCampaignsModule,
+    AdHypothesesModule,
     DashboardModule,
     FinanceCategoriesModule,
     WorkspaceMembersModule,

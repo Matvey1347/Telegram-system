@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { Account, Transaction, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
@@ -27,6 +27,7 @@ export default function TransactionsPage() {
   const [filters, setFilters] = useState({ type: 'all', sort: 'date_desc', dateFrom: '', dateTo: '', categoryId: '', accountId: '', search: '' });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
   const { data, isLoading, error } = useQuery({
     queryKey: ['transactions', filters],
     queryFn: () => transactionsApi.list(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) as TransactionQuery),
@@ -41,9 +42,6 @@ export default function TransactionsPage() {
   const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setDeleting(null); } });
 
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value, ...(key === 'type' ? { categoryId: '' } : {}) }));
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
-  const primaryCurrency = settings?.primaryCurrency ?? '';
-
   return <AppShell><PageHeader title="Transactions" subtitle="Track income and expenses" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
     <Card className="mb-4">
       <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-7">
@@ -81,8 +79,7 @@ export default function TransactionsPage() {
                 </div>
               </td>
               <td className="whitespace-nowrap px-3 py-3">
-                <div className={`font-semibold ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>{formatMoney(t.amount, t.currency, displayMode)}</div>
-                <div className="text-xs text-neutral-400">{formatMoney(t.amountInPrimaryCurrency, primaryCurrency, displayMode)}</div>
+                <MoneyStack amount={t.amount} currency={t.currency} settings={settings} rates={rates} amountInPrimary={t.amountInPrimaryCurrency} mainClassName={`font-semibold ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`} subClassName="text-xs text-neutral-400" />
               </td>
               <td className="px-3 py-3">
                 <div className="flex items-center gap-2">

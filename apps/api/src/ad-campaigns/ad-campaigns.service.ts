@@ -436,6 +436,13 @@ export class AdCampaignsService {
           },
         },
         advertisingChannels: { include: { advertisingSource: true } },
+        hypothesisLinks: {
+          include: {
+            hypothesis: {
+              select: { id: true, name: true, status: true },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -458,6 +465,13 @@ export class AdCampaignsService {
           },
         },
         advertisingChannels: { include: { advertisingSource: true } },
+        hypothesisLinks: {
+          include: {
+            hypothesis: {
+              select: { id: true, name: true, status: true },
+            },
+          },
+        },
       },
     });
     if (!row) throw new NotFoundException('Campaign not found');
@@ -684,7 +698,7 @@ export class AdCampaignsService {
           select: { joinedCount: true },
         })
       : null;
-    const joinedCount = Number(inviteLink?.joinedCount ?? 0);
+    const joinedCount = Number(inviteLink?.joinedCount ?? campaign.joinedCount ?? 0);
     const costAmount = Number(campaign.price || 0);
 
     return {

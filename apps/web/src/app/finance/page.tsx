@@ -8,7 +8,7 @@ import { CircleMinus, CirclePlus } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, transfersApi, type Transaction, type TransactionType } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, EmptyState, EntityCard, LoadingState, PageHeader } from '@/components/ui/primitives';
 
 export default function FinancePage() {
@@ -42,20 +42,10 @@ export default function FinancePage() {
     },
   });
 
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
   const primaryCurrency = settings?.primaryCurrency ?? '';
-  const secondaryCurrency = settings?.secondaryCurrency ?? '';
-  const secondaryRate = useMemo(() => {
-    if (!primaryCurrency || !secondaryCurrency || primaryCurrency === secondaryCurrency) return 1;
-    const direct = rates?.find((rate) => rate.baseCurrency === primaryCurrency && rate.targetCurrency === secondaryCurrency);
-    if (direct) return Number(direct.rate);
-    const reverse = rates?.find((rate) => rate.baseCurrency === secondaryCurrency && rate.targetCurrency === primaryCurrency);
-    if (reverse && Number(reverse.rate) > 0) return 1 / Number(reverse.rate);
-    return null;
-  }, [primaryCurrency, rates, secondaryCurrency]);
 
   const categorySummary = useMemo(() => {
-    const map = new Map<string, { name: string; type: TransactionType; icon: Transaction['categoryRef']; totalPrimary: number; totalSecondary: number; count: number }>();
+    const map = new Map<string, { name: string; type: TransactionType; icon: Transaction['categoryRef']; totalPrimary: number; count: number }>();
     for (const tx of transactions ?? []) {
       const key = tx.categoryId ?? tx.category ?? 'uncategorized';
       const amountPrimary = Number(tx.amountInPrimaryCurrency ?? 0);
@@ -64,11 +54,9 @@ export default function FinancePage() {
         type: tx.type,
         icon: tx.categoryRef,
         totalPrimary: 0,
-        totalSecondary: 0,
         count: 0,
       };
       current.totalPrimary += amountPrimary;
-      current.totalSecondary += secondaryRate == null ? 0 : amountPrimary * secondaryRate;
       current.count += 1;
       map.set(key, current);
     }
@@ -76,7 +64,7 @@ export default function FinancePage() {
       .filter((item) => item.type === categoryType)
       .sort((a, b) => b.totalPrimary - a.totalPrimary)
       .slice(0, 6);
-  }, [categoryType, secondaryRate, transactions]);
+  }, [categoryType, transactions]);
 
   return (
     <AppShell>
@@ -104,10 +92,9 @@ export default function FinancePage() {
                 }
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-2xl font-semibold text-white">{formatMoney(account.balance ?? account.calculatedBalance, account.currency, displayMode)}</p>
+                  <MoneyStack amount={account.balance ?? account.calculatedBalance} currency={account.currency} settings={settings} rates={rates} amountInPrimary={account.convertedCurrency === primaryCurrency ? account.convertedBalance : null} />
                   <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{account.currency}</span>
                 </div>
-                <p className="text-neutral-400">≈ {account.convertedBalance == null ? 'Rate missing' : formatMoney(account.convertedBalance, account.convertedCurrency, displayMode)}</p>
               </EntityCard>
             ))}
           </div>
@@ -130,8 +117,7 @@ export default function FinancePage() {
                 </div>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
-                <div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>{formatMoney(tx.amount, tx.currency, displayMode)}</div>
-                <div className="text-sm text-neutral-400">{formatMoney(tx.amountInPrimaryCurrency, primaryCurrency, displayMode)}</div>
+                <MoneyStack amount={tx.amount} currency={tx.currency} settings={settings} rates={rates} amountInPrimary={tx.amountInPrimaryCurrency} mainClassName={`font-semibold ${tx.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`} />
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
@@ -197,8 +183,7 @@ export default function FinancePage() {
                 }
               >
                 <p className="text-neutral-400">{category.type === 'income' ? 'Received' : 'Spent'}</p>
-                <p className={`text-2xl font-semibold ${category.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>{formatMoney(category.totalPrimary, primaryCurrency, displayMode)}</p>
-                <p className="text-neutral-200">{secondaryRate == null ? '≈ Rate missing' : `≈ ${formatMoney(category.totalSecondary, secondaryCurrency || primaryCurrency, displayMode)}`}</p>
+                <MoneyStack amount={category.totalPrimary} currency={primaryCurrency} settings={settings} rates={rates} mainClassName={`text-2xl font-semibold ${category.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`} subClassName="text-base font-medium text-neutral-200" />
                 <p className="text-neutral-400">{category.count} {category.count === 1 ? 'transaction' : 'transactions'}</p>
               </EntityCard>
             ))}
@@ -221,7 +206,7 @@ export default function FinancePage() {
                   <span>{transfer.fromAccount?.name ?? '-'}</span>
                 </div>
               </td>
-              <td className="px-4 py-3 font-medium text-white">{formatMoney(transfer.fromAmount, transfer.fromCurrency, displayMode)}</td>
+              <td className="px-4 py-3"><MoneyStack amount={transfer.fromAmount} currency={transfer.fromCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" /></td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   {transfer.toAccount?.id ? (
@@ -233,7 +218,7 @@ export default function FinancePage() {
                   <span>{transfer.toAccount?.name ?? '-'}</span>
                 </div>
               </td>
-              <td className="px-4 py-3 font-medium text-white">{formatMoney(transfer.toAmount, transfer.toCurrency, displayMode)}</td>
+              <td className="px-4 py-3"><MoneyStack amount={transfer.toAmount} currency={transfer.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" /></td>
             </tr>
           ))}
         </FinanceTable>

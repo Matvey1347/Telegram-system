@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAuth } from '@/hooks/use-auth';
 import { accountApi, currenciesApi, workspaceMembersApi, type WorkspaceMember, type WorkspaceRole } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, EmptyState, EntityCard, FormError, FormField, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 
 type CreateValues = { email: string; name?: string; password?: string; role: WorkspaceRole };
@@ -30,17 +30,7 @@ export default function WorkspaceMembersPage() {
   const ownersCount = useMemo(() => (data || []).filter((m) => m.role === 'owner').length, [data]);
   const canAdd = currentRole === 'owner' || currentRole === 'admin';
   const canEditWorkspace = currentRole === 'owner';
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
   const primaryCurrency = settings?.primaryCurrency ?? '';
-  const secondaryCurrency = settings?.secondaryCurrency ?? '';
-  const secondaryRate = useMemo(() => {
-    if (!primaryCurrency || !secondaryCurrency || primaryCurrency === secondaryCurrency) return 1;
-    const direct = rates?.find((rate) => rate.baseCurrency === primaryCurrency && rate.targetCurrency === secondaryCurrency);
-    if (direct) return Number(direct.rate);
-    const reverse = rates?.find((rate) => rate.baseCurrency === secondaryCurrency && rate.targetCurrency === primaryCurrency);
-    if (reverse && Number(reverse.rate) > 0) return 1 / Number(reverse.rate);
-    return null;
-  }, [primaryCurrency, rates, secondaryCurrency]);
 
   useEffect(() => {
     if (workspace?.name) {
@@ -122,12 +112,7 @@ export default function WorkspaceMembersPage() {
         {hasInvestments ? <>
           <div>
             <p>Total Invested:</p>
-            <p className="font-semibold text-white">{formatMoney(m.investmentSummary?.totalInvestedPrimary ?? 0, primaryCurrency, displayMode)}</p>
-            <p className="text-neutral-400">
-              {secondaryRate == null
-                ? '≈ Rate missing'
-                : `≈ ${formatMoney(Number(m.investmentSummary?.totalInvestedPrimary ?? 0) * secondaryRate, secondaryCurrency, displayMode)}`}
-            </p>
+            <MoneyStack amount={m.investmentSummary?.totalInvestedPrimary ?? 0} currency={primaryCurrency} settings={settings} rates={rates} mainClassName="font-semibold text-white" />
           </div>
           <p>Share of total investments: {Number(m.investmentSummary?.investmentSharePercent ?? 0).toFixed(2)}%</p>
         </> : null}

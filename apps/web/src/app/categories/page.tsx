@@ -6,13 +6,13 @@ import { useForm, useWatch } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { currenciesApi, transactionCategoriesApi, transactionsApi, type TransactionCategory, type TransactionType } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { CircleMinus, CirclePlus } from 'lucide-react';
 
 type CategoryFormValues = { name: string; type: TransactionType; iconId?: string | null };
-type CategoryStats = { count: number; totalPrimary: number; totalSecondary: number };
+type CategoryStats = { count: number; totalPrimary: number };
 
 export default function CategoriesPage() {
   const qc = useQueryClient();
@@ -68,32 +68,20 @@ export default function CategoriesPage() {
     },
   });
 
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
   const primaryCurrency = settings?.primaryCurrency ?? '';
-  const secondaryCurrency = settings?.secondaryCurrency ?? '';
-
-  const secondaryRate = useMemo(() => {
-    if (!primaryCurrency || !secondaryCurrency || primaryCurrency === secondaryCurrency) return 1;
-    const direct = rates?.find((rate) => rate.baseCurrency === primaryCurrency && rate.targetCurrency === secondaryCurrency);
-    if (direct) return Number(direct.rate);
-    const reverse = rates?.find((rate) => rate.baseCurrency === secondaryCurrency && rate.targetCurrency === primaryCurrency);
-    if (reverse && Number(reverse.rate) > 0) return 1 / Number(reverse.rate);
-    return null;
-  }, [primaryCurrency, rates, secondaryCurrency]);
 
   const categoryStats = useMemo(() => {
     const map = new Map<string, CategoryStats>();
     for (const transaction of transactions ?? []) {
       const key = transaction.categoryId ?? transaction.category ?? 'uncategorized';
-      const current = map.get(key) ?? { count: 0, totalPrimary: 0, totalSecondary: 0 };
+      const current = map.get(key) ?? { count: 0, totalPrimary: 0 };
       const amountPrimary = Number(transaction.amountInPrimaryCurrency ?? 0);
       current.count += 1;
       current.totalPrimary += amountPrimary;
-      current.totalSecondary += secondaryRate == null ? 0 : amountPrimary * secondaryRate;
       map.set(key, current);
     }
     return map;
-  }, [secondaryRate, transactions]);
+  }, [transactions]);
 
   return <AppShell>
     <PageHeader
@@ -128,7 +116,7 @@ export default function CategoriesPage() {
 
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       {data?.map((c) => {
-        const stats = categoryStats.get(c.id) ?? { count: 0, totalPrimary: 0, totalSecondary: 0 };
+        const stats = categoryStats.get(c.id) ?? { count: 0, totalPrimary: 0 };
         const tone = c.type === 'income' ? 'text-emerald-300' : 'text-rose-300';
         return (
           <EntityCard
@@ -139,12 +127,7 @@ export default function CategoriesPage() {
             <div className="space-y-3">
               <div>
                 <p className="text-sm text-neutral-400">{c.type === 'income' ? 'Received' : 'Spent'}</p>
-                <p className={`text-2xl font-semibold ${tone}`}>{formatMoney(stats.totalPrimary, primaryCurrency, displayMode)}</p>
-              </div>
-              <div>
-                <p className="text-base font-medium text-neutral-200">
-                  {secondaryRate == null ? '≈ Add exchange rate' : `≈ ${formatMoney(stats.totalSecondary, secondaryCurrency, displayMode)}`}
-                </p>
+                <MoneyStack amount={stats.totalPrimary} currency={primaryCurrency} settings={settings} rates={rates} mainClassName={`text-2xl font-semibold ${tone}`} subClassName="text-base font-medium text-neutral-200" />
               </div>
               <p className="text-sm text-neutral-400">
                 {stats.count} {stats.count === 1 ? 'transaction' : 'transactions'}

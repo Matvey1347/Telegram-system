@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { Account, accountsApi, currenciesApi } from '@/lib/api';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
-import { formatMoney } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 
@@ -19,6 +19,7 @@ export default function AccountsPage() {
   const [deleting, setDeleting] = useState<Account | null>(null);
   const { data, isLoading, error } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
 
   const createMutation = useMutation({ mutationFn: accountsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['currency-rates'] }); setCreateOpen(false); } });
   const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => accountsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['currency-rates'] }); setEditing(null); } });
@@ -32,10 +33,9 @@ export default function AccountsPage() {
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><span>{a.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-2xl font-semibold text-white">{formatMoney(a.balance ?? a.calculatedBalance, a.currency, settings?.currencyDisplayMode)}</p>
+          <MoneyStack amount={a.balance ?? a.calculatedBalance} currency={a.currency} settings={settings} rates={rates} amountInPrimary={a.convertedCurrency === settings?.primaryCurrency ? a.convertedBalance : null} />
           <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{a.currency}</span>
         </div>
-        <p className="text-neutral-400">≈ {a.convertedBalance == null ? 'Rate missing' : formatMoney(a.convertedBalance, a.convertedCurrency, settings?.currencyDisplayMode)}</p>
       </EntityCard>)}
     </div>
     {!isLoading && !data?.length ? <EmptyState text="No accounts yet" /> : null}

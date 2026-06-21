@@ -1,10 +1,14 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
-import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi } from '@/lib/api';
+import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi, workspacesApi } from '@/lib/api';
+import { currenciesApi } from '@/lib/api';
+import { formatMoney, getMoneyVariants } from '@/lib/money';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
 
@@ -45,6 +49,14 @@ export default function AdCampaignsPage() {
   const [deleting, setDeleting] = useState<any | null>(null);
   const [channelFilter, setChannelFilter] = useState('');
 
+  const { data: workspace } = useQuery({ queryKey: ['workspace-selected'], queryFn: workspacesApi.selected });
+  const { data: currencySettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
+  const moneySettings = currencySettings ?? {
+    primaryCurrency: workspace?.primaryCurrency || '',
+    secondaryCurrency: workspace?.secondaryCurrency || '',
+    currencyDisplayMode: workspace?.currencyDisplayMode || 'code',
+  };
   const { data: channels } = useQuery({ queryKey: ['telegram-channels'], queryFn: telegramChannelsApi.list });
   const { data, isLoading, error } = useQuery({
     queryKey: ['ad-campaigns', channelFilter],
@@ -79,7 +91,7 @@ export default function AdCampaignsPage() {
     onError: (error) => pushToast(getErrorMessage(error, 'Failed to archive campaign.'), 'error'),
   });
 
-  return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by own channel, promo link and external advertising channels" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
+  return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by own channel, promo link and external advertising channels" action={<div className="flex gap-2"><Link href="/ad-hypotheses" className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Hypotheses</Link><Button onClick={() => setCreateOpen(true)}>Create</Button></div>} />
     {(channels?.length ?? 0) > 1 ? <Card className="mb-4"><FormField label="Channel"><Select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}><option value="">All channels</option>{channels?.map((channel: any) => <option key={channel.id} value={channel.id}>{channel.title}</option>)}</Select></FormField></Card> : null}
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load campaigns</div> : null}
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{data?.map((c: any) => {
@@ -87,14 +99,31 @@ export default function AdCampaignsPage() {
       const joined = (c.analytics?.joinedCount ?? c.joinedCount ?? 0);
       const left = (c.analytics?.leftCount ?? c.leftCount ?? 0);
       const cost = Number(c.price || c.costAmount || 0);
+      const primaryCost = Number(c.priceInPrimaryCurrency ?? 0);
       const costPerJoined = joined > 0 ? cost / joined : null;
+      const primaryCostPerJoined = joined > 0 ? primaryCost / joined : null;
       const day = toInputDate(c?.placementDate || c?.startedAt || c?.createdAt) || '-';
-      const cardTitle = `${day} | ${cost.toFixed(2)} ${c.currency} | ${joined} subscribers`;
+      const costVariants = getMoneyVariants({ amount: cost, currency: c.currency, settings: moneySettings, rates, amountInPrimary: primaryCost });
+      const costLabel = [formatMoney(cost, c.currency, currencySettings?.currencyDisplayMode), ...costVariants.map((variant) => variant.amount == null ? 'Rate missing' : variant.label)].join(' / ');
+      const cardTitle = `${day} | ${costLabel} | ${joined} subscribers`;
       return <EntityCard key={c.id} title={cardTitle} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} /></div>}>
         <div className="mb-1 inline-flex items-center gap-2 py-1 text-sm text-neutral-200">
           {c.telegramChannel?.photoUrl ? <img src={c.telegramChannel.photoUrl} alt="" className="h-5 w-5 rounded-full" /> : <span className="inline-block h-5 w-5 rounded-full border border-neutral-600" />}
           <span>{c.telegramChannel?.title || '-'}</span>
         </div>
+        {(c.hypothesisLinks || []).length ? (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {(c.hypothesisLinks || []).map((link: any) => (
+              <Link
+                key={link.hypothesis.id}
+                href={`/ad-hypotheses/${link.hypothesis.id}`}
+                className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${hypothesisStatusClass(link.hypothesis.status)}`}
+              >
+                {link.hypothesis.name} · {link.hypothesis.status}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         <div className="mb-2 ml-0 pl-0">
           <p className="mb-1 text-xs uppercase tracking-wide text-neutral-400">Advertising Sources</p>
           <div className="ml-0 flex flex-wrap gap-2 pl-0">
@@ -108,9 +137,19 @@ export default function AdCampaignsPage() {
               : <span className="text-sm text-neutral-400">-</span>}
           </div>
         </div>
-        <p>Cost: {Number(c.price || c.costAmount || 0).toFixed(2)} {c.currency}</p>
+        <div className="mt-2">
+          <p className="text-xs uppercase tracking-wide text-neutral-400">Cost</p>
+          <MoneyStack amount={cost} currency={c.currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCost} mainClassName="font-semibold text-white" subClassName="text-sm text-neutral-400" />
+        </div>
         {left > 0 ? <p>Joined: {joined} | Left: {left} | Net: {net}</p> : <p className="text-emerald-300">Joined: {joined}</p>}
-        <p>Cost / subscriber: {costPerJoined !== null ? `${Number(costPerJoined).toFixed(2)} ${c.currency}` : '-'}</p>
+        <div>
+          <p className="text-xs uppercase tracking-wide text-neutral-400">Cost / subscriber</p>
+          {costPerJoined !== null ? (
+            <MoneyStack amount={costPerJoined} currency={c.currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCostPerJoined} mainClassName="font-medium text-white" subClassName="text-sm text-neutral-400" />
+          ) : (
+            <p>-</p>
+          )}
+        </div>
       </EntityCard>;
     })}</div>
     {!isLoading && !data?.length ? <EmptyState text="No campaigns" /> : null}
@@ -119,6 +158,14 @@ export default function AdCampaignsPage() {
     <CampaignModal open={!!editing} title="Edit Campaign" channels={channels ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v: any) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
   </AppShell>;
+}
+
+function hypothesisStatusClass(status?: string) {
+  if (status === 'winner') return 'border-emerald-700 text-emerald-200';
+  if (status === 'loser') return 'border-rose-700 text-rose-200';
+  if (status === 'paused') return 'border-yellow-700 text-yellow-200';
+  if (status === 'archived') return 'border-slate-700 text-slate-400';
+  return 'border-blue-700 text-blue-200';
 }
 
 function getErrorMessage(error: unknown, fallback: string) {

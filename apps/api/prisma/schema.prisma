@@ -128,6 +128,8 @@ model Workspace {
   promos                           Promo[]
   advertisingSources               AdvertisingSource[]
   adCampaigns                      AdCampaign[]
+  adHypotheses                     AdHypothesis[]
+  adHypothesisCampaigns            AdHypothesisCampaign[]
   exchangeRates                    ExchangeRate[]
   investments                      Investment[]
   transactionCategories            TransactionCategory[]
@@ -631,11 +633,49 @@ model AdCampaign {
   expenseTransaction          Transaction?                         @relation("CampaignExpenseTransaction")
   advertisingChannels         AdCampaignAdvertisingChannel[]
   advertisingTelegramChannels AdCampaignTelegramChannelPlacement[]
+  hypothesisLinks             AdHypothesisCampaign[]
 
   inviteLinks TelegramInviteLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AdHypothesis {
+  id          String  @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  status      String  @default("testing")
+  conclusion  String?
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaigns AdHypothesisCampaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+model AdHypothesisCampaign {
+  id           String @id @default(cuid())
+  workspaceId  String
+  hypothesisId String
+  adCampaignId String
+
+  workspace  Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  hypothesis AdHypothesis @relation(fields: [hypothesisId], references: [id], onDelete: Cascade)
+  adCampaign AdCampaign   @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([hypothesisId, adCampaignId])
+  @@index([workspaceId])
+  @@index([hypothesisId])
+  @@index([adCampaignId])
 }
 
 model AdCampaignAdvertisingChannel {
