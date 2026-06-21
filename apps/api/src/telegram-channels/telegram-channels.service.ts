@@ -23,7 +23,9 @@ import {
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   UpdateTelegramChannelDto,
+  UpdateTelegramPostManualMetricsDto,
 } from './dto';
+import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
 
 @Injectable()
 export class TelegramChannelsService {
@@ -38,10 +40,25 @@ export class TelegramChannelsService {
     private encryptionService: TokenEncryptionService,
     private mtprotoClient: TelegramMtprotoClient,
     private sourceAccessService: TelegramSourceAccessService,
+    private analyticsService: TelegramChannelAnalyticsService,
   ) {}
 
   private workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
+  }
+
+  private async createAudienceSnapshotSafely(channelId: string, source = 'sync') {
+    try {
+      return await this.analyticsService.createAudienceSnapshot(
+        channelId,
+        source,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Audience snapshot skipped for channel=${channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return null;
+    }
   }
 
   private toUtcDay(value: Date) {
@@ -467,6 +484,63 @@ export class TelegramChannelsService {
           dto.username === undefined
             ? undefined
             : this.normalizeUsername(dto.username),
+        kpiCurrency:
+          dto.kpiCurrency === undefined
+            ? undefined
+            : String(dto.kpiCurrency || '').trim().toUpperCase() || null,
+      },
+    });
+  }
+
+  async audience(userId: string, channelId: string) {
+    await this.findOne(userId, channelId);
+    return this.analyticsService.getActiveAudienceEstimate(channelId);
+  }
+
+  async createAudienceSnapshot(
+    userId: string,
+    channelId: string,
+    source = 'manual',
+  ) {
+    await this.findOne(userId, channelId);
+    return this.analyticsService.createAudienceSnapshot(channelId, source);
+  }
+
+  async audienceSnapshots(userId: string, channelId: string, limit = 50) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const safeLimit = Math.max(1, Math.min(200, limit));
+    const rows = await this.prisma.telegramChannelAudienceSnapshot.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { collectedAt: 'desc' },
+      take: safeLimit,
+    });
+    return rows.reverse();
+  }
+
+  async financialSummary(userId: string, channelId: string) {
+    await this.findOne(userId, channelId);
+    return this.analyticsService.getChannelFinancialSummary(channelId);
+  }
+
+  async updatePostManualMetrics(
+    userId: string,
+    channelId: string,
+    postId: string,
+    dto: UpdateTelegramPostManualMetricsDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const post = await this.prisma.telegramPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!post) throw new NotFoundException('Telegram post not found');
+    return this.prisma.telegramPost.update({
+      where: { id: post.id },
+      data: {
+        manualOwnViews: dto.manualOwnViews,
+        manualOwnReactions: dto.manualOwnReactions,
+        excludeFromAnalytics: dto.excludeFromAnalytics,
       },
     });
   }
@@ -618,6 +692,10 @@ export class TelegramChannelsService {
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
+    const audienceSnapshot = await this.createAudienceSnapshotSafely(
+      channelId,
+      'sync',
+    );
     return {
       source: 'mtproto',
       publicInfo,
@@ -625,6 +703,7 @@ export class TelegramChannelsService {
       postsMetricsSync,
       olderPostsBackfill,
       channelStatsSync,
+      audienceSnapshot,
     };
   }
 
@@ -667,6 +746,10 @@ export class TelegramChannelsService {
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
+    const audienceSnapshot = await this.createAudienceSnapshotSafely(
+      channelId,
+      'sync',
+    );
     return {
       message: 'Deep MTProto sync completed',
       source: 'mtproto',
@@ -675,6 +758,7 @@ export class TelegramChannelsService {
       postsMetricsSync,
       olderPostsBackfill,
       channelStatsSync,
+      audienceSnapshot,
     };
   }
 
@@ -851,12 +935,17 @@ export class TelegramChannelsService {
         metadata: { postsUpdated },
       });
     }
+    const audienceSnapshot =
+      dto.syncPosts || dto.syncInviteLinks
+        ? await this.createAudienceSnapshotSafely(channelId, 'sync')
+        : null;
     return {
       message: 'Historical MTProto sync completed',
       source: 'mtproto',
       imported,
       updated,
       postsUpdated,
+      audienceSnapshot,
     };
   }
 
@@ -909,7 +998,11 @@ export class TelegramChannelsService {
           metadata: { syncedPosts: metrics.length },
         });
       }
-      return { source: 'mtproto', syncedPosts: metrics.length };
+      const audienceSnapshot = await this.createAudienceSnapshotSafely(
+        channelId,
+        'sync',
+      );
+      return { source: 'mtproto', syncedPosts: metrics.length, audienceSnapshot };
     } catch (error) {
       this.logger.error(
         `MTProto post metrics sync failed for channel=${channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -1219,11 +1312,16 @@ export class TelegramChannelsService {
         warnings: stats.warnings,
       },
     });
+    const audienceSnapshot = await this.createAudienceSnapshotSafely(
+      channelId,
+      'sync',
+    );
     return {
       source: 'mtproto',
       success: stats.normalized.status === 'available',
       snapshot,
       pointsUpserted: points.length,
+      audienceSnapshot,
     };
   }
 

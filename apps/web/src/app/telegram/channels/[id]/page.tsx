@@ -1,9 +1,25 @@
 "use client";
 
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, CircleHelp, Database } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  Database,
+  Eye,
+  Pencil,
+  Smile,
+} from "lucide-react";
 import {
   Bar,
   CartesianGrid,
@@ -22,6 +38,7 @@ import {
   DateInput,
   EntityCard,
   FormField,
+  Input,
   LoadingState,
   Modal,
   PageHeader,
@@ -33,6 +50,8 @@ import {
   getTelegramChannelPosts,
   syncTelegramChannelNow,
   telegramChannelsApi,
+  type TelegramChannel,
+  type TelegramChannelAudienceSnapshot,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 
@@ -68,6 +87,14 @@ function formatPercent(value: unknown, decimals = 1) {
   return `${formatNumber(value, decimals)}%`;
 }
 
+function hasKpiSettings(channel?: TelegramChannel) {
+  return Boolean(
+    channel?.targetCpa != null ||
+      channel?.acceptableCpa != null ||
+      channel?.stopCpa != null,
+  );
+}
+
 export default function TelegramChannelAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -88,6 +115,14 @@ export default function TelegramChannelAnalyticsPage() {
     posts: true,
     inviteLinks: true,
     campaigns: true,
+  });
+  const [settings, setSettings] = useState({
+    seedSubscribersCount: "0",
+    activeSubscribersWindow: "5",
+    targetCpa: "",
+    acceptableCpa: "",
+    stopCpa: "",
+    kpiCurrency: "",
   });
 
   const pushToast = (
@@ -120,6 +155,22 @@ export default function TelegramChannelAnalyticsPage() {
     queryFn: () =>
       getTelegramChannelAnalytics(id, rangeParams.from, rangeParams.to),
   });
+  const { data: channel } = useQuery({
+    queryKey: ["telegram-channel", id],
+    queryFn: () => telegramChannelsApi.get(id),
+  });
+  const { data: audience } = useQuery({
+    queryKey: ["telegram-channel-audience", id],
+    queryFn: () => telegramChannelsApi.audience(id),
+  });
+  const { data: financialSummary } = useQuery({
+    queryKey: ["telegram-channel-financial-summary", id],
+    queryFn: () => telegramChannelsApi.financialSummary(id),
+  });
+  const { data: audienceSnapshots = [] } = useQuery({
+    queryKey: ["telegram-channel-audience-snapshots", id],
+    queryFn: () => telegramChannelsApi.audienceSnapshots(id, 80),
+  });
   const {
     data: postsData,
     isLoading: isPostsLoading,
@@ -132,6 +183,20 @@ export default function TelegramChannelAnalyticsPage() {
     queryKey: ["telegram-channel-analytics-sources", id],
     queryFn: () => telegramChannelsApi.analyticsSources(id),
   });
+
+  useEffect(() => {
+    const source = channel || data?.channel;
+    if (!source) return;
+    setSettings({
+      seedSubscribersCount: String(source.seedSubscribersCount ?? 0),
+      activeSubscribersWindow: String(source.activeSubscribersWindow ?? 5),
+      targetCpa: source.targetCpa == null ? "" : String(source.targetCpa),
+      acceptableCpa:
+        source.acceptableCpa == null ? "" : String(source.acceptableCpa),
+      stopCpa: source.stopCpa == null ? "" : String(source.stopCpa),
+      kpiCurrency: source.kpiCurrency || "",
+    });
+  }, [channel, data?.channel]);
 
   const syncMutation = useMutation({
     mutationFn: () => syncTelegramChannelNow(id),
@@ -146,11 +211,98 @@ export default function TelegramChannelAnalyticsPage() {
       queryClient.invalidateQueries({
         queryKey: ["telegram-channel-analytics-sources", id],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-financial-summary", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience-snapshots", id],
+      });
       setLastSyncResult(result);
       pushToast(summarizeSync(result), "success", 8000);
     },
     onError: (error: any) =>
       pushToast(error?.response?.data?.message || "Sync failed.", "error"),
+  });
+
+  const settingsMutation = useMutation({
+    mutationFn: () =>
+      telegramChannelsApi.update(id, {
+        seedSubscribersCount: toNumber(settings.seedSubscribersCount),
+        activeSubscribersWindow: Math.max(
+          1,
+          toNumber(settings.activeSubscribersWindow),
+        ),
+        targetCpa: settings.targetCpa === "" ? null : toNumber(settings.targetCpa),
+        acceptableCpa:
+          settings.acceptableCpa === "" ? null : toNumber(settings.acceptableCpa),
+        stopCpa: settings.stopCpa === "" ? null : toNumber(settings.stopCpa),
+        kpiCurrency: settings.kpiCurrency.trim().toUpperCase() || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-analytics", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-financial-summary", id],
+      });
+      pushToast("Settings saved.", "success");
+    },
+    onError: (error: any) =>
+      pushToast(error?.response?.data?.message || "Failed to save settings.", "error"),
+  });
+
+  const createSnapshotMutation = useMutation({
+    mutationFn: () => telegramChannelsApi.createAudienceSnapshot(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience-snapshots", id],
+      });
+      pushToast("Audience snapshot created.", "success");
+    },
+    onError: (error: any) =>
+      pushToast(
+        error?.response?.data?.message || "Failed to create snapshot.",
+        "error",
+      ),
+  });
+
+  const manualMetricsMutation = useMutation({
+    mutationFn: ({
+      postId,
+      payload,
+    }: {
+      postId: string;
+      payload: {
+        manualOwnViews?: number;
+        manualOwnReactions?: number;
+        excludeFromAnalytics?: boolean;
+      };
+    }) => telegramChannelsApi.updatePostManualMetrics(id, postId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel-posts", id] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-financial-summary", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-audience-snapshots", id],
+      });
+      pushToast("Post correction saved.", "success");
+    },
+    onError: (error: any) =>
+      pushToast(
+        error?.response?.data?.message || "Failed to save post correction.",
+        "error",
+      ),
   });
 
   const posts = useMemo(
@@ -181,6 +333,7 @@ export default function TelegramChannelAnalyticsPage() {
       })),
     [data?.channelStatsPoints, mtprotoStats],
   );
+  const activeChannel = (channel || data?.channel) as TelegramChannel | undefined;
 
   const computed = useMemo(() => {
     const viewsTotal = posts.reduce(
@@ -346,11 +499,30 @@ export default function TelegramChannelAnalyticsPage() {
         setCustomTo={setCustomTo}
       />
 
-      <DataSourcesPanel
-        sources={analyticsSources?.sources || []}
-        dataAttribution={analyticsSources?.dataAttribution || []}
-        onSelectSource={setSelectedSourceAccess}
-      />
+      <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <AudienceOverview audience={audience} />
+        <FinancialOverview
+          summary={financialSummary}
+          currency={
+            financialSummary?.kpiCurrency || activeChannel?.kpiCurrency || ""
+          }
+          hasKpi={hasKpiSettings(activeChannel)}
+        />
+      </section>
+
+      <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <KpiSettingsCard
+          settings={settings}
+          setSettings={setSettings}
+          isSaving={settingsMutation.isPending}
+          onSave={() => settingsMutation.mutate()}
+        />
+        <AudienceSnapshotsPanel
+          snapshots={audienceSnapshots}
+          isCreating={createSnapshotMutation.isPending}
+          onCreate={() => createSnapshotMutation.mutate()}
+        />
+      </section>
 
       <section className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -524,6 +696,14 @@ export default function TelegramChannelAnalyticsPage() {
               <PostsTable
                 posts={visiblePosts}
                 subscribers={computed.subscribers}
+                savingPostId={
+                  manualMetricsMutation.isPending
+                    ? manualMetricsMutation.variables?.postId
+                    : null
+                }
+                onSaveManualMetrics={(postId, payload) =>
+                  manualMetricsMutation.mutate({ postId, payload })
+                }
               />
             ) : null}
           </>
@@ -665,6 +845,332 @@ function SimplePanel({
       {children}
     </div>
   );
+}
+
+function OverviewGrid({ children }: { children: ReactNode }) {
+  return <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{children}</div>;
+}
+
+function AudienceOverview({ audience }: { audience: any }) {
+  return (
+    <SimplePanel title="Audience overview">
+      <OverviewGrid>
+        <SnapshotItem
+          label="Subscribers"
+          value={formatNullableNumber(audience?.subscribersCount)}
+        />
+        <SnapshotItem
+          label="Seed subscribers"
+          value={formatNumber(audience?.seedSubscribersCount)}
+        />
+        <SnapshotItem
+          label="Active subscribers estimate"
+          value={formatNullableNumber(audience?.activeSubscribersEstimate)}
+        />
+        <SnapshotItem
+          label="Paid active estimate"
+          value={formatNullableNumber(audience?.paidActiveSubscribersEstimate)}
+        />
+        <SnapshotItem label="View rate" value={formatPercent(audience?.viewRate)} />
+        <SnapshotItem
+          label="Avg adjusted views"
+          value={formatNullableNumber(audience?.avgViewsAdjusted, 1)}
+        />
+        <SnapshotItem
+          label="Avg adjusted reactions"
+          value={formatNullableNumber(audience?.avgReactionsAdjusted, 1)}
+        />
+        <SnapshotItem
+          label="Posts window"
+          value={`${formatNumber(audience?.postsUsed)} / ${formatNumber(audience?.postsWindow)}`}
+        />
+      </OverviewGrid>
+    </SimplePanel>
+  );
+}
+
+function FinancialOverview({
+  summary,
+  currency,
+  hasKpi,
+}: {
+  summary: any;
+  currency: string;
+  hasKpi: boolean;
+}) {
+  const hasPaidLaunches =
+    toNumber(summary?.campaignsCount) > 0 || toNumber(summary?.totalAdSpend) > 0;
+  return (
+    <SimplePanel title="KPI / Financial overview">
+      {hasKpi && !hasPaidLaunches ? (
+        <div className="mb-3 rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm text-slate-300">
+          No paid launches yet.
+        </div>
+      ) : null}
+      <OverviewGrid>
+        <SnapshotItem
+          label="Total ad spend"
+          value={`${formatNumber(summary?.totalAdSpend, 2)} ${currency}`}
+        />
+        <SnapshotItem
+          label="Campaigns count"
+          value={formatNumber(summary?.campaignsCount)}
+        />
+        <SnapshotItem
+          label="Total joined subscribers"
+          value={formatNumber(summary?.totalJoinedSubscribers)}
+        />
+        <SnapshotItem
+          label="Avg CPA"
+          value={
+            summary?.avgCpa == null
+              ? "-"
+              : `${formatNumber(summary.avgCpa, 2)} ${currency}`
+          }
+        />
+        <SnapshotItem
+          label="Active CPA"
+          value={
+            summary?.activeCpa == null
+              ? "-"
+              : `${formatNumber(summary.activeCpa, 2)} ${currency}`
+          }
+        />
+        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+          <p className="text-xs text-slate-400">KPI status</p>
+          <span
+            className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
+          >
+            {summary?.kpiLabel || "-"}
+          </span>
+        </div>
+      </OverviewGrid>
+    </SimplePanel>
+  );
+}
+
+type SettingsState = {
+  seedSubscribersCount: string;
+  activeSubscribersWindow: string;
+  targetCpa: string;
+  acceptableCpa: string;
+  stopCpa: string;
+  kpiCurrency: string;
+};
+
+function KpiSettingsCard({
+  settings,
+  setSettings,
+  isSaving,
+  onSave,
+}: {
+  settings: SettingsState;
+  setSettings: (settings: SettingsState) => void;
+  isSaving: boolean;
+  onSave: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const setValue = (key: keyof SettingsState, value: string) =>
+    setSettings({ ...settings, [key]: value });
+  const hasKpi = Boolean(
+    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+  );
+  const save = () => {
+    onSave();
+    setOpen(false);
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-base font-semibold">KPI</h3>
+        {hasKpi ? (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800"
+            title="Edit KPI"
+          >
+            <Pencil size={15} />
+          </button>
+        ) : null}
+      </div>
+      {hasKpi ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <SnapshotItem
+            label="Target CPA"
+            value={
+              settings.targetCpa
+                ? `${formatNumber(settings.targetCpa, 2)} ${settings.kpiCurrency}`
+                : "-"
+            }
+          />
+          <SnapshotItem
+            label="Acceptable CPA"
+            value={
+              settings.acceptableCpa
+                ? `${formatNumber(settings.acceptableCpa, 2)} ${settings.kpiCurrency}`
+                : "-"
+            }
+          />
+          <SnapshotItem
+            label="Stop CPA"
+            value={
+              settings.stopCpa
+                ? `${formatNumber(settings.stopCpa, 2)} ${settings.kpiCurrency}`
+                : "-"
+            }
+          />
+          <SnapshotItem label="Currency" value={settings.kpiCurrency || "-"} />
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-slate-700 p-4">
+          <p className="text-sm text-slate-400">No KPI set yet.</p>
+          <Button
+            type="button"
+            className="mt-3"
+            variant="secondary"
+            onClick={() => setOpen(true)}
+          >
+            Set KPI
+          </Button>
+        </div>
+      )}
+      <Modal open={open} onClose={() => setOpen(false)} title="KPI settings">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <FormField label="Target CPA">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={settings.targetCpa}
+                onChange={(event) => setValue("targetCpa", event.target.value)}
+              />
+            </FormField>
+            <FormField label="Acceptable CPA">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={settings.acceptableCpa}
+                onChange={(event) =>
+                  setValue("acceptableCpa", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Stop CPA">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={settings.stopCpa}
+                onChange={(event) => setValue("stopCpa", event.target.value)}
+              />
+            </FormField>
+            <FormField label="KPI currency">
+              <Input
+                maxLength={3}
+                value={settings.kpiCurrency}
+                onChange={(event) =>
+                  setValue("kpiCurrency", event.target.value)
+                }
+              />
+            </FormField>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={isSaving} onClick={save}>
+              {isSaving ? "Saving..." : "Save KPI"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function AudienceSnapshotsPanel({
+  snapshots,
+  isCreating,
+  onCreate,
+}: {
+  snapshots: TelegramChannelAudienceSnapshot[];
+  isCreating: boolean;
+  onCreate: () => void;
+}) {
+  const chartRows = snapshots.map((snapshot) => ({
+    label: formatLocalDate(snapshot.collectedAt),
+    subscribersCount: snapshot.subscribersCount ?? null,
+    activeSubscribersEstimate: snapshot.activeSubscribersEstimate ?? null,
+  }));
+  return (
+    <SimplePanel title="Audience chart">
+      <div className="mb-3 flex justify-end">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={isCreating}
+          onClick={onCreate}
+        >
+          {isCreating ? "Creating..." : "Create snapshot"}
+        </Button>
+      </div>
+      {chartRows.length ? (
+        <div className="h-64 rounded-lg bg-slate-900/40 p-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={chartRows}
+              margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
+            >
+              <CartesianGrid stroke="#1e293b" strokeDasharray="4 4" />
+              <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} width={48} />
+              <Tooltip
+                contentStyle={{
+                  background: "#020617",
+                  border: "1px solid #334155",
+                  borderRadius: 10,
+                }}
+                labelStyle={{ color: "#e2e8f0" }}
+              />
+              <Line
+                type="linear"
+                dataKey="subscribersCount"
+                stroke="#38bdf8"
+                strokeWidth={2}
+                dot={false}
+                name="Subscribers"
+              />
+              <Line
+                type="linear"
+                dataKey="activeSubscribersEstimate"
+                stroke="#22c55e"
+                strokeWidth={2}
+                dot={false}
+                name="Active estimate"
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <EmptyState text="No audience snapshots yet." />
+      )}
+    </SimplePanel>
+  );
+}
+
+function kpiBadgeClass(status?: string) {
+  if (status === "good") return "border-emerald-700 text-emerald-200";
+  if (status === "acceptable") return "border-yellow-700 text-yellow-200";
+  if (status === "bad") return "border-rose-700 text-rose-200";
+  return "border-slate-700 text-slate-300";
 }
 
 function DataSourcesPanel({
@@ -1148,25 +1654,53 @@ function TopPostsTable({
 function PostsTable({
   posts,
   subscribers,
+  savingPostId,
+  onSaveManualMetrics,
 }: {
   posts: any[];
   subscribers: number;
+  savingPostId?: string | null;
+  onSaveManualMetrics: (
+    postId: string,
+    payload: {
+      manualOwnViews?: number;
+      manualOwnReactions?: number;
+      excludeFromAnalytics?: boolean;
+    },
+  ) => void;
 }) {
   if (!posts.length)
     return <EmptyState text="No post metrics with text yet." />;
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="min-w-full text-sm">
+      <table className="w-full min-w-[1120px] table-fixed text-sm">
         <thead className="bg-slate-900/60 text-slate-300">
           <tr>
-            <th className="px-3 py-2 text-left">Date</th>
-            <th className="px-3 py-2 text-left">Text</th>
-            <th className="px-3 py-2 text-right">Views</th>
-            <th className="px-3 py-2 text-right">Forwards</th>
-            <th className="px-3 py-2 text-right">Reactions</th>
-            <th className="px-3 py-2 text-right">Comments</th>
-            <th className="px-3 py-2 text-right">ERR</th>
-            <th className="px-3 py-2 text-right">Reaction Rate</th>
+            <th className="w-28 whitespace-nowrap px-3 py-2 text-left">
+              Date
+            </th>
+            <th className="w-56 px-3 py-2 text-left">Text</th>
+            <th className="w-24 whitespace-nowrap px-3 py-2 text-right">
+              Views
+            </th>
+            <th className="w-24 whitespace-nowrap px-3 py-2 text-right">
+              Forwards
+            </th>
+            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
+              Reactions
+            </th>
+            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
+              Comments
+            </th>
+            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
+              ERR
+            </th>
+            <th className="w-32 whitespace-nowrap px-3 py-2 text-right">
+              Reaction Rate
+            </th>
+            <th className="w-52 whitespace-nowrap px-3 py-2 text-left">
+              Manual correction
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -1175,29 +1709,42 @@ function PostsTable({
             const reactions = toNumber(post.reactionsCount);
             return (
               <tr key={post.id} className="border-t border-slate-800">
-                <td className="px-3 py-2">{formatLocalDate(post.postDate)}</td>
-                <td className="max-w-md truncate px-3 py-2">
-                  {post.text || "-"}
+                <td className="whitespace-nowrap px-3 py-2">
+                  {formatLocalDate(post.postDate)}
                 </td>
-                <td className="px-3 py-2 text-right">{formatNumber(views)}</td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-2">
+                  <PostTextTooltip text={post.text || "-"} />
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right">
+                  {formatNumber(views)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(post.forwardsCount)}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(reactions)}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(post.commentsCount)}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="whitespace-nowrap px-3 py-2 text-right">
                   {subscribers > 0
                     ? formatPercent((views / subscribers) * 100, 2)
                     : "-"}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="whitespace-nowrap px-3 py-2 text-right">
                   {views > 0
                     ? formatPercent((reactions / views) * 100, 2)
                     : "-"}
+                </td>
+                <td className="px-3 py-2">
+                  <PostManualMetricsEditor
+                    post={post}
+                    isSaving={savingPostId === post.id}
+                    onSave={(payload) =>
+                      onSaveManualMetrics(post.id, payload)
+                    }
+                  />
                 </td>
               </tr>
             );
@@ -1205,6 +1752,182 @@ function PostsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PostTextTooltip({ text }: { text: string }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({
+    top: 0,
+    left: 0,
+    ready: false,
+  });
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !tooltipRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const tooltip = tooltipRef.current.getBoundingClientRect();
+    const gap = 8;
+    const padding = 12;
+    const spaceAbove = trigger.top - padding;
+    const spaceBelow = window.innerHeight - trigger.bottom - padding;
+    const showAbove =
+      spaceAbove >= tooltip.height + gap || spaceAbove > spaceBelow;
+    const top = showAbove
+      ? Math.max(padding, trigger.top - tooltip.height - gap)
+      : Math.min(
+          window.innerHeight - tooltip.height - padding,
+          trigger.bottom + gap,
+        );
+    const left = Math.min(
+      window.innerWidth - tooltip.width - padding,
+      Math.max(padding, trigger.left),
+    );
+    setPosition({ top, left, ready: true });
+  }, [open, text]);
+
+  const tooltip =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <span
+            ref={tooltipRef}
+            className={`fixed z-[9999] max-h-[60vh] max-w-md overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-relaxed text-slate-100 shadow-2xl ${position.ready ? "opacity-100" : "opacity-0"}`}
+            style={{ top: position.top, left: position.left }}
+          >
+            {text}
+          </span>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <span
+      ref={triggerRef}
+      className="block min-w-0"
+      onMouseEnter={() => {
+        setPosition((prev) => ({ ...prev, ready: false }));
+        setOpen(true);
+      }}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => {
+        setPosition((prev) => ({ ...prev, ready: false }));
+        setOpen(true);
+      }}
+      onBlur={() => setOpen(false)}
+      tabIndex={0}
+    >
+      <span className="block truncate">{text}</span>
+      {tooltip}
+    </span>
+  );
+}
+
+function PostManualMetricsEditor({
+  post,
+  isSaving,
+  onSave,
+}: {
+  post: any;
+  isSaving: boolean;
+  onSave: (payload: {
+    manualOwnViews?: number;
+    manualOwnReactions?: number;
+    excludeFromAnalytics?: boolean;
+  }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [manualOwnViews, setManualOwnViews] = useState(
+    String(post.manualOwnViews ?? 0),
+  );
+  const [manualOwnReactions, setManualOwnReactions] = useState(
+    String(post.manualOwnReactions ?? 0),
+  );
+
+  useEffect(() => {
+    setManualOwnViews(String(post.manualOwnViews ?? 0));
+    setManualOwnReactions(String(post.manualOwnReactions ?? 0));
+  }, [post.manualOwnReactions, post.manualOwnViews]);
+
+  const ownViews = toNumber(post.manualOwnViews);
+  const ownReactions = toNumber(post.manualOwnReactions);
+  const hasCorrection = ownViews > 0 || ownReactions > 0;
+  const save = () =>
+    {
+      onSave({
+      manualOwnViews: Math.max(0, toNumber(manualOwnViews)),
+      manualOwnReactions: Math.max(0, toNumber(manualOwnReactions)),
+      excludeFromAnalytics: true,
+      });
+      setOpen(false);
+    };
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        {hasCorrection ? (
+          <div className="min-w-0 space-y-1 text-xs text-slate-300">
+            <p className="flex items-center gap-1 whitespace-nowrap">
+              <Eye size={13} className="text-slate-500" />
+              {formatNumber(ownViews)}
+            </p>
+            <p className="flex items-center gap-1 whitespace-nowrap">
+              <Smile size={13} className="text-slate-500" />
+              {formatNumber(ownReactions)}
+            </p>
+          </div>
+        ) : (
+          <span className="text-slate-500">-</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800"
+          title="Edit manual correction"
+        >
+          <Pencil size={15} />
+        </button>
+      </div>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Manual correction"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FormField label="Own views">
+              <Input
+                type="number"
+                min={0}
+                value={manualOwnViews}
+                onChange={(event) => setManualOwnViews(event.target.value)}
+              />
+            </FormField>
+            <FormField label="Own reactions">
+              <Input
+                type="number"
+                min={0}
+                value={manualOwnReactions}
+                onChange={(event) => setManualOwnReactions(event.target.value)}
+              />
+            </FormField>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={isSaving} onClick={save}>
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
 

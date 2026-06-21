@@ -26,6 +26,17 @@ body {
   overflow-x: hidden;
 }
 
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 .app-scrollbar {
   scrollbar-color: #3a3a3a transparent;
   scrollbar-width: thin;

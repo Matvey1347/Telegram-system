@@ -20,6 +20,7 @@ import {
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
   UpdateTelegramChannelDto,
+  UpdateTelegramPostManualMetricsDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
 
@@ -49,6 +50,31 @@ export class TelegramChannelsController {
     @Body() dto: UpdateTelegramChannelDto,
   ) {
     return this.service.update(user.sub, id, dto);
+  }
+  @Get(':id/audience') audience(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.audience(user.sub, id);
+  }
+  @Post(':id/audience-snapshot') createAudienceSnapshot(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.createAudienceSnapshot(user.sub, id, 'manual');
+  }
+  @Get(':id/audience-snapshots') audienceSnapshots(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.audienceSnapshots(user.sub, id, Number(limit || 50));
+  }
+  @Get(':id/financial-summary') financialSummary(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.financialSummary(user.sub, id);
   }
   @Delete(':id') remove(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.remove(user.sub, id);
@@ -139,6 +165,20 @@ export class TelegramChannelsController {
       id,
       Number(limit || 50),
       Number(offset || 0),
+    );
+  }
+  @Patch(':channelId/posts/:postId/manual-metrics')
+  updatePostManualMetrics(
+    @CurrentUser() user: JwtUser,
+    @Param('channelId') channelId: string,
+    @Param('postId') postId: string,
+    @Body() dto: UpdateTelegramPostManualMetricsDto,
+  ) {
+    return this.service.updatePostManualMetrics(
+      user.sub,
+      channelId,
+      postId,
+      dto,
     );
   }
 }

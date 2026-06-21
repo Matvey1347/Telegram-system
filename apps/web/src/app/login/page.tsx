@@ -29,12 +29,12 @@ export default function LoginPage() {
       }
 
       if (axios.isAxiosError(error)) {
-        if (error.response.status === 401) {
+        if (error.response?.status === 401) {
           setError('Invalid email or password');
           return;
         }
 
-        const message = typeof error.response.data?.message === 'string' ? error.response.data.message : '';
+        const message = typeof error.response?.data?.message === 'string' ? error.response.data.message : '';
         setError(message || 'Sign in failed. Please try again.');
         return;
       }

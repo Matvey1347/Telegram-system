@@ -102,72 +102,73 @@ model User {
 }
 
 model Workspace {
-  id                String   @id @default(cuid())
-  name              String
-  primaryCurrency   String   @default("USD") @db.VarChar(3)
-  secondaryCurrency String   @default("UAH") @db.VarChar(3)
+  id                  String              @id @default(cuid())
+  name                String
+  primaryCurrency     String              @default("USD") @db.VarChar(3)
+  secondaryCurrency   String              @default("UAH") @db.VarChar(3)
   currencyDisplayMode CurrencyDisplayMode @default(code)
-  avatarIconId      String?
+  avatarIconId        String?
 
-  members            WorkspaceMember[]
-  accounts           Account[]
-  transactions       Transaction[]
-  transfers          Transfer[]
-  telegramChannels   TelegramChannel[]
-  telegramBotIntegrations TelegramBotIntegration[]
-  telegramUserAccountIntegrations TelegramUserAccountIntegration[]
-  telegramChannelAdminLinks TelegramChannelAdminLink[]
-  telegramChannelSourceAccesses TelegramChannelSourceAccess[]
-  telegramChannelDataSources TelegramChannelDataSource[]
-  telegramChannelStatsSnapshots TelegramChannelStatsSnapshot[]
-  telegramChannelStatsPoints TelegramChannelStatsPoint[]
-  telegramPosts      TelegramPost[]
-  promos             Promo[]
-  advertisingSources AdvertisingSource[]
-  adCampaigns        AdCampaign[]
-  exchangeRates      ExchangeRate[]
-  investments        Investment[]
-  transactionCategories TransactionCategory[]
-  icons              Icon[]
-  avatarIcon         Icon? @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
+  members                          WorkspaceMember[]
+  accounts                         Account[]
+  transactions                     Transaction[]
+  transfers                        Transfer[]
+  telegramChannels                 TelegramChannel[]
+  telegramBotIntegrations          TelegramBotIntegration[]
+  telegramUserAccountIntegrations  TelegramUserAccountIntegration[]
+  telegramChannelAdminLinks        TelegramChannelAdminLink[]
+  telegramChannelSourceAccesses    TelegramChannelSourceAccess[]
+  telegramChannelDataSources       TelegramChannelDataSource[]
+  telegramChannelStatsSnapshots    TelegramChannelStatsSnapshot[]
+  telegramChannelAudienceSnapshots TelegramChannelAudienceSnapshot[]
+  telegramChannelStatsPoints       TelegramChannelStatsPoint[]
+  telegramPosts                    TelegramPost[]
+  promos                           Promo[]
+  advertisingSources               AdvertisingSource[]
+  adCampaigns                      AdCampaign[]
+  exchangeRates                    ExchangeRate[]
+  investments                      Investment[]
+  transactionCategories            TransactionCategory[]
+  icons                            Icon[]
+  avatarIcon                       Icon?                             @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model TelegramUserAccountIntegration {
-  id               String                    @id @default(cuid())
-  workspaceId      String
-  label            String
-  apiId            String
-  apiHashEncrypted String
-  apiHashIv        String
-  apiHashAuthTag   String
-  phoneMasked      String?
-  phoneEncrypted   String?
-  phoneIv          String?
-  phoneAuthTag     String?
-  telegramUserId   String?
-  username         String?
-  firstName        String?
-  lastName         String?
-  photoUrl         String?
-  nameColor        Int?
-  status           TelegramUserAccountStatus @default(pending)
-  lastErrorMessage String?
-  lastCheckedAt    DateTime?
-  lastSyncedAt     DateTime?
-  isActive         Boolean                   @default(true)
-  sessionEncrypted String?
-  sessionIv        String?
-  sessionAuthTag   String?
-  loginPhoneCodeHash String?
+  id                        String                    @id @default(cuid())
+  workspaceId               String
+  label                     String
+  apiId                     String
+  apiHashEncrypted          String
+  apiHashIv                 String
+  apiHashAuthTag            String
+  phoneMasked               String?
+  phoneEncrypted            String?
+  phoneIv                   String?
+  phoneAuthTag              String?
+  telegramUserId            String?
+  username                  String?
+  firstName                 String?
+  lastName                  String?
+  photoUrl                  String?
+  nameColor                 Int?
+  status                    TelegramUserAccountStatus @default(pending)
+  lastErrorMessage          String?
+  lastCheckedAt             DateTime?
+  lastSyncedAt              DateTime?
+  isActive                  Boolean                   @default(true)
+  sessionEncrypted          String?
+  sessionIv                 String?
+  sessionAuthTag            String?
+  loginPhoneCodeHash        String?
   loginTempSessionEncrypted String?
-  loginTempSessionIv String?
-  loginTempSessionAuthTag String?
-  loginStartedAt   DateTime?
+  loginTempSessionIv        String?
+  loginTempSessionAuthTag   String?
+  loginStartedAt            DateTime?
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace         Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   channelAdminLinks TelegramChannelAdminLink[]
 
   createdAt DateTime @default(now())
@@ -181,8 +182,8 @@ model TelegramChannelAdminLink {
   telegramUserAccountIntegrationId String
   source                           String @default("mtproto")
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  workspace                      Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel                TelegramChannel                @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   telegramUserAccountIntegration TelegramUserAccountIntegration @relation(fields: [telegramUserAccountIntegrationId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -195,23 +196,23 @@ model TelegramChannelAdminLink {
 
 model TelegramChannelSourceAccess {
   id                   String                    @id @default(cuid())
-  workspaceId           String
-  channelId             String
-  sourceId              String
-  sourceType            TelegramSourceType
+  workspaceId          String
+  channelId            String
+  sourceId             String
+  sourceType           TelegramSourceType
   role                 TelegramChannelSourceRole @default(UNKNOWN)
-  canPostMessages       Boolean                   @default(false)
-  canEditMessages       Boolean                   @default(false)
-  canDeleteMessages     Boolean                   @default(false)
-  canInviteUsers        Boolean                   @default(false)
-  canManageInviteLinks  Boolean                   @default(false)
-  canViewStats          Boolean                   @default(false)
-  rawPermissions        Json?
-  lastCheckedAt         DateTime?
-  createdAt             DateTime                  @default(now())
-  updatedAt             DateTime                  @updatedAt
+  canPostMessages      Boolean                   @default(false)
+  canEditMessages      Boolean                   @default(false)
+  canDeleteMessages    Boolean                   @default(false)
+  canInviteUsers       Boolean                   @default(false)
+  canManageInviteLinks Boolean                   @default(false)
+  canViewStats         Boolean                   @default(false)
+  rawPermissions       Json?
+  lastCheckedAt        DateTime?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   channel   TelegramChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@unique([channelId, sourceId, sourceType])
@@ -234,7 +235,7 @@ model TelegramChannelDataSource {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   channel   TelegramChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, channelId])
@@ -248,9 +249,9 @@ model WorkspaceMember {
   userId      String
   role        WorkspaceRole @default(admin)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  investments Investment[]
+  workspace              Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  investments            Investment[]
   investmentTransactions Transaction[] @relation("MemberInvestmentTransactions")
 
   createdAt DateTime @default(now())
@@ -260,20 +261,20 @@ model WorkspaceMember {
 }
 
 model Account {
-  id             String   @id @default(cuid())
+  id             String  @id @default(cuid())
   workspaceId    String
   name           String
-  currency       String   @db.VarChar(3)
-  initialBalance Decimal  @default(0)
-  isActive       Boolean  @default(true)
+  currency       String  @db.VarChar(3)
+  initialBalance Decimal @default(0)
+  isActive       Boolean @default(true)
   iconId         String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   icon      Icon?     @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   transactions      Transaction[]
-  outgoingTransfers Transfer[] @relation("OutgoingTransfers")
-  incomingTransfers Transfer[] @relation("IncomingTransfers")
+  outgoingTransfers Transfer[]    @relation("OutgoingTransfers")
+  incomingTransfers Transfer[]    @relation("IncomingTransfers")
   adCampaigns       AdCampaign[]
   investments       Investment[]
 
@@ -283,8 +284,8 @@ model Account {
 
 model Transaction {
   id                      String          @id @default(cuid())
-  workspaceId              String
-  accountId                String
+  workspaceId             String
+  accountId               String
   type                    TransactionType
   amount                  Decimal
   currency                String          @db.VarChar(3)
@@ -302,11 +303,11 @@ model Transaction {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   account   Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
 
-  adCampaign AdCampaign? @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
-  investment Investment?
+  adCampaign  AdCampaign?          @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
+  investment  Investment?
   categoryRef TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  member WorkspaceMember? @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
-  icon Icon? @relation(fields: [iconId], references: [id], onDelete: SetNull)
+  member      WorkspaceMember?     @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
+  icon        Icon?                @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -326,9 +327,9 @@ model TransactionCategory {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  transactions Transaction[]  @relation
-  icon        Icon?           @relation(fields: [iconId], references: [id], onDelete: SetNull)
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions Transaction[] @relation
+  icon         Icon?         @relation(fields: [iconId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, type, key])
   @@index([workspaceId, type])
@@ -348,28 +349,28 @@ model Investment {
   notes                   String?
   createdByUserId         String?
 
-  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceMember WorkspaceMember @relation(fields: [workspaceMemberId], references: [id], onDelete: Restrict)
-  account     Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  account         Account         @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transaction     Transaction?    @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Transfer {
-  id                  String    @id @default(cuid())
+  id                   String   @id @default(cuid())
   workspaceId          String
   fromAccountId        String
   toAccountId          String
   fromAmount           Decimal
-  fromCurrency         String    @db.VarChar(3)
+  fromCurrency         String   @db.VarChar(3)
   toAmount             Decimal
-  toCurrency           String    @db.VarChar(3)
+  toCurrency           String   @db.VarChar(3)
   exchangeRate         Decimal?
   expectedToAmount     Decimal?
   transferLossAmount   Decimal?
-  transferLossCurrency String?   @db.VarChar(3)
+  transferLossCurrency String?  @db.VarChar(3)
   date                 DateTime
   description          String?
   createdByUserId      String?
@@ -384,36 +385,43 @@ model Transfer {
 
 model TelegramChannel {
   id                      String   @id @default(cuid())
-  workspaceId              String
+  workspaceId             String
   title                   String
   username                String?
-  telegramChatId           String?
+  telegramChatId          String?
   inviteLink              String?
   description             String?
   language                String?
   niche                   String?
   currentSubscribersCount Int?
+  seedSubscribersCount    Int      @default(0)
+  activeSubscribersWindow Int      @default(5)
+  targetCpa               Decimal?
+  acceptableCpa           Decimal?
+  stopCpa                 Decimal?
+  kpiCurrency             String?  @db.VarChar(3)
   isActive                Boolean  @default(true)
 
-  photoSmallFileId        String?
-  photoBigFileId          String?
-  photoUrl                String?
-  sourceType              String?  @default("telegram")
-  lastPublicSyncedAt      DateTime?
+  photoSmallFileId   String?
+  photoBigFileId     String?
+  photoUrl           String?
+  sourceType         String?   @default("telegram")
+  lastPublicSyncedAt DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  promos      Promo[]
-  adCampaigns AdCampaign[]
-  adPlacements AdCampaignTelegramChannelPlacement[]
-  inviteLinks TelegramInviteLink[]
-  dailyStats  TelegramChannelDailyStats[]
-  adminLinks TelegramChannelAdminLink[]
-  sourceAccesses TelegramChannelSourceAccess[]
-  dataSources TelegramChannelDataSource[]
-  posts       TelegramPost[]
-  statsSnapshots TelegramChannelStatsSnapshot[]
-  statsPoints TelegramChannelStatsPoint[]
+  promos            Promo[]
+  adCampaigns       AdCampaign[]
+  adPlacements      AdCampaignTelegramChannelPlacement[]
+  inviteLinks       TelegramInviteLink[]
+  dailyStats        TelegramChannelDailyStats[]
+  adminLinks        TelegramChannelAdminLink[]
+  sourceAccesses    TelegramChannelSourceAccess[]
+  dataSources       TelegramChannelDataSource[]
+  posts             TelegramPost[]
+  statsSnapshots    TelegramChannelStatsSnapshot[]
+  audienceSnapshots TelegramChannelAudienceSnapshot[]
+  statsPoints       TelegramChannelStatsPoint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -457,8 +465,8 @@ model TelegramChannelStatsSnapshot {
 
   createdAt DateTime @default(now())
 
-  @@index([workspaceId, telegramChannelId, syncedAt])
   @@unique([telegramChannelId, snapshotDate])
+  @@index([workspaceId, telegramChannelId, syncedAt])
 }
 
 model TelegramChannelStatsPoint {
@@ -484,10 +492,33 @@ model TelegramChannelStatsPoint {
   @@index([workspaceId, telegramChannelId, date])
 }
 
+model TelegramChannelAudienceSnapshot {
+  id                        String   @id @default(cuid())
+  workspaceId               String
+  telegramChannelId         String
+  collectedAt               DateTime @default(now())
+  subscribersCount          Int?
+  activeSubscribersEstimate Int?
+  viewRate                  Float?
+  avgViewsRaw               Float?
+  avgViewsAdjusted          Float?
+  avgReactionsRaw           Float?
+  avgReactionsAdjusted      Float?
+  postsWindow               Int
+  source                    String   @default("sync")
+  createdAt                 DateTime @default(now())
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, telegramChannelId, collectedAt])
+  @@index([telegramChannelId, collectedAt])
+}
+
 model Promo {
   id                String      @id @default(cuid())
-  workspaceId        String
-  telegramChannelId  String
+  workspaceId       String
+  telegramChannelId String
   title             String
   text              String
   angle             String?
@@ -505,7 +536,7 @@ model Promo {
 
 model AdvertisingSource {
   id               String                @id @default(cuid())
-  workspaceId       String
+  workspaceId      String
   name             String
   type             AdvertisingSourceType @default(telegram_channel)
   url              String?
@@ -517,7 +548,7 @@ model AdvertisingSource {
   subscribersCount Int                   @default(0)
   channelTags      String[]              @default([])
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace         Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adCampaignsLegacy AdCampaign[]
   adCampaigns       AdCampaignAdvertisingChannel[]
 
@@ -526,33 +557,33 @@ model AdvertisingSource {
 }
 
 model AdCampaign {
-  id                      String         @id @default(cuid())
-  workspaceId              String
-  telegramChannelId        String
-  advertisingSourceId      String?
-  promoId                  String?
-  accountId                String?
+  id                  String  @id @default(cuid())
+  workspaceId         String
+  telegramChannelId   String
+  advertisingSourceId String?
+  promoId             String?
+  accountId           String?
 
-  title                    String
-  status                   CampaignStatus @default(planned)
-  price                    Decimal
-  currency                 String         @db.VarChar(3)
-  priceInPrimaryCurrency   Decimal
-  exchangeRateToPrimary    Decimal
-  inviteLink               String?
-  telegramInviteLinkId     String?
-  sourcePostUrl            String?
-  sourcePostViews          Int?
-  startedAt                DateTime?
-  endedAt                  DateTime?
-  placementDate            DateTime?
-  joinedCount              Int            @default(0)
-  leftCount                Int?
-  netGrowthCount           Int?
-  cpa                      Decimal?
-  cpm                      Decimal?
-  notes                    String?
-  createdByUserId          String?
+  title                  String
+  status                 CampaignStatus @default(planned)
+  price                  Decimal
+  currency               String         @db.VarChar(3)
+  priceInPrimaryCurrency Decimal
+  exchangeRateToPrimary  Decimal
+  inviteLink             String?
+  telegramInviteLinkId   String?
+  sourcePostUrl          String?
+  sourcePostViews        Int?
+  startedAt              DateTime?
+  endedAt                DateTime?
+  placementDate          DateTime?
+  joinedCount            Int            @default(0)
+  leftCount              Int?
+  netGrowthCount         Int?
+  cpa                    Decimal?
+  cpm                    Decimal?
+  notes                  String?
+  createdByUserId        String?
 
   workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel   TelegramChannel    @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
@@ -560,23 +591,23 @@ model AdCampaign {
   promo             Promo?             @relation(fields: [promoId], references: [id], onDelete: SetNull)
   account           Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
-  expenseTransaction Transaction? @relation("CampaignExpenseTransaction")
-  advertisingChannels AdCampaignAdvertisingChannel[]
+  expenseTransaction          Transaction?                         @relation("CampaignExpenseTransaction")
+  advertisingChannels         AdCampaignAdvertisingChannel[]
   advertisingTelegramChannels AdCampaignTelegramChannelPlacement[]
 
-  inviteLinks      TelegramInviteLink[]
+  inviteLinks TelegramInviteLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model AdCampaignAdvertisingChannel {
-  id String @id @default(cuid())
-  adCampaignId String
+  id                  String   @id @default(cuid())
+  adCampaignId        String
   advertisingSourceId String
-  createdAt DateTime @default(now())
+  createdAt           DateTime @default(now())
 
-  adCampaign AdCampaign @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+  adCampaign        AdCampaign        @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
   advertisingSource AdvertisingSource @relation(fields: [advertisingSourceId], references: [id], onDelete: Cascade)
 
   @@unique([adCampaignId, advertisingSourceId])
@@ -584,7 +615,7 @@ model AdCampaignAdvertisingChannel {
 }
 
 model AdCampaignTelegramChannelPlacement {
-  id                String @id @default(cuid())
+  id                String   @id @default(cuid())
   adCampaignId      String
   telegramChannelId String
   createdAt         DateTime @default(now())
@@ -598,12 +629,12 @@ model AdCampaignTelegramChannelPlacement {
 
 model TelegramInviteLink {
   id                   String    @id @default(cuid())
-  workspaceId           String
-  telegramChannelId     String
-  adCampaignId          String?
+  workspaceId          String
+  telegramChannelId    String
+  adCampaignId         String?
   name                 String
   url                  String
-  telegramInviteLinkId  String?
+  telegramInviteLinkId String?
   createdBy            String?
   createsJoinRequest   Boolean?
   expireDate           DateTime?
@@ -620,44 +651,47 @@ model TelegramInviteLink {
 }
 
 model TelegramBotIntegration {
-  id                 String   @id @default(cuid())
-  workspaceId        String
-  label              String
-  botTokenEncrypted  String
-  botTokenIv         String
-  botTokenAuthTag    String
-  botTokenMasked     String
-  botId              String?
-  username           String?
-  firstName          String?
-  lastErrorMessage   String?
-  lastCheckedAt      DateTime?
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                String    @id @default(cuid())
+  workspaceId       String
+  label             String
+  botTokenEncrypted String
+  botTokenIv        String
+  botTokenAuthTag   String
+  botTokenMasked    String
+  botId             String?
+  username          String?
+  firstName         String?
+  lastErrorMessage  String?
+  lastCheckedAt     DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model TelegramPost {
-  id                       String   @id @default(cuid())
-  workspaceId              String
-  telegramChannelId        String
-  telegramMessageId        String
-  text                     String?
-  postDate                 DateTime
-  viewsCount               Int?
-  forwardsCount            Int?
-  reactionsCount           Int?
-  commentsCount            Int?
-  reactions                Json?
-  rawMessage               Json?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  telegramChannelId    String
+  telegramMessageId    String
+  text                 String?
+  postDate             DateTime
+  viewsCount           Int?
+  forwardsCount        Int?
+  reactionsCount       Int?
+  commentsCount        Int?
+  manualOwnViews       Int      @default(0)
+  manualOwnReactions   Int      @default(0)
+  excludeFromAnalytics Boolean  @default(false)
+  reactions            Json?
+  rawMessage           Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  workspace              Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  telegramChannel       TelegramChannel          @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
-  metricSnapshots       TelegramPostMetricSnapshot[]
+  workspace       Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel              @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  metricSnapshots TelegramPostMetricSnapshot[]
 
   @@unique([telegramChannelId, telegramMessageId])
   @@index([telegramChannelId, postDate])
@@ -681,9 +715,9 @@ model TelegramPostMetricSnapshot {
 
 model ExchangeRate {
   id             String   @id @default(cuid())
-  workspaceId     String
-  baseCurrency    String   @db.VarChar(3)
-  targetCurrency  String   @db.VarChar(3)
+  workspaceId    String
+  baseCurrency   String   @db.VarChar(3)
+  targetCurrency String   @db.VarChar(3)
   rate           Decimal
   date           DateTime
   source         String?
@@ -697,26 +731,26 @@ model ExchangeRate {
 }
 
 model Icon {
-  id             String   @id @default(cuid())
-  workspaceId    String?
-  type           IconType
-  name           String
-  emoji          String?
-  imageUrl       String?
+  id              String   @id @default(cuid())
+  workspaceId     String?
+  type            IconType
+  name            String
+  emoji           String?
+  imageUrl        String?
   createdByUserId String?
 
-  workspace      Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
-  createdByUser  User?      @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  workspaceAvatars Workspace[] @relation("WorkspaceAvatarIcon")
-  accounts       Account[]
-  transactions   Transaction[]
+  workspace             Workspace?            @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  createdByUser         User?                 @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workspaceAvatars      Workspace[]           @relation("WorkspaceAvatarIcon")
+  accounts              Account[]
+  transactions          Transaction[]
   transactionCategories TransactionCategory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([workspaceId, type, name])
   @@index([workspaceId, name, type])
   @@index([workspaceId, type])
   @@index([createdByUserId])
-  @@unique([workspaceId, type, name])
 }

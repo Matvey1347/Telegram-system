@@ -20,6 +20,7 @@ import {
   type AdvertisingChannel,
   type ImportedTelegramSource,
   type TelegramChannel,
+  type TelegramChannelFinancialSummary,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import {
@@ -62,6 +63,23 @@ function formatNumber(value: unknown, decimals = 0) {
     maximumFractionDigits: decimals,
     minimumFractionDigits: decimals,
   });
+}
+
+function formatNullableNumber(value: unknown, decimals = 0) {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  return formatNumber(value, decimals);
+}
+
+function formatPercent(value: unknown, decimals = 1) {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  return `${formatNumber(value, decimals)}%`;
+}
+
+function kpiBadgeClass(status?: TelegramChannelFinancialSummary["kpiStatus"]) {
+  if (status === "good") return "border-emerald-700 text-emerald-200";
+  if (status === "acceptable") return "border-yellow-700 text-yellow-200";
+  if (status === "bad") return "border-rose-700 text-rose-200";
+  return "border-slate-700 text-slate-300";
 }
 
 function formatLocalDate(value?: string | Date | null) {
@@ -207,6 +225,72 @@ function ChannelSourcesSummary({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
+  const { data: audience, isLoading: audienceLoading } = useQuery({
+    queryKey: ["telegram-channel-audience", channel.id],
+    queryFn: () => telegramChannelsApi.audience(channel.id),
+  });
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: ["telegram-channel-financial-summary", channel.id],
+    queryFn: () => telegramChannelsApi.financialSummary(channel.id),
+  });
+  const loading = audienceLoading || summaryLoading;
+  const currency = summary?.kpiCurrency || channel.kpiCurrency || "";
+  return (
+    <div className="mt-3 rounded-md border border-slate-800 bg-slate-900/30 p-3">
+      {loading ? (
+        <p className="text-xs text-slate-400">Loading analytics...</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <MiniStat
+            label="Subscribers"
+            value={formatNumber(
+              audience?.subscribersCount ?? channel.currentSubscribersCount,
+            )}
+          />
+          <MiniStat
+            label="Active estimate"
+            value={formatNullableNumber(audience?.activeSubscribersEstimate)}
+          />
+          <MiniStat
+            label="View rate"
+            value={formatPercent(audience?.viewRate, 1)}
+          />
+          <MiniStat
+            label="Spend"
+            value={`${formatNumber(summary?.totalAdSpend, 2)} ${currency}`}
+          />
+          <MiniStat
+            label="Avg CPA"
+            value={
+              summary?.avgCpa == null
+                ? "-"
+                : `${formatNumber(summary.avgCpa, 2)} ${currency}`
+            }
+          />
+          <div>
+            <p className="text-slate-500">KPI</p>
+            <span
+              className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
+            >
+              {summary?.kpiLabel || "-"}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-slate-500">{label}</p>
+      <p className="mt-0.5 truncate font-medium text-slate-100">{value}</p>
     </div>
   );
 }
@@ -645,6 +729,7 @@ export default function TelegramChannelsPage() {
                       )}
                     </p>
                   </div>
+                  <ChannelFinanceMiniSummary channel={channel} />
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
                       channelId={channel.id}
