@@ -249,13 +249,15 @@ model TelegramChannelDataSource {
 }
 
 model WorkspaceMember {
-  id          String        @id @default(cuid())
-  workspaceId String
-  userId      String
-  role        WorkspaceRole @default(admin)
+  id           String        @id @default(cuid())
+  workspaceId  String
+  userId       String
+  role         WorkspaceRole @default(admin)
+  avatarIconId String?
 
   workspace              Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatarIcon             Icon?         @relation(fields: [avatarIconId], references: [id], onDelete: SetNull)
   investments            Investment[]
   investmentTransactions Transaction[] @relation("MemberInvestmentTransactions")
 
@@ -903,6 +905,7 @@ model Icon {
   workspace             Workspace?            @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   createdByUser         User?                 @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   workspaceAvatars      Workspace[]           @relation("WorkspaceAvatarIcon")
+  workspaceMembers      WorkspaceMember[]
   accounts              Account[]
   transactions          Transaction[]
   transactionCategories TransactionCategory[]

@@ -24,9 +24,18 @@ export class CreateWorkspaceMemberDto {
   @IsOptional()
   @IsEnum(WorkspaceRole)
   role?: WorkspaceRole;
+
+  @IsOptional()
+  @IsString()
+  avatarIconId?: string | null;
 }
 
 export class UpdateWorkspaceMemberDto {
+  @IsOptional()
   @IsEnum(WorkspaceRole)
-  role!: WorkspaceRole;
+  role?: WorkspaceRole;
+
+  @IsOptional()
+  @IsString()
+  avatarIconId?: string | null;
 }

@@ -47,13 +47,25 @@ export class WorkspaceMembersService {
     });
   }
 
+  private async assertAvatarIcon(workspaceId: string, avatarIconId?: string | null) {
+    if (avatarIconId === undefined || avatarIconId === null) return;
+    const icon = await this.prisma.icon.findFirst({
+      where: { id: avatarIconId, workspaceId },
+      select: { id: true },
+    });
+    if (!icon) throw new NotFoundException('Avatar image not found');
+  }
+
   async list(userId: string) {
     const membership =
       await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
     const [rows, investments] = await Promise.all([
       this.prisma.workspaceMember.findMany({
         where: { workspaceId: membership.workspaceId },
-        include: { user: { select: { id: true, email: true, name: true } } },
+        include: {
+          user: { select: { id: true, email: true, name: true } },
+          avatarIcon: true,
+        },
         orderBy: { createdAt: 'asc' },
       }),
       this.investmentTransactions(membership.workspaceId),
@@ -152,6 +164,7 @@ export class WorkspaceMembersService {
     if (role === WorkspaceRole.owner && current.role !== WorkspaceRole.owner) {
       throw new ForbiddenException('Only owner can add owner role');
     }
+    await this.assertAvatarIcon(current.workspaceId, dto.avatarIconId);
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -183,8 +196,16 @@ export class WorkspaceMembersService {
       throw new ConflictException('User is already a member of this workspace');
 
     const created = await this.prisma.workspaceMember.create({
-      data: { workspaceId: current.workspaceId, userId: user.id, role },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      data: {
+        workspaceId: current.workspaceId,
+        userId: user.id,
+        role,
+        avatarIconId: dto.avatarIconId ?? null,
+      },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+        avatarIcon: true,
+      },
     });
 
     return {
@@ -208,7 +229,7 @@ export class WorkspaceMembersService {
       if (member.role !== WorkspaceRole.member) {
         throw new ForbiddenException('Admin cannot edit owner/admin');
       }
-      if (dto.role !== WorkspaceRole.member) {
+      if (dto.role !== undefined && dto.role !== WorkspaceRole.member) {
         throw new ForbiddenException('Admin can only assign member role');
       }
     }
@@ -221,6 +242,7 @@ export class WorkspaceMembersService {
     }
 
     if (
+      dto.role !== undefined &&
       member.role === WorkspaceRole.owner &&
       dto.role !== WorkspaceRole.owner
     ) {
@@ -230,11 +252,19 @@ export class WorkspaceMembersService {
       if (ownersCount <= 1)
         throw new ForbiddenException('Cannot demote the last owner');
     }
+    await this.assertAvatarIcon(current.workspaceId, dto.avatarIconId);
 
     const updated = await this.prisma.workspaceMember.update({
       where: { id: memberId },
-      data: { role: dto.role },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      data: {
+        role: dto.role,
+        avatarIconId:
+          dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
+      },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+        avatarIcon: true,
+      },
     });
     return this.toResponse(updated, userId);
   }

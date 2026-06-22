@@ -75,6 +75,8 @@ export type AccountMe = { id: string; email: string; name: string; createdAt: st
 export type WorkspaceMember = {
   id: string;
   role: WorkspaceRole;
+  avatarIconId?: string | null;
+  avatarIcon?: Icon | null;
   createdAt: string;
   user: User;
   isCurrentUser: boolean;

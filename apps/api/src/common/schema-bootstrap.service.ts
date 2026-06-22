@@ -112,5 +112,10 @@ ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 ALTER TABLE "TransactionCategory"
 ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "WorkspaceMember"
+ADD COLUMN IF NOT EXISTS "avatarIconId" TEXT;
+`);
   }
 }
