@@ -16,7 +16,13 @@ function resolveApiBaseUrl() {
 export const api = axios.create({ baseURL: resolveApiBaseUrl(), withCredentials: true });
 
 export function isApiNetworkError(error: unknown) {
-  return axios.isAxiosError(error) && (!error.response || error.code === 'ERR_NETWORK');
+  return (
+    axios.isAxiosError(error) &&
+    !error.response &&
+    (error.code === 'ERR_NETWORK' ||
+      error.code === 'ERR_FAILED' ||
+      error.code == null)
+  );
 }
 
 api.interceptors.request.use((config) => {
@@ -35,7 +41,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error?.response?.status === 401 && typeof window !== 'undefined') {
+    if (
+      axios.isAxiosError(error) &&
+      error.response?.status === 401 &&
+      typeof window !== 'undefined'
+    ) {
       clearAccessToken();
       if (!['/login', '/register'].includes(window.location.pathname)) window.location.href = '/login';
     }
@@ -83,7 +93,7 @@ export type TransactionCategory = { id: string; name: string; type: TransactionT
 export type Transaction = { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
 export type Transfer = { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
 export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
-export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; targetCpa?: number | string | null; acceptableCpa?: number | string | null; stopCpa?: number | string | null; kpiCurrency?: string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean };
+export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpa?: number | string | null; acceptableCpa?: number | string | null; stopCpa?: number | string | null; kpiCurrency?: string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean };
 export type TelegramPost = {
   id: string;
   telegramChannelId: string;
@@ -101,15 +111,29 @@ export type TelegramPost = {
 };
 export type TelegramChannelAudience = {
   subscribersCount: number | null;
+  knownFakeSubscribersCount?: number;
+  effectiveSubscribersCount?: number | null;
+  subscriberBaseQuality?: string | null;
   seedSubscribersCount: number;
+  rawActiveSubscribersEstimate?: number | null;
   activeSubscribersEstimate: number | null;
+  cappedActiveSubscribersEstimate?: number | null;
   organicActiveSubscribersEstimate: number | null;
   paidActiveSubscribersEstimate: number | null;
+  rawViewRate?: number | null;
   viewRate: number | null;
+  cappedViewRate?: number | null;
   avgViewsRaw: number | null;
   avgViewsAdjusted: number | null;
   avgReactionsRaw: number | null;
   avgReactionsAdjusted: number | null;
+  rawAvgViews?: number | null;
+  rawAvgReactions?: number | null;
+  dataQuality?: string | null;
+  dataQualityReason?: string | null;
+  dataQualityWarning?: string | null;
+  hasExternalTrafficAnomaly?: boolean;
+  hasSubscriberBasePollution?: boolean;
   postsWindow: number;
   postsUsed: number;
 };
@@ -125,6 +149,16 @@ export type TelegramChannelAudienceSnapshot = {
   avgViewsAdjusted?: number | null;
   avgReactionsRaw?: number | null;
   avgReactionsAdjusted?: number | null;
+  rawAvgViews?: number | null;
+  rawAvgReactions?: number | null;
+  rawViewRate?: number | null;
+  effectiveSubscribersCount?: number | null;
+  cappedActiveSubscribersEstimate?: number | null;
+  cappedViewRate?: number | null;
+  dataQuality?: string | null;
+  dataQualityReason?: string | null;
+  hasExternalTrafficAnomaly?: boolean;
+  hasSubscriberBasePollution?: boolean;
   postsWindow: number;
   source: string;
   createdAt: string;
@@ -139,6 +173,11 @@ export type TelegramChannelFinancialSummary = {
   activeCpa: number | null;
   avgActiveRate?: number | null;
   avgRetention7d?: number | null;
+  dataQuality?: string | null;
+  dataQualityReason?: string | null;
+  dataQualityWarning?: string | null;
+  hasExternalTrafficAnomaly?: boolean;
+  hasSubscriberBasePollution?: boolean;
   kpiStatus: 'good' | 'acceptable' | 'bad' | 'unknown';
   kpiLabel: string;
   kpiCurrency?: string | null;
@@ -318,6 +357,17 @@ export type AdCampaignAnalyticsInput = {
 };
 export type AdCampaignAnalyticsFields = AdCampaignAnalyticsInput & {
   newSubscribers?: number | null;
+  rawActiveSubscribersFromAd?: number | null;
+  rawViewRateAfter?: number | null;
+  cappedActiveSubscribersFromAd?: number | null;
+  cappedActiveRate?: number | null;
+  cappedActiveCpa?: number | string | null;
+  cappedViewRateAfter?: number | null;
+  adDataQuality?: string | null;
+  adDataQualityReason?: string | null;
+  adDataQualityWarning?: string | null;
+  hasViewAnomaly?: boolean;
+  hasSubscriberBasePollution?: boolean;
   activeSubscribersFromAd?: number | null;
   cpa?: number | string | null;
   activeCpa?: number | string | null;
@@ -372,6 +422,10 @@ export type AdCampaignPerformanceSummary = {
   acceptableCount: number;
   badCount: number;
   unknownCount: number;
+  anomalousCount: number;
+  suspiciousCount: number;
+  pollutedCount: number;
+  normalDataCount: number;
   bestCampaigns: AdCampaign[];
   worstCampaigns: AdCampaign[];
   lastDailyAnalyticsSync?: DailyAnalyticsSyncRun | null;

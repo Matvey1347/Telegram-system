@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -28,6 +29,9 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpa?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpa?: number;
   @IsOptional() @IsString() kpiCurrency?: string | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) knownFakeSubscribersCount?: number;
+  @IsOptional() @IsIn(['normal', 'suspicious', 'polluted', 'invalid']) subscriberBaseQuality?: string;
+  @IsOptional() @IsString() dataQualityNotes?: string | null;
 }
 
 export class ImportTelegramChannelDto {

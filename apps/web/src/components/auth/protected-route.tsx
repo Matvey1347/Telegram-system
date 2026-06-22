@@ -14,6 +14,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   const isAuthPage = pathname === '/login' || pathname === '/register';
   const [mounted, setMounted] = useState(false);
   const hasShownConnectionAlertRef = useRef(false);
+  const hasConnectionIssue = Boolean(token && isApiNetworkError(error));
 
   useEffect(() => {
     setMounted(true);
@@ -22,7 +23,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!mounted) return;
 
-    if (token && isApiNetworkError(error)) {
+    if (hasConnectionIssue) {
       if (!hasShownConnectionAlertRef.current) {
         hasShownConnectionAlertRef.current = true;
         pushToast('Unable to connect to the server. Please try again later.', 'error');
@@ -31,7 +32,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
     }
 
     hasShownConnectionAlertRef.current = false;
-  }, [mounted, token, error, pushToast]);
+  }, [mounted, hasConnectionIssue, pushToast]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -53,14 +54,14 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
       return;
     }
 
-    if (token && isApiNetworkError(error)) {
+    if (hasConnectionIssue) {
       return;
     }
 
     if (!isLoading && token && !isAuthenticated) {
       router.replace('/login');
     }
-  }, [mounted, token, isLoading, isAuthenticated, isAuthPage, router, pathname, error]);
+  }, [mounted, token, isLoading, isAuthenticated, isAuthPage, router, pathname, hasConnectionIssue]);
 
   if (!mounted) {
     return <div className="flex min-h-screen items-center justify-center text-neutral-300">Loading...</div>;
@@ -71,9 +72,13 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   }
 
   if (pathname === '/login') {
-    if (token && (isLoading || isAuthenticated)) {
+    if (token && (isLoading || isAuthenticated) && !hasConnectionIssue) {
       return <div className="flex min-h-screen items-center justify-center text-neutral-300">Loading...</div>;
     }
+    return <>{children}</>;
+  }
+
+  if (hasConnectionIssue && token) {
     return <>{children}</>;
   }
 

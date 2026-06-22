@@ -401,6 +401,9 @@ model TelegramChannel {
   currentSubscribersCount Int?
   seedSubscribersCount    Int      @default(0)
   activeSubscribersWindow Int      @default(5)
+  knownFakeSubscribersCount Int    @default(0)
+  subscriberBaseQuality   String   @default("normal")
+  dataQualityNotes        String?
   targetCpa               Decimal?
   acceptableCpa           Decimal?
   stopCpa                 Decimal?
@@ -510,6 +513,16 @@ model TelegramChannelAudienceSnapshot {
   avgViewsAdjusted          Float?
   avgReactionsRaw           Float?
   avgReactionsAdjusted      Float?
+  rawAvgViews               Float?
+  rawAvgReactions           Float?
+  rawViewRate               Float?
+  effectiveSubscribersCount Int?
+  cappedActiveSubscribersEstimate Int?
+  cappedViewRate            Float?
+  dataQuality               String   @default("normal")
+  dataQualityReason         String?
+  hasExternalTrafficAnomaly Boolean  @default(false)
+  hasSubscriberBasePollution Boolean @default(false)
   postsWindow               Int
   source                    String   @default("sync")
   createdAt                 DateTime @default(now())
@@ -637,6 +650,16 @@ model AdCampaign {
   activeSubscribersFromAd Int?
   activeCpa              Decimal?
   activeRate             Float?
+  rawActiveSubscribersFromAd Int?
+  rawViewRateAfter       Float?
+  cappedActiveSubscribersFromAd Int?
+  cappedActiveRate       Float?
+  cappedActiveCpa        Decimal?
+  cappedViewRateAfter    Float?
+  adDataQuality          String   @default("normal")
+  adDataQualityReason    String?
+  hasViewAnomaly         Boolean  @default(false)
+  hasSubscriberBasePollution Boolean @default(false)
   unsub24h               Int?
   unsub48h               Int?
   unsub72h               Int?

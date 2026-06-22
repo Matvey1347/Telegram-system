@@ -1,5 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  buildDataQualityWarning,
+  calculateEffectiveSubscribers,
+  classifyViewRate,
+  maxDataQuality,
+  type DataQuality,
+} from '../common/analytics/data-quality';
 
 type KpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
 
@@ -69,6 +76,20 @@ export class AdCampaignAnalyticsService {
       newSubscribers: campaign.newSubscribers,
       avgViewsBefore: campaign.avgViewsBefore,
       avgViewsAfter: campaign.avgViewsAfter,
+      rawActiveSubscribersFromAd: campaign.rawActiveSubscribersFromAd,
+      rawViewRateAfter: campaign.rawViewRateAfter,
+      cappedActiveSubscribersFromAd: campaign.cappedActiveSubscribersFromAd,
+      cappedActiveRate: campaign.cappedActiveRate,
+      cappedActiveCpa: this.numberOrNull(campaign.cappedActiveCpa),
+      cappedViewRateAfter: campaign.cappedViewRateAfter,
+      adDataQuality: campaign.adDataQuality || 'normal',
+      adDataQualityReason: campaign.adDataQualityReason || null,
+      adDataQualityWarning: buildDataQualityWarning(
+        campaign.adDataQuality || 'normal',
+        campaign.adDataQualityReason || null,
+      ),
+      hasViewAnomaly: Boolean(campaign.hasViewAnomaly),
+      hasSubscriberBasePollution: Boolean(campaign.hasSubscriberBasePollution),
       activeSubscribersFromAd: campaign.activeSubscribersFromAd,
       cpa: this.numberOrNull(campaign.cpa),
       activeCpa: this.numberOrNull(campaign.activeCpa),
@@ -110,15 +131,37 @@ export class AdCampaignAnalyticsService {
     const after30d = this.numberOrNull(campaign.subscribersAfter30d);
     const avgViewsBefore = this.numberOrNull(campaign.avgViewsBefore);
     const avgViewsAfter = this.numberOrNull(campaign.avgViewsAfter);
+    const {
+      effectiveSubscribers,
+      subscriberBaseQuality,
+      hasSubscriberBasePollution,
+    } = calculateEffectiveSubscribers({
+      totalSubscribers: after24h,
+      knownFakeSubscribersCount: Number(
+        campaign.telegramChannel?.knownFakeSubscribersCount || 0,
+      ),
+      manualSubscriberBaseQuality: campaign.telegramChannel?.subscriberBaseQuality,
+    });
 
     const newSubscribers =
       subscribersBefore != null && after24h != null
-        ? after24h - subscribersBefore
+        ? Math.max(0, after24h - subscribersBefore)
         : null;
-    const activeSubscribersFromAd =
+    const rawActiveSubscribersFromAd =
       avgViewsBefore != null && avgViewsAfter != null
         ? Math.max(0, Math.round(avgViewsAfter - avgViewsBefore))
         : null;
+    const rawViewRateAfter =
+      avgViewsAfter != null && effectiveSubscribers != null && effectiveSubscribers > 0
+        ? (avgViewsAfter / effectiveSubscribers) * 100
+        : null;
+    const cappedActiveSubscribersFromAd =
+      rawActiveSubscribersFromAd != null && newSubscribers != null
+        ? Math.min(rawActiveSubscribersFromAd, newSubscribers)
+        : null;
+    const activeSubscribersFromAd = cappedActiveSubscribersFromAd;
+    const cappedViewRateAfter =
+      rawViewRateAfter == null ? null : Math.min(rawViewRateAfter, 100);
     const cpa =
       newSubscribers != null && newSubscribers > 0 ? cost / newSubscribers : null;
     const activeCpa =
@@ -126,28 +169,74 @@ export class AdCampaignAnalyticsService {
         ? cost / activeSubscribersFromAd
         : null;
     const activeRate = this.ratio(activeSubscribersFromAd, newSubscribers);
+    const cappedActiveRate = activeRate;
+    const cappedActiveCpa = activeCpa;
     const retention24h = after24h != null && after24h > 0 ? 100 : null;
     const retention48h = this.ratio(after48h, after24h);
     const retention72h = this.ratio(after72h, after24h);
     const retention7d = this.ratio(after7d, after24h);
     const retention30d = this.ratio(after30d, after24h);
     const cpaStatus = this.kpiStatus(cpa, campaign.telegramChannel);
-    const activeCpaStatus = this.kpiStatus(activeCpa, campaign.telegramChannel);
+    const activeCpaStatus = this.kpiStatus(cappedActiveCpa, campaign.telegramChannel);
     const retentionStatus = this.retentionStatus(retention7d);
+    const classified = classifyViewRate(rawViewRateAfter);
+    let adDataQuality: DataQuality = classified.dataQuality;
+    let adDataQualityReason = classified.reason;
+    const upliftExceedsNewSubscribers =
+      rawActiveSubscribersFromAd != null &&
+      newSubscribers != null &&
+      rawActiveSubscribersFromAd > newSubscribers;
+    const upliftWithoutNewSubscribers =
+      rawActiveSubscribersFromAd != null &&
+      rawActiveSubscribersFromAd > 0 &&
+      newSubscribers === 0;
+    if (upliftWithoutNewSubscribers) {
+      adDataQuality = maxDataQuality(adDataQuality, 'suspicious');
+      adDataQualityReason = 'views_uplift_without_new_subscribers';
+    } else if (upliftExceedsNewSubscribers) {
+      adDataQuality = maxDataQuality(adDataQuality, 'suspicious');
+      adDataQualityReason = 'views_uplift_exceeds_new_subscribers';
+    }
+    if (subscriberBaseQuality === 'polluted' || subscriberBaseQuality === 'suspicious') {
+      adDataQuality = maxDataQuality(adDataQuality, 'suspicious');
+      adDataQualityReason = 'subscriber_base_polluted';
+    }
+    if (subscriberBaseQuality === 'invalid') {
+      adDataQuality = 'invalid';
+      adDataQualityReason = 'missing_required_data';
+    }
+    const hasViewAnomaly =
+      classified.hasExternalTrafficAnomaly || upliftExceedsNewSubscribers;
     const overallStatus = this.overallStatus([
       cpaStatus,
       activeCpaStatus,
       retentionStatus,
     ]);
+    const decisionText =
+      adDataQuality === 'anomalous'
+        ? 'Campaign data is anomalous. Active subscribers are capped. Do not scale based only on this result.'
+        : adDataQuality === 'suspicious'
+          ? 'Campaign data is suspicious. Check external reach, reposts or view manipulation before scaling.'
+          : this.decisionText(overallStatus);
 
     const updated = await (this.prisma.adCampaign as any).update({
       where: { id: campaign.id },
       data: {
         newSubscribers,
+        rawActiveSubscribersFromAd,
+        rawViewRateAfter,
+        cappedActiveSubscribersFromAd,
         activeSubscribersFromAd,
         cpa,
-        activeCpa,
+        activeCpa: cappedActiveCpa,
         activeRate,
+        cappedActiveRate,
+        cappedActiveCpa,
+        cappedViewRateAfter,
+        adDataQuality,
+        adDataQualityReason,
+        hasViewAnomaly,
+        hasSubscriberBasePollution,
         unsub24h: this.unsub(after24h, after48h),
         unsub48h: this.unsub(after24h, after72h),
         unsub72h: this.unsub(after24h, after7d),
@@ -162,7 +251,7 @@ export class AdCampaignAnalyticsService {
         activeCpaStatus,
         retentionStatus,
         overallStatus,
-        decisionText: this.decisionText(overallStatus),
+        decisionText,
         analyticsLastCalculatedAt: new Date(),
       },
       include: { telegramChannel: true },

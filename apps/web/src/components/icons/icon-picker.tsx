@@ -392,16 +392,17 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
               </div>
 
               <div className="mb-1.5 flex items-center gap-2">
-                <div className="relative min-w-0 flex-1">
-                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder={tab === 'upload' ? 'Enter a name for the new icon' : 'Search icon by name'}
-                    className="pl-9 py-2"
-                  />
-                </div>
-                {tab === 'upload' ? (
+                {tab === 'icons' ? (
+                  <div className="relative min-w-0 flex-1">
+                    <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                    <Input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search icon by name"
+                      className="pl-9 py-2"
+                    />
+                  </div>
+                ) : (
                   <>
                     <input
                       ref={fileInputRef}
@@ -414,11 +415,12 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                       type="button"
                       variant="secondary"
                       onClick={() => fileInputRef.current?.click()}
+                      className="ml-auto"
                     >
                       <span className="flex items-center gap-2"><Upload size={14} />Upload</span>
                     </Button>
                   </>
-                ) : null}
+                )}
               </div>
             </div>
 
@@ -617,7 +619,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
 
             {tab === 'upload' ? (
               <div
-                className="min-h-0 flex-1 rounded-xl border border-dashed border-neutral-700 bg-neutral-950 p-3"
+                className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-xl border border-dashed border-neutral-700 bg-neutral-950 p-3"
                 onDragOver={(event) => {
                   event.preventDefault();
                 }}
@@ -637,22 +639,26 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                     <span className="text-xs text-neutral-500">Paste or drag and drop works too</span>
                   </button>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
-                      <p className="mb-3 text-sm text-neutral-400">Preview</p>
-                      <div className="flex items-center gap-4">
-                        <img src={upload.imageUrl} alt="" className="h-20 w-20 rounded-xl border border-neutral-700 object-cover" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm text-neutral-300">Ready to save as reusable icon</p>
-                          <p className="truncate text-xs text-neutral-500">{upload.fileName}</p>
+                  <>
+                    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                      <div className="space-y-4 pb-3">
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+                          <p className="mb-3 text-sm text-neutral-400">Preview</p>
+                          <div className="flex items-center gap-4">
+                            <img src={upload.imageUrl} alt="" className="h-20 w-20 rounded-xl border border-neutral-700 object-cover" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm text-neutral-300">Ready to save as reusable icon</p>
+                              <p className="truncate text-xs text-neutral-500">{upload.fileName}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm text-neutral-300">Icon name</label>
+                          <Input value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="e.g. office logo" />
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <label className="mb-1 block text-sm text-neutral-300">Icon name</label>
-                      <Input value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="e.g. office logo" />
-                    </div>
-                    <div className="flex justify-between gap-2">
+                    <div className="sticky bottom-0 mt-auto flex justify-between gap-2 border-t border-neutral-800 bg-neutral-950 pt-3">
                       <Button
                         type="button"
                         variant="secondary"
@@ -674,7 +680,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                         Save
                       </Button>
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             ) : null}

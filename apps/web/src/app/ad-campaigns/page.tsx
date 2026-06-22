@@ -133,6 +133,10 @@ export default function AdCampaignsPage() {
             <SummaryItem label="Active CPA" value={formatMetric(performance?.avgActiveCpa, 2)} />
             <SummaryItem label="Active rate" value={formatPercent(performance?.avgActiveRate)} />
             <SummaryItem label="Retention 7d" value={formatPercent(performance?.avgRetention7d)} />
+            <SummaryItem label="Normal data" value={formatMetric(performance?.normalDataCount)} />
+            <SummaryItem label="Suspicious" value={formatMetric(performance?.suspiciousCount)} />
+            <SummaryItem label="Anomalous" value={formatMetric(performance?.anomalousCount)} />
+            <SummaryItem label="Polluted" value={formatMetric(performance?.pollutedCount)} />
           </div>
         </div>
         <div className="min-w-56 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm">
@@ -210,12 +214,18 @@ export default function AdCampaignsPage() {
         {left > 0 ? <p>Joined: {joined} | Left: {left} | Net: {net}</p> : <p className="text-emerald-300">Joined: {joined}</p>}
         <div className="mt-3 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
           <MiniMetric label="New subs" value={formatMetric(c.newSubscribers)} />
-          <MiniMetric label="Active" value={formatMetric(c.activeSubscribersFromAd)} />
-          <MiniMetric label="Active CPA" value={formatMetric(c.activeCpa, 2)} />
+          <MiniMetric label="Active" value={formatMetric(c.cappedActiveSubscribersFromAd ?? c.activeSubscribersFromAd)} />
+          <MiniMetric label="Raw uplift" value={formatMetric(c.rawActiveSubscribersFromAd)} />
+          <MiniMetric label="Active CPA" value={formatMetric(c.cappedActiveCpa ?? c.activeCpa, 2)} />
           <MiniMetric label="Retention 7d" value={formatPercent(c.retention7d)} />
         </div>
         <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm">
-          <span className={`rounded border px-2 py-0.5 text-xs ${campaignStatusClass(c.overallStatus)}`}>{c.overallStatus || 'unknown'}</span>
+          <div className="flex items-center gap-2">
+            <span className={`rounded border px-2 py-0.5 text-xs ${campaignStatusClass(c.overallStatus)}`}>{c.overallStatus || 'unknown'}</span>
+            {c.adDataQuality ? (
+              <span className={`rounded border px-2 py-0.5 text-xs ${campaignQualityClass(c.adDataQuality)}`}>{c.adDataQuality}</span>
+            ) : null}
+          </div>
           <label className="flex cursor-pointer items-center gap-2 text-slate-300">
             <input
               type="checkbox"
@@ -225,6 +235,11 @@ export default function AdCampaignsPage() {
             Exclude
           </label>
         </div>
+        {c.adDataQualityWarning ? (
+          <div className="mt-3 rounded-lg border border-amber-700 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
+            {c.adDataQualityWarning}
+          </div>
+        ) : null}
         <div>
           <p className="text-xs uppercase tracking-wide text-neutral-400">Cost / subscriber</p>
           {costPerJoined !== null ? (
@@ -265,6 +280,14 @@ function campaignStatusClass(status?: string | null) {
   if (status === 'good') return 'border-emerald-700 text-emerald-200';
   if (status === 'acceptable') return 'border-yellow-700 text-yellow-200';
   if (status === 'bad') return 'border-rose-700 text-rose-200';
+  return 'border-slate-700 text-slate-300';
+}
+
+function campaignQualityClass(status?: string | null) {
+  if (status === 'normal') return 'border-emerald-700 text-emerald-200';
+  if (status === 'borderline') return 'border-yellow-700 text-yellow-200';
+  if (status === 'suspicious') return 'border-amber-700 text-amber-200';
+  if (status === 'anomalous' || status === 'invalid') return 'border-rose-700 text-rose-200';
   return 'border-slate-700 text-slate-300';
 }
 

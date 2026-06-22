@@ -256,10 +256,34 @@ function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
             label="Active estimate"
             value={formatNullableNumber(audience?.activeSubscribersEstimate)}
           />
+          <div>
+            <p className="text-slate-500">Data quality</p>
+            {audience?.dataQuality ? (
+              <span
+                className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(
+                  audience.dataQuality === "normal"
+                    ? "good"
+                    : audience.dataQuality === "borderline"
+                      ? "acceptable"
+                      : "bad",
+                )}`}
+              >
+                {audience.dataQuality}
+              </span>
+            ) : (
+              <p className="mt-0.5 truncate font-medium text-slate-100">-</p>
+            )}
+          </div>
           <MiniStat
             label="View rate"
             value={formatPercent(audience?.viewRate, 1)}
           />
+          {Number(audience?.rawViewRate || 0) > 100 ? (
+            <MiniStat
+              label="Raw view rate"
+              value={formatPercent(audience?.rawViewRate, 1)}
+            />
+          ) : null}
           <MiniStat
             label="Spend"
             value={`${formatNumber(summary?.totalAdSpend, 2)} ${currency}`}

@@ -1,5 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  buildDataQualityWarning,
+  calculateEffectiveSubscribers,
+  classifyViewRate,
+  maxDataQuality,
+  type DataQuality,
+} from '../common/analytics/data-quality';
 
 type KpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
 
@@ -47,13 +54,51 @@ export class TelegramChannelAnalyticsService {
       Math.max(0, Number(post.reactionsCount || 0) - post.manualOwnReactions),
     );
     const avgViewsAdjusted = this.average(adjustedViews);
-    const activeSubscribersEstimate =
-      avgViewsAdjusted == null ? null : Math.round(avgViewsAdjusted);
     const subscribersCount = channel.currentSubscribersCount ?? null;
-    const viewRate =
-      subscribersCount && activeSubscribersEstimate != null
-        ? (activeSubscribersEstimate / subscribersCount) * 100
+    const knownFakeSubscribersCount = Math.max(
+      0,
+      Number(channel.knownFakeSubscribersCount || 0),
+    );
+    const {
+      effectiveSubscribers,
+      subscriberBaseQuality,
+      hasSubscriberBasePollution,
+    } = calculateEffectiveSubscribers({
+      totalSubscribers: subscribersCount,
+      knownFakeSubscribersCount,
+      manualSubscriberBaseQuality: channel.subscriberBaseQuality,
+    });
+    const rawActiveSubscribersEstimate =
+      avgViewsAdjusted == null ? null : Math.round(avgViewsAdjusted);
+    const rawViewRate =
+      effectiveSubscribers && rawActiveSubscribersEstimate != null
+        ? (rawActiveSubscribersEstimate / effectiveSubscribers) * 100
         : null;
+    const cappedActiveSubscribersEstimate =
+      effectiveSubscribers == null || rawActiveSubscribersEstimate == null
+        ? null
+        : Math.min(rawActiveSubscribersEstimate, effectiveSubscribers);
+    const cappedViewRate =
+      rawViewRate == null ? null : Math.min(rawViewRate, 100);
+    const classified = classifyViewRate(rawViewRate);
+    let dataQuality: DataQuality = classified.dataQuality;
+    let dataQualityReason = classified.reason;
+    let hasExternalTrafficAnomaly = classified.hasExternalTrafficAnomaly;
+    if (subscriberBaseQuality === 'polluted' || subscriberBaseQuality === 'suspicious') {
+      dataQuality = maxDataQuality(dataQuality, 'suspicious');
+      dataQualityReason = 'subscriber_base_polluted';
+    }
+    if (subscriberBaseQuality === 'invalid') {
+      dataQuality = 'invalid';
+      dataQualityReason = 'missing_subscribers_or_views';
+      hasExternalTrafficAnomaly = false;
+    }
+    const dataQualityWarning = buildDataQualityWarning(
+      dataQuality,
+      dataQualityReason,
+    );
+    const activeSubscribersEstimate = cappedActiveSubscribersEstimate;
+    const viewRate = cappedViewRate;
     const seedSubscribersCount = channel.seedSubscribersCount || 0;
     const organicActiveSubscribersEstimate =
       activeSubscribersEstimate == null
@@ -66,15 +111,29 @@ export class TelegramChannelAnalyticsService {
 
     return {
       subscribersCount,
+      knownFakeSubscribersCount,
+      effectiveSubscribersCount: effectiveSubscribers,
+      subscriberBaseQuality,
       seedSubscribersCount,
+      rawActiveSubscribersEstimate,
       activeSubscribersEstimate,
+      cappedActiveSubscribersEstimate,
       organicActiveSubscribersEstimate,
       paidActiveSubscribersEstimate,
+      rawViewRate,
       viewRate,
+      cappedViewRate,
       avgViewsRaw: this.average(rawViews),
       avgViewsAdjusted,
       avgReactionsRaw: this.average(rawReactions),
       avgReactionsAdjusted: this.average(adjustedReactions),
+      rawAvgViews: this.average(rawViews),
+      rawAvgReactions: this.average(rawReactions),
+      dataQuality,
+      dataQualityReason,
+      dataQualityWarning,
+      hasExternalTrafficAnomaly,
+      hasSubscriberBasePollution,
       postsWindow,
       postsUsed: posts.length,
     };
@@ -97,6 +156,17 @@ export class TelegramChannelAnalyticsService {
         avgViewsAdjusted: analytics.avgViewsAdjusted,
         avgReactionsRaw: analytics.avgReactionsRaw,
         avgReactionsAdjusted: analytics.avgReactionsAdjusted,
+        rawAvgViews: analytics.rawAvgViews,
+        rawAvgReactions: analytics.rawAvgReactions,
+        rawViewRate: analytics.rawViewRate,
+        effectiveSubscribersCount: analytics.effectiveSubscribersCount,
+        cappedActiveSubscribersEstimate:
+          analytics.cappedActiveSubscribersEstimate,
+        cappedViewRate: analytics.cappedViewRate,
+        dataQuality: analytics.dataQuality,
+        dataQualityReason: analytics.dataQualityReason,
+        hasExternalTrafficAnomaly: analytics.hasExternalTrafficAnomaly,
+        hasSubscriberBasePollution: analytics.hasSubscriberBasePollution,
         postsWindow: analytics.postsWindow,
         source,
       },
@@ -197,6 +267,11 @@ export class TelegramChannelAnalyticsService {
       activeCpa,
       avgActiveRate,
       avgRetention7d,
+      dataQuality: audience.dataQuality,
+      dataQualityReason: audience.dataQualityReason,
+      dataQualityWarning: audience.dataQualityWarning,
+      hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
+      hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
       kpiStatus,
       kpiLabel,
       kpiCurrency: channel.kpiCurrency,

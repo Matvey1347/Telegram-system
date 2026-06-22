@@ -43,6 +43,14 @@ function statusClass(status?: string | null) {
   return 'border-slate-700 text-slate-300';
 }
 
+function dataQualityClass(status?: string | null) {
+  if (status === 'normal') return 'border-emerald-700 text-emerald-200';
+  if (status === 'borderline') return 'border-yellow-700 text-yellow-200';
+  if (status === 'suspicious') return 'border-amber-700 text-amber-200';
+  if (status === 'anomalous' || status === 'invalid') return 'border-rose-700 text-rose-200';
+  return 'border-slate-700 text-slate-300';
+}
+
 function errorMessage(error: unknown, fallback: string) {
   const message = (error as any)?.response?.data?.message;
   if (Array.isArray(message)) return message.join(', ');
@@ -148,9 +156,15 @@ export default function AdCampaignDetailPage() {
               <div>
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(campaign.overallStatus)}`}>{campaign.overallStatus || 'unknown'}</span>
+                  {campaign.adDataQuality ? <span className={`rounded border px-2 py-0.5 text-xs ${dataQualityClass(campaign.adDataQuality)}`}>{campaign.adDataQuality}</span> : null}
                   {campaign.excludeFromAnalytics ? <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">Excluded</span> : null}
                 </div>
                 <p className="text-sm text-slate-300">{campaign.decisionText || 'Not enough data yet.'}</p>
+                {campaign.adDataQualityWarning ? (
+                  <div className="mt-3 rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                    {campaign.adDataQualityWarning}
+                  </div>
+                ) : null}
               </div>
               <div className="text-sm text-slate-400">
                 <p>Cost: {formatMoney(Number(campaign.price || 0), campaign.currency, currencySettings?.currencyDisplayMode)}</p>
@@ -161,11 +175,14 @@ export default function AdCampaignDetailPage() {
 
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <MetricCard title="New subscribers" value={formatNumber(campaign.newSubscribers)} />
-            <MetricCard title="Active subscribers from ad" value={formatNumber(campaign.activeSubscribersFromAd)} />
+            <MetricCard title="Active subscribers from ad" value={formatNumber(campaign.activeSubscribersFromAd ?? campaign.cappedActiveSubscribersFromAd)} />
+            <MetricCard title="Raw active uplift" value={formatNumber(campaign.rawActiveSubscribersFromAd)} />
             <MetricCard title="CPA" value={formatMoneyValue((campaign as any).cpa ?? campaign.analytics?.costPerJoinedSubscriber, currencySettings?.primaryCurrency || campaign.currency)} />
-            <MetricCard title="Active CPA" value={formatMoneyValue(campaign.activeCpa, currencySettings?.primaryCurrency || campaign.currency)} />
-            <MetricCard title="Active rate" value={formatPercent(campaign.activeRate)} />
+            <MetricCard title="Active CPA" value={formatMoneyValue(campaign.cappedActiveCpa ?? campaign.activeCpa, currencySettings?.primaryCurrency || campaign.currency)} />
+            <MetricCard title="Active rate" value={formatPercent(campaign.cappedActiveRate ?? campaign.activeRate)} />
             <MetricCard title="Retention 7d" value={formatPercent(campaign.retention7d)} />
+            <MetricCard title="Raw view rate after" value={formatPercent(campaign.rawViewRateAfter)} />
+            <MetricCard title="Capped view rate after" value={formatPercent(campaign.cappedViewRateAfter)} />
           </section>
 
           <Card>
@@ -207,6 +224,17 @@ export default function AdCampaignDetailPage() {
               </div>
             </Card>
             <Card>
+              <h3 className="mb-3 text-lg font-semibold">Data quality</h3>
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <p className="text-xs text-slate-400">Quality</p>
+                  <span className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${dataQualityClass(campaign.adDataQuality)}`}>{campaign.adDataQuality || 'normal'}</span>
+                  {campaign.adDataQualityReason ? <p className="mt-2 text-sm text-slate-300">{campaign.adDataQualityReason}</p> : null}
+                  {campaign.adDataQualityWarning ? <p className="mt-2 text-sm text-amber-100">{campaign.adDataQualityWarning}</p> : null}
+                </div>
+              </div>
+            </Card>
+            <Card>
               <h3 className="mb-3 text-lg font-semibold">Sync metadata</h3>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <MetricCard title="Calculated" value={formatDateTime(campaign.analyticsLastCalculatedAt)} compact />
@@ -221,9 +249,10 @@ export default function AdCampaignDetailPage() {
             <h3 className="mb-2 text-lg font-semibold">Formulas</h3>
             <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-2">
               <p>New subscribers = subscribers after 24h - subscribers before.</p>
-              <p>Active subscribers from ad = avg views after - avg views before.</p>
+              <p>Raw active from ad = avg views after - avg views before.</p>
+              <p>Capped active from ad = min(raw active from ad, new subscribers).</p>
               <p>CPA = campaign cost / new subscribers.</p>
-              <p>Active CPA = campaign cost / active subscribers from ad.</p>
+              <p>Active CPA = campaign cost / capped active from ad.</p>
               <p>Active rate = active subscribers from ad / new subscribers.</p>
               <p>Retention 7d = subscribers after 7d / subscribers after 24h.</p>
             </div>

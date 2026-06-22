@@ -849,9 +849,30 @@ export class AdCampaignsService {
       },
       { good: 0, acceptable: 0, bad: 0, unknown: 0 } as Record<string, number>,
     );
+    const dataQualityCounts = campaigns.reduce(
+      (acc, campaign) => {
+        const quality = String(campaign.adDataQuality || 'normal');
+        if (quality === 'anomalous') acc.anomalousCount += 1;
+        else if (quality === 'suspicious') acc.suspiciousCount += 1;
+        else if (quality === 'normal' || quality === 'borderline') acc.normalDataCount += 1;
+        if (campaign.hasSubscriberBasePollution) acc.pollutedCount += 1;
+        return acc;
+      },
+      {
+        anomalousCount: 0,
+        suspiciousCount: 0,
+        pollutedCount: 0,
+        normalDataCount: 0,
+      },
+    );
     const metric = (campaign: any) =>
-      Number(campaign.activeCpa ?? campaign.cpa ?? Number.POSITIVE_INFINITY);
+      Number(campaign.cappedActiveCpa ?? campaign.activeCpa ?? campaign.cpa ?? Number.POSITIVE_INFINITY);
     const ranked = campaigns.filter((campaign) => Number.isFinite(metric(campaign)));
+    const bestRanked = ranked.filter(
+      (campaign) =>
+        campaign.adDataQuality !== 'anomalous' &&
+        !campaign.excludeFromAnalytics,
+    );
     return {
       campaignsCount: campaigns.length,
       totalSpend,
@@ -865,11 +886,12 @@ export class AdCampaignsService {
           : null,
       avgActiveRate: avg(campaigns.map((campaign) => campaign.activeRate)),
       avgRetention7d: avg(campaigns.map((campaign) => campaign.retention7d)),
+      ...dataQualityCounts,
       goodCount: statusCounts.good || 0,
       acceptableCount: statusCounts.acceptable || 0,
       badCount: statusCounts.bad || 0,
       unknownCount: statusCounts.unknown || 0,
-      bestCampaigns: [...ranked].sort((a, b) => metric(a) - metric(b)).slice(0, 5),
+      bestCampaigns: [...bestRanked].sort((a, b) => metric(a) - metric(b)).slice(0, 5),
       worstCampaigns: [...ranked].sort((a, b) => metric(b) - metric(a)).slice(0, 5),
       lastDailyAnalyticsSync,
     };

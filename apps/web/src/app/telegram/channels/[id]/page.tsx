@@ -107,6 +107,15 @@ function hasKpiSettings(channel?: TelegramChannel) {
   );
 }
 
+function dataQualityBadgeClass(status?: string | null) {
+  if (status === "normal") return "border-emerald-700 text-emerald-200";
+  if (status === "borderline") return "border-yellow-700 text-yellow-200";
+  if (status === "suspicious") return "border-amber-700 text-amber-200";
+  if (status === "anomalous" || status === "invalid")
+    return "border-rose-700 text-rose-200";
+  return "border-slate-700 text-slate-300";
+}
+
 export default function TelegramChannelAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -131,6 +140,9 @@ export default function TelegramChannelAnalyticsPage() {
   const [settings, setSettings] = useState({
     seedSubscribersCount: "0",
     activeSubscribersWindow: "5",
+    knownFakeSubscribersCount: "0",
+    subscriberBaseQuality: "normal",
+    dataQualityNotes: "",
     targetCpa: "",
     acceptableCpa: "",
     stopCpa: "",
@@ -210,6 +222,9 @@ export default function TelegramChannelAnalyticsPage() {
     setSettings({
       seedSubscribersCount: String(source.seedSubscribersCount ?? 0),
       activeSubscribersWindow: String(source.activeSubscribersWindow ?? 5),
+      knownFakeSubscribersCount: String(source.knownFakeSubscribersCount ?? 0),
+      subscriberBaseQuality: source.subscriberBaseQuality || "normal",
+      dataQualityNotes: source.dataQualityNotes || "",
       targetCpa: source.targetCpa == null ? "" : String(source.targetCpa),
       acceptableCpa:
         source.acceptableCpa == null ? "" : String(source.acceptableCpa),
@@ -255,6 +270,12 @@ export default function TelegramChannelAnalyticsPage() {
           1,
           toNumber(settings.activeSubscribersWindow),
         ),
+        knownFakeSubscribersCount: Math.max(
+          0,
+          toNumber(settings.knownFakeSubscribersCount),
+        ),
+        subscriberBaseQuality: settings.subscriberBaseQuality,
+        dataQualityNotes: settings.dataQualityNotes.trim() || null,
         targetCpa: settings.targetCpa === "" ? null : toNumber(settings.targetCpa),
         acceptableCpa:
           settings.acceptableCpa === "" ? null : toNumber(settings.acceptableCpa),
@@ -905,24 +926,53 @@ function OverviewGrid({ children }: { children: ReactNode }) {
 function AudienceOverview({ audience }: { audience: any }) {
   return (
     <SimplePanel title="Audience overview">
+      {audience?.dataQualityWarning ? (
+        <div className="mb-3 rounded-lg border border-amber-700/70 bg-amber-950/30 p-3 text-sm text-amber-100">
+          {audience.dataQualityWarning}
+        </div>
+      ) : null}
       <OverviewGrid>
         <SnapshotItem
           label="Subscribers"
           value={formatNullableNumber(audience?.subscribersCount)}
         />
         <SnapshotItem
+          label="Known fake subscribers"
+          value={formatNumber(audience?.knownFakeSubscribersCount)}
+        />
+        <SnapshotItem
+          label="Effective subscribers"
+          value={formatNullableNumber(audience?.effectiveSubscribersCount)}
+        />
+        <SnapshotItem
           label="Seed subscribers"
           value={formatNumber(audience?.seedSubscribersCount)}
         />
         <SnapshotItem
-          label="Active subscribers estimate"
+          label="Active subscribers"
           value={formatNullableNumber(audience?.activeSubscribersEstimate)}
+        />
+        <SnapshotItem
+          label="Raw active estimate"
+          value={formatNullableNumber(audience?.rawActiveSubscribersEstimate)}
+        />
+        <SnapshotItem
+          label="Capped active estimate"
+          value={formatNullableNumber(audience?.cappedActiveSubscribersEstimate)}
         />
         <SnapshotItem
           label="Paid active estimate"
           value={formatNullableNumber(audience?.paidActiveSubscribersEstimate)}
         />
         <SnapshotItem label="View rate" value={formatPercent(audience?.viewRate)} />
+        <SnapshotItem
+          label="Raw view rate"
+          value={formatPercent(audience?.rawViewRate)}
+        />
+        <SnapshotItem
+          label="Capped view rate"
+          value={formatPercent(audience?.cappedViewRate)}
+        />
         <SnapshotItem
           label="Avg adjusted views"
           value={formatNullableNumber(audience?.avgViewsAdjusted, 1)}
@@ -931,6 +981,19 @@ function AudienceOverview({ audience }: { audience: any }) {
           label="Avg adjusted reactions"
           value={formatNullableNumber(audience?.avgReactionsAdjusted, 1)}
         />
+        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+          <p className="text-xs text-slate-400">Data quality</p>
+          <span
+            className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${dataQualityBadgeClass(audience?.dataQuality)}`}
+          >
+            {audience?.dataQuality || "-"}
+          </span>
+          {audience?.subscriberBaseQuality ? (
+            <p className="mt-2 text-xs text-slate-400">
+              Subscriber base: {audience.subscriberBaseQuality}
+            </p>
+          ) : null}
+        </div>
         <SnapshotItem
           label="Posts window"
           value={`${formatNumber(audience?.postsUsed)} / ${formatNumber(audience?.postsWindow)}`}
@@ -1042,6 +1105,9 @@ function FinancialOverview({
 type SettingsState = {
   seedSubscribersCount: string;
   activeSubscribersWindow: string;
+  knownFakeSubscribersCount: string;
+  subscriberBaseQuality: string;
+  dataQualityNotes: string;
   targetCpa: string;
   acceptableCpa: string;
   stopCpa: string;
@@ -1084,6 +1150,30 @@ function KpiSettingsControl({
       <Modal open={open} onClose={() => setOpen(false)} title="KPI settings">
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <FormField label="Known fake subscribers">
+              <Input
+                type="number"
+                min={0}
+                value={settings.knownFakeSubscribersCount}
+                onChange={(event) =>
+                  setValue("knownFakeSubscribersCount", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Subscriber base quality">
+              <select
+                value={settings.subscriberBaseQuality}
+                onChange={(event) =>
+                  setValue("subscriberBaseQuality", event.target.value)
+                }
+                className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
+              >
+                <option value="normal">Normal</option>
+                <option value="suspicious">Suspicious</option>
+                <option value="polluted">Polluted</option>
+                <option value="invalid">Invalid</option>
+              </select>
+            </FormField>
             <FormField label="Target CPA">
               <Input
                 type="number"
@@ -1122,6 +1212,18 @@ function KpiSettingsControl({
                 }
               />
             </FormField>
+            <div className="md:col-span-2">
+              <FormField label="Data quality notes">
+                <textarea
+                  rows={3}
+                  value={settings.dataQualityNotes}
+                  onChange={(event) =>
+                    setValue("dataQualityNotes", event.target.value)
+                  }
+                  className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
+                />
+              </FormField>
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <Button
