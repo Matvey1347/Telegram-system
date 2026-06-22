@@ -1,17 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Camera, Pencil, ShieldCheck, UserRound } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Camera, ShieldCheck } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAuth } from '@/hooks/use-auth';
-import { accountApi, currenciesApi, workspaceMembersApi, type WorkspaceMember, type WorkspaceRole } from '@/lib/api';
+import { currenciesApi, workspaceMembersApi, type WorkspaceMember, type WorkspaceRole } from '@/lib/api';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, EmptyState, FormError, FormField, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, Card, CustomSelect, EmptyState, FormError, FormField, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 
 type CreateValues = { email: string; name?: string; password?: string; role: WorkspaceRole; avatarIconId?: string | null };
+
+const WORKSPACE_ROLE_OPTIONS: Array<{ value: WorkspaceRole; label: string }> = [
+  { value: 'owner', label: 'owner' },
+  { value: 'admin', label: 'admin' },
+  { value: 'member', label: 'member' },
+];
 
 export default function WorkspaceMembersPage() {
   const qc = useQueryClient();
@@ -19,10 +25,6 @@ export default function WorkspaceMembersPage() {
   const [open, setOpen] = useState(false);
   const [tempPassword, setTempPassword] = useState<string>('');
   const [error, setError] = useState('');
-  const [workspaceError, setWorkspaceError] = useState('');
-  const [workspaceName, setWorkspaceName] = useState(workspace?.name || '');
-  const [workspaceNameDraft, setWorkspaceNameDraft] = useState(workspace?.name || '');
-  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['workspace-members'], queryFn: workspaceMembersApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
@@ -30,15 +32,7 @@ export default function WorkspaceMembersPage() {
   const currentRole = workspace?.role;
   const ownersCount = useMemo(() => (data || []).filter((m) => m.role === 'owner').length, [data]);
   const canAdd = currentRole === 'owner' || currentRole === 'admin';
-  const canEditWorkspace = currentRole === 'owner';
   const primaryCurrency = settings?.primaryCurrency ?? '';
-
-  useEffect(() => {
-    if (workspace?.name) {
-      setWorkspaceName(workspace.name);
-      setWorkspaceNameDraft(workspace.name);
-    }
-  }, [workspace?.name]);
 
   const createMutation = useMutation({
     mutationFn: workspaceMembersApi.create,
@@ -49,19 +43,6 @@ export default function WorkspaceMembersPage() {
       setTempPassword(res?.temporaryPassword || '');
     },
     onError: (e: any) => setError(e?.response?.data?.message || 'Failed to add member'),
-  });
-
-  const workspaceMutation = useMutation({
-    mutationFn: accountApi.updateWorkspace,
-    onSuccess: (res) => {
-      setWorkspaceError('');
-      setWorkspaceName(res.workspace.name);
-      setWorkspaceNameDraft(res.workspace.name);
-      setWorkspaceModalOpen(false);
-      qc.invalidateQueries({ queryKey: ['account-me'] });
-      qc.invalidateQueries({ queryKey: ['me'] });
-    },
-    onError: (e: any) => setWorkspaceError(e?.response?.data?.message || 'Failed to update workspace'),
   });
 
   const updateMutation = useMutation({
@@ -94,12 +75,11 @@ export default function WorkspaceMembersPage() {
 
   return <AppShell>
     <PageHeader
-      title={`${workspaceName || 'Workspace'} Members`}
+      title={`${workspace?.name || 'Workspace'} Members`}
       subtitle="Manage your team"
-      action={<div className="flex gap-2">{canEditWorkspace ? <Button variant="secondary" onClick={() => { setWorkspaceNameDraft(workspaceName); setWorkspaceModalOpen(true); }}><Pencil size={16} /></Button> : null}{canAdd ? <Button onClick={() => setOpen(true)}>Add Member</Button> : null}</div>}
+      action={canAdd ? <Button onClick={() => setOpen(true)}>Add Member</Button> : null}
     />
 
-    <FormError message={workspaceError} />
     {tempPassword ? <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200">Temporary password (show once): <span className="font-mono">{tempPassword}</span></div> : null}
     <FormError message={error} />
     {isLoading ? <LoadingState /> : null}
@@ -108,8 +88,7 @@ export default function WorkspaceMembersPage() {
       {data?.map((m: WorkspaceMember) => {
         const hasInvestments = Number(m.investmentSummary?.totalInvestedPrimary ?? 0) > 0;
         const canManageMember = currentRole === 'owner' && !m.isCurrentUser;
-        return <Card key={m.id} className="relative overflow-hidden border-neutral-800/80 bg-[linear-gradient(145deg,rgba(38,38,38,0.95),rgba(18,18,18,0.98))] p-0 shadow-[0_18px_45px_rgba(0,0,0,0.22)]">
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-500/70 via-cyan-400/50 to-emerald-400/60" />
+        return <Card key={m.id} className="relative overflow-visible border-neutral-800/80 bg-[linear-gradient(145deg,rgba(38,38,38,0.95),rgba(18,18,18,0.98))] p-0 shadow-[0_18px_45px_rgba(0,0,0,0.22)]">
           <div className="p-5">
             <div className="flex items-start gap-4">
               <div className="relative shrink-0">
@@ -118,11 +97,12 @@ export default function WorkspaceMembersPage() {
                   iconId={m.avatarIconId ?? null}
                   onChange={(avatarIconId) => updateMutation.mutate({ id: m.id, payload: { avatarIconId } })}
                   buttonLabel="Upload avatar"
-                  className="!h-16 !w-16 !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner"
+                  className={`!h-16 !w-16 !overflow-hidden !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner ${!m.avatarIconId ? '[&>svg]:hidden' : ''}`}
+                  iconClassName="!h-full !w-full !rounded-2xl !border-0 !bg-transparent"
                 />
                 {!m.avatarIconId ? (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl text-neutral-400">
-                    <UserRound size={25} />
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl text-2xl font-semibold text-neutral-300">
+                    {(m.user.name?.trim()?.[0] || '?').toUpperCase()}
                   </div>
                 ) : null}
                 <span className="pointer-events-none absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-blue-300 shadow-lg">
@@ -137,7 +117,6 @@ export default function WorkspaceMembersPage() {
                   {m.role === 'owner' ? <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-200"><ShieldCheck size={12} />Owner</span> : null}
                 </div>
                 <p className="mt-1 truncate text-sm text-neutral-400">{m.user.email}</p>
-                <p className="mt-3 inline-flex rounded-full border border-neutral-700 bg-neutral-900/70 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-neutral-300">{m.role}</p>
               </div>
             </div>
 
@@ -159,9 +138,14 @@ export default function WorkspaceMembersPage() {
             {m.isCurrentUser ? <p className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-xs text-neutral-400">Manage your personal info in My Profile.</p> : null}
 
             {canManageMember ? <div className="mt-4 flex gap-2">
-              <select className="min-w-0 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white disabled:opacity-50" value={m.role} disabled={!canEditRole(m)} onChange={(e) => updateMutation.mutate({ id: m.id, payload: { role: e.target.value as WorkspaceRole } })}>
-                <option value="owner">owner</option><option value="admin">admin</option><option value="member">member</option>
-              </select>
+              <div className="min-w-0 flex-1">
+                <CustomSelect
+                  value={m.role}
+                  disabled={!canEditRole(m)}
+                  options={WORKSPACE_ROLE_OPTIONS}
+                  onChange={(role) => updateMutation.mutate({ id: m.id, payload: { role: role as WorkspaceRole } })}
+                />
+              </div>
               {canRemove(m) ? <Button variant="secondary" onClick={() => removeMutation.mutate(m.id)} className="shrink-0">Remove</Button> : null}
             </div> : null}
           </div>
@@ -172,14 +156,6 @@ export default function WorkspaceMembersPage() {
     {!isLoading && !data?.length ? <EmptyState text="No members" /> : null}
 
     <MemberModal open={open} onClose={() => setOpen(false)} onSubmit={(v: any) => createMutation.mutate(v)} currentRole={currentRole || 'member'} />
-
-    <Modal open={workspaceModalOpen} onClose={() => setWorkspaceModalOpen(false)} title="Edit Workspace Name">
-      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); workspaceMutation.mutate({ name: workspaceNameDraft }); }}>
-        <FormField label="Workspace Name"><Input value={workspaceNameDraft} onChange={(e) => setWorkspaceNameDraft(e.target.value)} /></FormField>
-        <FormError message={workspaceError} />
-        <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={() => { setWorkspaceNameDraft(workspaceName); setWorkspaceModalOpen(false); }}>Cancel</Button><Button type="submit" disabled={workspaceMutation.isPending}>Save</Button></div>
-      </form>
-    </Modal>
   </AppShell>;
 }
 

@@ -18,6 +18,7 @@ import { TelegramChannelNetworksModule } from './telegram-channel-networks/teleg
 import { TransactionsModule } from './transactions/transactions.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { FinanceCategoriesModule } from './finance-categories/finance-categories.module';
+import { GlobalSearchModule } from './global-search/global-search.module';
 import { WorkspaceMembersModule } from './workspace-members/workspace-members.module';
 import { AccountModule } from './account/account.module';
 import { TelegramSyncModule } from './telegram-sync/telegram-sync.module';
@@ -48,6 +49,7 @@ import { IconsModule } from './icons/icons.module';
     AdCampaignsModule,
     AdHypothesesModule,
     DashboardModule,
+    GlobalSearchModule,
     FinanceCategoriesModule,
     WorkspaceMembersModule,
     AccountModule,

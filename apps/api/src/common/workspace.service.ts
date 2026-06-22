@@ -47,6 +47,8 @@ export class WorkspaceService {
           id: true,
           workspaceId: true,
           role: true,
+          avatarIconId: true,
+          avatarIcon: true,
           workspace: { select: this.workspaceSelect },
         },
       });
@@ -66,6 +68,8 @@ export class WorkspaceService {
         id: true,
         workspaceId: true,
         role: true,
+        avatarIconId: true,
+        avatarIcon: true,
         workspace: { select: this.workspaceSelect },
       },
     });

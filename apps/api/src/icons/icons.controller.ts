@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   CreateCustomIconDto,
   CreateEmojiIconDto,
+  CreateTemporaryImageIconDto,
   ListIconsQueryDto,
 } from './dto';
 import { IconsService } from './icons.service';
@@ -57,6 +58,14 @@ export class IconsController {
     @Body() dto: CreateCustomIconDto,
   ) {
     return this.service.createCustom(user.sub, dto);
+  }
+
+  @Post('temporary-image')
+  createTemporaryImage(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreateTemporaryImageIconDto,
+  ) {
+    return this.service.createTemporaryImage(user.sub, dto);
   }
 
   @Post('emoji')

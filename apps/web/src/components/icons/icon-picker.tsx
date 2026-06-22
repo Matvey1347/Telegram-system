@@ -14,6 +14,7 @@ type IconPickerProps = {
   onChange: (iconId: string | null) => void;
   buttonLabel?: string;
   className?: string;
+  iconClassName?: string;
   compact?: boolean;
   bare?: boolean;
 };
@@ -102,13 +103,14 @@ function matchesRecentSaved(item: RecentSavedIcon, search: string) {
   return item.icon.name.toLowerCase().includes(search);
 }
 
-export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', className = '', compact = false, bare = false }: IconPickerProps) {
+export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', className = '', iconClassName = '', compact = false, bare = false }: IconPickerProps) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('icons');
   const [search, setSearch] = useState('');
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [uploadName, setUploadName] = useState('');
+  const [saveReusableOpen, setSaveReusableOpen] = useState(false);
   const [recentIcons, setRecentIcons] = useState<RecentIcon[]>(() => loadRecentIcons());
   const [activeSection, setActiveSection] = useState<IconSection>('recent');
   const [standardIconsReady, setStandardIconsReady] = useState(false);
@@ -169,8 +171,21 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
       setOpen(false);
       setUpload(null);
       setUploadName('');
+      setSaveReusableOpen(false);
       setSearch('');
       qc.invalidateQueries({ queryKey: ['icons'] });
+    },
+  });
+
+  const createTemporaryImageMutation = useMutation({
+    mutationFn: iconsApi.createTemporaryImage,
+    onSuccess: (icon) => {
+      onChange(icon.id);
+      setOpen(false);
+      setUpload(null);
+      setUploadName('');
+      setSaveReusableOpen(false);
+      setSearch('');
     },
   });
 
@@ -178,7 +193,8 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     mutationFn: iconsApi.upload,
     onSuccess: (result, file) => {
       setUpload({ imageUrl: result.imageUrl, fileName: stripExtension(file.name || 'icon') });
-      setUploadName(stripExtension(file.name || 'icon'));
+      setUploadName('');
+      setSaveReusableOpen(false);
       setTab('upload');
     },
   });
@@ -232,7 +248,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       const width = 360;
-      const height = 360;
+      const height = Math.min(480, viewportHeight - 32);
       const gap = 8;
       const left = Math.min(Math.max(16, triggerRect.left), Math.max(16, viewportWidth - width - 16));
       const spaceBelow = viewportHeight - triggerRect.bottom;
@@ -289,7 +305,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     return () => window.removeEventListener('paste', onPaste);
   }, [handleFile, open, tab]);
 
-  const uploadDisabled = isUploading || createCustomMutation.isPending;
+  const uploadDisabled = isUploading || createCustomMutation.isPending || createTemporaryImageMutation.isPending;
 
   const standardRecent = useMemo(
     () => recentIcons.filter(isStandardRecent).filter((item) => matchesRecentStandard(item, normalizedSearch)),
@@ -349,6 +365,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     setSearch('');
     setUpload(null);
     setUploadName('');
+    setSaveReusableOpen(false);
     setActiveSection('recent');
   };
 
@@ -367,7 +384,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
             ? `flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800 ${className}`
             : `flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${className}`}
       >
-        {currentIcon ? <IconAvatar icon={currentIcon} label={currentIcon.name} size={compact ? 'sm' : 'xs'} bordered={!(compact || bare)} className={bare ? '!h-5 !w-5 !bg-transparent !border-0 !rounded-none !text-base' : ''} /> : <Plus size={bare ? 14 : 16} />}
+        {currentIcon ? <IconAvatar icon={currentIcon} label={currentIcon.name} size={compact ? 'sm' : 'xs'} bordered={!(compact || bare)} className={`${bare ? '!h-5 !w-5 !bg-transparent !border-0 !rounded-none !text-base' : ''} ${iconClassName}`} /> : <Plus size={bare ? 14 : 16} />}
         {!compact && !bare ? <span>{currentIcon ? 'Change icon' : buttonLabel}</span> : null}
       </button>
 
@@ -676,37 +693,69 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                           <div className="flex items-center gap-4">
                             <img src={upload.imageUrl} alt="" className="h-20 w-20 rounded-xl border border-neutral-700 object-cover" />
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm text-neutral-300">Ready to save as reusable icon</p>
+                              <p className="text-sm text-neutral-300">Ready to use once</p>
                               <p className="truncate text-xs text-neutral-500">{upload.fileName}</p>
                             </div>
                           </div>
                         </div>
-                        <div>
-                          <label className="mb-1 block text-sm text-neutral-300">Icon name</label>
-                          <Input value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="e.g. office logo" />
-                        </div>
+                        {saveReusableOpen ? (
+                          <div>
+                            <label className="mb-1 block text-sm text-neutral-300">Icon name</label>
+                            <Input value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="e.g. office logo" />
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                    <div className="sticky bottom-0 mt-auto flex justify-between gap-2 border-t border-neutral-800 bg-neutral-950 pt-3">
+                    <div className="sticky bottom-0 mt-auto flex flex-col gap-2 border-t border-neutral-800 bg-neutral-950 pt-3">
                       <Button
                         type="button"
-                        variant="secondary"
-                        onClick={() => setUpload(null)}
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={uploadDisabled || !uploadName.trim()}
+                        className="w-full"
+                        disabled={uploadDisabled || (saveReusableOpen && !uploadName.trim())}
                         onClick={() => {
                           if (!upload) return;
-                          createCustomMutation.mutate({
-                            name: uploadName.trim(),
+                          if (saveReusableOpen) {
+                            createCustomMutation.mutate({
+                              name: uploadName.trim(),
+                              imageUrl: upload.imageUrl,
+                            });
+                            return;
+                          }
+                          createTemporaryImageMutation.mutate({
                             imageUrl: upload.imageUrl,
+                            fileName: upload.fileName,
                           });
                         }}
                       >
-                        Save
+                        {saveReusableOpen ? 'Save' : 'Use once'}
+                      </Button>
+                      {!saveReusableOpen ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="w-full"
+                          disabled={uploadDisabled}
+                          onClick={() => {
+                            setUploadName(upload.fileName);
+                            setSaveReusableOpen(true);
+                          }}
+                        >
+                          Save custom icon
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full"
+                        onClick={() => {
+                          if (saveReusableOpen) {
+                            setSaveReusableOpen(false);
+                            setUploadName('');
+                          } else {
+                            setUpload(null);
+                          }
+                        }}
+                      >
+                        Back
                       </Button>
                     </div>
                   </>

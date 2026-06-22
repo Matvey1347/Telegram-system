@@ -16,6 +16,7 @@ import {
   workspacesApi,
   type Account,
   type AdCampaign,
+  type AdCampaignKpiStatus,
   type AdHypothesis,
 } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
@@ -302,6 +303,8 @@ export default function AdCampaignsPage() {
         hypotheses={visibleHypotheses}
         loading={hypothesesLoading}
         error={hypothesesError}
+        moneySettings={moneySettings}
+        rates={rates}
         onEdit={(hypothesis) => {
           setEditingHypothesis(hypothesis);
           setHypothesisFormOpen(true);
@@ -342,6 +345,44 @@ function formatMetric(value: unknown, decimals = 0) {
 function formatPercent(value: unknown, decimals = 1) {
   if (value == null || !Number.isFinite(Number(value))) return '-';
   return `${formatMetric(value, decimals)}%`;
+}
+
+function numberOrNull(value: unknown) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isInRange(value: number, from: number | null, to: number | null) {
+  if (from == null && to == null) return false;
+  if (from != null && value < from) return false;
+  if (to != null && value > to) return false;
+  return true;
+}
+
+function calculatedKpiStatus(value: number | null, channel?: AdCampaign['telegramChannel']): AdCampaignKpiStatus {
+  if (value == null || !channel) return 'unknown';
+  const targetFrom = numberOrNull(channel.targetCpaFrom);
+  const target = numberOrNull(channel.targetCpa);
+  const acceptableFrom = numberOrNull(channel.acceptableCpaFrom);
+  const acceptable = numberOrNull(channel.acceptableCpa);
+  const stopFrom = numberOrNull(channel.stopCpaFrom) ?? numberOrNull(channel.stopCpa);
+  if (
+    targetFrom == null &&
+    target == null &&
+    acceptableFrom == null &&
+    acceptable == null &&
+    stopFrom == null
+  ) return 'unknown';
+  if (isInRange(value, targetFrom, target)) return 'good';
+  if (isInRange(value, acceptableFrom, acceptable)) return 'acceptable';
+  if (isInRange(value, stopFrom, null)) return 'bad';
+  return 'unknown';
+}
+
+function effectiveCampaignKpiStatus(campaign: AdCampaign, primaryCostPerJoined: number | null, costPerJoined: number | null): AdCampaignKpiStatus {
+  if (campaign.overallStatus && campaign.overallStatus !== 'unknown') return campaign.overallStatus;
+  return calculatedKpiStatus(primaryCostPerJoined ?? costPerJoined, campaign.telegramChannel);
 }
 
 function campaignDateValue(campaign: any) {
@@ -469,6 +510,7 @@ function CampaignsTable({
               const primaryCostPerJoined = joined > 0 ? primaryCost / joined : null;
               const metrics = campaignMetrics(campaign);
               const analyticsWarning = campaign.adDataQualityWarning || campaignMissingAnalyticsMessage(campaign);
+              const kpiStatus = effectiveCampaignKpiStatus(campaign, primaryCostPerJoined, costPerJoined);
               return (
                 <tr key={campaign.id} className={`align-top text-slate-200 transition-colors hover:bg-neutral-900 ${index % 2 ? 'bg-neutral-950' : 'bg-black'}`}>
                   <td className="px-4 py-4">
@@ -495,13 +537,14 @@ function CampaignsTable({
                     />
                   </td>
                   <td className="px-4 py-4">
-                    {metrics.length ? (
-                      <div className="flex flex-wrap gap-1">
-                        {metrics.slice(0, 3).map((metric) => <span key={metric.label} className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">{metric.label}: {metric.value}</span>)}
-                      </div>
-                    ) : (
-                      <span className="rounded border border-amber-700 px-2 py-0.5 text-xs text-amber-200" title={analyticsWarning || undefined}>Missing</span>
-                    )}
+                    <div className="flex flex-wrap gap-1">
+                      <KpiStatusBadge status={kpiStatus} />
+                      {metrics.length ? metrics.slice(0, 3).map((metric) => (
+                        <span key={metric.label} className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">{metric.label}: {metric.value}</span>
+                      )) : (
+                        <span className="rounded border border-amber-700 px-2 py-0.5 text-xs text-amber-200" title={analyticsWarning || undefined}>Missing</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-4">
                     <HypothesisLinks links={campaign.hypothesisLinks || []} />
@@ -712,6 +755,38 @@ function readableSyncError(message?: string | null) {
   return message.split('\n')[0] || 'No additional details.';
 }
 
+function kpiStatusClass(status?: AdCampaignKpiStatus | null) {
+  if (status === 'good') return 'border-emerald-700 bg-emerald-950/20 text-emerald-200';
+  if (status === 'acceptable') return 'border-yellow-700 bg-yellow-950/20 text-yellow-200';
+  if (status === 'bad') return 'border-rose-700 bg-rose-950/20 text-rose-200';
+  return 'border-slate-700 bg-slate-950/30 text-slate-300';
+}
+
+function kpiStatusLabel(status?: AdCampaignKpiStatus | null) {
+  if (status === 'good') return 'KPI hit';
+  if (status === 'acceptable') return 'KPI ok';
+  if (status === 'bad') return 'KPI missed';
+  return 'KPI unknown';
+}
+
+function kpiStatusTitle(status?: AdCampaignKpiStatus | null) {
+  if (status === 'good') return 'CPA is inside target KPI range.';
+  if (status === 'acceptable') return 'CPA is inside acceptable KPI range.';
+  if (status === 'bad') return 'CPA is inside stop KPI range.';
+  return 'KPI range or enough CPA data is missing.';
+}
+
+function KpiStatusBadge({ status }: { status?: AdCampaignKpiStatus | null }) {
+  return (
+    <span
+      className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiStatusClass(status)}`}
+      title={kpiStatusTitle(status)}
+    >
+      {kpiStatusLabel(status)}
+    </span>
+  );
+}
+
 function SyncRunSummary({ run, compact = false, inline = false }: { run: any; compact?: boolean; inline?: boolean }) {
   const summary = describeSyncRun(run);
   if (inline) {
@@ -740,11 +815,11 @@ function hypothesisStatusClass(status?: string) {
   return 'border-blue-700 text-blue-200';
 }
 
-function MiniPerformance({ label, value }: { label: string; value: string }) {
+function MiniPerformance({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="font-semibold leading-snug text-white">{value}</p>
+      {typeof value === 'string' ? <p className="font-semibold leading-snug text-white">{value}</p> : value}
     </div>
   );
 }
@@ -753,12 +828,16 @@ function HypothesesSection({
   hypotheses,
   loading,
   error,
+  moneySettings,
+  rates,
   onEdit,
   onDelete,
 }: {
   hypotheses: AdHypothesis[];
   loading: boolean;
   error: unknown;
+  moneySettings: any;
+  rates: any[] | undefined;
   onEdit: (hypothesis: AdHypothesis) => void;
   onDelete: (hypothesis: AdHypothesis) => void;
 }) {
@@ -789,10 +868,27 @@ function HypothesesSection({
                     <div className="grid grid-cols-3 gap-2">
                       <MiniPerformance label="Campaigns" value={formatMetric(hypothesis.summary?.campaignsCount ?? hypothesis.campaignsCount)} />
                       <MiniPerformance label="Joined" value={formatMetric(hypothesis.summary?.totalJoinedSubscribers)} />
-                      <MiniPerformance label="CPA" value={formatMetric(hypothesis.summary?.avgCpa, 2)} />
+                      <MiniPerformance
+                        label="CPA"
+                        value={
+                          <MoneyStack
+                            amount={hypothesis.summary?.avgCpa}
+                            currency={moneySettings.primaryCurrency}
+                            settings={moneySettings}
+                            rates={rates}
+                            mainClassName="font-semibold leading-snug text-white"
+                            subClassName="text-xs leading-snug text-slate-500"
+                          />
+                        }
+                      />
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-slate-400">{hypothesis.summary?.decision || '-'}</td>
+                  <td className="px-4 py-4">
+                    <div className="space-y-2">
+                      <KpiStatusBadge status={hypothesis.summary?.kpiStatus} />
+                      <p className="text-slate-400">{hypothesis.summary?.decision || '-'}</p>
+                    </div>
+                  </td>
                   <td className="px-4 py-4">
                     <div className="flex justify-end gap-2">
                       <IconButton onClick={() => onEdit(hypothesis)} />

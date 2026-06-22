@@ -5,7 +5,7 @@ import { PropsWithChildren, useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { logout } from '@/lib/auth';
-import { iconsApi, workspacesApi } from '@/lib/api';
+import { globalSearchApi, iconsApi, workspacesApi, type GlobalSearchResult } from '@/lib/api';
 import { CustomSelect } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import {
@@ -15,10 +15,11 @@ import {
   Coins,
   CreditCard,
   FolderTree,
+  Gauge,
   Landmark,
-  LayoutDashboard,
   LogOut,
   Plus,
+  Search,
   Megaphone,
   MessageCircle,
   RadioTower,
@@ -29,7 +30,7 @@ import {
   Users,
 } from 'lucide-react';
 
-const dashboardItem = { label: 'Dashboard', href: '/', icon: LayoutDashboard } as const;
+const dashboardItem = { label: 'Dashboard', href: '/', icon: Gauge } as const;
 
 const groups = [
   {
@@ -71,11 +72,19 @@ export function AppShell({ children }: PropsWithChildren) {
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     return localStorage.getItem('selected-workspace-id') ?? '';
   });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
+  const { data: searchResults = [], isFetching: searchFetching } = useQuery({
+    queryKey: ['global-search', debouncedGlobalSearch],
+    queryFn: () => globalSearchApi.search(debouncedGlobalSearch),
+    enabled: debouncedGlobalSearch.trim().length >= 2,
+  });
   const createWorkspace = useMutation({
     mutationFn: async (payload: { name: string; avatarIconId?: string | null }) => {
       const selectedIcon = payload.avatarIconId ? await iconsApi.get(payload.avatarIconId).catch(() => null) : null;
@@ -132,6 +141,11 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [openGroups]);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedGlobalSearch(globalSearch.trim()), 220);
+    return () => window.clearTimeout(timeout);
+  }, [globalSearch]);
+
+  useEffect(() => {
     if (!workspaces?.length) return;
     if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
     const nextWorkspaceId = workspaces[0].id;
@@ -174,6 +188,15 @@ export function AppShell({ children }: PropsWithChildren) {
           <h1 className="text-xl font-semibold">Telegram System</h1>
           <p className="mt-1 text-sm text-neutral-400">Finance, ads and analytics</p>
         </div>
+
+        <GlobalSearchBox
+          query={globalSearch}
+          onQueryChange={setGlobalSearch}
+          focused={searchFocused}
+          onFocusedChange={setSearchFocused}
+          results={searchResults}
+          isFetching={searchFetching}
+        />
 
         <div className="mb-5 space-y-2 rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
           <div className="flex items-center justify-between gap-2 text-xs uppercase text-neutral-500">
@@ -272,6 +295,83 @@ export function AppShell({ children }: PropsWithChildren) {
         <button onClick={logout} className="mt-6 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-900"><LogOut size={16} /> Logout</button>
       </aside>
       <main className="ml-64 min-h-screen w-[calc(100%-16rem)] min-w-0 px-4 py-5 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
+    </div>
+  );
+}
+
+function SearchResultIcon({ result }: { result: GlobalSearchResult }) {
+  if (result.iconUrl) return <img src={result.iconUrl} alt="" className="h-7 w-7 shrink-0 rounded-md object-cover" />;
+  if (result.iconEmoji) return <span className="flex h-7 w-7 shrink-0 items-center justify-center text-base">{result.iconEmoji}</span>;
+  return (
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-neutral-700 bg-neutral-800 text-xs font-semibold text-neutral-200">
+      {(result.title.trim()[0] || result.label.trim()[0] || '?').toUpperCase()}
+    </span>
+  );
+}
+
+function GlobalSearchBox({
+  query,
+  onQueryChange,
+  focused,
+  onFocusedChange,
+  results,
+  isFetching,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  focused: boolean;
+  onFocusedChange: (value: boolean) => void;
+  results: GlobalSearchResult[];
+  isFetching: boolean;
+}) {
+  const showResults = focused && query.trim().length >= 2;
+  return (
+    <div className="relative mb-4">
+      <div className="relative">
+        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onFocus={() => onFocusedChange(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') onFocusedChange(false);
+          }}
+          placeholder="Search everything"
+          className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 py-2 pl-9 pr-3 text-sm text-neutral-100 outline-none transition placeholder:text-neutral-500 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+        />
+      </div>
+      {showResults ? (
+        <div
+          className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950 p-1 shadow-2xl"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {isFetching ? <p className="px-3 py-2 text-sm text-neutral-400">Searching...</p> : null}
+          {!isFetching && results.length ? (
+            <div className="space-y-1">
+              {results.map((result) => (
+                <Link
+                  key={`${result.type}-${result.id}`}
+                  href={result.href}
+                  onClick={() => {
+                    onFocusedChange(false);
+                    onQueryChange('');
+                  }}
+                  className="flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-sm text-neutral-200 hover:bg-neutral-900"
+                >
+                  <SearchResultIcon result={result} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-white">{result.title}</span>
+                    <span className="block truncate text-xs text-neutral-500">{result.label}{result.subtitle ? ` · ${result.subtitle}` : ''}</span>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : null}
+          {!isFetching && !results.length ? (
+            <p className="px-3 py-2 text-sm text-neutral-400">No results</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

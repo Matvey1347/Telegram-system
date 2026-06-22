@@ -27,6 +27,8 @@ export class AccountService {
       await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
     return {
       ...user,
+      avatarIconId: membership.avatarIconId,
+      avatarIcon: membership.avatarIcon ?? null,
       workspace: {
         id: membership.workspace.id,
         name: membership.workspace.name,
@@ -38,6 +40,8 @@ export class AccountService {
 
   async updateMe(userId: string, dto: UpdateMeDto) {
     const data: { name?: string; email?: string } = {};
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
 
     if (dto.name !== undefined) {
       const trimmed = dto.name.trim();
@@ -51,6 +55,22 @@ export class AccountService {
       if (existing && existing.id !== userId)
         throw new ConflictException('Email already exists');
       data.email = email;
+    }
+
+    if (dto.avatarIconId !== undefined && dto.avatarIconId !== null) {
+      const icon = await this.prisma.icon.findFirst({
+        where: { id: dto.avatarIconId, workspaceId: membership.workspaceId },
+      });
+      if (!icon) {
+        throw new NotFoundException('Avatar image not found');
+      }
+    }
+
+    if (dto.avatarIconId !== undefined) {
+      await this.prisma.workspaceMember.update({
+        where: { id: membership.id },
+        data: { avatarIconId: dto.avatarIconId },
+      });
     }
 
     if (!Object.keys(data).length) return this.me(userId);

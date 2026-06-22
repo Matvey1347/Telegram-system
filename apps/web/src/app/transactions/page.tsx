@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
+import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Account, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
@@ -27,8 +28,17 @@ function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null
   };
 }
 
+function memberOptionProps(member: WorkspaceMember) {
+  return {
+    'data-icon-url': member.avatarIcon?.imageUrl ?? undefined,
+    'data-icon-emoji': member.avatarIcon?.emoji ?? undefined,
+    'data-icon-fallback': member.user.name,
+  };
+}
+
 export default function TransactionsPage() {
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
@@ -48,6 +58,11 @@ export default function TransactionsPage() {
   const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const updateCategoryIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionCategoriesApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transaction-categories'] }); qc.invalidateQueries({ queryKey: ['transaction-categories-admin'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
+
+  useEffect(() => {
+    const nextSearch = searchParams.get('search') || '';
+    setFilters((prev) => prev.search === nextSearch ? prev : { ...prev, search: nextSearch });
+  }, [searchParams]);
 
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value, ...(key === 'type' ? { categoryId: '' } : {}) }));
   return <AppShell><PageHeader title="Transactions" subtitle="Track income and expenses" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
@@ -152,6 +167,7 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   const type = watch('type');
   const accountId = watch('accountId');
   const categoryId = watch('categoryId');
+  const memberId = watch('memberId') ?? '';
   const { data: categories } = useQuery({ queryKey: ['transaction-categories', type], queryFn: () => transactionCategoriesApi.list(type), enabled: open && !!type });
   const selectedCategory = useMemo(() => categories?.find((c) => c.id === categoryId), [categories, categoryId]);
   const isInvestment = type === 'income' && selectedCategory?.key === 'investment';
@@ -213,9 +229,13 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
         </FormField>
         {isInvestment ? (
           <FormField label="Member" required error={errors.memberId ? 'Required field' : undefined}>
-            <Select {...register('memberId', { required: true })}>
+            <Select
+              {...register('memberId', { required: true })}
+              value={memberId}
+              onChange={(event) => setValue('memberId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+            >
               <option value="" disabled hidden>Select member</option>
-              {members.map((m) => <option key={m.id} value={m.id}>{m.user.name}</option>)}
+              {members.map((m) => <option key={m.id} value={m.id} {...memberOptionProps(m)}>{m.user.name}</option>)}
             </Select>
           </FormField>
         ) : null}

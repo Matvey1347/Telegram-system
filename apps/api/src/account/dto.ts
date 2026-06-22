@@ -9,6 +9,10 @@ export class UpdateMeDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  @IsString()
+  avatarIconId?: string | null;
 }
 
 export class UpdatePasswordDto {

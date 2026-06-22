@@ -767,13 +767,38 @@ function kpiRangeClass(kind: KpiRange["kind"]) {
   return "border-rose-800 bg-rose-950/40 text-rose-200";
 }
 
+type TooltipPlacement = {
+  x: "left" | "right";
+  y: "top" | "bottom";
+};
+
+function tooltipPlacementClass(placement: TooltipPlacement) {
+  const xClass = placement.x === "right" ? "right-0" : "left-0";
+  const yClass = placement.y === "top" ? "bottom-full mb-2" : "top-full mt-2";
+  return `${xClass} ${yClass}`;
+}
+
+function resolveTooltipPlacement(rect: DOMRect, width = 320, height = 220): TooltipPlacement {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  return {
+    x: rect.left + width > viewportWidth - 16 ? "right" : "left",
+    y: rect.bottom + height > viewportHeight - 16 ? "top" : "bottom",
+  };
+}
+
 function InfoTooltip({ tip }: { tip: string }) {
+  const [placement, setPlacement] = useState<TooltipPlacement>({ x: "left", y: "bottom" });
   return (
-    <span className="group relative inline-flex align-middle">
+    <span
+      className="group relative inline-flex align-middle"
+      onMouseEnter={(event) => setPlacement(resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()))}
+      onFocus={(event) => setPlacement(resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()))}
+    >
       <span className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-600 text-slate-400">
         <CircleHelp size={11} />
       </span>
-      <span className="pointer-events-none absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <span className={`pointer-events-none absolute z-50 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPlacementClass(placement)}`}>
         {tip}
       </span>
     </span>
@@ -1371,7 +1396,7 @@ export default function TelegramChannelsPage() {
           {error ? (
             <div className="text-red-300">Failed to load channels</div>
           ) : null}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredChannels.map((channel: TelegramChannel) => {
               const hasAdminLink = isOwnChannel(channel);
               const username = normalizeUsername(channel.username);

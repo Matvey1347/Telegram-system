@@ -47,18 +47,9 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <PageHeader title="Settings" subtitle="MVP account and workspace info" />
+      <PageHeader title="Settings" />
       {me.isLoading ? <LoadingState /> : null}
-      {me.data ? (
-        <Card>
-          <h3 className="text-lg font-semibold">Current User</h3>
-          <p className="mt-2 text-sm">Name: {me.data.user.name}</p>
-          <p className="text-sm">Email: {me.data.user.email}</p>
-          <p className="text-sm">Workspace: {me.data.workspace.name}</p>
-          <p className="text-sm">Role: {me.data.workspace.role}</p>
-        </Card>
-      ) : null}
-      <div className="mt-4">
+      <div>
         <Card>
           <h3 className="text-lg font-semibold">Workspace</h3>
           <div className="mt-4 space-y-3">

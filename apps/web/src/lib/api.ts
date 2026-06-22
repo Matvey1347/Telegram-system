@@ -71,7 +71,7 @@ export type WorkspaceInfo = { id: string; name: string; role: WorkspaceRole; pri
 export type User = { id: string; email: string; name: string; createdAt?: string };
 export type AuthResponse = { accessToken: string; user: User; workspace: WorkspaceInfo };
 export type MeResponse = { user: User; workspace: WorkspaceInfo };
-export type AccountMe = { id: string; email: string; name: string; createdAt: string; workspace: WorkspaceInfo };
+export type AccountMe = { id: string; email: string; name: string; createdAt: string; avatarIconId?: string | null; avatarIcon?: Icon | null; workspace: WorkspaceInfo };
 export type WorkspaceMember = {
   id: string;
   role: WorkspaceRole;
@@ -87,6 +87,16 @@ export type WorkspaceMember = {
     investmentsCount: number;
   };
   temporaryPassword?: string;
+};
+export type GlobalSearchResult = {
+  id: string;
+  type: string;
+  label: string;
+  title: string;
+  subtitle?: string | null;
+  href: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
 };
 export type Currency = string;
 export type TransactionType = 'income' | 'expense';
@@ -507,7 +517,7 @@ export const authApi = {
 
 export const accountApi = {
   me: async () => (await api.get<AccountMe>('/account/me')).data,
-  updateMe: async (payload: { name?: string; email?: string }) => (await api.patch<AccountMe>('/account/me', payload)).data,
+  updateMe: async (payload: { name?: string; email?: string; avatarIconId?: string | null }) => (await api.patch<AccountMe>('/account/me', payload)).data,
   updatePassword: async (payload: { currentPassword: string; newPassword: string }) => (await api.patch<{ success: boolean }>('/account/password', payload)).data,
   updateWorkspace: async (payload: { name: string; avatarIconId?: string | null }) => (await api.patch<AccountMe>('/account/workspace', payload)).data,
 };
@@ -520,6 +530,10 @@ export const workspacesApi = {
   remove: async (id: string) => (await api.delete<{ success: boolean }>(`/workspaces/${id}`)).data,
 };
 
+export const globalSearchApi = {
+  search: async (query: string) => (await api.get<GlobalSearchResult[]>('/global-search', { params: { q: query } })).data,
+};
+
 export const iconsApi = {
   list: async (search?: string) => (await api.get<Icon[]>('/icons', { params: search ? { search } : undefined })).data,
   get: async (id: string) => (await api.get<Icon>(`/icons/${id}`)).data,
@@ -529,6 +543,7 @@ export const iconsApi = {
     return (await api.post<{ imageUrl: string }>('/icons/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
   },
   createCustom: async (payload: { name: string; imageUrl: string }) => (await api.post<Icon>('/icons/custom', payload)).data,
+  createTemporaryImage: async (payload: { imageUrl: string; fileName?: string }) => (await api.post<Icon>('/icons/temporary-image', payload)).data,
   createEmoji: async (payload: { name: string; emoji: string }) => (await api.post<Icon>('/icons/emoji', payload)).data,
   remove: async (id: string) => (await api.delete<{ success: boolean }>(`/icons/${id}`)).data,
 };

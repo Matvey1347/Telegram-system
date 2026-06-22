@@ -15,6 +15,16 @@ export class CreateCustomIconDto {
   imageUrl!: string;
 }
 
+export class CreateTemporaryImageIconDto {
+  @IsString()
+  imageUrl!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  fileName?: string;
+}
+
 export class CreateEmojiIconDto {
   @IsString()
   @MaxLength(80)

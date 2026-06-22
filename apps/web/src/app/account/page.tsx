@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountApi } from '@/lib/api';
+import { IconPicker } from '@/components/icons/icon-picker';
 import { Button, Card, FormError, FormField, Input, LoadingState, PageHeader } from '@/components/ui/primitives';
 
 type ProfileValues = { name: string; email: string };
@@ -14,10 +15,16 @@ export default function AccountPage() {
   const qc = useQueryClient();
   const [profileError, setProfileError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [avatarIconId, setAvatarIconId] = useState<string | null>(null);
   const { data, isLoading } = useQuery({ queryKey: ['account-me'], queryFn: accountApi.me });
 
   const profileForm = useForm<ProfileValues>({ values: { name: data?.name || '', email: data?.email || '' } });
   const passwordForm = useForm<PasswordValues>();
+
+  useEffect(() => {
+    if (!data) return;
+    setAvatarIconId(data.avatarIconId ?? data.avatarIcon?.id ?? null);
+  }, [data]);
 
   const updateProfile = useMutation({
     mutationFn: accountApi.updateMe,
@@ -40,18 +47,24 @@ export default function AccountPage() {
 
   return <AppShell>
     <PageHeader title="My Profile" subtitle="Manage your account" />
-    {isLoading || !data ? <LoadingState /> : <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Card>
-        <h3 className="mb-2 text-lg font-semibold">Current Account & Workspace</h3>
-        <p>Name: {data.name}</p>
-        <p>Email: {data.email}</p>
-        <p>Workspace: {data.workspace.name}</p>
-        <p>Role: {data.workspace.role}</p>
-      </Card>
-
+    {isLoading || !data ? <LoadingState /> : <div className="grid grid-cols-1 gap-4">
       <Card>
         <h3 className="mb-2 text-lg font-semibold">Edit Profile</h3>
-        <form className="space-y-3" onSubmit={profileForm.handleSubmit((values) => updateProfile.mutate(values))}>
+        <form className="space-y-3" onSubmit={profileForm.handleSubmit((values) => updateProfile.mutate({ ...values, avatarIconId }))}>
+          <div className="flex items-center gap-4">
+            <IconPicker
+              compact
+              iconId={avatarIconId}
+              onChange={setAvatarIconId}
+              buttonLabel="Upload avatar"
+              className="!h-16 !w-16 !overflow-hidden !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner"
+              iconClassName="!h-full !w-full !rounded-2xl !border-0 !bg-transparent"
+            />
+            <div>
+              <p className="text-sm font-medium text-white">Avatar</p>
+              <p className="text-xs text-neutral-400">Shown in workspace members.</p>
+            </div>
+          </div>
           <FormField label="Name" required error={profileForm.formState.errors.name ? 'Required field' : undefined}><Input {...profileForm.register('name', { required: true })} /></FormField>
           <FormField label="Email" required error={profileForm.formState.errors.email ? 'Required field' : undefined}><Input type="email" {...profileForm.register('email', { required: true })} /></FormField>
           <FormError message={profileError} />

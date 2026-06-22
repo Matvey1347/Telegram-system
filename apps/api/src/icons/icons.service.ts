@@ -10,6 +10,7 @@ import { WorkspaceService } from '../common/workspace.service';
 import {
   CreateCustomIconDto,
   CreateEmojiIconDto,
+  CreateTemporaryImageIconDto,
   ListIconsQueryDto,
 } from './dto';
 
@@ -44,6 +45,7 @@ export class IconsService {
     return this.prisma.icon.findMany({
       where: {
         workspaceId,
+        NOT: { name: { startsWith: 'temporary:' } },
         ...(search
           ? {
               name: {
@@ -91,6 +93,24 @@ export class IconsService {
         workspaceId,
         type: 'image',
         name,
+        imageUrl,
+        createdByUserId: userId,
+      },
+      select: this.iconSelect,
+    });
+  }
+
+  async createTemporaryImage(userId: string, dto: CreateTemporaryImageIconDto) {
+    const workspaceId = await this.workspaceId(userId);
+    const imageUrl = dto.imageUrl.trim();
+    if (!imageUrl) throw new BadRequestException('Image URL is required');
+    const fileName = dto.fileName?.trim() || 'uploaded image';
+
+    return this.prisma.icon.create({
+      data: {
+        workspaceId,
+        type: 'image',
+        name: `temporary:${Date.now()}:${fileName}`.slice(0, 80),
         imageUrl,
         createdByUserId: userId,
       },
