@@ -5,9 +5,10 @@ type ChannelPreviewProps = {
   rightAction?: React.ReactNode;
   subtitle?: string;
   avatarKind?: 'channel' | 'mtproto' | 'person';
+  className?: string;
 };
 
-export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'channel' }: ChannelPreviewProps) {
+export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'channel', className = '' }: ChannelPreviewProps) {
   const title = String(channel?.title || '-');
   const subscribers = channel?.currentSubscribersCount == null ? null : Number(channel.currentSubscribersCount);
   const fallbackSubtitle =
@@ -19,7 +20,7 @@ export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'c
           ? `ID ${channel.telegramChatId}`
           : '';
   return (
-    <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-neutral-700 bg-slate-900/70 p-3">
+    <div className={`mb-4 flex items-center justify-between gap-3 rounded-lg border border-neutral-700 bg-slate-900/70 p-3 ${className}`}>
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <TelegramEntityAvatar imageUrl={channel?.photoUrl} kind={avatarKind} alt={title} size="lg" />
         <div className="min-w-0">

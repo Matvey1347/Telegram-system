@@ -1458,6 +1458,16 @@ export class TelegramChannelsService {
       }),
       this.prisma.adCampaign.findMany({
         where: { workspaceId, telegramChannelId: channelId },
+        include: {
+          telegramChannel: true,
+          promo: true,
+          advertisingTelegramChannels: {
+            include: {
+              telegramChannel: true,
+            },
+          },
+          advertisingChannels: { include: { advertisingSource: true } },
+        },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.telegramPost.findMany({

@@ -40,7 +40,6 @@ import { MoneyStack } from "@/components/ui/money-stack";
 import {
   Button,
   DateInput,
-  EntityCard,
   FormField,
   Input,
   LoadingState,
@@ -116,6 +115,21 @@ function dataQualityBadgeClass(status?: string | null) {
     return "border-rose-700 text-rose-200";
   return "border-slate-700 text-slate-300";
 }
+
+function nullableNumber(value: unknown) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function valueInRange(value: number, from: number | null, to: number | null) {
+  if (from == null && to == null) return false;
+  if (from != null && value < from) return false;
+  if (to != null && value > to) return false;
+  return true;
+}
+
+type CampaignKpiStatus = "good" | "acceptable" | "bad" | "unknown";
 
 type ChannelSectionState = {
   posts: boolean;
@@ -603,7 +617,7 @@ export default function TelegramChannelAnalyticsPage() {
       show: campaigns.length > 0,
       title: "Campaigns",
       value: formatNumber(campaigns.length),
-      hint: "Attribution source: invite links",
+      hint: "Attributed campaign rows",
     },
   ].filter((card) => card.show);
 
@@ -628,11 +642,19 @@ export default function TelegramChannelAnalyticsPage() {
       campaigns.map((campaign: any) => {
         const joined = toNumber(campaign.joinedCount);
         const cost = toNumber(campaign.costAmount ?? campaign.price);
+        const costInPrimary = hasNumericValue(campaign.priceInPrimaryCurrency)
+          ? toNumber(campaign.priceInPrimaryCurrency)
+          : null;
+        const kpiCost = costInPrimary != null
+          ? costInPrimary
+          : cost;
         return {
           ...campaign,
           joined,
           cost,
+          costInPrimary,
           cpa: joined > 0 ? cost / joined : null,
+          cpaForKpi: joined > 0 ? kpiCost / joined : null,
         };
       }),
     [campaigns],
@@ -702,52 +724,39 @@ export default function TelegramChannelAnalyticsPage() {
         }
       />
       {isLoading ? <LoadingState /> : null}
-      {data?.channel ? (
-        <ChannelPreview
-          channel={{
-            ...data.channel,
-            currentSubscribersCount: computed.subscribers,
-          }}
-        />
-      ) : null}
+      <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
+        <div className="min-w-0 space-y-3">
+          {data?.channel ? (
+            <ChannelPreview
+              channel={{
+                ...data.channel,
+                currentSubscribersCount: computed.subscribers,
+              }}
+              className="!mb-0"
+            />
+          ) : null}
+          <RangePicker
+            rangeMode={rangeMode}
+            setRangeMode={setRangeMode}
+            customFrom={customFrom}
+            customTo={customTo}
+            setCustomFrom={setCustomFrom}
+            setCustomTo={setCustomTo}
+          />
+        </div>
+        <ChannelMetricsDeck metrics={statCards} />
+      </section>
 
-      <RangePicker
-        rangeMode={rangeMode}
-        setRangeMode={setRangeMode}
-        customFrom={customFrom}
-        customTo={customTo}
-        setCustomFrom={setCustomFrom}
-        setCustomTo={setCustomTo}
-      />
-
-      <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(520px,100%),1fr))] gap-4">
+      <section className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(460px,100%),1fr))] gap-4">
         <AudienceOverview audience={audience} />
         <FinancialOverview
           summary={financialSummary}
           currencySettings={currencySettings}
           rates={rates}
           hasKpi={hasKpiSettings(activeChannel)}
+          settings={settings}
         />
       </section>
-
-      {hasKpi ? (
-        <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(520px,100%),1fr))] gap-4">
-          <KpiSummaryPanel settings={settings} />
-        </section>
-      ) : null}
-
-      {statCards.length ? (
-        <section className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-4">
-          {statCards.map((card) => (
-            <MetricCard
-              key={card.key}
-              title={card.title}
-              value={card.value}
-              hint={card.hint}
-            />
-          ))}
-        </section>
-      ) : null}
 
       {hasAudienceChart || mtprotoGraphs.length ? (
         <section className="mt-6">
@@ -775,7 +784,12 @@ export default function TelegramChannelAnalyticsPage() {
             }
           />
           {openSections.campaigns ? (
-            <CampaignsTable campaigns={campaignRows} />
+            <CampaignsTable
+              campaigns={campaignRows}
+              settings={settings}
+              currencySettings={currencySettings}
+              rates={rates}
+            />
           ) : null}
         </section>
       ) : null}
@@ -879,7 +893,7 @@ function RangePicker({
   setCustomTo: (value: string) => void;
 }) {
   return (
-    <section className="mt-5 flex flex-wrap items-end gap-2 rounded-lg border border-slate-700 p-3">
+    <section className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-700 bg-slate-950/20 p-3">
       <Button
         variant={rangeMode === "30d" ? "primary" : "secondary"}
         type="button"
@@ -929,20 +943,80 @@ function RangePicker({
   );
 }
 
-function MetricCard({
-  title,
-  value,
-  hint,
+function ChannelMetricsDeck({
+  metrics,
 }: {
-  title: string;
-  value: string;
-  hint?: string;
+  metrics: Array<{
+    key: string;
+    title: string;
+    value: string;
+    hint?: string;
+  }>;
+}) {
+  if (!metrics.length) return null;
+  const primaryKeys = new Set(["subscribers", "err", "avgViews", "cpa"]);
+  const primaryMetrics = metrics.filter((metric) => primaryKeys.has(metric.key));
+  const secondaryMetrics = metrics.filter((metric) => !primaryKeys.has(metric.key));
+  const visiblePrimary = primaryMetrics.length ? primaryMetrics : metrics.slice(0, 4);
+  const visibleSecondary = primaryMetrics.length
+    ? secondaryMetrics
+    : metrics.slice(4);
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-950/30 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold uppercase text-slate-400">
+          Channel pulse
+        </h3>
+        <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
+          {metrics.length} metrics
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {visiblePrimary.map((metric) => (
+          <div
+            key={metric.key}
+            className="min-h-[82px] rounded-lg border border-slate-800 bg-slate-900/40 p-3"
+          >
+            <p className="truncate text-xs text-slate-400">{metric.title}</p>
+            <p className="mt-1.5 truncate text-xl font-semibold text-white">
+              {metric.value}
+            </p>
+            {metric.hint ? (
+              <p className="mt-1 truncate text-xs text-slate-500">{metric.hint}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      {visibleSecondary.length ? (
+        <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(min(140px,100%),1fr))] gap-2">
+          {visibleSecondary.map((metric) => (
+            <CompactMetric key={metric.key} metric={metric} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CompactMetric({
+  metric,
+}: {
+  metric: { title: string; value: string; hint?: string };
 }) {
   return (
-    <EntityCard title={title} actions={null}>
-      <p className="text-2xl font-semibold">{value}</p>
-      {hint ? <p className="mt-1 text-xs text-slate-400">{hint}</p> : null}
-    </EntityCard>
+    <div className="rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="truncate text-xs text-slate-400">{metric.title}</p>
+        <p className="shrink-0 text-sm font-semibold text-slate-100">
+          {metric.value}
+        </p>
+      </div>
+      {metric.hint ? (
+        <p className="mt-0.5 truncate text-[11px] text-slate-500">
+          {metric.hint}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -955,21 +1029,25 @@ function SimplePanel({
 }) {
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-3">
-      <h3 className="mb-3 text-base font-semibold">{title}</h3>
+      <h3 className="mb-2.5 text-base font-semibold">{title}</h3>
       {children}
     </div>
   );
 }
 
 function OverviewGrid({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-3">{children}</div>;
+  return (
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(136px,100%),1fr))] gap-2">
+      {children}
+    </div>
+  );
 }
 
 function AudienceOverview({ audience }: { audience: any }) {
   return (
     <SimplePanel title="Audience overview">
       {audience?.dataQualityWarning ? (
-        <div className="mb-3 rounded-lg border border-amber-700/70 bg-amber-950/30 p-3 text-sm text-amber-100">
+        <div className="mb-2 rounded-lg border border-amber-700/70 bg-amber-950/30 px-3 py-2 text-xs font-medium text-amber-100">
           {audience.dataQualityWarning}
         </div>
       ) : null}
@@ -1031,15 +1109,15 @@ function AudienceOverview({ audience }: { audience: any }) {
           label="Avg adjusted reactions"
           value={formatNullableNumber(audience?.avgReactionsAdjusted, 1)}
         />
-        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+        <div className="min-h-[58px] rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-2">
           <p className="text-xs text-slate-400">Data quality</p>
           <span
-            className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${dataQualityBadgeClass(audience?.dataQuality)}`}
+            className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${dataQualityBadgeClass(audience?.dataQuality)}`}
           >
             {audience?.dataQuality || "-"}
           </span>
           {audience?.subscriberBaseQuality ? (
-            <p className="mt-2 text-xs text-slate-400">
+            <p className="mt-1 truncate text-xs text-slate-400">
               Subscriber base: {audience.subscriberBaseQuality}
             </p>
           ) : null}
@@ -1058,11 +1136,13 @@ function FinancialOverview({
   currencySettings,
   rates,
   hasKpi,
+  settings,
 }: {
   summary: any;
   currencySettings: any;
   rates: any[] | undefined;
   hasKpi: boolean;
+  settings: SettingsState;
 }) {
   const primaryCurrency = currencySettings?.primaryCurrency || "USD";
   const hasPaidLaunches =
@@ -1127,26 +1207,29 @@ function FinancialOverview({
   return (
     <SimplePanel title="KPI / Financial overview">
       {hasKpi && !hasPaidLaunches ? (
-        <div className="mb-3 rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm text-slate-300">
+        <div className="mb-2 rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-2 text-xs text-slate-300">
           No paid launches yet.
         </div>
       ) : null}
       {metrics.length || showKpiStatus ? (
-        <OverviewGrid>
-          {metrics.map((metric) => (
-            <Fragment key={metric.key}>{metric.node}</Fragment>
-          ))}
-          {showKpiStatus ? (
-            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-              <p className="text-xs text-slate-400">KPI status</p>
-              <span
-                className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
-              >
-                {summary?.kpiLabel || "-"}
-              </span>
-            </div>
-          ) : null}
-        </OverviewGrid>
+        <div className="space-y-2">
+          <OverviewGrid>
+            {metrics.map((metric) => (
+              <Fragment key={metric.key}>{metric.node}</Fragment>
+            ))}
+            {showKpiStatus ? (
+              <div className="min-h-[58px] rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-2">
+                <p className="text-xs text-slate-400">KPI status</p>
+                <span
+                  className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
+                >
+                  {summary?.kpiLabel || "-"}
+                </span>
+              </div>
+            ) : null}
+          </OverviewGrid>
+          {hasKpi ? <KpiTargetsInline settings={settings} /> : null}
+        </div>
       ) : null}
     </SimplePanel>
   );
@@ -1417,55 +1500,31 @@ function SeedSettingsControl({
   );
 }
 
-function KpiSummaryPanel({ settings }: { settings: SettingsState }) {
-  const hasKpi = Boolean(
-    settings.targetCpaFrom ||
-      settings.targetCpa ||
-      settings.acceptableCpaFrom ||
-      settings.acceptableCpa ||
-      settings.stopCpaFrom ||
-      settings.stopCpa,
-  );
+function KpiTargetsInline({ settings }: { settings: SettingsState }) {
   return (
-    <SimplePanel title="KPI targets">
-      {hasKpi ? (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-            <p className="text-xs uppercase text-slate-500">Optimization goal</p>
-            <p className="mt-1 text-sm text-slate-300">
-              CPA thresholds for paid campaign decisions.
-            </p>
-          </div>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-3">
-            <KpiTarget
-              tone="good"
-              label="Target CPA ($)"
-              from={settings.targetCpaFrom}
-              to={settings.targetCpa}
-            />
-            <KpiTarget
-              tone="warn"
-              label="Acceptable CPA ($)"
-              from={settings.acceptableCpaFrom}
-              to={settings.acceptableCpa}
-            />
-            <KpiTarget
-              tone="bad"
-              label="Stop CPA ($)"
-              from={settings.stopCpaFrom}
-              openEnded
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/20 p-4">
-          <p className="text-sm font-medium text-slate-200">No KPI configured</p>
-          <p className="mt-1 text-sm text-slate-400">
-            Set CPA thresholds from the top bar to evaluate campaign performance.
-          </p>
-        </div>
-      )}
-    </SimplePanel>
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(150px,100%),1fr))] gap-2">
+      <KpiTarget
+        tone="good"
+        label="Target CPA"
+        from={settings.targetCpaFrom}
+        to={settings.targetCpa}
+        compact
+      />
+      <KpiTarget
+        tone="warn"
+        label="Acceptable CPA"
+        from={settings.acceptableCpaFrom}
+        to={settings.acceptableCpa}
+        compact
+      />
+      <KpiTarget
+        tone="bad"
+        label="Stop CPA"
+        from={settings.stopCpaFrom}
+        openEnded
+        compact
+      />
+    </div>
   );
 }
 
@@ -1475,12 +1534,14 @@ function KpiTarget({
   from,
   to,
   openEnded = false,
+  compact = false,
 }: {
   tone: "good" | "warn" | "bad";
   label: string;
   from?: string;
   to?: string;
   openEnded?: boolean;
+  compact?: boolean;
 }) {
   const toneClass = {
     good: "border-emerald-800/80 bg-emerald-950/30 text-emerald-200",
@@ -1489,9 +1550,11 @@ function KpiTarget({
   }[tone];
   const display = formatKpiRange(from, to, openEnded);
   return (
-    <div className={`rounded-lg border p-3 ${toneClass}`}>
+    <div className={`rounded-lg border ${compact ? "px-2.5 py-2" : "p-3"} ${toneClass}`}>
       <p className="text-xs opacity-80">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{display}</p>
+      <p className={compact ? "mt-1 text-sm font-semibold" : "mt-1 text-lg font-semibold"}>
+        {display}
+      </p>
     </div>
   );
 }
@@ -2589,7 +2652,17 @@ function InviteLinksTable({ links }: { links: any[] }) {
   );
 }
 
-function CampaignsTable({ campaigns }: { campaigns: any[] }) {
+function CampaignsTable({
+  campaigns,
+  settings,
+  currencySettings,
+  rates,
+}: {
+  campaigns: any[];
+  settings: SettingsState;
+  currencySettings: any;
+  rates: any[] | undefined;
+}) {
   return (
     <div className="table-scroll w-full rounded-lg border border-slate-700">
       <table className="w-max min-w-full text-sm">
@@ -2600,49 +2673,169 @@ function CampaignsTable({ campaigns }: { campaigns: any[] }) {
             <th className="px-3 py-2 text-right">Joined</th>
             <th className="px-3 py-2 text-right">Cost</th>
             <th className="px-3 py-2 text-right">CPA</th>
-            <th className="px-3 py-2 text-left">Source</th>
           </tr>
         </thead>
         <tbody>
-          {campaigns.map((campaign) => (
-            <tr key={campaign.id} className="border-t border-slate-800">
-              <td className="max-w-md truncate px-3 py-2">
-                {campaign.title || "-"}
-              </td>
-              <td className="px-3 py-2">
-                {formatLocalDate(
-                  campaign.placementDate ||
-                    campaign.startedAt ||
-                    campaign.createdAt,
-                )}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(campaign.joined)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {formatNumber(campaign.cost, 2)} {campaign.currency || ""}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {campaign.cpa == null
-                  ? "-"
-                  : `${formatNumber(campaign.cpa, 2)} ${campaign.currency || ""}`}
-              </td>
-              <td className="px-3 py-2 text-slate-400">
-                {campaign.attributionSource || "invite_link_usage"}
-              </td>
-            </tr>
-          ))}
+          {campaigns.map((campaign) => {
+            const status = campaignKpiStatus(campaign.cpaForKpi, settings);
+            return (
+              <tr
+                key={campaign.id}
+                className={`border-t border-slate-800 ${campaignRowKpiClass(status)}`}
+              >
+                <td className="max-w-md truncate px-3 py-2">
+                  {campaignDisplayTitleWithDate(campaign)}
+                </td>
+                <td className="px-3 py-2">
+                  {formatLocalDate(
+                    campaign.placementDate ||
+                      campaign.startedAt ||
+                      campaign.createdAt,
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {formatNumber(campaign.joined)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <MoneyStack
+                    amount={campaign.cost}
+                    currency={campaign.currency}
+                    settings={currencySettings}
+                    rates={rates}
+                    amountInPrimary={campaign.costInPrimary}
+                    className="inline-block min-w-[112px] text-right"
+                    mainClassName="font-semibold leading-snug text-white"
+                    subClassName="text-xs leading-snug text-slate-500"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {campaign.cpa == null ? (
+                    "-"
+                  ) : (
+                    <div
+                      className={`inline-flex min-w-[112px] justify-center rounded px-2 py-1 ${campaignCpaBadgeClass(status)}`}
+                    >
+                      <MoneyStack
+                        amount={campaign.cpa}
+                        currency={campaign.currency}
+                        settings={currencySettings}
+                        rates={rates}
+                        amountInPrimary={campaign.cpaForKpi}
+                        mainClassName="text-xs font-semibold leading-snug"
+                        subClassName="text-[11px] font-medium leading-snug opacity-75"
+                      />
+                    </div>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
+function campaignDisplayTitleWithDate(campaign: any) {
+  const date = formatLocalDate(
+    campaign?.placementDate || campaign?.startedAt || campaign?.createdAt,
+  );
+  const title = campaignDisplayTitle(campaign);
+  return date && date !== "-" ? `${date} | ${title}` : title;
+}
+
+function campaignDisplayTitle(campaign: any) {
+  const date = formatLocalDate(
+    campaign?.placementDate || campaign?.startedAt || campaign?.createdAt,
+  );
+  let title = String(campaign?.title || "").trim();
+  title = title.replace(/^Telegram ad campaign:\s*/i, "").trim();
+  if (date && date !== "-") {
+    title = title
+      .replace(new RegExp(`^${date}\\s*\\|\\s*`), "")
+      .replace(new RegExp(`^${date}\\b\\s*[-|:]?\\s*`), "")
+      .trim();
+  }
+  if (!title || /^Campaign\s+\d{4}-\d{2}-\d{2}$/i.test(title)) {
+    return generatedCampaignDisplayTitle(campaign);
+  }
+  return title;
+}
+
+function generatedCampaignDisplayTitle(campaign: any) {
+  const sources = campaignSourceLabels(campaign);
+  const promo = campaign?.promo?.title;
+  const parts = [...sources.slice(0, 2), promo].filter(Boolean);
+  if (parts.length) return [...new Set(parts)].join(" | ");
+  return campaign?.telegramChannel?.title || "Campaign";
+}
+
+function campaignSourceLabels(campaign: any) {
+  const normalized = (campaign?.advertisingChannels || [])
+    .map((source: any) =>
+      source?.title ||
+      source?.name ||
+      source?.advertisingSource?.name ||
+      source?.advertisingSource?.title,
+    )
+    .filter(Boolean);
+  const telegramSources = (campaign?.advertisingTelegramChannels || [])
+    .map((placement: any) => placement?.telegramChannel?.title)
+    .filter(Boolean);
+  return [...new Set([...telegramSources, ...normalized])];
+}
+
+function campaignKpiStatus(
+  value: unknown,
+  settings: SettingsState,
+): CampaignKpiStatus {
+  const cpa = nullableNumber(value);
+  if (cpa == null) return "unknown";
+  const targetFrom = nullableNumber(settings.targetCpaFrom);
+  const targetTo = nullableNumber(settings.targetCpa);
+  const acceptableFrom = nullableNumber(settings.acceptableCpaFrom);
+  const acceptableTo = nullableNumber(settings.acceptableCpa);
+  const stopFrom =
+    nullableNumber(settings.stopCpaFrom) ?? nullableNumber(settings.stopCpa);
+  if (
+    targetFrom == null &&
+    targetTo == null &&
+    acceptableFrom == null &&
+    acceptableTo == null &&
+    stopFrom == null
+  ) {
+    return "unknown";
+  }
+  if (valueInRange(cpa, targetFrom, targetTo)) return "good";
+  if (valueInRange(cpa, acceptableFrom, acceptableTo)) return "acceptable";
+  if (valueInRange(cpa, stopFrom, null)) return "bad";
+  return "unknown";
+}
+
+function campaignRowKpiClass(status: CampaignKpiStatus) {
+  if (status === "good") return "bg-emerald-950/10";
+  if (status === "acceptable") return "bg-yellow-950/10";
+  if (status === "bad") return "bg-rose-950/15";
+  return "";
+}
+
+function campaignCpaBadgeClass(status: CampaignKpiStatus) {
+  if (status === "good")
+    return "border-emerald-700/80 bg-emerald-950/40 text-emerald-200";
+  if (status === "acceptable")
+    return "border-yellow-700/80 bg-yellow-950/40 text-yellow-200";
+  if (status === "bad")
+    return "border-rose-700/80 bg-rose-950/40 text-rose-200";
+  return "border-slate-700 bg-slate-900/40 text-slate-200";
+}
+
 function SnapshotItem({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-      <p className="text-xs text-slate-400">{label}</p>
-      <div className="mt-1 font-semibold">{value || "-"}</div>
+    <div className="min-h-[58px] rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-2">
+      <p className="truncate text-xs text-slate-400">{label}</p>
+      <div className="mt-1 truncate text-sm font-semibold text-slate-100">
+        {value || "-"}
+      </div>
     </div>
   );
 }
