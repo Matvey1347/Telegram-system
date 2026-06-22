@@ -104,7 +104,16 @@ export class AdHypothesesService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  private average(values: Array<number | null | undefined>) {
+    const clean = values.filter((value): value is number => value != null);
+    return clean.length
+      ? clean.reduce((sum, value) => sum + value, 0) / clean.length
+      : null;
+  }
+
   private campaignJoined(campaign: any) {
+    const newSubscribers = this.nullableNumber(campaign.newSubscribers);
+    if (newSubscribers != null) return newSubscribers;
     const analyticsJoined = this.nullableNumber(campaign.analytics?.joinedCount);
     const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
       ? campaign.inviteLinks
@@ -198,8 +207,12 @@ export class AdHypothesesService {
       views,
       reactions,
       engagementRate,
-      activeSubscribersEstimate: null,
-      activeCpa: null,
+      activeSubscribersEstimate: this.nullableNumber(campaign.activeSubscribersFromAd),
+      activeCpa: this.nullableNumber(campaign.activeCpa),
+      activeRate: this.nullableNumber(campaign.activeRate),
+      retention7d: this.nullableNumber(campaign.retention7d),
+      overallStatus: campaign.overallStatus || 'unknown',
+      analyticsLastCalculatedAt: campaign.analyticsLastCalculatedAt,
       targetChannel: campaign.telegramChannel
         ? {
             id: campaign.telegramChannel.id,
@@ -210,7 +223,7 @@ export class AdHypothesesService {
         : null,
       source: this.sourceLabel(campaign),
       sourcePostUrl: campaign.sourcePostUrl,
-      kpiStatus,
+      kpiStatus: campaign.overallStatus || kpiStatus,
     };
   }
 
@@ -227,13 +240,16 @@ export class AdHypothesesService {
       (sum, campaign) => sum + Number(campaign.views || 0),
       0,
     );
+    const activeSubscribersEstimate = campaignSummaries.reduce(
+      (sum, campaign) => sum + Number(campaign.activeSubscribersEstimate || 0),
+      0,
+    );
     const reactionsWithData = campaignSummaries
       .map((campaign) => campaign.reactions)
       .filter((value) => value != null);
     const totalReactions = reactionsWithData.length
       ? reactionsWithData.reduce((sum, value) => sum + Number(value || 0), 0)
       : null;
-    const activeSubscribersEstimate = null;
     const bestCampaign =
       campaignSummaries
         .filter((campaign) => campaign.cpa != null)
@@ -252,8 +268,14 @@ export class AdHypothesesService {
       avgCpa:
         totalJoinedSubscribers > 0 ? totalSpend / totalJoinedSubscribers : null,
       activeSubscribersEstimate,
-      activeCpa: null,
-      avgActiveRate: null,
+      activeCpa:
+        activeSubscribersEstimate > 0 ? totalSpend / activeSubscribersEstimate : null,
+      avgActiveRate: this.average(
+        campaignSummaries.map((campaign) => campaign.activeRate),
+      ),
+      avgRetention7d: this.average(
+        campaignSummaries.map((campaign) => campaign.retention7d),
+      ),
       totalViews: totalViews || null,
       totalReactions,
       engagementRate:

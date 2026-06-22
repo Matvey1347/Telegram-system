@@ -117,18 +117,26 @@ export class TelegramChannelAnalyticsService {
       where: { id: channelId },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const [campaigns, audience] = await Promise.all([
-      this.prisma.adCampaign.findMany({
-        where: { workspaceId: channel.workspaceId, telegramChannelId: channel.id },
+    const [campaignRows, audience] = await Promise.all([
+      (this.prisma.adCampaign as any).findMany({
+        where: {
+          workspaceId: channel.workspaceId,
+          telegramChannelId: channel.id,
+          excludeFromAnalytics: false,
+        },
         include: { inviteLinks: { select: { joinedCount: true } } },
       }),
       this.getActiveAudienceEstimate(channelId),
     ]);
+    const campaigns = campaignRows as any[];
     const totalAdSpend = campaigns.reduce(
       (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
       0,
     );
     const totalJoinedSubscribers = campaigns.reduce((sum, campaign) => {
+      if (campaign.newSubscribers != null) {
+        return sum + Number(campaign.newSubscribers || 0);
+      }
       const campaignJoined = Number(campaign.joinedCount || 0);
       const linksJoined = campaign.inviteLinks.reduce(
         (linkSum, link) => linkSum + Number(link.joinedCount || 0),
@@ -138,12 +146,28 @@ export class TelegramChannelAnalyticsService {
     }, 0);
     const avgCpa =
       totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
+    const campaignActiveSubscribersEstimate = campaigns.reduce(
+      (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
+      0,
+    );
     const paidActiveSubscribersEstimate =
-      audience.paidActiveSubscribersEstimate ?? 0;
+      campaignActiveSubscribersEstimate > 0
+        ? campaignActiveSubscribersEstimate
+        : (audience.paidActiveSubscribersEstimate ?? 0);
     const activeCpa =
       paidActiveSubscribersEstimate > 0
         ? totalAdSpend / paidActiveSubscribersEstimate
         : null;
+    const avgActiveRate = this.average(
+      campaigns
+        .map((campaign) => this.numberOrNull(campaign.activeRate))
+        .filter((value): value is number => value != null),
+    );
+    const avgRetention7d = this.average(
+      campaigns
+        .map((campaign) => this.numberOrNull(campaign.retention7d))
+        .filter((value): value is number => value != null),
+    );
     const targetCpa = this.numberOrNull(channel.targetCpa);
     const acceptableCpa = this.numberOrNull(channel.acceptableCpa);
     const stopCpa = this.numberOrNull(channel.stopCpa);
@@ -169,8 +193,10 @@ export class TelegramChannelAnalyticsService {
       totalJoinedSubscribers,
       avgCpa,
       activeSubscribersEstimate: audience.activeSubscribersEstimate,
-      paidActiveSubscribersEstimate: audience.paidActiveSubscribersEstimate,
+      paidActiveSubscribersEstimate,
       activeCpa,
+      avgActiveRate,
+      avgRetention7d,
       kpiStatus,
       kpiLabel,
       kpiCurrency: channel.kpiCurrency,

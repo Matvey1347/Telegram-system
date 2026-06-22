@@ -14,6 +14,7 @@ import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { AdCampaignsService } from './ad-campaigns.service';
 import {
+  AdCampaignAnalyticsInputDto,
   CreateAdCampaignDto,
   AdCampaignQueryDto,
   UpdateAdCampaignDto,
@@ -34,9 +35,36 @@ export class AdCampaignsController {
     return this.service.create(user.sub, dto);
   }
 
+  @Get('performance-summary')
+  performanceSummary(
+    @CurrentUser() user: JwtUser,
+    @Query() query: Record<string, string>,
+  ) {
+    return this.service.performanceSummary(user.sub, query);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.findOne(user.sub, id);
+  }
+
+  @Patch(':id/analytics-input')
+  updateAnalyticsInput(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: AdCampaignAnalyticsInputDto,
+  ) {
+    return this.service.updateAnalyticsInput(user.sub, id, dto);
+  }
+
+  @Post(':id/recalculate-analytics')
+  recalculateAnalytics(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.recalculateAnalytics(user.sub, id);
+  }
+
+  @Get(':id/analytics-summary')
+  analyticsSummary(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.analyticsSummary(user.sub, id);
   }
 
   @Patch(':id')

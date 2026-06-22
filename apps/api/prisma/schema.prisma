@@ -130,6 +130,7 @@ model Workspace {
   adCampaigns                      AdCampaign[]
   adHypotheses                     AdHypothesis[]
   adHypothesisCampaigns            AdHypothesisCampaign[]
+  dailyAnalyticsSyncRuns           DailyAnalyticsSyncRun[]
   exchangeRates                    ExchangeRate[]
   investments                      Investment[]
   transactionCategories            TransactionCategory[]
@@ -621,6 +622,41 @@ model AdCampaign {
   netGrowthCount         Int?
   cpa                    Decimal?
   cpm                    Decimal?
+  subscribersBefore      Int?
+  avgViewsBefore         Float?
+  avgReactionsBefore     Float?
+  subscribersAfter24h    Int?
+  subscribersAfter48h    Int?
+  subscribersAfter72h    Int?
+  subscribersAfter7d     Int?
+  subscribersAfter30d    Int?
+  avgViewsAfter          Float?
+  avgReactionsAfter      Float?
+  clicksAfter            Int?
+  newSubscribers         Int?
+  activeSubscribersFromAd Int?
+  activeCpa              Decimal?
+  activeRate             Float?
+  unsub24h               Int?
+  unsub48h               Int?
+  unsub72h               Int?
+  unsub7d                Int?
+  unsub30d               Int?
+  retention24h           Float?
+  retention48h           Float?
+  retention72h           Float?
+  retention7d            Float?
+  retention30d           Float?
+  cpaStatus              String?
+  activeCpaStatus        String?
+  retentionStatus        String?
+  overallStatus          String?
+  decisionText           String?
+  excludeFromAnalytics   Boolean        @default(false)
+  analyticsNotes         String?
+  analyticsLastCalculatedAt DateTime?
+  analyticsLastAutoSyncedAt DateTime?
+  analyticsLastManualSyncedAt DateTime?
   notes                  String?
   createdByUserId        String?
 
@@ -676,6 +712,27 @@ model AdHypothesisCampaign {
   @@index([workspaceId])
   @@index([hypothesisId])
   @@index([adCampaignId])
+}
+
+model DailyAnalyticsSyncRun {
+  id                 String    @id @default(cuid())
+  workspaceId        String?
+  startedAt          DateTime  @default(now())
+  finishedAt         DateTime?
+  status             String    @default("running")
+  source             String    @default("cron")
+  channelsProcessed  Int       @default(0)
+  campaignsProcessed Int       @default(0)
+  snapshotsCreated   Int       @default(0)
+  errorsCount        Int       @default(0)
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, startedAt])
+  @@index([status])
+  @@index([source])
 }
 
 model AdCampaignAdvertisingChannel {

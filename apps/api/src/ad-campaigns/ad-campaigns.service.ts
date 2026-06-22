@@ -7,10 +7,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
 import {
+  AdCampaignAnalyticsInputDto,
   AdCampaignQueryDto,
   CreateAdCampaignDto,
   UpdateAdCampaignDto,
 } from './dto';
+import { AdCampaignAnalyticsService } from './ad-campaign-analytics.service';
 
 @Injectable()
 export class AdCampaignsService {
@@ -18,7 +20,26 @@ export class AdCampaignsService {
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
     private financeCategoriesService: FinanceCategoriesService,
+    private campaignAnalyticsService: AdCampaignAnalyticsService,
   ) {}
+
+  private analyticsInputData(dto: Partial<AdCampaignAnalyticsInputDto>) {
+    return {
+      subscribersBefore: dto.subscribersBefore,
+      avgViewsBefore: dto.avgViewsBefore,
+      avgReactionsBefore: dto.avgReactionsBefore,
+      subscribersAfter24h: dto.subscribersAfter24h,
+      subscribersAfter48h: dto.subscribersAfter48h,
+      subscribersAfter72h: dto.subscribersAfter72h,
+      subscribersAfter7d: dto.subscribersAfter7d,
+      subscribersAfter30d: dto.subscribersAfter30d,
+      avgViewsAfter: dto.avgViewsAfter,
+      avgReactionsAfter: dto.avgReactionsAfter,
+      clicksAfter: dto.clicksAfter,
+      analyticsNotes: dto.analyticsNotes,
+      excludeFromAnalytics: dto.excludeFromAnalytics,
+    };
+  }
 
   private async workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
@@ -532,6 +553,7 @@ export class AdCampaignsService {
           accountId: account.id,
           placementDate,
           notes: dto.notes,
+          ...this.analyticsInputData(dto),
         },
       });
 
@@ -558,6 +580,10 @@ export class AdCampaignsService {
       return row;
     });
 
+    await this.campaignAnalyticsService.recalculateCampaignAnalytics(
+      workspaceId,
+      campaign.id,
+    );
     return this.findOne(userId, campaign.id);
   }
 
@@ -648,6 +674,7 @@ export class AdCampaignsService {
           accountId: account.id,
           placementDate: dto.date ? new Date(dto.date) : undefined,
           notes: dto.notes,
+          ...this.analyticsInputData(dto),
         },
       });
 
@@ -677,6 +704,10 @@ export class AdCampaignsService {
       await this.syncExpenseTransaction(tx, workspaceId, row, dto.accountId);
     });
 
+    await this.campaignAnalyticsService.recalculateCampaignAnalytics(
+      workspaceId,
+      id,
+    );
     return this.findOne(userId, id);
   }
 
@@ -723,6 +754,124 @@ export class AdCampaignsService {
       advertisingChannels: campaign.advertisingChannels,
       isMixedAttribution: campaign.isMixedAttribution,
       ...campaign.analytics,
+    };
+  }
+
+  async updateAnalyticsInput(
+    userId: string,
+    id: string,
+    dto: AdCampaignAnalyticsInputDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const existing = await this.prisma.adCampaign.findFirst({
+      where: { id, workspaceId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Campaign not found');
+    await (this.prisma.adCampaign as any).update({
+      where: { id },
+      data: this.analyticsInputData(dto),
+    });
+    await this.campaignAnalyticsService.recalculateCampaignAnalytics(
+      workspaceId,
+      id,
+    );
+    return this.findOne(userId, id);
+  }
+
+  async recalculateAnalytics(userId: string, id: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.campaignAnalyticsService.recalculateCampaignAnalytics(
+      workspaceId,
+      id,
+    );
+    return this.findOne(userId, id);
+  }
+
+  async analyticsSummary(userId: string, id: string) {
+    const workspaceId = await this.workspace(userId);
+    const campaign: any = await this.prisma.adCampaign.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    return this.campaignAnalyticsService.summary(campaign);
+  }
+
+  async performanceSummary(userId: string, query: any = {}) {
+    const workspaceId = await this.workspace(userId);
+    const where: any = {
+      workspaceId,
+      excludeFromAnalytics: false,
+      telegramChannelId: query.channelId || undefined,
+      placementDate: {
+        gte: query.dateFrom ? new Date(query.dateFrom) : undefined,
+        lte: query.dateTo ? new Date(query.dateTo) : undefined,
+      },
+    };
+    if (!query.dateFrom && !query.dateTo) delete where.placementDate;
+    if (query.hypothesisId) {
+      where.hypothesisLinks = { some: { hypothesisId: query.hypothesisId } };
+    }
+    const [campaigns, lastDailyAnalyticsSync] = await Promise.all([
+      (this.prisma.adCampaign as any).findMany({
+        where,
+        include: { telegramChannel: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      (this.prisma as any).dailyAnalyticsSyncRun.findFirst({
+        where: { OR: [{ workspaceId }, { workspaceId: null }] },
+        orderBy: { startedAt: 'desc' },
+      }),
+    ]);
+    const totalSpend = campaigns.reduce(
+      (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
+      0,
+    );
+    const totalNewSubscribers = campaigns.reduce(
+      (sum, campaign) => sum + Number(campaign.newSubscribers || 0),
+      0,
+    );
+    const totalActiveSubscribersFromAd = campaigns.reduce(
+      (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
+      0,
+    );
+    const avg = (values: Array<number | null>) => {
+      const clean = values.filter((value): value is number => value != null);
+      return clean.length
+        ? clean.reduce((sum, value) => sum + value, 0) / clean.length
+        : null;
+    };
+    const statusCounts = campaigns.reduce(
+      (acc, campaign) => {
+        const status = campaign.overallStatus || 'unknown';
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      },
+      { good: 0, acceptable: 0, bad: 0, unknown: 0 } as Record<string, number>,
+    );
+    const metric = (campaign: any) =>
+      Number(campaign.activeCpa ?? campaign.cpa ?? Number.POSITIVE_INFINITY);
+    const ranked = campaigns.filter((campaign) => Number.isFinite(metric(campaign)));
+    return {
+      campaignsCount: campaigns.length,
+      totalSpend,
+      totalNewSubscribers,
+      totalActiveSubscribersFromAd,
+      avgCpa:
+        totalNewSubscribers > 0 ? totalSpend / totalNewSubscribers : null,
+      avgActiveCpa:
+        totalActiveSubscribersFromAd > 0
+          ? totalSpend / totalActiveSubscribersFromAd
+          : null,
+      avgActiveRate: avg(campaigns.map((campaign) => campaign.activeRate)),
+      avgRetention7d: avg(campaigns.map((campaign) => campaign.retention7d)),
+      goodCount: statusCounts.good || 0,
+      acceptableCount: statusCounts.acceptable || 0,
+      badCount: statusCounts.bad || 0,
+      unknownCount: statusCounts.unknown || 0,
+      bestCampaigns: [...ranked].sort((a, b) => metric(a) - metric(b)).slice(0, 5),
+      worstCampaigns: [...ranked].sort((a, b) => metric(b) - metric(a)).slice(0, 5),
+      lastDailyAnalyticsSync,
     };
   }
 }

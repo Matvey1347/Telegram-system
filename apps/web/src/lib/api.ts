@@ -137,6 +137,8 @@ export type TelegramChannelFinancialSummary = {
   activeSubscribersEstimate: number | null;
   paidActiveSubscribersEstimate: number | null;
   activeCpa: number | null;
+  avgActiveRate?: number | null;
+  avgRetention7d?: number | null;
   kpiStatus: 'good' | 'acceptable' | 'bad' | 'unknown';
   kpiLabel: string;
   kpiCurrency?: string | null;
@@ -298,7 +300,82 @@ export type Promo = { id: string; telegramChannelId: string; title: string; text
 export type AdvertisingChannel = { id: string; selectionId?: string; kind?: 'person' | 'legacy_channel'; title: string; telegramUrl?: string; username?: string; contactInfo?: string; notes?: string; imageUrl?: string; subscribersCount?: number; channelTags?: string[]; createdAt?: string; updatedAt?: string };
 export type ImportedTelegramSource = TelegramChannel | AdvertisingChannel;
 export type AdCampaignHypothesisLink = { id: string; hypothesis: { id: string; name: string; status: AdHypothesisStatus } };
-export type AdCampaign = { id: string; title: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdCampaignKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type AdCampaignAnalyticsInput = {
+  subscribersBefore?: number | null;
+  avgViewsBefore?: number | null;
+  avgReactionsBefore?: number | null;
+  subscribersAfter24h?: number | null;
+  subscribersAfter48h?: number | null;
+  subscribersAfter72h?: number | null;
+  subscribersAfter7d?: number | null;
+  subscribersAfter30d?: number | null;
+  avgViewsAfter?: number | null;
+  avgReactionsAfter?: number | null;
+  clicksAfter?: number | null;
+  analyticsNotes?: string | null;
+  excludeFromAnalytics?: boolean;
+};
+export type AdCampaignAnalyticsFields = AdCampaignAnalyticsInput & {
+  newSubscribers?: number | null;
+  activeSubscribersFromAd?: number | null;
+  cpa?: number | string | null;
+  activeCpa?: number | string | null;
+  activeRate?: number | null;
+  unsub24h?: number | null;
+  unsub48h?: number | null;
+  unsub72h?: number | null;
+  unsub7d?: number | null;
+  unsub30d?: number | null;
+  retention24h?: number | null;
+  retention48h?: number | null;
+  retention72h?: number | null;
+  retention7d?: number | null;
+  retention30d?: number | null;
+  cpaStatus?: AdCampaignKpiStatus | null;
+  activeCpaStatus?: AdCampaignKpiStatus | null;
+  retentionStatus?: AdCampaignKpiStatus | null;
+  overallStatus?: AdCampaignKpiStatus | null;
+  decisionText?: string | null;
+  analyticsLastCalculatedAt?: string | null;
+  analyticsLastAutoSyncedAt?: string | null;
+  analyticsLastManualSyncedAt?: string | null;
+};
+export type AdCampaign = AdCampaignAnalyticsFields & { id: string; title: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdCampaignAnalyticsSummary = AdCampaignAnalyticsFields & {
+  cost?: number | null;
+  cpa?: number | null;
+};
+export type DailyAnalyticsSyncRun = {
+  id: string;
+  workspaceId?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  status: string;
+  source: string;
+  channelsProcessed: number;
+  campaignsProcessed: number;
+  snapshotsCreated: number;
+  errorsCount: number;
+  errorMessage?: string | null;
+};
+export type AdCampaignPerformanceSummary = {
+  campaignsCount: number;
+  totalSpend: number;
+  totalNewSubscribers: number;
+  totalActiveSubscribersFromAd: number;
+  avgCpa: number | null;
+  avgActiveCpa: number | null;
+  avgActiveRate: number | null;
+  avgRetention7d: number | null;
+  goodCount: number;
+  acceptableCount: number;
+  badCount: number;
+  unknownCount: number;
+  bestCampaigns: AdCampaign[];
+  worstCampaigns: AdCampaign[];
+  lastDailyAnalyticsSync?: DailyAnalyticsSyncRun | null;
+};
 export type AdHypothesisStatus = 'testing' | 'winner' | 'loser' | 'paused' | 'archived';
 export type AdHypothesisKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
 export type AdHypothesisCampaignSummary = {
@@ -316,6 +393,10 @@ export type AdHypothesisCampaignSummary = {
   engagementRate?: number | null;
   activeSubscribersEstimate?: number | null;
   activeCpa?: number | null;
+  activeRate?: number | null;
+  retention7d?: number | null;
+  overallStatus?: AdCampaignKpiStatus | null;
+  analyticsLastCalculatedAt?: string | null;
   targetChannel?: { id: string; title: string; username?: string | null; photoUrl?: string | null } | null;
   source?: string | null;
   sourcePostUrl?: string | null;
@@ -329,6 +410,7 @@ export type AdHypothesisSummary = {
   activeSubscribersEstimate?: number | null;
   activeCpa?: number | null;
   avgActiveRate?: number | null;
+  avgRetention7d?: number | null;
   totalViews?: number | null;
   totalReactions?: number | null;
   engagementRate?: number | null;
@@ -485,6 +567,15 @@ export const advertisingChannelsApi = crud<AdvertisingChannel>('/advertising-cha
 export const adCampaignsApi = {
   ...crud<AdCampaign>('/ad-campaigns'),
   list: async (params?: { telegramChannelId?: string }) => (await api.get<AdCampaign[]>('/ad-campaigns', { params })).data,
+  updateAnalyticsInput: async (id: string, payload: AdCampaignAnalyticsInput) => (await api.patch<AdCampaign>(`/ad-campaigns/${id}/analytics-input`, payload)).data,
+  recalculateAnalytics: async (id: string) => (await api.post<AdCampaign>(`/ad-campaigns/${id}/recalculate-analytics`)).data,
+  analyticsSummary: async (id: string) => (await api.get<AdCampaignAnalyticsSummary>(`/ad-campaigns/${id}/analytics-summary`)).data,
+  performanceSummary: async (params?: { channelId?: string; hypothesisId?: string; dateFrom?: string; dateTo?: string }) => (await api.get<AdCampaignPerformanceSummary>('/ad-campaigns/performance-summary', { params })).data,
+};
+export const telegramSyncApi = {
+  runDailyAnalytics: async () => (await api.post<DailyAnalyticsSyncRun>('/telegram-sync/daily-analytics/run')).data,
+  lastDailyAnalyticsRun: async () => (await api.get<DailyAnalyticsSyncRun | null>('/telegram-sync/daily-analytics/last-run')).data,
+  dailyAnalyticsRuns: async (limit = 20) => (await api.get<DailyAnalyticsSyncRun[]>('/telegram-sync/daily-analytics/runs', { params: { limit } })).data,
 };
 export const adHypothesesApi = {
   list: async () => (await api.get<AdHypothesis[]>('/ad-hypotheses')).data,

@@ -921,6 +921,10 @@ function FinancialOverview({
           value={formatNumber(summary?.totalJoinedSubscribers)}
         />
         <SnapshotItem
+          label="Active subscribers from ads"
+          value={formatNullableNumber(summary?.paidActiveSubscribersEstimate)}
+        />
+        <SnapshotItem
           label="Avg CPA"
           value={
             summary?.avgCpa == null
@@ -935,6 +939,14 @@ function FinancialOverview({
               ? "-"
               : `${formatNumber(summary.activeCpa, 2)} ${currency}`
           }
+        />
+        <SnapshotItem
+          label="Avg active rate"
+          value={formatPercent(summary?.avgActiveRate)}
+        />
+        <SnapshotItem
+          label="Avg retention 7d"
+          value={formatPercent(summary?.avgRetention7d)}
         />
         <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
           <p className="text-xs text-slate-400">KPI status</p>

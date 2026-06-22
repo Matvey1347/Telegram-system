@@ -47,7 +47,7 @@ export default function DashboardPage() {
   );
 }
 
-function SimpleCampaignTable({ rows }: { rows: { id: string; title: string; cpa?: number; cpm?: number; joinedCount?: number }[] }) {
+function SimpleCampaignTable({ rows }: { rows: { id: string; title: string; cpa?: number | string | null; cpm?: number | string | null; joinedCount?: number | null }[] }) {
   return (
     <Table>
       <thead><tr className="text-neutral-400"><th>Title</th><th>Joined</th><th>CPA</th><th>CPM</th></tr></thead>

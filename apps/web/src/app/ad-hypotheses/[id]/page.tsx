@@ -150,6 +150,7 @@ export default function AdHypothesisDetailPage() {
             />
             <MetricCard title="Active CPA" value={formatNumber(summary.activeCpa, 2)} />
             <MetricCard title="Active rate" value={formatPercent(summary.avgActiveRate)} />
+            <MetricCard title="Retention 7d" value={formatPercent(summary.avgRetention7d)} />
             <MetricCard
               title="Engagement rate"
               value={formatPercent(summary.engagementRate)}
@@ -219,7 +220,7 @@ function CampaignMiniBlock({
         <div className="text-sm">
           <p className="truncate font-medium text-slate-100">{campaign.title}</p>
           <p className="mt-1 text-slate-400">
-            CPA {formatNumber(campaign.cpa, 2)} · {formatNumber(campaign.joinedSubscribers)} joined
+            CPA {formatNumber(campaign.cpa, 2)} · active CPA {formatNumber(campaign.activeCpa, 2)}
           </p>
         </div>
       ) : (
@@ -236,7 +237,7 @@ function CampaignsTable({
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="w-full min-w-[1120px] table-fixed text-sm">
+      <table className="w-full min-w-[1480px] table-fixed text-sm">
         <thead className="bg-slate-900/60 text-slate-300">
           <tr>
             <th className="w-64 px-3 py-2 text-left">Campaign</th>
@@ -244,10 +245,16 @@ function CampaignsTable({
             <th className="w-56 px-3 py-2 text-left">Source</th>
             <th className="w-28 px-3 py-2 text-right">Spend</th>
             <th className="w-32 px-3 py-2 text-right">Joined</th>
+            <th className="w-32 px-3 py-2 text-right">Active</th>
             <th className="w-28 px-3 py-2 text-right">CPA</th>
+            <th className="w-32 px-3 py-2 text-right">Active CPA</th>
+            <th className="w-32 px-3 py-2 text-right">Active rate</th>
+            <th className="w-32 px-3 py-2 text-right">Retention 7d</th>
             <th className="w-28 px-3 py-2 text-right">Views</th>
             <th className="w-28 px-3 py-2 text-right">Reactions</th>
             <th className="w-32 px-3 py-2 text-right">Engagement</th>
+            <th className="w-32 px-3 py-2 text-left">Overall</th>
+            <th className="w-44 px-3 py-2 text-left">Calculated</th>
             <th className="w-28 px-3 py-2 text-left">KPI</th>
           </tr>
         </thead>
@@ -274,10 +281,22 @@ function CampaignsTable({
               </td>
               <td className="px-3 py-2 text-right">{formatNumber(campaign.spend, 2)}</td>
               <td className="px-3 py-2 text-right">{formatNumber(campaign.joinedSubscribers)}</td>
+              <td className="px-3 py-2 text-right">{formatNumber(campaign.activeSubscribersEstimate)}</td>
               <td className="px-3 py-2 text-right">{formatNumber(campaign.cpa, 2)}</td>
+              <td className="px-3 py-2 text-right">{formatNumber(campaign.activeCpa, 2)}</td>
+              <td className="px-3 py-2 text-right">{formatPercent(campaign.activeRate)}</td>
+              <td className="px-3 py-2 text-right">{formatPercent(campaign.retention7d)}</td>
               <td className="px-3 py-2 text-right">{formatNumber(campaign.views)}</td>
               <td className="px-3 py-2 text-right">{formatNumber(campaign.reactions)}</td>
               <td className="px-3 py-2 text-right">{formatPercent(campaign.engagementRate)}</td>
+              <td className="px-3 py-2">
+                <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(campaign.overallStatus || "unknown")}`}>
+                  {campaign.overallStatus || "unknown"}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-slate-400">
+                {campaign.analyticsLastCalculatedAt ? new Date(campaign.analyticsLastCalculatedAt).toLocaleString() : "-"}
+              </td>
               <td className="px-3 py-2">
                 <span
                   className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(campaign.kpiStatus)}`}

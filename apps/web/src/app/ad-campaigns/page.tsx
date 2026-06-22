@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
-import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi, workspacesApi } from '@/lib/api';
+import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi, telegramSyncApi, workspacesApi } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { formatMoney, getMoneyVariants } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
@@ -62,6 +62,14 @@ export default function AdCampaignsPage() {
     queryKey: ['ad-campaigns', channelFilter],
     queryFn: () => adCampaignsApi.list(channelFilter ? { telegramChannelId: channelFilter } : undefined),
   });
+  const { data: performance } = useQuery({
+    queryKey: ['ad-campaigns-performance', channelFilter],
+    queryFn: () => adCampaignsApi.performanceSummary(channelFilter ? { channelId: channelFilter } : undefined),
+  });
+  const { data: syncRuns } = useQuery({
+    queryKey: ['daily-analytics-runs'],
+    queryFn: () => telegramSyncApi.dailyAnalyticsRuns(8),
+  });
 
   const createMutation = useMutation({
     mutationFn: adCampaignsApi.create,
@@ -90,9 +98,67 @@ export default function AdCampaignsPage() {
     },
     onError: (error) => pushToast(getErrorMessage(error, 'Failed to archive campaign.'), 'error'),
   });
+  const syncMutation = useMutation({
+    mutationFn: telegramSyncApi.runDailyAnalytics,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      qc.invalidateQueries({ queryKey: ['ad-campaigns-performance'] });
+      qc.invalidateQueries({ queryKey: ['daily-analytics-runs'] });
+      pushToast('Daily analytics sync finished.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Daily analytics sync failed.'), 'error'),
+  });
+  const excludeMutation = useMutation({
+    mutationFn: ({ id, excludeFromAnalytics }: { id: string; excludeFromAnalytics: boolean }) =>
+      adCampaignsApi.updateAnalyticsInput(id, { excludeFromAnalytics }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      qc.invalidateQueries({ queryKey: ['ad-campaigns-performance'] });
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update analytics flag.'), 'error'),
+  });
 
   return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by own channel, promo link and external advertising channels" action={<div className="flex gap-2"><Link href="/ad-hypotheses" className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Hypotheses</Link><Button onClick={() => setCreateOpen(true)}>Create</Button></div>} />
     {(channels?.length ?? 0) > 1 ? <Card className="mb-4"><FormField label="Channel"><Select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}><option value="">All channels</option>{channels?.map((channel: any) => <option key={channel.id} value={channel.id}>{channel.title}</option>)}</Select></FormField></Card> : null}
+    <Card className="mb-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Performance summary</h3>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4 xl:grid-cols-8">
+            <SummaryItem label="Campaigns" value={formatMetric(performance?.campaignsCount)} />
+            <SummaryItem label="Spend" value={formatMoney(performance?.totalSpend || 0, moneySettings.primaryCurrency || '', currencySettings?.currencyDisplayMode)} />
+            <SummaryItem label="New subs" value={formatMetric(performance?.totalNewSubscribers)} />
+            <SummaryItem label="Active from ads" value={formatMetric(performance?.totalActiveSubscribersFromAd)} />
+            <SummaryItem label="Avg CPA" value={formatMetric(performance?.avgCpa, 2)} />
+            <SummaryItem label="Active CPA" value={formatMetric(performance?.avgActiveCpa, 2)} />
+            <SummaryItem label="Active rate" value={formatPercent(performance?.avgActiveRate)} />
+            <SummaryItem label="Retention 7d" value={formatPercent(performance?.avgRetention7d)} />
+          </div>
+        </div>
+        <div className="min-w-56 rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm">
+          <p className="text-slate-400">Daily analytics sync</p>
+          <p className="mt-1 font-medium">{performance?.lastDailyAnalyticsSync?.startedAt ? new Date(performance.lastDailyAnalyticsSync.startedAt).toLocaleString() : 'No runs yet'}</p>
+          <p className="mt-1 text-xs text-slate-400">Status: {performance?.lastDailyAnalyticsSync?.status || '-'}</p>
+          <Button className="mt-3 w-full" type="button" disabled={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
+            {syncMutation.isPending ? 'Syncing...' : 'Run sync'}
+          </Button>
+        </div>
+      </div>
+      {syncRuns?.length ? (
+        <div className="mt-4 border-t border-slate-800 pt-3">
+          <p className="mb-2 text-sm font-medium text-slate-200">Recent sync runs</p>
+          <div className="grid gap-2 text-xs text-slate-300 md:grid-cols-2 xl:grid-cols-4">
+            {syncRuns.map((run) => (
+              <div key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
+                <p className="font-medium">{new Date(run.startedAt).toLocaleString()}</p>
+                <p className="text-slate-400">{run.status} · {run.source}</p>
+                <p className="text-slate-400">Channels {run.channelsProcessed} · Campaigns {run.campaignsProcessed}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load campaigns</div> : null}
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{data?.map((c: any) => {
       const net = (c.analytics?.netGrowth ?? c.netGrowthCount ?? 0);
@@ -106,7 +172,7 @@ export default function AdCampaignsPage() {
       const costVariants = getMoneyVariants({ amount: cost, currency: c.currency, settings: moneySettings, rates, amountInPrimary: primaryCost });
       const costLabel = [formatMoney(cost, c.currency, currencySettings?.currencyDisplayMode), ...costVariants.map((variant) => variant.amount == null ? 'Rate missing' : variant.label)].join(' / ');
       const cardTitle = `${day} | ${costLabel} | ${joined} subscribers`;
-      return <EntityCard key={c.id} title={cardTitle} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} /></div>}>
+      return <EntityCard key={c.id} title={cardTitle} actions={<div className="flex gap-2"><Link href={`/ad-campaigns/${c.id}`} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">Open</Link><IconButton onClick={() => setEditing(c)} /><IconButton kind="delete" onClick={() => setDeleting(c)} /></div>}>
         <div className="mb-1 inline-flex items-center gap-2 py-1 text-sm text-neutral-200">
           {c.telegramChannel?.photoUrl ? <img src={c.telegramChannel.photoUrl} alt="" className="h-5 w-5 rounded-full" /> : <span className="inline-block h-5 w-5 rounded-full border border-neutral-600" />}
           <span>{c.telegramChannel?.title || '-'}</span>
@@ -142,6 +208,23 @@ export default function AdCampaignsPage() {
           <MoneyStack amount={cost} currency={c.currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCost} mainClassName="font-semibold text-white" subClassName="text-sm text-neutral-400" />
         </div>
         {left > 0 ? <p>Joined: {joined} | Left: {left} | Net: {net}</p> : <p className="text-emerald-300">Joined: {joined}</p>}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+          <MiniMetric label="New subs" value={formatMetric(c.newSubscribers)} />
+          <MiniMetric label="Active" value={formatMetric(c.activeSubscribersFromAd)} />
+          <MiniMetric label="Active CPA" value={formatMetric(c.activeCpa, 2)} />
+          <MiniMetric label="Retention 7d" value={formatPercent(c.retention7d)} />
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm">
+          <span className={`rounded border px-2 py-0.5 text-xs ${campaignStatusClass(c.overallStatus)}`}>{c.overallStatus || 'unknown'}</span>
+          <label className="flex cursor-pointer items-center gap-2 text-slate-300">
+            <input
+              type="checkbox"
+              checked={Boolean(c.excludeFromAnalytics)}
+              onChange={(event) => excludeMutation.mutate({ id: c.id, excludeFromAnalytics: event.target.checked })}
+            />
+            Exclude
+          </label>
+        </div>
         <div>
           <p className="text-xs uppercase tracking-wide text-neutral-400">Cost / subscriber</p>
           {costPerJoined !== null ? (
@@ -158,6 +241,31 @@ export default function AdCampaignsPage() {
     <CampaignModal open={!!editing} title="Edit Campaign" channels={channels ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v: any) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
   </AppShell>;
+}
+
+function formatMetric(value: unknown, decimals = 0) {
+  if (value == null || !Number.isFinite(Number(value))) return '-';
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
+}
+
+function formatPercent(value: unknown, decimals = 1) {
+  if (value == null || !Number.isFinite(Number(value))) return '-';
+  return `${formatMetric(value, decimals)}%`;
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"><p className="text-xs text-slate-400">{label}</p><p className="mt-1 font-semibold text-white">{value}</p></div>;
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-2"><p className="text-xs text-slate-400">{label}</p><p className="font-medium text-white">{value}</p></div>;
+}
+
+function campaignStatusClass(status?: string | null) {
+  if (status === 'good') return 'border-emerald-700 text-emerald-200';
+  if (status === 'acceptable') return 'border-yellow-700 text-yellow-200';
+  if (status === 'bad') return 'border-rose-700 text-rose-200';
+  return 'border-slate-700 text-slate-300';
 }
 
 function hypothesisStatusClass(status?: string) {
