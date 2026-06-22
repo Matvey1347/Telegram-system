@@ -117,6 +117,38 @@ function dataQualityBadgeClass(status?: string | null) {
   return "border-slate-700 text-slate-300";
 }
 
+type ChannelSectionState = {
+  posts: boolean;
+  inviteLinks: boolean;
+  campaigns: boolean;
+};
+
+const closedChannelSections: ChannelSectionState = {
+  posts: false,
+  inviteLinks: false,
+  campaigns: false,
+};
+
+function channelSectionsStorageKey(channelId: string) {
+  return `telegram-channel:${channelId}:open-sections`;
+}
+
+function readStoredChannelSections(channelId: string): ChannelSectionState {
+  if (typeof window === "undefined") return closedChannelSections;
+  try {
+    const raw = window.localStorage.getItem(channelSectionsStorageKey(channelId));
+    if (!raw) return closedChannelSections;
+    const parsed = JSON.parse(raw) as Partial<ChannelSectionState>;
+    return {
+      posts: Boolean(parsed.posts),
+      inviteLinks: Boolean(parsed.inviteLinks),
+      campaigns: Boolean(parsed.campaigns),
+    };
+  } catch {
+    return closedChannelSections;
+  }
+}
+
 export default function TelegramChannelAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -134,11 +166,9 @@ export default function TelegramChannelAnalyticsPage() {
   const [lastSyncResult, setLastSyncResult] = useState<any>(null);
   const [selectedSourceAccess, setSelectedSourceAccess] =
     useState<TelegramChannelSourceAccess | null>(null);
-  const [openSections, setOpenSections] = useState({
-    posts: true,
-    inviteLinks: true,
-    campaigns: true,
-  });
+  const [openSections, setOpenSections] = useState<ChannelSectionState>(() =>
+    readStoredChannelSections(id),
+  );
   const [settings, setSettings] = useState({
     seedSubscribersCount: "0",
     activeSubscribersWindow: "5",
@@ -219,6 +249,13 @@ export default function TelegramChannelAnalyticsPage() {
     queryKey: ["currency-rates"],
     queryFn: currenciesApi.listRates,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      channelSectionsStorageKey(id),
+      JSON.stringify(openSections),
+    );
+  }, [id, openSections]);
 
   useEffect(() => {
     const source = channel || data?.channel;

@@ -42,12 +42,12 @@ export default function TransactionsPage() {
   });
   const { data: members } = useQuery({ queryKey: ['workspace-members'], queryFn: workspaceMembersApi.list });
   const { data: filterCategories } = useQuery({ queryKey: ['transaction-categories', filters.type], queryFn: () => transactionCategoriesApi.list(filters.type === 'income' ? 'income' : 'expense'), enabled: filters.type === 'income' || filters.type === 'expense' });
-  const createMutation = useMutation({ mutationFn: transactionsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setCreateOpen(false); } });
-  const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transactionsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setEditing(null); } });
+  const createMutation = useMutation({ mutationFn: transactionsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setCreateOpen(false); } });
+  const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transactionsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setEditing(null); } });
   const updateTransactionIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionsApi.update(id, { iconId }), onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }) });
   const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const updateCategoryIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionCategoriesApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transaction-categories'] }); qc.invalidateQueries({ queryKey: ['transaction-categories-admin'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
-  const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setDeleting(null); } });
+  const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
 
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value, ...(key === 'type' ? { categoryId: '' } : {}) }));
   return <AppShell><PageHeader title="Transactions" subtitle="Track income and expenses" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />

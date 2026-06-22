@@ -88,7 +88,8 @@ export type WorkspaceMember = {
 };
 export type Currency = string;
 export type TransactionType = 'income' | 'expense';
-export type Account = { id: string; name: string; currency: Currency; initialBalance: number; balance?: number; calculatedBalance?: number; convertedBalance?: number | null; convertedCurrency?: Currency; isActive: boolean; iconId?: string | null; icon?: Icon | null };
+export type AccountTransactionStats = { count: number; incomeCount: number; expenseCount: number; received: number; spent: number; transferredIn: number; transferredOut: number; delta: number };
+export type Account = { id: string; name: string; currency: Currency; initialBalance: number; balance?: number; calculatedBalance?: number; convertedBalance?: number | null; convertedCurrency?: Currency; transactionStats?: AccountTransactionStats; isActive: boolean; iconId?: string | null; icon?: Icon | null };
 export type TransactionCategory = { id: string; name: string; type: TransactionType; isSystem: boolean; key?: string | null; iconId?: string | null; icon?: Icon | null };
 export type Transaction = { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
 export type Transfer = { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };

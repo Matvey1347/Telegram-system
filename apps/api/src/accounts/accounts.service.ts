@@ -46,6 +46,7 @@ export class AccountsService {
           by: ['accountId', 'type'],
           where: { workspaceId, accountId: { in: accounts.map((a) => a.id) } },
           _sum: { amount: true },
+          _count: { _all: true },
         }),
         this.prisma.transfer.groupBy({
           by: ['fromAccountId'],
@@ -73,6 +74,12 @@ export class AccountsService {
         const expenses = transactions
           .filter((t) => t.accountId === account.id && t.type === 'expense')
           .reduce((acc, row) => acc + dec(row._sum.amount), 0);
+        const incomeCount = transactions
+          .filter((t) => t.accountId === account.id && t.type === 'income')
+          .reduce((acc, row) => acc + row._count._all, 0);
+        const expenseCount = transactions
+          .filter((t) => t.accountId === account.id && t.type === 'expense')
+          .reduce((acc, row) => acc + row._count._all, 0);
         const outgoing = outgoingTransfers
           .filter((t) => t.fromAccountId === account.id)
           .reduce((acc, row) => acc + dec(row._sum.fromAmount), 0);
@@ -104,6 +111,16 @@ export class AccountsService {
           calculatedBalance: balance,
           convertedBalance,
           convertedCurrency,
+          transactionStats: {
+            count: incomeCount + expenseCount,
+            incomeCount,
+            expenseCount,
+            received: incomes,
+            spent: expenses,
+            transferredIn: incoming,
+            transferredOut: outgoing,
+            delta: incomes - expenses + incoming - outgoing,
+          },
         };
       }),
     );

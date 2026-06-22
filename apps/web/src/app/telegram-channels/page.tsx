@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { ArrowUpRight, CircleHelp, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -430,12 +430,16 @@ function SourceAccessModal({
 
 function ChannelFinanceMiniSummary({
   channel,
+  isOwnChannel,
   moneySettings,
   rates,
+  actions,
 }: {
   channel: TelegramChannel;
+  isOwnChannel: boolean;
   moneySettings?: CurrencySettings | null;
   rates?: ExchangeRate[];
+  actions?: ReactNode;
 }) {
   const { data: audience, isLoading: audienceLoading } = useQuery({
     queryKey: ["telegram-channel-audience", channel.id],
@@ -472,7 +476,12 @@ function ChannelFinanceMiniSummary({
         : kpiStatus === "bad"
           ? "border-rose-800/80 bg-rose-950/10"
           : "border-slate-800 bg-slate-900/30";
-  const metrics: Array<{ label: string; value: ReactNode; prominent?: boolean }> = [];
+  const metrics: Array<{
+    label: string;
+    value: ReactNode;
+    prominent?: boolean;
+    tip?: string;
+  }> = [];
   const joinedSubscribers = hasNumber(summary?.totalJoinedSubscribers)
     ? Number(summary?.totalJoinedSubscribers)
     : null;
@@ -487,10 +496,14 @@ function ChannelFinanceMiniSummary({
     inactiveSubscribers && hasPositiveNumber(summary?.totalAdSpend)
       ? Number(summary?.totalAdSpend) / inactiveSubscribers
       : null;
+  const subscriberDefinitionsTip =
+    `Subscriber: current Telegram channel subscriber count.\n` +
+    `Active: estimated paid subscribers still active from ad traffic, based on the ${channel.activeSubscribersWindow || 5}-post active window.\n` +
+    "Inactive: joined subscribers from ads minus active paid subscribers.";
 
   if (hasPositiveNumber(summary?.totalAdSpend)) {
     metrics.push({
-      label: "Minus",
+      label: "Finance",
       value: moneyValue(
         -Number(summary?.totalAdSpend),
         "font-semibold text-rose-200",
@@ -502,6 +515,7 @@ function ChannelFinanceMiniSummary({
     metrics.push({
       label: "CPA / sub",
       value: moneyValue(summary?.avgCpa),
+      tip: `CPA / sub: ad spend divided by joined subscribers.\n\n${subscriberDefinitionsTip}`,
     });
   }
   if (hasPositiveNumber(summary?.activeCpa)) {
@@ -509,12 +523,14 @@ function ChannelFinanceMiniSummary({
       label: "CPA / active",
       value: moneyValue(summary?.activeCpa),
       prominent: true,
+      tip: `CPA / active: ad spend divided by estimated active paid subscribers.\n\n${subscriberDefinitionsTip}`,
     });
   }
   if (hasPositiveNumber(inactiveCpa)) {
     metrics.push({
       label: "CPA / inactive",
       value: moneyValue(inactiveCpa),
+      tip: `CPA / inactive: ad spend divided by inactive paid subscribers.\n\n${subscriberDefinitionsTip}`,
     });
   }
   if (hasPositiveNumber(summary?.totalJoinedSubscribers)) {
@@ -530,38 +546,53 @@ function ChannelFinanceMiniSummary({
     });
   }
   const showQuality =
-    audience?.dataQuality && audience.dataQuality !== "normal";
+    isOwnChannel && audience?.dataQuality && audience.dataQuality !== "normal";
+  const visibleMetrics = metrics.slice(0, 6);
+  const cpaMetrics = visibleMetrics.filter((metric) =>
+    metric.label.startsWith("CPA /"),
+  );
+  const topMetrics = visibleMetrics.filter((metric) => metric.label === "Finance");
+  const supportingMetrics = visibleMetrics.filter(
+    (metric) => !metric.label.startsWith("CPA /") && metric.label !== "Finance",
+  );
   const kpiTargets = [
-    formatCompactKpiRange("target", channel.targetCpaFrom, channel.targetCpa),
-    formatCompactKpiRange("ok", channel.acceptableCpaFrom, channel.acceptableCpa),
+    formatCompactKpiRange("target", channel.targetCpaFrom, channel.targetCpa, false, "target"),
+    formatCompactKpiRange("ok", channel.acceptableCpaFrom, channel.acceptableCpa, false, "ok"),
     formatCompactKpiRange(
       "stop",
       channel.stopCpaFrom ?? channel.stopCpa,
       null,
       true,
+      "stop",
     ),
-  ].filter(Boolean);
+  ].filter((target): target is KpiRange => Boolean(target));
 
   return (
-    <div className={`mt-3 rounded-md border p-3 ${kpiTone}`}>
+    <div className={`mt-2 rounded-md border p-3 ${kpiTone}`}>
       {loading ? (
         <p className="text-xs text-slate-400">Loading analytics...</p>
       ) : (
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-[11px] uppercase tracking-wide text-slate-500">
                 Performance
               </p>
-              <p className="text-sm font-semibold text-slate-100">
-                {formatNumber(
-                  audience?.subscribersCount ?? channel.currentSubscribersCount,
-                )}{" "}
-                subs
-                {hasNumber(audience?.activeSubscribersEstimate) ? (
-                  <span className="font-normal text-slate-500">
-                    {" "}
+              <p className="flex min-w-0 flex-nowrap items-center gap-x-1 overflow-hidden whitespace-nowrap text-sm font-semibold leading-tight text-slate-100">
+                <span className="inline-flex items-center whitespace-nowrap">
+                  {formatNumber(
+                    audience?.subscribersCount ?? channel.currentSubscribersCount,
+                  )}{" "}
+                  subs
+                </span>
+                {isOwnChannel && hasNumber(audience?.activeSubscribersEstimate) ? (
+                  <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
                     · {formatNumber(audience?.activeSubscribersEstimate)} active
+                  </span>
+                ) : null}
+                {isOwnChannel && inactiveSubscribers != null && inactiveSubscribers > 0 ? (
+                  <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
+                    · {formatNumber(inactiveSubscribers)} inactive
                   </span>
                 ) : null}
               </p>
@@ -582,15 +613,45 @@ function ChannelFinanceMiniSummary({
           </div>
 
           {metrics.length ? (
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {metrics.slice(0, 6).map((metric) => (
-                <PreviewMetric
-                  key={metric.label}
-                  label={metric.label}
-                  value={metric.value}
-                  prominent={metric.prominent}
-                />
-              ))}
+            <div className="space-y-2 text-xs">
+              {topMetrics.length ? (
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+                  {topMetrics.map((metric) => (
+                    <PreviewMetric
+                      key={metric.label}
+                      label={metric.label}
+                      value={metric.value}
+                      prominent={false}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {cpaMetrics.length ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {cpaMetrics.map((metric) => (
+                    <PreviewMetric
+                      key={metric.label}
+                      label={metric.label}
+                      value={metric.value}
+                      prominent
+                      compact
+                      tip={metric.tip}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {supportingMetrics.length ? (
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+                  {supportingMetrics.map((metric) => (
+                    <PreviewMetric
+                      key={metric.label}
+                      label={metric.label}
+                      value={metric.value}
+                      prominent={metric.prominent}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -607,11 +668,22 @@ function ChannelFinanceMiniSummary({
               ) : null}
               {kpiTargets.length ? (
                 <KpiPreviewTooltip summary={summary} targets={kpiTargets}>
-                  <span className="inline-flex rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
-                    KPI $: {kpiTargets.join(" · ")}
+                  <span className="inline-flex flex-wrap items-center gap-1 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
+                    <span className="font-semibold text-slate-200">KPI $:</span>
+                    {kpiTargets.map((target) => (
+                      <span key={target.label} className={`rounded border px-1.5 py-0.5 ${kpiRangeClass(target.kind)}`}>
+                        {target.label}
+                      </span>
+                    ))}
                   </span>
                 </KpiPreviewTooltip>
               ) : null}
+            </div>
+          ) : null}
+
+          {actions ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {actions}
             </div>
           ) : null}
         </div>
@@ -627,7 +699,7 @@ function KpiPreviewTooltip({
   className = "",
 }: {
   summary?: TelegramChannelFinancialSummary;
-  targets: string[];
+  targets: KpiRange[];
   children: ReactNode;
   className?: string;
 }) {
@@ -658,7 +730,7 @@ function KpiPreviewTooltip({
         ) : null}
         {targets.length ? (
           <span className="mt-2 block text-slate-400">
-            Ranges: {targets.join(" · ")}
+            Ranges: {targets.map((target) => target.label).join(" · ")}
           </span>
         ) : null}
       </span>
@@ -666,21 +738,46 @@ function KpiPreviewTooltip({
   );
 }
 
+type KpiRange = {
+  kind: "target" | "ok" | "stop";
+  label: string;
+};
+
 function formatCompactKpiRange(
   label: string,
   from: unknown,
   to: unknown,
   openEnded = false,
-) {
+  kind: KpiRange["kind"] = "target",
+): KpiRange | null {
   const hasFrom = from != null && Number.isFinite(Number(from));
   const hasTo = to != null && Number.isFinite(Number(to));
-  if (!hasFrom && !hasTo) return "";
+  if (!hasFrom && !hasTo) return null;
   const fromText = hasFrom ? formatNumber(from, 2) : "";
   const toText = hasTo ? formatNumber(to, 2) : "";
-  if (openEnded) return fromText ? `${label} ${fromText}+` : "";
-  if (fromText && toText) return `${label} ${fromText}-${toText}`;
-  if (fromText) return `${label} from ${fromText}`;
-  return `${label} to ${toText}`;
+  if (openEnded) return fromText ? { kind, label: `${label} ${fromText}+` } : null;
+  if (fromText && toText) return { kind, label: `${label} ${fromText}-${toText}` };
+  if (fromText) return { kind, label: `${label} from ${fromText}` };
+  return { kind, label: `${label} to ${toText}` };
+}
+
+function kpiRangeClass(kind: KpiRange["kind"]) {
+  if (kind === "target") return "border-emerald-800 bg-emerald-950/40 text-emerald-200";
+  if (kind === "ok") return "border-yellow-800 bg-yellow-950/40 text-yellow-200";
+  return "border-rose-800 bg-rose-950/40 text-rose-200";
+}
+
+function InfoTooltip({ tip }: { tip: string }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-600 text-slate-400">
+        <CircleHelp size={11} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {tip}
+      </span>
+    </span>
+  );
 }
 
 function DataQualityBadge({
@@ -766,16 +863,21 @@ function dataQualityReasonText(reason?: string | null) {
   return "";
 }
 
-function PreviewMetric({ label, value, prominent }: {
+function PreviewMetric({ label, value, prominent, compact, tip }: {
   label: string;
   value: ReactNode;
   prominent?: boolean;
+  compact?: boolean;
+  tip?: string;
 }) {
   return (
     <div
-      className={prominent ? "rounded border border-slate-800/80 px-2 py-1" : ""}
+      className={`${prominent ? "rounded border border-slate-800/80 px-2 py-1" : ""} ${compact ? "min-w-0" : ""}`}
     >
-      <p className="text-slate-500">{label}</p>
+      <p className="flex min-w-0 items-center gap-1 text-slate-500">
+        <span className="truncate">{label}</span>
+        {tip ? <InfoTooltip tip={tip} /> : null}
+      </p>
       <div className="mt-0.5 truncate font-medium text-slate-100">{value}</div>
     </div>
   );
@@ -1303,8 +1405,42 @@ export default function TelegramChannelsPage() {
                   </div>
                   <ChannelFinanceMiniSummary
                     channel={channel}
+                    isOwnChannel={hasAdminLink}
                     moneySettings={currencySettings}
                     rates={rates}
+                    actions={
+                      <>
+                        {hasAdminLink ? (
+                          <Button
+                            className="inline-flex h-11 min-w-36 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                            variant="primary"
+                            onClick={() => syncNowMutation.mutate(channel.id)}
+                          >
+                            <RefreshCw size={16} />
+                            Sync
+                          </Button>
+                        ) : null}
+                        {!hasAdminLink && username ? (
+                          <Button
+                            className="inline-flex h-11 min-w-56 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                            variant="primary"
+                            onClick={() => importMutation.mutate(`@${username}`)}
+                          >
+                            <RefreshCw size={16} />
+                            Refresh Public
+                          </Button>
+                        ) : null}
+                        {hasAdminLink ? (
+                          <Link
+                            href={`/telegram/channels/${channel.id}`}
+                            className="flex h-11 min-w-28 items-center justify-center gap-2 rounded-md border border-slate-600/80 px-3 py-2 text-center text-sm font-semibold text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-900 hover:text-white"
+                          >
+                            Open
+                            <ArrowUpRight size={16} />
+                          </Link>
+                        ) : null}
+                      </>
+                    }
                   />
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
@@ -1312,36 +1448,6 @@ export default function TelegramChannelsPage() {
                       fallbackAdminCount={channel.adminLinks?.length || 0}
                     />
                   ) : null}
-                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {hasAdminLink ? (
-                      <Button
-                        className="inline-flex h-11 w-full items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
-                        variant="primary"
-                        onClick={() => syncNowMutation.mutate(channel.id)}
-                      >
-                        <RefreshCw size={16} />
-                        Sync
-                      </Button>
-                    ) : null}
-                    {!hasAdminLink && username ? (
-                      <Button
-                        className="h-11 w-full text-center"
-                        variant="secondary"
-                        onClick={() => importMutation.mutate(`@${username}`)}
-                      >
-                        Refresh Public
-                      </Button>
-                    ) : null}
-                    {hasAdminLink ? (
-                      <Link
-                        href={`/telegram/channels/${channel.id}`}
-                        className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-slate-600/80 px-3 py-2 text-center text-sm font-semibold text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-900 hover:text-white"
-                      >
-                        Open
-                        <ArrowUpRight size={16} />
-                      </Link>
-                    ) : null}
-                  </div>
                 </EntityCard>
               );
             })}

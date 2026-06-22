@@ -6,10 +6,9 @@ import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { currenciesApi, Currency, CurrencyDisplayMode, ExchangeRate } from '@/lib/api';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { formatRate } from '@/lib/money';
 
 type RateValues = { baseCurrency: Currency; targetCurrency: Currency; rate: number; date: string; source?: string };
-
-const n = (value: number | null | undefined) => (value ?? 0).toFixed(4);
 
 export default function CurrenciesPage() {
   const qc = useQueryClient();
@@ -69,7 +68,7 @@ export default function CurrenciesPage() {
               </div>
             }
           >
-            <p>Rate: {n(Number(rate.rate))}</p>
+            <p>Rate: {formatRate(rate.rate)}</p>
             <p>Date: {new Date(rate.date).toLocaleDateString()}</p>
             <p>Source: {rate.source || 'manual'}</p>
           </EntityCard>

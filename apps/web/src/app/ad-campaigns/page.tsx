@@ -22,7 +22,7 @@ import { currenciesApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
-import { CircleHelp } from 'lucide-react';
+import { CircleHelp, RefreshCw } from 'lucide-react';
 
 type CampaignValues = {
   telegramChannelId: string;
@@ -260,7 +260,14 @@ export default function AdCampaignsPage() {
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={viewMode === 'campaigns' ? 'Campaign, source, channel' : 'Hypothesis'} />
         </FormField>
         <div className="flex items-end gap-2 md:col-span-4 xl:col-span-1">
-          <Button type="button" variant="secondary" className="h-11 flex-1" disabled={syncMutation.isPending} onClick={() => syncMutation.mutate()}>
+          <Button
+            type="button"
+            variant="primary"
+            className="inline-flex h-11 flex-1 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+            disabled={syncMutation.isPending}
+            onClick={() => syncMutation.mutate()}
+          >
+            <RefreshCw size={16} className={syncMutation.isPending ? "animate-spin" : ""} />
             {syncMutation.isPending ? 'Syncing...' : 'Sync'}
           </Button>
           <button
@@ -434,14 +441,21 @@ function CampaignsTable({
 }) {
   return (
     <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
-      <table className="w-full min-w-[920px] table-fixed text-left text-sm">
+      <table className="w-full min-w-[1160px] table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[390px]" />
+            <col className="w-[280px]" />
+            <col className="w-[160px]" />
+            <col className="w-[190px]" />
+            <col className="w-[140px]" />
+          </colgroup>
           <thead className="bg-slate-950 text-xs uppercase text-neutral-400">
             <tr>
-              <th className="w-[40%] px-4 py-3 font-medium">Campaign</th>
-              <th className="w-[25%] px-4 py-3 font-medium">Performance</th>
-              <th className="w-[12%] px-4 py-3 font-medium">Analytics</th>
-              <th className="w-[11%] px-4 py-3 font-medium">Hypotheses</th>
-              <th className="w-[12%] px-4 py-3 text-right font-medium">Actions</th>
+              <th className="px-4 py-3 font-medium">Campaign</th>
+              <th className="px-4 py-3 font-medium">Performance</th>
+              <th className="px-4 py-3 font-medium">Analytics</th>
+              <th className="px-4 py-3 font-medium">Hypotheses</th>
+              <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-800">
@@ -493,7 +507,7 @@ function CampaignsTable({
                     <HypothesisLinks links={campaign.hypothesisLinks || []} />
                   </td>
                   <td className="px-4 py-4">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex min-w-[108px] items-center justify-end gap-2 whitespace-nowrap">
                       <label className="flex items-center gap-1 text-xs text-slate-400" title="Exclude from performance summary">
                         <input type="checkbox" checked={Boolean(campaign.excludeFromAnalytics)} onChange={(event) => onToggleExclude(campaign, event.target.checked)} />
                       </label>
@@ -584,9 +598,9 @@ function SourceList({ sources }: { sources: any[] }) {
 function HypothesisLinks({ links }: { links: any[] }) {
   if (!links.length) return <span className="text-slate-500">-</span>;
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
       {links.slice(0, 2).map((link) => (
-        <span key={link.hypothesis.id} className={`inline-flex max-w-[180px] rounded-full border px-2 py-0.5 text-xs ${hypothesisStatusClass(link.hypothesis.status)}`}>
+        <span key={link.hypothesis.id} className={`inline-flex min-w-0 max-w-full rounded-full border px-2 py-0.5 text-xs ${hypothesisStatusClass(link.hypothesis.status)}`}>
           <span className="truncate">{link.hypothesis.name}</span>
         </span>
       ))}

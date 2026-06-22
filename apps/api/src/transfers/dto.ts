@@ -17,6 +17,8 @@ export class CreateTransferDto {
   @IsOptional() @IsString() description?: string;
 }
 export class UpdateTransferDto {
+  @IsOptional() @IsString() fromAccountId?: string;
+  @IsOptional() @IsString() toAccountId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) fromAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) toAmount?: number;
   @IsOptional() @IsDateString() date?: string;

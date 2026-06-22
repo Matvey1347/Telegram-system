@@ -33,6 +33,17 @@ export function formatMoney(
   return `${formatted} ${code}`.trim();
 }
 
+export function formatRate(value: number | string | null | undefined, maxFractionDigits = 10) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '-';
+  const factor = 10 ** maxFractionDigits;
+  const truncated = Math.trunc(number * factor) / factor;
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxFractionDigits,
+  }).format(truncated);
+}
+
 export function getExchangeRate(
   rates: ExchangeRate[] | undefined,
   fromCurrency: string | null | undefined,

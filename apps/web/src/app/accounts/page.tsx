@@ -9,6 +9,7 @@ import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
+import { formatMoney } from '@/lib/money';
 
 type Values = { name: string; currency: string; initialBalance: number; iconId?: string | null };
 
@@ -36,6 +37,7 @@ export default function AccountsPage() {
           <MoneyStack amount={a.balance ?? a.calculatedBalance} currency={a.currency} settings={settings} rates={rates} amountInPrimary={a.convertedCurrency === settings?.primaryCurrency ? a.convertedBalance : null} />
           <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{a.currency}</span>
         </div>
+        <AccountStatsSummary account={a} displayMode={settings?.currencyDisplayMode} />
       </EntityCard>)}
     </div>
     {!isLoading && !data?.length ? <EmptyState text="No accounts yet" /> : null}
@@ -44,6 +46,42 @@ export default function AccountsPage() {
     <AccountModal open={!!editing} title="Edit Account" currencies={settings?.supportedCurrencies ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance) } })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.name ?? ''} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
   </AppShell>;
+}
+
+function AccountStatsSummary({ account, displayMode }: { account: Account; displayMode?: 'code' | 'symbol' }) {
+  const stats = account.transactionStats;
+  const count = stats?.count ?? 0;
+  const received = Number(stats?.received ?? 0);
+  const spent = Number(stats?.spent ?? 0);
+  const transferredIn = Number(stats?.transferredIn ?? 0);
+  const transferredOut = Number(stats?.transferredOut ?? 0);
+  const delta = Number(stats?.delta ?? 0);
+
+  return (
+    <div className="mt-3 space-y-1.5 text-xs leading-snug text-neutral-500">
+      <div>{count} {count === 1 ? 'transaction' : 'transactions'}</div>
+      <div className="grid gap-1">
+        <AccountStatLine label="Received" value={received} currency={account.currency} displayMode={displayMode} tone="positive" />
+        <AccountStatLine label="Spent" value={spent} currency={account.currency} displayMode={displayMode} tone="negative" />
+        <AccountStatLine label="Transferred in" value={transferredIn} currency={account.currency} displayMode={displayMode} tone="positive" />
+        <AccountStatLine label="Transferred out" value={transferredOut} currency={account.currency} displayMode={displayMode} tone="negative" />
+        {delta !== 0 ? (
+          <AccountStatLine label="Delta" value={delta} currency={account.currency} displayMode={displayMode} tone={delta > 0 ? 'positive' : 'negative'} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AccountStatLine({ label, value, currency, displayMode, tone }: { label: string; value: number; currency: string; displayMode?: 'code' | 'symbol'; tone: 'positive' | 'negative' }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      <span className={`font-medium ${tone === 'positive' ? 'text-emerald-300' : 'text-rose-300'}`}>
+        {formatMoney(value, currency, displayMode)}
+      </span>
+    </div>
+  );
 }
 
 function AccountModal({ open, onClose, onSubmit, title, initial, currencies }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; initial?: Account; currencies: string[] }) {

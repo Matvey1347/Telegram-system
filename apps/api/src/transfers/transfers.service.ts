@@ -4,19 +4,70 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateTransferDto, TransferQueryDto, UpdateTransferDto } from './dto';
 
+const dec = (value: unknown) => Number(value ?? 0);
+
 @Injectable()
 export class TransfersService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
   ) {}
-  private calc(fromAmount: number, toAmount: number) {
+
+  private rateKey(fromCurrency: string, toCurrency: string) {
+    return `${fromCurrency.toUpperCase()}->${toCurrency.toUpperCase()}`;
+  }
+
+  private async bestTransferRates(workspaceId: string) {
+    const rows = await this.prisma.transfer.groupBy({
+      by: ['fromCurrency', 'toCurrency'],
+      where: { workspaceId, exchangeRate: { not: null } },
+      _max: { exchangeRate: true },
+    });
+
+    return new Map(
+      rows.map((row) => [
+        this.rateKey(row.fromCurrency, row.toCurrency),
+        dec(row._max.exchangeRate),
+      ]),
+    );
+  }
+
+  private calc(
+    fromAmount: number,
+    toAmount: number,
+    fromCurrency: string,
+    toCurrency: string,
+    bestRates: Map<string, number>,
+  ) {
     const exchangeRate = fromAmount > 0 ? toAmount / fromAmount : null;
-    const expectedToAmount = exchangeRate ? fromAmount * exchangeRate : null;
-    const transferLossAmount =
-      expectedToAmount !== null ? expectedToAmount - toAmount : null;
+    const knownBestRate = bestRates.get(this.rateKey(fromCurrency, toCurrency));
+    const expectedRate = Math.max(knownBestRate ?? 0, exchangeRate ?? 0);
+    const expectedToAmount = expectedRate > 0 ? fromAmount * expectedRate : null;
+    const transferLossAmount = expectedToAmount !== null
+      ? Math.max(expectedToAmount - toAmount, 0)
+      : null;
     return { exchangeRate, expectedToAmount, transferLossAmount };
   }
+
+  private async withLosses<T extends {
+    fromAmount: unknown;
+    toAmount: unknown;
+    fromCurrency: string;
+    toCurrency: string;
+  }>(workspaceId: string, transfers: T[]) {
+    const bestRates = await this.bestTransferRates(workspaceId);
+    return transfers.map((transfer) => ({
+      ...transfer,
+      ...this.calc(
+        dec(transfer.fromAmount),
+        dec(transfer.toAmount),
+        transfer.fromCurrency,
+        transfer.toCurrency,
+        bestRates,
+      ),
+    }));
+  }
+
   async findAll(userId: string, query: TransferQueryDto = {}) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
@@ -36,11 +87,12 @@ export class TransfersService {
         { toAccountId: query.accountId },
       ];
     }
-    return this.prisma.transfer.findMany({
+    const transfers = await this.prisma.transfer.findMany({
       where,
       orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
       include: { fromAccount: true, toAccount: true },
     });
+    return this.withLosses(workspaceId, transfers);
   }
   async findOne(userId: string, id: string) {
     const workspaceId =
@@ -50,7 +102,8 @@ export class TransfersService {
       include: { fromAccount: true, toAccount: true },
     });
     if (!row) throw new NotFoundException('Transfer not found');
-    return row;
+    const [transfer] = await this.withLosses(workspaceId, [row]);
+    return transfer;
   }
   async create(userId: string, dto: CreateTransferDto) {
     const workspaceId =
@@ -64,12 +117,20 @@ export class TransfersService {
       }),
     ]);
     if (!from || !to) throw new NotFoundException('Account not found');
-    const calc = this.calc(dto.fromAmount, dto.toAmount);
+    const transferDate = new Date(dto.date);
+    const bestRates = await this.bestTransferRates(workspaceId);
+    const calc = this.calc(
+      dto.fromAmount,
+      dto.toAmount,
+      from.currency,
+      to.currency,
+      bestRates,
+    );
     return this.prisma.transfer.create({
       data: {
         ...dto,
         workspaceId,
-        date: new Date(dto.date),
+        date: transferDate,
         fromCurrency: from.currency,
         toCurrency: to.currency,
         transferLossCurrency: to.currency,
@@ -84,14 +145,36 @@ export class TransfersService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Transfer not found');
+    const fromAccountId = dto.fromAccountId ?? existing.fromAccountId;
+    const toAccountId = dto.toAccountId ?? existing.toAccountId;
+    const [from, to] = await Promise.all([
+      this.prisma.account.findFirst({
+        where: { id: fromAccountId, workspaceId },
+      }),
+      this.prisma.account.findFirst({
+        where: { id: toAccountId, workspaceId },
+      }),
+    ]);
+    if (!from || !to) throw new NotFoundException('Account not found');
     const fromAmount = dto.fromAmount ?? Number(existing.fromAmount);
     const toAmount = dto.toAmount ?? Number(existing.toAmount);
-    const calc = this.calc(fromAmount, toAmount);
+    const transferDate = dto.date ? new Date(dto.date) : existing.date;
+    const bestRates = await this.bestTransferRates(workspaceId);
+    const calc = this.calc(
+      fromAmount,
+      toAmount,
+      from.currency,
+      to.currency,
+      bestRates,
+    );
     return this.prisma.transfer.update({
       where: { id },
       data: {
         ...dto,
-        date: dto.date ? new Date(dto.date) : undefined,
+        date: dto.date ? transferDate : undefined,
+        fromCurrency: from.currency,
+        toCurrency: to.currency,
+        transferLossCurrency: to.currency,
         ...calc,
       },
     });
