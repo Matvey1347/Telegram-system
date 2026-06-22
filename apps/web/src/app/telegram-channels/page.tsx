@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -12,15 +12,22 @@ import {
   BotAccountsPanel,
   MtprotoAccountsPanel,
 } from "@/components/telegram/telegram-account-panels";
+import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
+import { MoneyStack } from "@/components/ui/money-stack";
 import {
   advertisingChannelsApi,
+  currenciesApi,
   syncTelegramChannelNow,
+  telegramChannelNetworksApi,
   telegramChannelsApi,
   type AdvertisingChannel,
+  type CurrencySettings,
+  type ExchangeRate,
   type ImportedTelegramSource,
   type TelegramChannel,
   type TelegramChannelFinancialSummary,
+  type TelegramChannelNetwork,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import {
@@ -34,11 +41,12 @@ import {
   LoadingState,
   Modal,
   PageHeader,
+  Textarea,
   ToastStack,
   type ToastItem,
 } from "@/components/ui/primitives";
 
-type TelegramTab = "channels" | "accounts" | "bot";
+type TelegramTab = "channels" | "networks" | "accounts" | "bot";
 type ChannelFilter = "own" | "external";
 type AccountFilter = "mtproto" | "people";
 
@@ -103,7 +111,9 @@ function isPersonSource(
 }
 
 function parseTelegramTab(value: string | null): TelegramTab {
-  return value === "accounts" || value === "bot" ? value : "channels";
+  return value === "networks" || value === "accounts" || value === "bot"
+    ? value
+    : "channels";
 }
 
 function parseChannelFilter(value: string | null): ChannelFilter {
@@ -557,6 +567,11 @@ export default function TelegramChannelsPage() {
   const [deleting, setDeleting] = useState<TelegramChannel | null>(null);
   const [deletingPerson, setDeletingPerson] =
     useState<AdvertisingChannel | null>(null);
+  const [networkFormOpen, setNetworkFormOpen] = useState(false);
+  const [editingNetwork, setEditingNetwork] =
+    useState<TelegramChannelNetwork | null>(null);
+  const [deletingNetwork, setDeletingNetwork] =
+    useState<TelegramChannelNetwork | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const pushToast = (
     message: string,
@@ -589,6 +604,22 @@ export default function TelegramChannelsPage() {
   } = useQuery({
     queryKey: ["telegram-channels"],
     queryFn: telegramChannelsApi.list,
+  });
+  const {
+    data: networks = [],
+    isLoading: networksLoading,
+    error: networksError,
+  } = useQuery({
+    queryKey: ["telegram-channel-networks"],
+    queryFn: telegramChannelNetworksApi.list,
+  });
+  const { data: currencySettings } = useQuery({
+    queryKey: ["currency-settings"],
+    queryFn: currenciesApi.getSettings,
+  });
+  const { data: rates } = useQuery({
+    queryKey: ["currency-rates"],
+    queryFn: currenciesApi.listRates,
   });
   const {
     data: people,
@@ -650,6 +681,56 @@ export default function TelegramChannelsPage() {
         "error",
       ),
   });
+  const createNetworkMutation = useMutation({
+    mutationFn: telegramChannelNetworksApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      setNetworkFormOpen(false);
+      pushToast("Network created.", "success");
+    },
+    onError: (requestError: unknown) =>
+      pushToast(
+        requestErrorMessage(requestError, "Failed to create network."),
+        "error",
+      ),
+  });
+  const updateNetworkMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: {
+        name?: string;
+        description?: string | null;
+        telegramChannelIds?: string[];
+      };
+    }) => telegramChannelNetworksApi.update(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      setEditingNetwork(null);
+      setNetworkFormOpen(false);
+      pushToast("Network updated.", "success");
+    },
+    onError: (requestError: unknown) =>
+      pushToast(
+        requestErrorMessage(requestError, "Failed to update network."),
+        "error",
+      ),
+  });
+  const deleteNetworkMutation = useMutation({
+    mutationFn: (id: string) => telegramChannelNetworksApi.remove(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      setDeletingNetwork(null);
+      pushToast("Network deleted.", "success");
+    },
+    onError: (requestError: unknown) =>
+      pushToast(
+        requestErrorMessage(requestError, "Failed to delete network."),
+        "error",
+      ),
+  });
   const syncNowMutation = useMutation({
     mutationFn: (id: string) => syncTelegramChannelNow(id),
     onSuccess: (result) => {
@@ -667,12 +748,25 @@ export default function TelegramChannelsPage() {
       }),
     [channels, channelFilter],
   );
+  const ownChannels = useMemo(
+    () => (channels || []).filter(isOwnChannel),
+    [channels],
+  );
   const isLoading = channelsLoading || peopleLoading;
   const error = channelsError || peopleError;
   const emptyText =
     channelFilter === "own" ? "No own channels" : "No external channels";
   const headerAction =
-    tab === "bot" ? (
+    tab === "networks" ? (
+      <Button
+        onClick={() => {
+          setEditingNetwork(null);
+          setNetworkFormOpen(true);
+        }}
+      >
+        Create network
+      </Button>
+    ) : tab === "bot" ? (
       <Button onClick={() => setBotCreateOpen(true)}>Connect bot</Button>
     ) : tab === "accounts" && accountFilter === "mtproto" ? (
       <Button onClick={() => setMtprotoCreateOpen(true)}>
@@ -690,7 +784,7 @@ export default function TelegramChannelsPage() {
         action={headerAction}
       />
       <div className="mb-5 inline-flex rounded-lg border border-neutral-700 bg-neutral-900 p-1">
-        {(["channels", "accounts", "bot"] as TelegramTab[]).map((item) => (
+        {(["channels", "networks", "accounts", "bot"] as TelegramTab[]).map((item) => (
           <button
             key={item}
             type="button"
@@ -699,7 +793,9 @@ export default function TelegramChannelsPage() {
           >
             {item === "channels"
               ? "Channels"
-              : item === "accounts"
+              : item === "networks"
+                ? "Networks"
+                : item === "accounts"
                 ? "Accounts"
                 : "Bot"}
           </button>
@@ -800,6 +896,19 @@ export default function TelegramChannelsPage() {
             <EmptyState text={emptyText} />
           ) : null}
         </>
+      ) : tab === "networks" ? (
+        <TelegramNetworksSection
+          networks={networks}
+          loading={networksLoading}
+          error={networksError}
+          moneySettings={currencySettings}
+          rates={rates}
+          onEdit={(network) => {
+            setEditingNetwork(network);
+            setNetworkFormOpen(true);
+          }}
+          onDelete={setDeletingNetwork}
+        />
       ) : tab === "accounts" ? (
         <>
           <div className="mb-5 flex gap-1 border-b border-neutral-800">
@@ -887,6 +996,35 @@ export default function TelegramChannelsPage() {
         }
         label="Delete"
       />
+      <NetworkFormModal
+        open={networkFormOpen}
+        network={editingNetwork}
+        channels={ownChannels}
+        isSubmitting={
+          createNetworkMutation.isPending || updateNetworkMutation.isPending
+        }
+        onClose={() => {
+          setNetworkFormOpen(false);
+          setEditingNetwork(null);
+        }}
+        onSubmit={(payload) => {
+          if (editingNetwork) {
+            updateNetworkMutation.mutate({ id: editingNetwork.id, payload });
+          } else {
+            createNetworkMutation.mutate(payload);
+          }
+        }}
+      />
+      <ConfirmDeleteModal
+        open={!!deletingNetwork}
+        entityName={deletingNetwork?.name ?? ""}
+        description="This deletes only the network. Telegram channels remain untouched."
+        onClose={() => setDeletingNetwork(null)}
+        onConfirm={() =>
+          deletingNetwork && deleteNetworkMutation.mutate(deletingNetwork.id)
+        }
+        label="Delete"
+      />
       <ToastStack
         items={toasts}
         onClose={(id) =>
@@ -894,6 +1032,334 @@ export default function TelegramChannelsPage() {
         }
       />
     </AppShell>
+  );
+}
+
+function TelegramNetworksSection({
+  networks,
+  loading,
+  error,
+  moneySettings,
+  rates,
+  onEdit,
+  onDelete,
+}: {
+  networks: TelegramChannelNetwork[];
+  loading: boolean;
+  error: unknown;
+  moneySettings?: CurrencySettings | null;
+  rates?: ExchangeRate[];
+  onEdit: (network: TelegramChannelNetwork) => void;
+  onDelete: (network: TelegramChannelNetwork) => void;
+}) {
+  return (
+    <>
+      {loading ? <LoadingState /> : null}
+      {error ? (
+        <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
+          Failed to load networks.
+        </div>
+      ) : null}
+      {!loading && !networks.length ? (
+        <EmptyState text="No channel networks yet." />
+      ) : null}
+      {networks.length ? (
+        <NetworksTable
+          networks={networks}
+          moneySettings={moneySettings}
+          rates={rates}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function NetworksTable({
+  networks,
+  moneySettings,
+  rates,
+  onEdit,
+  onDelete,
+}: {
+  networks: TelegramChannelNetwork[];
+  moneySettings?: CurrencySettings | null;
+  rates?: ExchangeRate[];
+  onEdit: (network: TelegramChannelNetwork) => void;
+  onDelete: (network: TelegramChannelNetwork) => void;
+}) {
+  const primaryCurrency = moneySettings?.primaryCurrency;
+  return (
+    <div className="table-scroll w-full rounded-lg border border-neutral-800">
+      <table className="w-full min-w-[980px] text-left text-sm">
+        <thead className="bg-slate-950 text-xs uppercase text-neutral-400">
+          <tr>
+            <th className="w-[30%] px-3 py-3 font-medium">Name</th>
+            <th className="w-[14%] px-3 py-3 font-medium">Audience</th>
+            <th className="w-[10%] px-3 py-3 font-medium">View Rate</th>
+            <th className="w-[15%] px-3 py-3 font-medium">Spend</th>
+            <th className="w-[17%] px-3 py-3 font-medium">CPA</th>
+            <th className="w-[8%] px-3 py-3 font-medium">KPI</th>
+            <th className="w-[6%] px-3 py-3 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-neutral-800">
+          {networks.map((network) => {
+            const summary = network.summary;
+            return (
+              <tr key={network.id} className="bg-neutral-950 align-top">
+                <td className="px-3 py-4">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/telegram-channel-networks/${network.id}`}
+                      className="truncate font-semibold text-white hover:text-blue-300"
+                    >
+                      {network.name}
+                    </Link>
+                    {network.description ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                        {network.description}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-xs text-slate-400">
+                      {formatNumber(summary.channelsCount)} channels
+                    </p>
+                  </div>
+                </td>
+                <td className="px-3 py-4">
+                  <div className="font-semibold text-white">
+                    {formatNumber(summary.totalSubscribers)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    active {formatNumber(summary.activeSubscribersEstimate)}
+                  </div>
+                </td>
+                <td className="px-3 py-4 font-semibold text-white">
+                  {formatPercent(summary.viewRate)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-4">
+                  <NetworkMoneyValue
+                    amount={summary.totalAdSpend}
+                    currency={primaryCurrency}
+                    moneySettings={moneySettings}
+                    rates={rates}
+                  />
+                </td>
+                <td className="whitespace-nowrap px-3 py-4">
+                  <NetworkMoneyValue
+                    amount={summary.avgCpa}
+                    currency={primaryCurrency}
+                    moneySettings={moneySettings}
+                    rates={rates}
+                    label="avg"
+                  />
+                  <NetworkMoneyValue
+                    amount={summary.activeCpa}
+                    currency={primaryCurrency}
+                    moneySettings={moneySettings}
+                    rates={rates}
+                    label="active"
+                    className="mt-2"
+                  />
+                </td>
+                <td className="px-3 py-4">
+                  <span
+                    className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary.kpiStatus)}`}
+                  >
+                    {summary.kpiLabel || "-"}
+                  </span>
+                </td>
+                <td className="px-3 py-3">
+                  <div className="flex justify-end gap-2">
+                    <IconButton onClick={() => onEdit(network)} />
+                    <IconButton kind="delete" onClick={() => onDelete(network)} />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function NetworkMoneyValue({
+  amount,
+  currency,
+  moneySettings,
+  rates,
+  label,
+  className = "",
+}: {
+  amount: number | string | null | undefined;
+  currency?: string | null;
+  moneySettings?: CurrencySettings | null;
+  rates?: ExchangeRate[];
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      {label ? <p className="mb-0.5 text-xs text-slate-500">{label}</p> : null}
+      <MoneyStack
+        amount={amount}
+        currency={currency}
+        settings={moneySettings}
+        rates={rates}
+        amountInPrimary={amount}
+        mainClassName="font-semibold text-slate-100"
+        subClassName="text-xs text-slate-500"
+      />
+    </div>
+  );
+}
+
+function NetworkFormModal({
+  open,
+  network,
+  channels,
+  isSubmitting,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  network: TelegramChannelNetwork | null;
+  channels: TelegramChannel[];
+  isSubmitting: boolean;
+  onClose: () => void;
+  onSubmit: (payload: {
+    name: string;
+    description?: string | null;
+    telegramChannelIds: string[];
+  }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setName(network?.name || "");
+    setDescription(network?.description || "");
+    setSelectedIds(network?.channels.map((channel) => channel.id) || []);
+    setError("");
+  }, [network, open]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const toggleChannel = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+  const submit = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError("Name is required.");
+      return;
+    }
+    if (selectedIds.length < 2) {
+      setError("Network must contain at least 2 channels.");
+      return;
+    }
+    onSubmit({
+      name: trimmedName,
+      description: description.trim() || null,
+      telegramChannelIds: selectedIds,
+    });
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={network ? "Edit network" : "Create network"}
+    >
+      <div className="space-y-4">
+        <FormField label="Name" required>
+          <Input value={name} onChange={(event) => setName(event.target.value)} />
+        </FormField>
+        <FormField label="Description">
+          <Textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </FormField>
+        <div>
+          <p className="mb-2 text-sm font-medium text-slate-200">Channels</p>
+          <div className="max-h-72 space-y-2 overflow-auto rounded-lg border border-slate-800 p-2">
+            {channels.map((channel) => (
+              <ChannelSelectRow
+                key={channel.id}
+                channel={channel}
+                checked={selectedSet.has(channel.id)}
+                onToggle={() => toggleChannel(channel.id)}
+              />
+            ))}
+            {!channels.length ? (
+              <p className="p-2 text-sm text-slate-400">
+                No own channels available.
+              </p>
+            ) : null}
+          </div>
+          {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={isSubmitting} onClick={submit}>
+            {isSubmitting ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ChannelSelectRow({
+  channel,
+  checked,
+  onToggle,
+}: {
+  channel: TelegramChannel;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const username = channel.username
+    ? `@${String(channel.username).replace(/^@/, "")}`
+    : "";
+  return (
+    <label
+      className={`flex items-center gap-3 rounded-md border p-2 text-sm transition ${
+        checked
+          ? "border-blue-700 bg-slate-900"
+          : "border-slate-800 bg-slate-900/30 hover:border-slate-700"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        className="h-4 w-4 shrink-0"
+      />
+      <TelegramEntityAvatar
+        imageUrl={channel.photoUrl}
+        kind="channel"
+        alt={channel.title}
+        size="md"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-semibold leading-tight text-slate-100">
+          {channel.title}
+        </p>
+        {username ? (
+          <p className="mt-0.5 truncate text-xs text-slate-400">{username}</p>
+        ) : null}
+      </div>
+    </label>
   );
 }
 

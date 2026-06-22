@@ -187,7 +187,7 @@ export class TelegramChannelAnalyticsService {
       where: { id: channelId },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const [campaignRows, audience] = await Promise.all([
+    const [campaignRows, audience, channelInviteLinks] = await Promise.all([
       (this.prisma.adCampaign as any).findMany({
         where: {
           workspaceId: channel.workspaceId,
@@ -197,21 +197,35 @@ export class TelegramChannelAnalyticsService {
         include: { inviteLinks: { select: { joinedCount: true } } },
       }),
       this.getActiveAudienceEstimate(channelId),
+      this.prisma.telegramInviteLink.findMany({
+        where: { workspaceId: channel.workspaceId, telegramChannelId: channel.id },
+        select: { id: true, joinedCount: true },
+      }),
     ]);
     const campaigns = campaignRows as any[];
+    const inviteLinksById = new Map(
+      channelInviteLinks.map((link) => [link.id, Number(link.joinedCount || 0)]),
+    );
     const totalAdSpend = campaigns.reduce(
       (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
       0,
     );
     const totalJoinedSubscribers = campaigns.reduce((sum, campaign) => {
-      if (campaign.newSubscribers != null) {
-        return sum + Number(campaign.newSubscribers || 0);
+      const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
+      if (selectedLinkId && inviteLinksById.has(selectedLinkId)) {
+        return sum + Number(inviteLinksById.get(selectedLinkId) || 0);
       }
       const campaignJoined = Number(campaign.joinedCount || 0);
       const linksJoined = campaign.inviteLinks.reduce(
         (linkSum, link) => linkSum + Number(link.joinedCount || 0),
         0,
       );
+      if (linksJoined > 0 || campaignJoined > 0) {
+        return sum + Math.max(campaignJoined, linksJoined);
+      }
+      if (campaign.newSubscribers != null) {
+        return sum + Number(campaign.newSubscribers || 0);
+      }
       return sum + Math.max(campaignJoined, linksJoined);
     }, 0);
     const avgCpa =

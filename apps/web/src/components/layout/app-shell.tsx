@@ -24,7 +24,6 @@ import {
   RadioTower,
   ReceiptText,
   Settings,
-  Share2,
   Target,
   UserRound,
   Users,
@@ -51,7 +50,6 @@ const groups = [
     icon: MessageCircle,
     children: [
       { label: 'Telegram', href: '/telegram-channels', icon: RadioTower },
-      { label: 'Networks', href: '/telegram-channel-networks', icon: Share2 },
       { label: 'Promos', href: '/promos', icon: Megaphone },
       { label: 'Ad Campaigns', href: '/ad-campaigns', icon: Target },
     ],
