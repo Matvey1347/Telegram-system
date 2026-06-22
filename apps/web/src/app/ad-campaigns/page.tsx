@@ -21,7 +21,7 @@ import {
 } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
 import { CircleHelp, RefreshCw } from 'lucide-react';
 
@@ -220,11 +220,16 @@ export default function AdCampaignsPage() {
   return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by channel, source and hypothesis" action={<Button onClick={openCreateForCurrentView}>{viewMode === 'hypotheses' ? 'Create hypothesis' : 'Create campaign'}</Button>} />
     <Card className="mb-4">
       <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-7 xl:items-end">
-        <FormField label="From">
-          <DateInput value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} disabled={viewMode === 'hypotheses'} />
-        </FormField>
-        <FormField label="To">
-          <DateInput value={dateTo} onChange={(e) => setDateTo(e.target.value)} disabled={viewMode === 'hypotheses'} />
+        <FormField label="Period">
+          <DateRangeInput
+            from={dateFrom}
+            to={dateTo}
+            onChange={(range) => {
+              setDateFrom(range.from);
+              setDateTo(range.to);
+            }}
+            disabled={viewMode === 'hypotheses'}
+          />
         </FormField>
         <FormField label="View">
           <Select value={viewMode} onChange={(e) => handleViewModeChange(e.target.value as AdCampaignsViewMode)}>

@@ -28,6 +28,14 @@ export class GlobalSearchService {
     return { contains: query, mode: 'insensitive' as const };
   }
 
+  private queryVariants(query: string) {
+    return Array.from(new Set([query, query.toLocaleLowerCase(), query.toLocaleUpperCase()].filter(Boolean)));
+  }
+
+  private textMatches(field: string, query: string) {
+    return this.queryVariants(query).map((variant) => ({ [field]: this.contains(variant) }));
+  }
+
   private limited<T>(items: T[], limit = 40) {
     return items.slice(0, limit);
   }
@@ -37,35 +45,26 @@ export class GlobalSearchService {
     if (query.length < 2) return [];
 
     const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const contains = this.contains(query);
     const numeric = Number(query.replace(',', '.'));
     const hasNumber = Number.isFinite(numeric);
 
     const [
-      accounts,
       transactions,
-      categories,
-      transfers,
       members,
       channels,
-      networks,
+      telegramAccounts,
+      bots,
       promos,
-      sources,
+      people,
       campaigns,
       hypotheses,
     ] = await Promise.all([
-      this.prisma.account.findMany({
-        where: { workspaceId, name: contains },
-        select: { id: true, name: true, currency: true, icon: true },
-        take: 6,
-        orderBy: { updatedAt: 'desc' },
-      }),
       this.prisma.transaction.findMany({
         where: {
           workspaceId,
           OR: [
-            { description: contains },
-            { category: contains },
+            ...this.textMatches('description', query),
+            ...this.textMatches('category', query),
             ...(hasNumber ? [{ amount: numeric }, { amountInPrimaryCurrency: numeric }] : []),
           ],
         },
@@ -73,29 +72,11 @@ export class GlobalSearchService {
         take: 8,
         orderBy: { date: 'desc' },
       }),
-      this.prisma.transactionCategory.findMany({
-        where: { workspaceId, name: contains },
-        select: { id: true, name: true, type: true, icon: true },
-        take: 6,
-        orderBy: { updatedAt: 'desc' },
-      }),
-      this.prisma.transfer.findMany({
-        where: {
-          workspaceId,
-          OR: [
-            { description: contains },
-            ...(hasNumber ? [{ fromAmount: numeric }, { toAmount: numeric }] : []),
-          ],
-        },
-        include: { fromAccount: { select: { name: true } }, toAccount: { select: { name: true } } },
-        take: 6,
-        orderBy: { date: 'desc' },
-      }),
       this.prisma.workspaceMember.findMany({
         where: {
           workspaceId,
           user: {
-            OR: [{ name: contains }, { email: contains }],
+            OR: [...this.textMatches('name', query), ...this.textMatches('email', query)],
           },
         },
         include: { user: true, avatarIcon: true },
@@ -106,25 +87,55 @@ export class GlobalSearchService {
         where: {
           workspaceId,
           OR: [
-            { title: contains },
-            { username: contains },
-            { description: contains },
-            { niche: contains },
-            { language: contains },
+            ...this.textMatches('title', query),
+            ...this.textMatches('username', query),
+            ...this.textMatches('description', query),
+            ...this.textMatches('niche', query),
+            ...this.textMatches('language', query),
           ],
         },
         select: { id: true, title: true, username: true, photoUrl: true, adminLinks: { select: { id: true }, take: 1 } },
         take: 8,
         orderBy: { updatedAt: 'desc' },
       }),
-      this.prisma.telegramChannelNetwork.findMany({
-        where: { workspaceId, OR: [{ name: contains }, { description: contains }] },
-        select: { id: true, name: true, description: true },
+      this.prisma.telegramUserAccountIntegration.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('label', query),
+            ...this.textMatches('username', query),
+            ...this.textMatches('firstName', query),
+            ...this.textMatches('lastName', query),
+            ...this.textMatches('phoneMasked', query),
+          ],
+        },
+        select: { id: true, label: true, username: true, firstName: true, phoneMasked: true, photoUrl: true, status: true },
+        take: 6,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.telegramBotIntegration.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('label', query),
+            ...this.textMatches('username', query),
+            ...this.textMatches('firstName', query),
+            ...this.textMatches('botTokenMasked', query),
+          ],
+        },
+        select: { id: true, label: true, username: true, firstName: true, botTokenMasked: true, isActive: true },
         take: 6,
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.promo.findMany({
-        where: { workspaceId, OR: [{ title: contains }, { text: contains }, { angle: contains }] },
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('title', query),
+            ...this.textMatches('text', query),
+            ...this.textMatches('angle', query),
+          ],
+        },
         include: { telegramChannel: { select: { title: true, photoUrl: true } } },
         take: 8,
         orderBy: { updatedAt: 'desc' },
@@ -132,42 +143,48 @@ export class GlobalSearchService {
       this.prisma.advertisingSource.findMany({
         where: {
           workspaceId,
+          type: { not: 'telegram_channel' },
           OR: [
-            { name: contains },
-            { telegramUsername: contains },
-            { url: contains },
-            { description: contains },
-            { contactInfo: contains },
-            { notes: contains },
+            ...this.textMatches('name', query),
+            ...this.textMatches('telegramUsername', query),
+            ...this.textMatches('url', query),
+            ...this.textMatches('description', query),
+            ...this.textMatches('contactInfo', query),
+            ...this.textMatches('notes', query),
           ],
         },
         take: 8,
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.adCampaign.findMany({
-        where: { workspaceId, OR: [{ title: contains }, { notes: contains }, { sourcePostUrl: contains }] },
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('title', query),
+            ...this.textMatches('notes', query),
+            ...this.textMatches('sourcePostUrl', query),
+          ],
+        },
         include: { telegramChannel: { select: { title: true, photoUrl: true } }, promo: { select: { title: true } } },
         take: 8,
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.adHypothesis.findMany({
-        where: { workspaceId, OR: [{ name: contains }, { description: contains }, { conclusion: contains }, { status: contains }] },
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('name', query),
+            ...this.textMatches('description', query),
+            ...this.textMatches('conclusion', query),
+            ...this.textMatches('status', query),
+          ],
+        },
         take: 6,
         orderBy: { updatedAt: 'desc' },
       }),
     ]);
 
     return this.limited([
-      ...accounts.map((account): SearchResult => ({
-        id: account.id,
-        type: 'account',
-        label: 'Account',
-        title: account.name,
-        subtitle: account.currency,
-        href: '/accounts',
-        iconUrl: account.icon?.imageUrl,
-        iconEmoji: account.icon?.emoji,
-      })),
       ...transactions.map((transaction): SearchResult => ({
         id: transaction.id,
         type: 'transaction',
@@ -177,24 +194,6 @@ export class GlobalSearchService {
         href: `/transactions?search=${encodeURIComponent(query)}`,
         iconUrl: transaction.icon?.imageUrl || transaction.categoryRef?.icon?.imageUrl,
         iconEmoji: transaction.icon?.emoji || transaction.categoryRef?.icon?.emoji,
-      })),
-      ...categories.map((category): SearchResult => ({
-        id: category.id,
-        type: 'category',
-        label: 'Category',
-        title: category.name,
-        subtitle: category.type,
-        href: '/categories',
-        iconUrl: category.icon?.imageUrl,
-        iconEmoji: category.icon?.emoji,
-      })),
-      ...transfers.map((transfer): SearchResult => ({
-        id: transfer.id,
-        type: 'transfer',
-        label: 'Transfer',
-        title: transfer.description || `${transfer.fromAccount?.name || transfer.fromCurrency} -> ${transfer.toAccount?.name || transfer.toCurrency}`,
-        subtitle: `${transfer.fromAmount} ${transfer.fromCurrency} -> ${transfer.toAmount} ${transfer.toCurrency}`,
-        href: '/transfers',
       })),
       ...members.map((member): SearchResult => ({
         id: member.id,
@@ -217,27 +216,36 @@ export class GlobalSearchService {
           : '/telegram-channels?tab=channels&channelTab=external',
         iconUrl: channel.photoUrl,
       })),
-      ...networks.map((network): SearchResult => ({
-        id: network.id,
-        type: 'telegram-network',
-        label: 'Network',
-        title: network.name,
-        subtitle: network.description,
-        href: `/telegram-channel-networks/${network.id}`,
+      ...telegramAccounts.map((account): SearchResult => ({
+        id: account.id,
+        type: 'telegram-account',
+        label: 'Telegram account',
+        title: account.username ? `@${account.username}` : account.label,
+        subtitle: [account.firstName, account.phoneMasked, account.status].filter(Boolean).join(' · '),
+        href: '/telegram-channels?tab=accounts&accountTab=mtproto',
+        iconUrl: account.photoUrl,
+      })),
+      ...bots.map((bot): SearchResult => ({
+        id: bot.id,
+        type: 'telegram-bot',
+        label: 'Bot',
+        title: bot.username ? `@${bot.username}` : bot.label,
+        subtitle: [bot.firstName, bot.botTokenMasked, bot.isActive ? 'active' : 'inactive'].filter(Boolean).join(' · '),
+        href: '/telegram-channels?tab=bot',
       })),
       ...promos.map((promo): SearchResult => ({
         id: promo.id,
         type: 'promo',
-        label: 'Promo',
+        label: 'Ad',
         title: promo.title,
         subtitle: promo.telegramChannel?.title,
         href: '/promos',
         iconUrl: promo.telegramChannel?.photoUrl,
       })),
-      ...sources.map((source): SearchResult => ({
+      ...people.map((source): SearchResult => ({
         id: source.id,
-        type: 'advertising-source',
-        label: source.type === 'telegram_channel' ? 'Ad source' : 'Contact',
+        type: 'person',
+        label: 'Person',
         title: source.name,
         subtitle: source.telegramUsername ? `@${source.telegramUsername}` : source.url,
         href: '/telegram-channels?tab=accounts&accountTab=people',
@@ -246,7 +254,7 @@ export class GlobalSearchService {
       ...campaigns.map((campaign): SearchResult => ({
         id: campaign.id,
         type: 'ad-campaign',
-        label: 'Ad campaign',
+        label: 'Ad',
         title: campaign.title,
         subtitle: [campaign.telegramChannel?.title, campaign.promo?.title].filter(Boolean).join(' · '),
         href: `/ad-campaigns/${campaign.id}`,
@@ -255,7 +263,7 @@ export class GlobalSearchService {
       ...hypotheses.map((hypothesis): SearchResult => ({
         id: hypothesis.id,
         type: 'ad-hypothesis',
-        label: 'Hypothesis',
+        label: 'Ad hypothesis',
         title: hypothesis.name,
         subtitle: hypothesis.description || hypothesis.status,
         href: '/ad-campaigns',

@@ -40,6 +40,7 @@ import { MoneyStack } from "@/components/ui/money-stack";
 import {
   Button,
   DateInput,
+  DateRangeInput,
   FormField,
   Input,
   LoadingState,
@@ -916,28 +917,18 @@ function RangePicker({
         Custom
       </Button>
       {rangeMode === "custom" ? (
-        <>
-          <div className="w-44">
-            <FormField label="From">
-              <DateInput
-                value={customFrom}
-                onChange={(event) =>
-                  setCustomFrom(String(event.target.value || ""))
-                }
-              />
-            </FormField>
-          </div>
-          <div className="w-44">
-            <FormField label="To">
-              <DateInput
-                value={customTo}
-                onChange={(event) =>
-                  setCustomTo(String(event.target.value || ""))
-                }
-              />
-            </FormField>
-          </div>
-        </>
+        <div className="w-72">
+          <FormField label="Period">
+            <DateRangeInput
+              from={customFrom}
+              to={customTo}
+              onChange={(range) => {
+                setCustomFrom(range.from);
+                setCustomTo(range.to);
+              }}
+            />
+          </FormField>
+        </div>
       ) : null}
     </section>
   );
