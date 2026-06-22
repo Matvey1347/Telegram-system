@@ -4,11 +4,19 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
-import { Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
+import { Account, Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 
 type Values = { fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; date: string; description?: string };
+
+function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null; emoji?: string | null } | null }) {
+  return {
+    'data-icon-url': item.icon?.imageUrl ?? undefined,
+    'data-icon-emoji': item.icon?.emoji ?? undefined,
+    'data-icon-fallback': item.name,
+  };
+}
 
 export default function TransfersPage() {
   const qc = useQueryClient();
@@ -33,13 +41,13 @@ export default function TransfersPage() {
       <div className="grid gap-3 md:grid-cols-4">
         <FormField label="From"><DateInput value={filters.dateFrom} onChange={(e) => setFilter('dateFrom', e.target.value)} /></FormField>
         <FormField label="To"><DateInput value={filters.dateTo} onChange={(e) => setFilter('dateTo', e.target.value)} /></FormField>
-        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></FormField>
+        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}</Select></FormField>
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
       </div>
     </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transfers</div> : null}
     <div className="table-scroll w-full rounded-lg border border-neutral-800">
-      <table className="w-max min-w-[980px] text-left text-sm">
+      <table className="w-full min-w-[980px] text-left text-sm">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">From account</th><th className="px-3 py-2">From amount</th><th className="px-3 py-2">To account</th><th className="px-3 py-2">To amount</th><th className="px-3 py-2">Exchange rate</th><th className="px-3 py-2">Transfer loss</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Actions</th></tr>
         </thead>
@@ -80,11 +88,46 @@ function transferDefaults(initial?: Transfer): Values {
     : { fromAccountId: '', toAccountId: '', fromAmount: 0, toAmount: 0, date: new Date().toISOString().slice(0, 10), description: '' };
 }
 
-function TransferModal({ open, onClose, onSubmit, title, accounts, initial }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; accounts: { id: string; name: string }[]; initial?: Transfer }) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<Values>({ defaultValues: transferDefaults(initial) });
+function TransferModal({ open, onClose, onSubmit, title, accounts, initial }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; accounts: Account[]; initial?: Transfer }) {
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<Values>({ defaultValues: transferDefaults(initial) });
+  const fromAccountId = watch('fromAccountId');
+  const toAccountId = watch('toAccountId');
   useEffect(() => {
     if (!open) return;
     reset(transferDefaults(initial));
   }, [open, initial, reset]);
-  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit(onSubmit)}><FormField label="From Account" required error={errors.fromAccountId ? 'Required field' : undefined}><Select {...register('fromAccountId', { required: true })}><option value="">Select</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></FormField><FormField label="To Account" required error={errors.toAccountId ? 'Required field' : undefined}><Select {...register('toAccountId', { required: true })}><option value="">Select</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></FormField><FormField label="From Amount"><Input type="number" step="0.01" {...register('fromAmount', { valueAsNumber: true })} /></FormField><FormField label="To Amount"><Input type="number" step="0.01" {...register('toAmount', { valueAsNumber: true })} /></FormField><FormField label="Date" required error={errors.date ? 'Required field' : undefined}><DateInput {...register('date', { required: true })} /></FormField><FormField label="Description"><Input {...register('description')} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
+        <FormField label="From Account" required error={errors.fromAccountId ? 'Required field' : undefined}>
+          <Select
+            {...register('fromAccountId', { required: true })}
+            value={fromAccountId}
+            onChange={(event) => setValue('fromAccountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+          >
+            <option value="" disabled hidden>Select</option>
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}
+          </Select>
+        </FormField>
+        <FormField label="To Account" required error={errors.toAccountId ? 'Required field' : undefined}>
+          <Select
+            {...register('toAccountId', { required: true })}
+            value={toAccountId}
+            onChange={(event) => setValue('toAccountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+          >
+            <option value="" disabled hidden>Select</option>
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}
+          </Select>
+        </FormField>
+        <FormField label="From Amount"><Input type="number" step="0.01" {...register('fromAmount', { valueAsNumber: true })} /></FormField>
+        <FormField label="To Amount"><Input type="number" step="0.01" {...register('toAmount', { valueAsNumber: true })} /></FormField>
+        <FormField label="Date" required error={errors.date ? 'Required field' : undefined}><DateInput {...register('date', { required: true })} /></FormField>
+        <FormField label="Description"><Input {...register('description')} /></FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="submit">Save</Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }

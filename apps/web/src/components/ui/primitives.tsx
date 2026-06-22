@@ -22,6 +22,17 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none ring-blue-500 focus:ring ${props.className ?? ''}`} />;
 }
 
+function OptionIcon({ iconUrl, iconEmoji, fallback }: { iconUrl?: string; iconEmoji?: string; fallback?: string }) {
+  if (iconUrl) return <img src={iconUrl} alt="" className="h-5 w-5 shrink-0 rounded-md object-cover" />;
+  if (iconEmoji) return <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[15px] leading-none">{iconEmoji}</span>;
+  if (!fallback) return null;
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-neutral-700 bg-neutral-800 text-[11px] font-semibold text-neutral-200">
+      {fallback.trim().slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const financeTypeClass = (value: string) => {
     if (value === 'income') return 'text-emerald-300';
@@ -45,11 +56,15 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       const hasExplicitValue = child.props?.value !== undefined;
       const value = String(hasExplicitValue ? child.props?.value : label);
       return {
-      value,
-      label,
-      disabled: Boolean(child.props?.disabled),
-      className: child.props?.className || financeTypeClass(value),
-      key: `${value}-${idx}`,
+        value,
+        label,
+        disabled: Boolean(child.props?.disabled),
+        hidden: Boolean(child.props?.hidden),
+        className: child.props?.className || financeTypeClass(value),
+        iconUrl: child.props?.['data-icon-url'] ? String(child.props['data-icon-url']) : undefined,
+        iconEmoji: child.props?.['data-icon-emoji'] ? String(child.props['data-icon-emoji']) : undefined,
+        iconFallback: child.props?.['data-icon-fallback'] ? String(child.props['data-icon-fallback']) : undefined,
+        key: `${value}-${idx}`,
       };
     });
 
@@ -58,6 +73,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const currentValue = String((isControlled ? props.value : internalValue) ?? '');
 
   const selected = options.find((o) => o.value === currentValue);
+  const menuOptions = options.filter((o) => !o.hidden);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -85,12 +101,15 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring disabled:opacity-50 ${props.className ?? ''}`}
       >
-        <span className={selected ? selected.className || 'text-white' : 'text-neutral-400'}>{selected?.label || 'Select'}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {selected ? <OptionIcon iconUrl={selected.iconUrl} iconEmoji={selected.iconEmoji} fallback={selected.iconFallback} /> : null}
+          <span className={`truncate ${selected ? selected.className || 'text-white' : 'text-neutral-400'}`}>{selected?.label || 'Select'}</span>
+        </span>
         <ChevronDown size={16} className="text-neutral-400" />
       </button>
       {open ? (
         <div className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          {options.map((opt) => (
+          {menuOptions.map((opt) => (
             <button
               key={opt.key}
               type="button"
@@ -102,7 +121,10 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
               }}
               className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
             >
-              <span className={opt.className}>{opt.label}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <OptionIcon iconUrl={opt.iconUrl} iconEmoji={opt.iconEmoji} fallback={opt.iconFallback} />
+                <span className={`truncate ${opt.className}`}>{opt.label}</span>
+              </span>
               {opt.value === currentValue ? <Check size={14} className="text-blue-300" /> : null}
             </button>
           ))}
@@ -257,6 +279,7 @@ type SelectOption = {
   label: string;
   iconUrl?: string;
   iconEmoji?: string;
+  iconFallback?: string;
   tone?: 'success' | 'warning' | 'danger' | 'muted' | 'info';
 };
 
@@ -296,8 +319,7 @@ export function CustomSelect({
         className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring"
       >
         <span className="flex min-w-0 items-center gap-2">
-          {selected?.iconUrl ? <img src={selected.iconUrl} alt="" className="h-5 w-5 rounded-full object-cover" /> : null}
-          {!selected?.iconUrl && selected?.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center text-[15px] leading-none">{selected.iconEmoji}</span> : null}
+          {selected ? <OptionIcon iconUrl={selected.iconUrl} iconEmoji={selected.iconEmoji} fallback={selected.iconFallback} /> : null}
           <span className={`truncate ${selected ? toneClass(selected.tone) : 'text-neutral-400'}`}>{selected?.label || placeholder}</span>
         </span>
         <ChevronDown size={16} className="text-neutral-400" />
@@ -317,8 +339,7 @@ export function CustomSelect({
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-neutral-800"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  {opt.iconUrl ? <img src={opt.iconUrl} alt="" className="h-5 w-5 rounded-full object-cover" /> : null}
-                  {!opt.iconUrl && opt.iconEmoji ? <span className="flex h-5 w-5 items-center justify-center text-[15px] leading-none">{opt.iconEmoji}</span> : null}
+                  <OptionIcon iconUrl={opt.iconUrl} iconEmoji={opt.iconEmoji} fallback={opt.iconFallback} />
                   <span className={`truncate ${toneClass(opt.tone)}`}>{opt.label}</span>
                 </span>
                 {isSelected ? <Check size={14} className="text-blue-300" /> : null}

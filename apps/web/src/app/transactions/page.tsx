@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
-import { Account, Transaction, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
+import { Account, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
@@ -17,6 +17,14 @@ function formatLocalDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null; emoji?: string | null } | null }) {
+  return {
+    'data-icon-url': item.icon?.imageUrl ?? undefined,
+    'data-icon-emoji': item.icon?.emoji ?? undefined,
+    'data-icon-fallback': item.name,
+  };
 }
 
 export default function TransactionsPage() {
@@ -48,15 +56,15 @@ export default function TransactionsPage() {
         <FormField label="From"><DateInput value={filters.dateFrom} onChange={(e) => setFilter('dateFrom', e.target.value)} /></FormField>
         <FormField label="To"><DateInput value={filters.dateTo} onChange={(e) => setFilter('dateTo', e.target.value)} /></FormField>
         <FormField label="Type"><Select value={filters.type} onChange={(e) => setFilter('type', e.target.value)}><option value="all">All</option><option value="income">Income</option><option value="expense">Expense</option></Select></FormField>
-        <FormField label="Category"><Select value={filters.categoryId} onChange={(e) => setFilter('categoryId', e.target.value)} disabled={filters.type === 'all'}><option value="">All</option>{filterCategories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></FormField>
-        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></FormField>
+        <FormField label="Category"><Select value={filters.categoryId} onChange={(e) => setFilter('categoryId', e.target.value)} disabled={filters.type === 'all'}><option value="">All</option>{filterCategories?.map((c) => <option key={c.id} value={c.id} {...iconOptionProps(c)}>{c.name}</option>)}</Select></FormField>
+        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}</Select></FormField>
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
         <FormField label="Search"><Input value={filters.search} onChange={(e) => setFilter('search', e.target.value)} placeholder="Description" /></FormField>
       </div>
     </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transactions</div> : null}
     <div className="table-scroll w-full rounded-lg border border-neutral-800">
-      <table className="w-max min-w-[760px] text-left text-sm">
+      <table className="w-full min-w-[760px] text-left text-sm">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Price</th><th className="px-3 py-2">Category</th><th className="px-3 py-2">Account</th><th className="px-3 py-2">Actions</th></tr>
         </thead>
@@ -142,6 +150,7 @@ function transactionDefaults(initial?: Transaction): Values {
 function TransactionModal({ open, onClose, onSubmit, title, accounts, members, initial }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; accounts: Account[]; members: WorkspaceMember[]; initial?: Transaction }) {
   const { register, handleSubmit, reset, watch, setValue, getValues, formState: { errors } } = useForm<Values>({ defaultValues: transactionDefaults(initial) });
   const type = watch('type');
+  const accountId = watch('accountId');
   const categoryId = watch('categoryId');
   const { data: categories } = useQuery({ queryKey: ['transaction-categories', type], queryFn: () => transactionCategoriesApi.list(type), enabled: open && !!type });
   const selectedCategory = useMemo(() => categories?.find((c) => c.id === categoryId), [categories, categoryId]);
@@ -165,5 +174,60 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
     }
   }, [categories, getValues, setValue, type]);
 
-  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit(onSubmit)}><IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} /><FormField label="Type"><Select {...register('type')}><option value="income">income</option><option value="expense">expense</option></Select></FormField><FormField label="Account" required error={errors.accountId ? 'Required field' : undefined}><Select {...register('accountId', { required: true })}><option value="">Select account</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>)}</Select></FormField><FormField label="Amount"><Input type="number" step="0.01" {...register('amount', { valueAsNumber: true })} /></FormField><FormField label="Category" required error={errors.categoryId ? 'Required field' : undefined}><Select {...register('categoryId', { required: true })}><option value="">Select category</option>{categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></FormField>{isInvestment ? <FormField label="Member" required error={errors.memberId ? 'Required field' : undefined}><Select {...register('memberId', { required: true })}><option value="">Select member</option>{members.map((m) => <option key={m.id} value={m.id}>{m.user.name}</option>)}</Select></FormField> : null}<FormField label="Description"><Input {...register('description')} /></FormField><FormField label="Date" required error={errors.date ? 'Required field' : undefined}><DateInput {...register('date', { required: true })} value={watch('date')} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
+        <IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} />
+        <FormField label="Type">
+          <Select
+            {...register('type')}
+            value={type}
+            onChange={(event) => setValue('type', event.target.value as Values['type'], { shouldDirty: true, shouldValidate: true })}
+          >
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+          </Select>
+        </FormField>
+        <FormField label="Account" required error={errors.accountId ? 'Required field' : undefined}>
+          <Select
+            {...register('accountId', { required: true })}
+            value={accountId}
+            onChange={(event) => setValue('accountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+          >
+            <option value="" disabled hidden>Select account</option>
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name} ({a.currency})</option>)}
+          </Select>
+        </FormField>
+        <FormField label="Amount">
+          <Input type="number" step="0.01" {...register('amount', { valueAsNumber: true })} />
+        </FormField>
+        <FormField label="Category" required error={errors.categoryId ? 'Required field' : undefined}>
+          <Select
+            {...register('categoryId', { required: true })}
+            value={categoryId}
+            onChange={(event) => setValue('categoryId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+          >
+            <option value="" disabled hidden>Select category</option>
+            {categories?.map((c: TransactionCategory) => <option key={c.id} value={c.id} {...iconOptionProps(c)}>{c.name}</option>)}
+          </Select>
+        </FormField>
+        {isInvestment ? (
+          <FormField label="Member" required error={errors.memberId ? 'Required field' : undefined}>
+            <Select {...register('memberId', { required: true })}>
+              <option value="" disabled hidden>Select member</option>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.user.name}</option>)}
+            </Select>
+          </FormField>
+        ) : null}
+        <FormField label="Description"><Input {...register('description')} /></FormField>
+        <FormField label="Date" required error={errors.date ? 'Required field' : undefined}>
+          <DateInput {...register('date', { required: true })} value={watch('date')} />
+        </FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="submit">Save</Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
-import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi, telegramSyncApi, workspacesApi } from '@/lib/api';
+import { accountsApi, adCampaignsApi, advertisingChannelsApi, getTelegramChannelInviteLinks, getTelegramChannelPromos, telegramChannelsApi, telegramSyncApi, workspacesApi, type Account } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { formatMoney, getMoneyVariants } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
@@ -39,6 +39,16 @@ function toInputDate(value?: string | Date | null) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
   return formatLocalDate(d);
+}
+
+function accountSelectOption(account: Account) {
+  return {
+    value: account.id,
+    label: `${account.name} (${account.currency})`,
+    iconUrl: account.icon?.imageUrl ?? undefined,
+    iconEmoji: account.icon?.emoji ?? undefined,
+    iconFallback: account.name,
+  };
 }
 
 export default function AdCampaignsPage() {
@@ -405,7 +415,7 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     </FormField>
     <FormField label="Cost amount" required error={errors.price ? 'Required field' : undefined}><Input type="number" step="0.01" {...register('price', { valueAsNumber: true, required: true })} /></FormField>
     <FormField label="Account" required error={errors.accountId ? 'Required field' : undefined}>
-      <CustomSelect value={watch('accountId')} onChange={(v) => setValue('accountId', v, { shouldValidate: true, shouldDirty: true })} placeholder="Select account" options={(accounts || []).map((a: any) => ({ value: a.id, label: `${a.name} (${a.currency})` }))} />
+      <CustomSelect value={watch('accountId')} onChange={(v) => setValue('accountId', v, { shouldValidate: true, shouldDirty: true })} placeholder="Select account" options={(accounts || []).map(accountSelectOption)} />
     </FormField>
     <FormField label="Date">
       <DateInput

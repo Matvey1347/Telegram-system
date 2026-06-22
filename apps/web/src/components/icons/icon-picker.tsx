@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock3, Dumbbell, Flag, Grid2x2, ImagePlus, Leaf, Package, Plane, Plus, Search, Shapes, Smile, Upload, Utensils } from 'lucide-react';
+import { Clock3, Dumbbell, Flag, Grid2x2, ImagePlus, Leaf, LoaderCircle, Package, Plane, Plus, Search, Shapes, Smile, Upload, Utensils } from 'lucide-react';
 import { iconsApi } from '@/lib/api';
 import { emojiCategoryLabels, emojiIcons, type EmojiCategory, type EmojiIcon } from '@/lib/emoji-icons';
 import { Button, Input } from '@/components/ui/primitives';
@@ -111,6 +111,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
   const [uploadName, setUploadName] = useState('');
   const [recentIcons, setRecentIcons] = useState<RecentIcon[]>(() => loadRecentIcons());
   const [activeSection, setActiveSection] = useState<IconSection>('recent');
+  const [standardIconsReady, setStandardIconsReady] = useState(false);
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -173,7 +174,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     },
   });
 
-  const uploadMutation = useMutation({
+  const { mutate: uploadFile, isPending: isUploading } = useMutation({
     mutationFn: iconsApi.upload,
     onSuccess: (result, file) => {
       setUpload({ imageUrl: result.imageUrl, fileName: stripExtension(file.name || 'icon') });
@@ -217,6 +218,13 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
   }, [recentIcons]);
 
   useEffect(() => {
+    if (!open || tab !== 'icons') return;
+
+    const timeout = window.setTimeout(() => setStandardIconsReady(true), 0);
+    return () => window.clearTimeout(timeout);
+  }, [open, tab]);
+
+  useEffect(() => {
     if (!open) return;
     const updatePosition = () => {
       const triggerRect = triggerRef.current?.getBoundingClientRect();
@@ -258,11 +266,13 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     };
   }, [open]);
 
-  const handleFile = (file?: File) => {
+  const handleFile = useCallback((file?: File) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) return;
-    uploadMutation.mutate(file);
-  };
+    setUpload(null);
+    setTab('upload');
+    uploadFile(file);
+  }, [uploadFile]);
 
   useEffect(() => {
     if (!open || tab !== 'upload') return;
@@ -275,11 +285,11 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
       }
     };
 
-    window.addEventListener('paste', onPaste as any);
-    return () => window.removeEventListener('paste', onPaste as any);
-  }, [open, tab]);
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [handleFile, open, tab]);
 
-  const uploadDisabled = uploadMutation.isPending || createCustomMutation.isPending;
+  const uploadDisabled = isUploading || createCustomMutation.isPending;
 
   const standardRecent = useMemo(
     () => recentIcons.filter(isStandardRecent).filter((item) => matchesRecentStandard(item, normalizedSearch)),
@@ -331,7 +341,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
     updateActiveSection();
     root.addEventListener('scroll', updateActiveSection, { passive: true });
     return () => root.removeEventListener('scroll', updateActiveSection);
-  }, [open, tab, standardRecent.length, savedRecent.length, filteredStandardIcons.length, customIcons.length]);
+  }, [customIcons.length, filteredStandardIcons.length, open, savedRecent.length, standardIconsReady, standardRecent.length, tab]);
 
   const closePicker = () => {
     setOpen(false);
@@ -347,7 +357,10 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
       <button
         type="button"
         ref={triggerRef}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setStandardIconsReady(false);
+          setOpen(true);
+        }}
         className={bare
           ? `inline-flex items-center justify-center text-neutral-100 hover:opacity-80 ${className}`
           : compact
@@ -372,7 +385,10 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                     <button
                       key={item}
                       type="button"
-                      onClick={() => setTab(item)}
+                      onClick={() => {
+                        if (item === 'icons' && tab !== 'icons') setStandardIconsReady(false);
+                        setTab(item);
+                      }}
                       className={`rounded-md px-2.5 py-1 text-sm capitalize ${tab === item ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white'}`}
                     >
                       {item}
@@ -409,15 +425,22 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => handleFile(e.target.files?.[0])}
+                      onChange={(e) => {
+                        handleFile(e.target.files?.[0]);
+                        e.target.value = '';
+                      }}
                     />
                     <Button
                       type="button"
                       variant="secondary"
+                      disabled={isUploading}
                       onClick={() => fileInputRef.current?.click()}
-                      className="ml-auto"
+                      className="w-full justify-center"
                     >
-                      <span className="flex items-center gap-2"><Upload size={14} />Upload</span>
+                      <span className="flex items-center gap-2">
+                        {isUploading ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
+                        Upload
+                      </span>
                     </Button>
                   </>
                 )}
@@ -511,7 +534,11 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                           <p className="text-sm font-medium text-neutral-300">Standard</p>
                           <p className="text-xs text-neutral-500">{filteredStandardIcons.length} results</p>
                         </div>
-                        {filteredStandardIcons.length ? (
+                        {!standardIconsReady ? (
+                          <div className="rounded-lg border border-neutral-900 bg-neutral-900/50 px-3 py-4 text-sm text-neutral-500">
+                            Loading icons...
+                          </div>
+                        ) : filteredStandardIcons.length ? (
                           Object.entries(emojiCategoryLabels).map(([category, label]) => {
                             const items = emojiByCategory[category as EmojiCategory];
                             if (!items.length) return null;
@@ -592,7 +619,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                             ? !hasRecentItems
                             : section === 'custom'
                               ? !customIcons.length
-                              : false;
+                              : !standardIconsReady;
                         return (
                           <button
                             key={section}
@@ -628,16 +655,18 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                   handleFile(event.dataTransfer.files?.[0]);
                 }}
               >
-                {!upload ? (
-                  <button
-                    type="button"
-                    className="flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-8 text-neutral-300 hover:bg-neutral-800"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
+                {isUploading ? (
+                  <div className="flex w-full flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-8 text-neutral-300">
+                    <LoaderCircle size={24} className="animate-spin text-blue-400" />
+                    <span>Uploading image...</span>
+                    <span className="text-xs text-neutral-500">Preparing preview</span>
+                  </div>
+                ) : !upload ? (
+                  <div className="flex w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-8 text-neutral-300">
                     <ImagePlus size={20} />
                     <span>Upload an image</span>
                     <span className="text-xs text-neutral-500">Paste or drag and drop works too</span>
-                  </button>
+                  </div>
                 ) : (
                   <>
                     <div className="min-h-0 flex-1 overflow-y-auto pr-1">

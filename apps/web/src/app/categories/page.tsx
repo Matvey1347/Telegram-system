@@ -14,12 +14,29 @@ import { CircleMinus, CirclePlus } from 'lucide-react';
 type CategoryFormValues = { name: string; type: TransactionType; iconId?: string | null };
 type CategoryStats = { count: number; totalPrimary: number };
 
+const CATEGORY_TYPE_KEY = 'telegram-system-category-type';
+
+function isTransactionType(value: string | null): value is TransactionType {
+  return value === 'income' || value === 'expense';
+}
+
+function loadCategoryType(): TransactionType {
+  if (typeof window === 'undefined') return 'expense';
+  const stored = localStorage.getItem(CATEGORY_TYPE_KEY);
+  return isTransactionType(stored) ? stored : 'expense';
+}
+
 export default function CategoriesPage() {
   const qc = useQueryClient();
-  const [activeType, setActiveType] = useState<TransactionType>('income');
+  const [activeType, setActiveType] = useState<TransactionType>(() => loadCategoryType());
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<TransactionCategory | null>(null);
   const [deleting, setDeleting] = useState<TransactionCategory | null>(null);
+
+  const selectType = (type: TransactionType) => {
+    setActiveType(type);
+    localStorage.setItem(CATEGORY_TYPE_KEY, type);
+  };
 
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
@@ -101,7 +118,7 @@ export default function CategoriesPage() {
           <button
             key={tab.value}
             type="button"
-            onClick={() => setActiveType(tab.value)}
+            onClick={() => selectType(tab.value)}
             className={`inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-base font-semibold transition ${active ? 'border-neutral-600 bg-neutral-800 text-white' : tab.value === 'expense' ? 'border-transparent bg-transparent text-rose-300 hover:border-neutral-800 hover:bg-neutral-900 hover:text-rose-200' : 'border-transparent bg-transparent text-neutral-400 hover:border-neutral-800 hover:bg-neutral-900 hover:text-white'}`}
           >
             <Icon size={20} className={tab.value === 'income' ? 'text-emerald-300' : 'text-rose-300'} />
@@ -191,6 +208,7 @@ function CategoryModal({
     defaultValues: initial ?? { name: '', type: 'income', iconId: null },
   });
   const iconId = useWatch({ control, name: 'iconId' });
+  const type = useWatch({ control, name: 'type' }) ?? initial?.type ?? 'income';
 
   useEffect(() => {
     if (!open) return;
@@ -206,7 +224,11 @@ function CategoryModal({
         </FormField>
         {!disableType ? (
           <FormField label="Type" required>
-            <Select {...register('type')}>
+            <Select
+              {...register('type')}
+              value={type}
+              onChange={(event) => setValue('type', event.target.value as TransactionType, { shouldDirty: true, shouldValidate: true })}
+            >
               <option value="income">Income</option>
               <option value="expense">Expense</option>
             </Select>
