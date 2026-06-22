@@ -20,6 +20,13 @@ export class AdCampaignAnalyticsService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  private inRange(value: number, from: number | null, to: number | null) {
+    if (from == null && to == null) return false;
+    if (from != null && value < from) return false;
+    if (to != null && value > to) return false;
+    return true;
+  }
+
   private ratio(numerator: number | null, denominator: number | null) {
     if (numerator == null || denominator == null || denominator <= 0) return null;
     return (numerator / denominator) * 100;
@@ -32,13 +39,22 @@ export class AdCampaignAnalyticsService {
 
   private kpiStatus(value: number | null, channel: any): KpiStatus {
     if (value == null || !channel) return 'unknown';
+    const targetFrom = this.numberOrNull(channel.targetCpaFrom);
     const target = this.numberOrNull(channel.targetCpa);
+    const acceptableFrom = this.numberOrNull(channel.acceptableCpaFrom);
     const acceptable = this.numberOrNull(channel.acceptableCpa);
-    const stop = this.numberOrNull(channel.stopCpa);
-    if (target == null && acceptable == null && stop == null) return 'unknown';
-    if (target != null && value <= target) return 'good';
-    if (acceptable != null && value <= acceptable) return 'acceptable';
-    if (stop != null && value >= stop) return 'bad';
+    const stopFrom =
+      this.numberOrNull(channel.stopCpaFrom) ?? this.numberOrNull(channel.stopCpa);
+    if (
+      targetFrom == null &&
+      target == null &&
+      acceptableFrom == null &&
+      acceptable == null &&
+      stopFrom == null
+    ) return 'unknown';
+    if (this.inRange(value, targetFrom, target)) return 'good';
+    if (this.inRange(value, acceptableFrom, acceptable)) return 'acceptable';
+    if (this.inRange(value, stopFrom, null)) return 'bad';
     return 'unknown';
   }
 

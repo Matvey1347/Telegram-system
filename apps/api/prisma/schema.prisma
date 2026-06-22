@@ -406,10 +406,12 @@ model TelegramChannel {
   ownReactionsPerPost     Int      @default(0)
   subscriberBaseQuality   String   @default("normal")
   dataQualityNotes        String?
+  targetCpaFrom           Decimal?
   targetCpa               Decimal?
+  acceptableCpaFrom       Decimal?
   acceptableCpa           Decimal?
+  stopCpaFrom             Decimal?
   stopCpa                 Decimal?
-  kpiCurrency             String?  @db.VarChar(3)
   isActive                Boolean  @default(true)
 
   photoSmallFileId   String?

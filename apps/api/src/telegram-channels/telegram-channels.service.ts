@@ -484,10 +484,6 @@ export class TelegramChannelsService {
           dto.username === undefined
             ? undefined
             : this.normalizeUsername(dto.username),
-        kpiCurrency:
-          dto.kpiCurrency === undefined
-            ? undefined
-            : String(dto.kpiCurrency || '').trim().toUpperCase() || null,
         dataQualityNotes:
           dto.dataQualityNotes === undefined
             ? undefined

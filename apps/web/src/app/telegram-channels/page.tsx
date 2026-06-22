@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -73,11 +74,6 @@ function formatNumber(value: unknown, decimals = 0) {
     maximumFractionDigits: decimals,
     minimumFractionDigits: decimals,
   });
-}
-
-function formatNullableNumber(value: unknown, decimals = 0) {
-  if (value == null || !Number.isFinite(Number(value))) return "-";
-  return formatNumber(value, decimals);
 }
 
 function formatDataType(value: string) {
@@ -432,7 +428,15 @@ function SourceAccessModal({
   );
 }
 
-function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
+function ChannelFinanceMiniSummary({
+  channel,
+  moneySettings,
+  rates,
+}: {
+  channel: TelegramChannel;
+  moneySettings?: CurrencySettings | null;
+  rates?: ExchangeRate[];
+}) {
   const { data: audience, isLoading: audienceLoading } = useQuery({
     queryKey: ["telegram-channel-audience", channel.id],
     queryFn: () => telegramChannelsApi.audience(channel.id),
@@ -442,75 +446,241 @@ function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
     queryFn: () => telegramChannelsApi.financialSummary(channel.id),
   });
   const loading = audienceLoading || summaryLoading;
-  const currency = summary?.kpiCurrency || channel.kpiCurrency || "";
+  const primaryCurrency = moneySettings?.primaryCurrency || "USD";
+  const hasNumber = (value: unknown) =>
+    value != null && Number.isFinite(Number(value));
+  const hasPositiveNumber = (value: unknown) => hasNumber(value) && Number(value) > 0;
+  const moneyValue = (
+    value: unknown,
+    className = "font-semibold text-slate-100",
+  ) => (
+    <MoneyStack
+      amount={Number(value)}
+      currency={primaryCurrency}
+      settings={moneySettings}
+      rates={rates}
+      mainClassName={className}
+      subClassName="text-[11px] leading-tight text-slate-500"
+    />
+  );
+  const kpiStatus = summary?.kpiStatus;
+  const kpiTone =
+    kpiStatus === "good"
+      ? "border-emerald-800/80 bg-emerald-950/10"
+      : kpiStatus === "acceptable"
+        ? "border-yellow-800/80 bg-yellow-950/10"
+        : kpiStatus === "bad"
+          ? "border-rose-800/80 bg-rose-950/10"
+          : "border-slate-800 bg-slate-900/30";
+  const metrics: Array<{ label: string; value: ReactNode; prominent?: boolean }> = [];
+  const joinedSubscribers = hasNumber(summary?.totalJoinedSubscribers)
+    ? Number(summary?.totalJoinedSubscribers)
+    : null;
+  const paidActiveSubscribers = hasNumber(summary?.paidActiveSubscribersEstimate)
+    ? Number(summary?.paidActiveSubscribersEstimate)
+    : null;
+  const inactiveSubscribers =
+    joinedSubscribers != null && paidActiveSubscribers != null
+      ? Math.max(joinedSubscribers - paidActiveSubscribers, 0)
+      : null;
+  const inactiveCpa =
+    inactiveSubscribers && hasPositiveNumber(summary?.totalAdSpend)
+      ? Number(summary?.totalAdSpend) / inactiveSubscribers
+      : null;
+
+  if (hasPositiveNumber(summary?.totalAdSpend)) {
+    metrics.push({
+      label: "Minus",
+      value: moneyValue(
+        -Number(summary?.totalAdSpend),
+        "font-semibold text-rose-200",
+      ),
+      prominent: true,
+    });
+  }
+  if (hasPositiveNumber(summary?.avgCpa)) {
+    metrics.push({
+      label: "CPA / sub",
+      value: moneyValue(summary?.avgCpa),
+    });
+  }
+  if (hasPositiveNumber(summary?.activeCpa)) {
+    metrics.push({
+      label: "CPA / active",
+      value: moneyValue(summary?.activeCpa),
+      prominent: true,
+    });
+  }
+  if (hasPositiveNumber(inactiveCpa)) {
+    metrics.push({
+      label: "CPA / inactive",
+      value: moneyValue(inactiveCpa),
+    });
+  }
+  if (hasPositiveNumber(summary?.totalJoinedSubscribers)) {
+    metrics.push({
+      label: "Joined",
+      value: formatNumber(summary?.totalJoinedSubscribers),
+    });
+  }
+  if (hasNumber(audience?.viewRate)) {
+    metrics.push({
+      label: "View rate",
+      value: formatPercent(audience?.viewRate, 1),
+    });
+  }
+  const showQuality =
+    audience?.dataQuality && audience.dataQuality !== "normal";
+  const kpiTargets = [
+    formatCompactKpiRange("target", channel.targetCpaFrom, channel.targetCpa),
+    formatCompactKpiRange("ok", channel.acceptableCpaFrom, channel.acceptableCpa),
+    formatCompactKpiRange(
+      "stop",
+      channel.stopCpaFrom ?? channel.stopCpa,
+      null,
+      true,
+    ),
+  ].filter(Boolean);
+
   return (
-    <div className="mt-3 rounded-md border border-slate-800 bg-slate-900/30 p-3">
+    <div className={`mt-3 rounded-md border p-3 ${kpiTone}`}>
       {loading ? (
         <p className="text-xs text-slate-400">Loading analytics...</p>
       ) : (
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <MiniStat
-            label="Subscribers"
-            value={formatNumber(
-              audience?.subscribersCount ?? channel.currentSubscribersCount,
-            )}
-          />
-          <MiniStat
-            label="Active estimate"
-            value={formatNullableNumber(audience?.activeSubscribersEstimate)}
-          />
-          <div>
-            <p className="text-slate-500">Data quality</p>
-            {audience?.dataQuality ? (
-              <DataQualityBadge
-                quality={audience.dataQuality}
-                reason={audience?.dataQualityReason}
-                warning={audience?.dataQualityWarning}
-                rawViewRate={audience?.rawViewRate}
-                subscriberBaseQuality={audience?.subscriberBaseQuality}
-              />
-            ) : (
-              <p className="mt-0.5 truncate font-medium text-slate-100">-</p>
-            )}
-          </div>
-          <MiniStat
-            label="View rate"
-            value={formatPercent(audience?.viewRate, 1)}
-          />
-          {Number(audience?.rawViewRate || 0) > 100 ? (
-            <MiniStat
-              label="Raw view rate"
-              value={formatPercent(audience?.rawViewRate, 1)}
-            />
-          ) : null}
-          <MiniStat
-            label="Spend"
-            value={`${formatNumber(summary?.totalAdSpend, 2)} ${currency}`}
-          />
-          <MiniStat
-            label="Avg CPA"
-            value={
-              summary?.avgCpa == null
-                ? "-"
-                : `${formatNumber(summary.avgCpa, 2)} ${currency}`
-            }
-          />
-          <div>
-            <p className="text-slate-500">KPI</p>
-            {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (
-              <span
-                className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary.kpiStatus)}`}
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                Performance
+              </p>
+              <p className="text-sm font-semibold text-slate-100">
+                {formatNumber(
+                  audience?.subscribersCount ?? channel.currentSubscribersCount,
+                )}{" "}
+                subs
+                {hasNumber(audience?.activeSubscribersEstimate) ? (
+                  <span className="font-normal text-slate-500">
+                    {" "}
+                    · {formatNumber(audience?.activeSubscribersEstimate)} active
+                  </span>
+                ) : null}
+              </p>
+            </div>
+            {kpiStatus && kpiStatus !== "unknown" ? (
+              <KpiPreviewTooltip
+                summary={summary}
+                targets={kpiTargets}
+                className="shrink-0"
               >
-                {summary.kpiLabel || "-"}
-              </span>
-            ) : (
-              <p className="mt-1 text-xs text-slate-200">-</p>
-            )}
+                <span
+                  className={`rounded border px-2 py-0.5 text-[11px] ${kpiBadgeClass(kpiStatus)}`}
+                >
+                  {summary?.kpiLabel || kpiStatus}
+                </span>
+              </KpiPreviewTooltip>
+            ) : null}
           </div>
+
+          {metrics.length ? (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {metrics.slice(0, 6).map((metric) => (
+                <PreviewMetric
+                  key={metric.label}
+                  label={metric.label}
+                  value={metric.value}
+                  prominent={metric.prominent}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {(showQuality || kpiTargets.length) ? (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              {showQuality && audience?.dataQuality ? (
+                <DataQualityBadge
+                  quality={audience.dataQuality}
+                  reason={audience?.dataQualityReason}
+                  warning={audience?.dataQualityWarning}
+                  rawViewRate={audience?.rawViewRate}
+                  subscriberBaseQuality={audience?.subscriberBaseQuality}
+                />
+              ) : null}
+              {kpiTargets.length ? (
+                <KpiPreviewTooltip summary={summary} targets={kpiTargets}>
+                  <span className="inline-flex rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
+                    KPI $: {kpiTargets.join(" · ")}
+                  </span>
+                </KpiPreviewTooltip>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+function KpiPreviewTooltip({
+  summary,
+  targets,
+  children,
+  className = "",
+}: {
+  summary?: TelegramChannelFinancialSummary;
+  targets: string[];
+  children: ReactNode;
+  className?: string;
+}) {
+  const currentCpa =
+    summary?.avgCpa == null || !Number.isFinite(Number(summary.avgCpa))
+      ? null
+      : Number(summary.avgCpa);
+  return (
+    <span className={`group relative inline-flex cursor-help ${className}`}>
+      {children}
+      <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 hidden w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+        <span className="block font-semibold text-white">
+          KPI is calculated by CPA / sub
+        </span>
+        <span className="mt-1 block text-slate-300">
+          Current CPA / sub:{" "}
+          <span className="font-semibold text-white">
+            {currentCpa == null ? "not enough data" : `$ ${formatNumber(currentCpa, 2)}`}
+          </span>
+        </span>
+        {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (
+          <span className="mt-1 block text-slate-300">
+            Result:{" "}
+            <span className={kpiBadgeClass(summary.kpiStatus).replace("border-", "text-")}>
+              {summary.kpiLabel || summary.kpiStatus}
+            </span>
+          </span>
+        ) : null}
+        {targets.length ? (
+          <span className="mt-2 block text-slate-400">
+            Ranges: {targets.join(" · ")}
+          </span>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+function formatCompactKpiRange(
+  label: string,
+  from: unknown,
+  to: unknown,
+  openEnded = false,
+) {
+  const hasFrom = from != null && Number.isFinite(Number(from));
+  const hasTo = to != null && Number.isFinite(Number(to));
+  if (!hasFrom && !hasTo) return "";
+  const fromText = hasFrom ? formatNumber(from, 2) : "";
+  const toText = hasTo ? formatNumber(to, 2) : "";
+  if (openEnded) return fromText ? `${label} ${fromText}+` : "";
+  if (fromText && toText) return `${label} ${fromText}-${toText}`;
+  if (fromText) return `${label} from ${fromText}`;
+  return `${label} to ${toText}`;
 }
 
 function DataQualityBadge({
@@ -596,11 +766,17 @@ function dataQualityReasonText(reason?: string | null) {
   return "";
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function PreviewMetric({ label, value, prominent }: {
+  label: string;
+  value: ReactNode;
+  prominent?: boolean;
+}) {
   return (
-    <div>
+    <div
+      className={prominent ? "rounded border border-slate-800/80 px-2 py-1" : ""}
+    >
       <p className="text-slate-500">{label}</p>
-      <p className="mt-0.5 truncate font-medium text-slate-100">{value}</p>
+      <div className="mt-0.5 truncate font-medium text-slate-100">{value}</div>
     </div>
   );
 }
@@ -1125,7 +1301,11 @@ export default function TelegramChannelsPage() {
                       )}
                     </p>
                   </div>
-                  <ChannelFinanceMiniSummary channel={channel} />
+                  <ChannelFinanceMiniSummary
+                    channel={channel}
+                    moneySettings={currencySettings}
+                    rates={rates}
+                  />
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
                       channelId={channel.id}
@@ -1135,10 +1315,11 @@ export default function TelegramChannelsPage() {
                   <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {hasAdminLink ? (
                       <Button
-                        className="h-11 w-full text-center"
-                        variant="secondary"
+                        className="inline-flex h-11 w-full items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                        variant="primary"
                         onClick={() => syncNowMutation.mutate(channel.id)}
                       >
+                        <RefreshCw size={16} />
                         Sync
                       </Button>
                     ) : null}
@@ -1154,9 +1335,10 @@ export default function TelegramChannelsPage() {
                     {hasAdminLink ? (
                       <Link
                         href={`/telegram/channels/${channel.id}`}
-                        className="flex h-11 w-full items-center justify-center rounded-md border border-slate-600 px-3 py-2 text-center text-sm text-slate-200 hover:bg-slate-800"
+                        className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-slate-600/80 px-3 py-2 text-center text-sm font-semibold text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-900 hover:text-white"
                       >
-                        Analytics
+                        Open
+                        <ArrowUpRight size={16} />
                       </Link>
                     ) : null}
                   </div>

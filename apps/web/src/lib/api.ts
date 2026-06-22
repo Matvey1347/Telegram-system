@@ -93,7 +93,7 @@ export type TransactionCategory = { id: string; name: string; type: TransactionT
 export type Transaction = { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
 export type Transfer = { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
 export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
-export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpa?: number | string | null; acceptableCpa?: number | string | null; stopCpa?: number | string | null; kpiCurrency?: string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean };
+export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean };
 export type TelegramPost = {
   id: string;
   telegramChannelId: string;
@@ -182,7 +182,6 @@ export type TelegramChannelFinancialSummary = {
   hasSubscriberBasePollution?: boolean;
   kpiStatus: 'good' | 'acceptable' | 'bad' | 'unknown';
   kpiLabel: string;
-  kpiCurrency?: string | null;
 };
 export type TelegramChannelNetworkKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
 export type TelegramChannelNetworkSummary = {

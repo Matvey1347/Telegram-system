@@ -27,10 +27,12 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) activeSubscribersWindow?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownViewsPerPost?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownReactionsPerPost?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) targetCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) targetCpa?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpa?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpa?: number;
-  @IsOptional() @IsString() kpiCurrency?: string | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) knownFakeSubscribersCount?: number;
   @IsOptional() @IsIn(['normal', 'suspicious', 'polluted', 'invalid']) subscriberBaseQuality?: string;
   @IsOptional() @IsString() dataQualityNotes?: string | null;

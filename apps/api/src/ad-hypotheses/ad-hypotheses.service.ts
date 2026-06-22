@@ -110,6 +110,13 @@ export class AdHypothesesService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  private inRange(value: number, from: number | null, to: number | null) {
+    if (from == null && to == null) return false;
+    if (from != null && value < from) return false;
+    if (to != null && value > to) return false;
+    return true;
+  }
+
   private average(values: Array<number | null | undefined>) {
     const clean = values.filter((value): value is number => value != null);
     return clean.length
@@ -166,13 +173,22 @@ export class AdHypothesesService {
   private campaignKpiStatus(campaign: any, cpa: number | null): KpiStatus {
     const channel = campaign.telegramChannel;
     if (!channel || cpa == null) return 'unknown';
+    const targetFrom = this.nullableNumber(channel.targetCpaFrom);
     const target = this.nullableNumber(channel.targetCpa);
+    const acceptableFrom = this.nullableNumber(channel.acceptableCpaFrom);
     const acceptable = this.nullableNumber(channel.acceptableCpa);
-    const stop = this.nullableNumber(channel.stopCpa);
-    if (target == null && acceptable == null && stop == null) return 'unknown';
-    if (target != null && cpa <= target) return 'good';
-    if (acceptable != null && cpa <= acceptable) return 'acceptable';
-    if (stop != null && cpa >= stop) return 'bad';
+    const stopFrom =
+      this.nullableNumber(channel.stopCpaFrom) ?? this.nullableNumber(channel.stopCpa);
+    if (
+      targetFrom == null &&
+      target == null &&
+      acceptableFrom == null &&
+      acceptable == null &&
+      stopFrom == null
+    ) return 'unknown';
+    if (this.inRange(cpa, targetFrom, target)) return 'good';
+    if (this.inRange(cpa, acceptableFrom, acceptable)) return 'acceptable';
+    if (this.inRange(cpa, stopFrom, null)) return 'bad';
     return 'unknown';
   }
 

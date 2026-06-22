@@ -145,12 +145,12 @@ export default function TelegramChannelAnalyticsPage() {
     knownFakeSubscribersCount: "0",
     ownViewsPerPost: "0",
     ownReactionsPerPost: "0",
-    subscriberBaseQuality: "normal",
-    dataQualityNotes: "",
+    targetCpaFrom: "",
     targetCpa: "",
+    acceptableCpaFrom: "",
     acceptableCpa: "",
+    stopCpaFrom: "",
     stopCpa: "",
-    kpiCurrency: "",
   });
 
   const pushToast = (
@@ -229,13 +229,20 @@ export default function TelegramChannelAnalyticsPage() {
       knownFakeSubscribersCount: String(source.knownFakeSubscribersCount ?? 0),
       ownViewsPerPost: String(source.ownViewsPerPost ?? 0),
       ownReactionsPerPost: String(source.ownReactionsPerPost ?? 0),
-      subscriberBaseQuality: source.subscriberBaseQuality || "normal",
-      dataQualityNotes: source.dataQualityNotes || "",
+      targetCpaFrom:
+        source.targetCpaFrom == null ? "" : String(source.targetCpaFrom),
       targetCpa: source.targetCpa == null ? "" : String(source.targetCpa),
+      acceptableCpaFrom:
+        source.acceptableCpaFrom == null ? "" : String(source.acceptableCpaFrom),
       acceptableCpa:
         source.acceptableCpa == null ? "" : String(source.acceptableCpa),
-      stopCpa: source.stopCpa == null ? "" : String(source.stopCpa),
-      kpiCurrency: source.kpiCurrency || "",
+      stopCpaFrom:
+        source.stopCpaFrom == null
+          ? source.stopCpa == null
+            ? ""
+            : String(source.stopCpa)
+          : String(source.stopCpaFrom),
+      stopCpa: "",
     });
   }, [channel, data?.channel]);
 
@@ -285,13 +292,18 @@ export default function TelegramChannelAnalyticsPage() {
           0,
           toNumber(settings.ownReactionsPerPost),
         ),
-        subscriberBaseQuality: settings.subscriberBaseQuality,
-        dataQualityNotes: settings.dataQualityNotes.trim() || null,
+        targetCpaFrom:
+          settings.targetCpaFrom === "" ? null : toNumber(settings.targetCpaFrom),
         targetCpa: settings.targetCpa === "" ? null : toNumber(settings.targetCpa),
+        acceptableCpaFrom:
+          settings.acceptableCpaFrom === ""
+            ? null
+            : toNumber(settings.acceptableCpaFrom),
         acceptableCpa:
           settings.acceptableCpa === "" ? null : toNumber(settings.acceptableCpa),
-        stopCpa: settings.stopCpa === "" ? null : toNumber(settings.stopCpa),
-        kpiCurrency: settings.kpiCurrency.trim().toUpperCase() || null,
+        stopCpaFrom:
+          settings.stopCpaFrom === "" ? null : toNumber(settings.stopCpaFrom),
+        stopCpa: null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
@@ -376,7 +388,12 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const activeChannel = (channel || data?.channel) as TelegramChannel | undefined;
   const hasKpi = Boolean(
-    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+    settings.targetCpaFrom ||
+      settings.targetCpa ||
+      settings.acceptableCpaFrom ||
+      settings.acceptableCpa ||
+      settings.stopCpaFrom ||
+      settings.stopCpa,
   );
 
   const computed = useMemo(() => {
@@ -595,7 +612,7 @@ export default function TelegramChannelAnalyticsPage() {
         title={data?.channel?.title || "Channel Analytics"}
         subtitle={data?.channel?.username || "Analytics"}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <KpiSettingsControl
               settings={settings}
               setSettings={setSettings}
@@ -618,23 +635,28 @@ export default function TelegramChannelAnalyticsPage() {
               <button
                 type="button"
                 onClick={() => setSyncStatusOpen(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-600/80 bg-slate-900 text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-800 hover:text-white"
               >
                 <RefreshCw size={18} />
               </button>
             </InfoTooltip>
             <Button
-              variant="secondary"
+              variant="primary"
               disabled={syncMutation.isPending}
               onClick={() => syncMutation.mutate()}
+              className="inline-flex h-11 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 px-5 text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
             >
+              <RefreshCw
+                size={16}
+                className={syncMutation.isPending ? "animate-spin" : ""}
+              />
               {syncMutation.isPending ? "Syncing..." : "Sync"}
             </Button>
             <InfoTooltip tip="Sync uses the best connected source available for each data type and records attribution.">
               <button
                 type="button"
                 onClick={() => setSyncScopeOpen(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-600/80 bg-slate-900 text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-800 hover:text-white"
               >
                 <CircleHelp size={18} />
               </button>
@@ -1005,7 +1027,7 @@ function FinancialOverview({
   rates: any[] | undefined;
   hasKpi: boolean;
 }) {
-  const primaryCurrency = currencySettings?.primaryCurrency || summary?.kpiCurrency || "";
+  const primaryCurrency = currencySettings?.primaryCurrency || "USD";
   const hasPaidLaunches =
     toNumber(summary?.campaignsCount) > 0 || toNumber(summary?.totalAdSpend) > 0;
   if (!hasKpi && !hasPaidLaunches) return null;
@@ -1099,12 +1121,12 @@ type SettingsState = {
   knownFakeSubscribersCount: string;
   ownViewsPerPost: string;
   ownReactionsPerPost: string;
-  subscriberBaseQuality: string;
-  dataQualityNotes: string;
+  targetCpaFrom: string;
   targetCpa: string;
+  acceptableCpaFrom: string;
   acceptableCpa: string;
+  stopCpaFrom: string;
   stopCpa: string;
-  kpiCurrency: string;
 };
 
 function KpiSettingsControl({
@@ -1122,7 +1144,12 @@ function KpiSettingsControl({
   const setValue = (key: keyof SettingsState, value: string) =>
     setSettings({ ...settings, [key]: value });
   const hasKpi = Boolean(
-    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+    settings.targetCpaFrom ||
+      settings.targetCpa ||
+      settings.acceptableCpaFrom ||
+      settings.acceptableCpa ||
+      settings.stopCpaFrom ||
+      settings.stopCpa,
   );
   const save = () => {
     onSave();
@@ -1135,52 +1162,38 @@ function KpiSettingsControl({
         type="button"
         variant={hasKpi ? "secondary" : "primary"}
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2"
+        className={
+          hasKpi
+            ? "inline-flex h-11 items-center justify-center gap-2 border border-slate-600/80 bg-slate-900 px-5 text-slate-100 transition hover:border-blue-400/70 hover:bg-slate-800 hover:text-white"
+            : "inline-flex h-11 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 px-5 text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+        }
       >
         <Pencil size={15} />
         {hasKpi ? "Edit KPI" : "Set KPI"}
       </Button>
       <Modal open={open} onClose={() => setOpen(false)} title="KPI settings">
         <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <FormField label="Target CPA">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={settings.targetCpa}
-                onChange={(event) => setValue("targetCpa", event.target.value)}
-              />
-            </FormField>
-            <FormField label="Acceptable CPA">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={settings.acceptableCpa}
-                onChange={(event) =>
-                  setValue("acceptableCpa", event.target.value)
-                }
-              />
-            </FormField>
-            <FormField label="Stop CPA">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={settings.stopCpa}
-                onChange={(event) => setValue("stopCpa", event.target.value)}
-              />
-            </FormField>
-            <FormField label="KPI currency">
-              <Input
-                maxLength={3}
-                value={settings.kpiCurrency}
-                onChange={(event) =>
-                  setValue("kpiCurrency", event.target.value)
-                }
-              />
-            </FormField>
+          <div className="space-y-3">
+            <KpiRangeFields
+              label="Target CPA"
+              fromValue={settings.targetCpaFrom}
+              toValue={settings.targetCpa}
+              onFromChange={(value) => setValue("targetCpaFrom", value)}
+              onToChange={(value) => setValue("targetCpa", value)}
+            />
+            <KpiRangeFields
+              label="Acceptable CPA"
+              fromValue={settings.acceptableCpaFrom}
+              toValue={settings.acceptableCpa}
+              onFromChange={(value) => setValue("acceptableCpaFrom", value)}
+              onToChange={(value) => setValue("acceptableCpa", value)}
+            />
+            <KpiRangeFields
+              label="Stop CPA"
+              fromValue={settings.stopCpaFrom}
+              onFromChange={(value) => setValue("stopCpaFrom", value)}
+              openEnded
+            />
           </div>
           <div className="flex justify-end gap-2">
             <Button
@@ -1197,6 +1210,56 @@ function KpiSettingsControl({
         </div>
       </Modal>
     </>
+  );
+}
+
+function KpiRangeFields({
+  label,
+  fromValue,
+  toValue,
+  onFromChange,
+  onToChange,
+  openEnded = false,
+}: {
+  label: string;
+  fromValue: string;
+  toValue?: string;
+  onFromChange: (value: string) => void;
+  onToChange?: (value: string) => void;
+  openEnded?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/20 p-3">
+      <p className="mb-2 text-sm font-semibold text-slate-200">{label} ($)</p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <FormField label={openEnded ? "From ($), no upper limit" : "From ($)"}>
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            value={fromValue}
+            onChange={(event) => onFromChange(event.target.value)}
+          />
+        </FormField>
+        {openEnded ? (
+          <div className="flex items-end">
+            <p className="rounded-md border border-rose-900/60 bg-rose-950/20 px-3 py-2 text-sm text-rose-200">
+              This value and higher
+            </p>
+          </div>
+        ) : (
+          <FormField label="To ($)">
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={toValue}
+              onChange={(event) => onToChange?.(event.target.value)}
+            />
+          </FormField>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1218,8 +1281,7 @@ function SeedSettingsControl({
     toNumber(settings.seedSubscribersCount) ||
       toNumber(settings.ownViewsPerPost) ||
       toNumber(settings.ownReactionsPerPost) ||
-      toNumber(settings.knownFakeSubscribersCount) ||
-      settings.subscriberBaseQuality !== "normal",
+      toNumber(settings.knownFakeSubscribersCount),
   );
   const save = () => {
     onSave();
@@ -1232,7 +1294,11 @@ function SeedSettingsControl({
         type="button"
         variant={hasSeed ? "secondary" : "primary"}
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2"
+        className={
+          hasSeed
+            ? "inline-flex h-11 items-center justify-center gap-2 border border-slate-600/80 bg-slate-900 px-5 text-slate-100 transition hover:border-blue-400/70 hover:bg-slate-800 hover:text-white"
+            : "inline-flex h-11 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 px-5 text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+        }
       >
         <Pencil size={15} />
         {hasSeed ? "Edit seed" : "Set seed"}
@@ -1295,32 +1361,6 @@ function SeedSettingsControl({
                 }
               />
             </FormField>
-            <FormField label="Subscriber base quality">
-              <select
-                value={settings.subscriberBaseQuality}
-                onChange={(event) =>
-                  setValue("subscriberBaseQuality", event.target.value)
-                }
-                className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
-              >
-                <option value="normal">Normal</option>
-                <option value="suspicious">Suspicious</option>
-                <option value="polluted">Polluted</option>
-                <option value="invalid">Invalid</option>
-              </select>
-            </FormField>
-            <div className="md:col-span-2">
-              <FormField label="Data quality notes">
-                <textarea
-                  rows={3}
-                  value={settings.dataQualityNotes}
-                  onChange={(event) =>
-                    setValue("dataQualityNotes", event.target.value)
-                  }
-                  className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
-                />
-              </FormField>
-            </div>
           </div>
           <div className="flex justify-end gap-2">
             <Button
@@ -1342,7 +1382,12 @@ function SeedSettingsControl({
 
 function KpiSummaryPanel({ settings }: { settings: SettingsState }) {
   const hasKpi = Boolean(
-    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+    settings.targetCpaFrom ||
+      settings.targetCpa ||
+      settings.acceptableCpaFrom ||
+      settings.acceptableCpa ||
+      settings.stopCpaFrom ||
+      settings.stopCpa,
   );
   return (
     <SimplePanel title="KPI targets">
@@ -1355,10 +1400,24 @@ function KpiSummaryPanel({ settings }: { settings: SettingsState }) {
             </p>
           </div>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-3">
-            <KpiTarget tone="good" label="Target" value={settings.targetCpa} currency={settings.kpiCurrency} />
-            <KpiTarget tone="warn" label="Acceptable" value={settings.acceptableCpa} currency={settings.kpiCurrency} />
-            <KpiTarget tone="bad" label="Stop" value={settings.stopCpa} currency={settings.kpiCurrency} />
-            <KpiTarget tone="neutral" label="Currency" value={settings.kpiCurrency} />
+            <KpiTarget
+              tone="good"
+              label="Target CPA ($)"
+              from={settings.targetCpaFrom}
+              to={settings.targetCpa}
+            />
+            <KpiTarget
+              tone="warn"
+              label="Acceptable CPA ($)"
+              from={settings.acceptableCpaFrom}
+              to={settings.acceptableCpa}
+            />
+            <KpiTarget
+              tone="bad"
+              label="Stop CPA ($)"
+              from={settings.stopCpaFrom}
+              openEnded
+            />
           </div>
         </div>
       ) : (
@@ -1376,32 +1435,38 @@ function KpiSummaryPanel({ settings }: { settings: SettingsState }) {
 function KpiTarget({
   tone,
   label,
-  value,
-  currency,
+  from,
+  to,
+  openEnded = false,
 }: {
-  tone: "good" | "warn" | "bad" | "neutral";
+  tone: "good" | "warn" | "bad";
   label: string;
-  value?: string;
-  currency?: string;
+  from?: string;
+  to?: string;
+  openEnded?: boolean;
 }) {
   const toneClass = {
     good: "border-emerald-800/80 bg-emerald-950/30 text-emerald-200",
     warn: "border-yellow-800/80 bg-yellow-950/30 text-yellow-200",
     bad: "border-rose-800/80 bg-rose-950/30 text-rose-200",
-    neutral: "border-slate-800 bg-slate-900/30 text-slate-200",
   }[tone];
-  const display =
-    label === "Currency"
-      ? value || "-"
-      : value
-        ? `${formatNumber(value, 2)} ${currency || ""}`.trim()
-        : "-";
+  const display = formatKpiRange(from, to, openEnded);
   return (
     <div className={`rounded-lg border p-3 ${toneClass}`}>
       <p className="text-xs opacity-80">{label}</p>
       <p className="mt-1 text-lg font-semibold">{display}</p>
     </div>
   );
+}
+
+function formatKpiRange(from?: string, to?: string, openEnded = false) {
+  const fromValue = from ? `$ ${formatNumber(from, 2)}` : "";
+  const toValue = to ? `$ ${formatNumber(to, 2)}` : "";
+  if (openEnded) return fromValue ? `${fromValue}+` : "-";
+  if (fromValue && toValue) return `${fromValue} - ${toValue}`;
+  if (fromValue) return `from ${fromValue}`;
+  if (toValue) return `to ${toValue}`;
+  return "-";
 }
 
 function AudienceSnapshotsPanel({

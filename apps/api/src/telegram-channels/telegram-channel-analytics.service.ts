@@ -26,6 +26,13 @@ export class TelegramChannelAnalyticsService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  private inRange(value: number, from: number | null, to: number | null) {
+    if (from == null && to == null) return false;
+    if (from != null && value < from) return false;
+    if (to != null && value > to) return false;
+    return true;
+  }
+
   async getActiveAudienceEstimate(channelId: string) {
     const channel = await this.prisma.telegramChannel.findUnique({
       where: { id: channelId },
@@ -273,15 +280,18 @@ export class TelegramChannelAnalyticsService {
         .map((campaign) => this.numberOrNull(campaign.retention7d))
         .filter((value): value is number => value != null),
     );
+    const targetCpaFrom = this.numberOrNull(channel.targetCpaFrom);
     const targetCpa = this.numberOrNull(channel.targetCpa);
+    const acceptableCpaFrom = this.numberOrNull(channel.acceptableCpaFrom);
     const acceptableCpa = this.numberOrNull(channel.acceptableCpa);
-    const stopCpa = this.numberOrNull(channel.stopCpa);
+    const stopCpaFrom =
+      this.numberOrNull(channel.stopCpaFrom) ?? this.numberOrNull(channel.stopCpa);
     let kpiStatus: KpiStatus = 'unknown';
     if (avgCpa != null) {
-      if (targetCpa != null && avgCpa <= targetCpa) kpiStatus = 'good';
-      else if (acceptableCpa != null && avgCpa <= acceptableCpa)
+      if (this.inRange(avgCpa, targetCpaFrom, targetCpa)) kpiStatus = 'good';
+      else if (this.inRange(avgCpa, acceptableCpaFrom, acceptableCpa))
         kpiStatus = 'acceptable';
-      else if (stopCpa != null && avgCpa >= stopCpa) kpiStatus = 'bad';
+      else if (this.inRange(avgCpa, stopCpaFrom, null)) kpiStatus = 'bad';
     }
     const kpiLabel =
       kpiStatus === 'good'
@@ -309,7 +319,6 @@ export class TelegramChannelAnalyticsService {
       hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
       kpiStatus,
       kpiLabel,
-      kpiCurrency: channel.kpiCurrency,
     };
   }
 }
