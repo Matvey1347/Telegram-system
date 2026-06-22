@@ -20,6 +20,7 @@ import {
   Database,
   Eye,
   Pencil,
+  RefreshCw,
   Smile,
 } from "lucide-react";
 import {
@@ -126,6 +127,7 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [syncScopeOpen, setSyncScopeOpen] = useState(false);
+  const [syncStatusOpen, setSyncStatusOpen] = useState(false);
   const [rangeMode, setRangeMode] = useState<"30d" | "all" | "custom">("all");
   const [customFrom, setCustomFrom] = useState(thirtyDaysAgoIso);
   const [customTo, setCustomTo] = useState(todayIso);
@@ -141,6 +143,8 @@ export default function TelegramChannelAnalyticsPage() {
     seedSubscribersCount: "0",
     activeSubscribersWindow: "5",
     knownFakeSubscribersCount: "0",
+    ownViewsPerPost: "0",
+    ownReactionsPerPost: "0",
     subscriberBaseQuality: "normal",
     dataQualityNotes: "",
     targetCpa: "",
@@ -223,6 +227,8 @@ export default function TelegramChannelAnalyticsPage() {
       seedSubscribersCount: String(source.seedSubscribersCount ?? 0),
       activeSubscribersWindow: String(source.activeSubscribersWindow ?? 5),
       knownFakeSubscribersCount: String(source.knownFakeSubscribersCount ?? 0),
+      ownViewsPerPost: String(source.ownViewsPerPost ?? 0),
+      ownReactionsPerPost: String(source.ownReactionsPerPost ?? 0),
       subscriberBaseQuality: source.subscriberBaseQuality || "normal",
       dataQualityNotes: source.dataQualityNotes || "",
       targetCpa: source.targetCpa == null ? "" : String(source.targetCpa),
@@ -273,6 +279,11 @@ export default function TelegramChannelAnalyticsPage() {
         knownFakeSubscribersCount: Math.max(
           0,
           toNumber(settings.knownFakeSubscribersCount),
+        ),
+        ownViewsPerPost: Math.max(0, toNumber(settings.ownViewsPerPost)),
+        ownReactionsPerPost: Math.max(
+          0,
+          toNumber(settings.ownReactionsPerPost),
         ),
         subscriberBaseQuality: settings.subscriberBaseQuality,
         dataQualityNotes: settings.dataQualityNotes.trim() || null,
@@ -591,6 +602,27 @@ export default function TelegramChannelAnalyticsPage() {
               isSaving={settingsMutation.isPending}
               onSave={() => settingsMutation.mutate()}
             />
+            <SeedSettingsControl
+              settings={settings}
+              setSettings={setSettings}
+              isSaving={settingsMutation.isPending}
+              onSave={() => settingsMutation.mutate()}
+            />
+            <InfoTooltip
+              tip={
+                latestSnapshot
+                  ? `Last sync: ${new Date(latestSnapshot.syncedAt).toLocaleString()}`
+                  : "No Telegram snapshot yet."
+              }
+            >
+              <button
+                type="button"
+                onClick={() => setSyncStatusOpen(true)}
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
+              >
+                <RefreshCw size={18} />
+              </button>
+            </InfoTooltip>
             <Button
               variant="secondary"
               disabled={syncMutation.isPending}
@@ -639,10 +671,9 @@ export default function TelegramChannelAnalyticsPage() {
         />
       </section>
 
-      {hasKpi || hasAudienceChart ? (
+      {hasKpi ? (
         <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(520px,100%),1fr))] gap-4">
-          {hasKpi ? <KpiSummaryPanel settings={settings} /> : null}
-          <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
+          <KpiSummaryPanel settings={settings} />
         </section>
       ) : null}
 
@@ -659,67 +690,13 @@ export default function TelegramChannelAnalyticsPage() {
         </section>
       ) : null}
 
-      <section className="mt-6">
-        <SimplePanel title="Snapshot">
-          {latestSnapshot ? (
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-3 text-sm">
-              <SnapshotItem
-                label="Latest snapshot"
-                value={new Date(latestSnapshot.syncedAt).toLocaleString()}
-              />
-              <SnapshotItem
-                label="Status"
-                value={mtprotoStats?.status || "unknown"}
-              />
-              <SnapshotItem
-                label="Followers"
-                value={formatNullableNumber(mtprotoStats?.followers?.current)}
-              />
-              <SnapshotItem
-                label="Views / Post"
-                value={formatNullableNumber(
-                  mtprotoStats?.views_per_post?.current,
-                  1,
-                )}
-              />
-              <SnapshotItem
-                label="Shares / Post"
-                value={formatNullableNumber(
-                  mtprotoStats?.shares_per_post?.current,
-                  1,
-                )}
-              />
-              <SnapshotItem
-                label="Reactions / Post"
-                value={formatNullableNumber(
-                  mtprotoStats?.reactions_per_post?.current,
-                  1,
-                )}
-              />
-              <SnapshotItem
-                label="Notifications enabled"
-                value={formatTelegramPercent(
-                  mtprotoStats?.enabled_notifications,
-                )}
-              />
-              <SnapshotItem
-                label="Telegram window"
-                value={formatStatsPeriod(
-                  mtprotoStats?.period,
-                  mtprotoStats?.graphs,
-                )}
-              />
-            </div>
-          ) : (
-            <EmptyState text="No channel snapshot yet." />
-          )}
-        </SimplePanel>
-      </section>
-
-      {mtprotoGraphs.length ? (
+      {hasAudienceChart || mtprotoGraphs.length ? (
         <section className="mt-6">
           <h3 className="mb-3 text-lg font-semibold">Charts</h3>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
+            {hasAudienceChart ? (
+              <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
+            ) : null}
             {mtprotoGraphs.map(({ key, title, chart }) => (
               <SimplePanel key={key} title={title}>
                 <MtprotoGraphChart chart={chart} />
@@ -798,6 +775,12 @@ export default function TelegramChannelAnalyticsPage() {
         </section>
       ) : null}
 
+      <SyncStatusModal
+        open={syncStatusOpen}
+        onClose={() => setSyncStatusOpen(false)}
+        latestSnapshot={latestSnapshot}
+        mtprotoStats={mtprotoStats}
+      />
       <SyncScopeModal
         open={syncScopeOpen}
         onClose={() => setSyncScopeOpen(false)}
@@ -945,8 +928,16 @@ function AudienceOverview({ audience }: { audience: any }) {
           value={formatNullableNumber(audience?.effectiveSubscribersCount)}
         />
         <SnapshotItem
-          label="Seed subscribers"
+          label="Own / seed subscribers"
           value={formatNumber(audience?.seedSubscribersCount)}
+        />
+        <SnapshotItem
+          label="Own views per post"
+          value={formatNumber(audience?.ownViewsPerPost)}
+        />
+        <SnapshotItem
+          label="Own reactions per post"
+          value={formatNumber(audience?.ownReactionsPerPost)}
         />
         <SnapshotItem
           label="Active subscribers"
@@ -1106,6 +1097,8 @@ type SettingsState = {
   seedSubscribersCount: string;
   activeSubscribersWindow: string;
   knownFakeSubscribersCount: string;
+  ownViewsPerPost: string;
+  ownReactionsPerPost: string;
   subscriberBaseQuality: string;
   dataQualityNotes: string;
   targetCpa: string;
@@ -1150,30 +1143,6 @@ function KpiSettingsControl({
       <Modal open={open} onClose={() => setOpen(false)} title="KPI settings">
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <FormField label="Known fake subscribers">
-              <Input
-                type="number"
-                min={0}
-                value={settings.knownFakeSubscribersCount}
-                onChange={(event) =>
-                  setValue("knownFakeSubscribersCount", event.target.value)
-                }
-              />
-            </FormField>
-            <FormField label="Subscriber base quality">
-              <select
-                value={settings.subscriberBaseQuality}
-                onChange={(event) =>
-                  setValue("subscriberBaseQuality", event.target.value)
-                }
-                className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
-              >
-                <option value="normal">Normal</option>
-                <option value="suspicious">Suspicious</option>
-                <option value="polluted">Polluted</option>
-                <option value="invalid">Invalid</option>
-              </select>
-            </FormField>
             <FormField label="Target CPA">
               <Input
                 type="number"
@@ -1212,6 +1181,134 @@ function KpiSettingsControl({
                 }
               />
             </FormField>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={isSaving} onClick={save}>
+              {isSaving ? "Saving..." : "Save KPI"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function SeedSettingsControl({
+  settings,
+  setSettings,
+  isSaving,
+  onSave,
+}: {
+  settings: SettingsState;
+  setSettings: (settings: SettingsState) => void;
+  isSaving: boolean;
+  onSave: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const setValue = (key: keyof SettingsState, value: string) =>
+    setSettings({ ...settings, [key]: value });
+  const hasSeed = Boolean(
+    toNumber(settings.seedSubscribersCount) ||
+      toNumber(settings.ownViewsPerPost) ||
+      toNumber(settings.ownReactionsPerPost) ||
+      toNumber(settings.knownFakeSubscribersCount) ||
+      settings.subscriberBaseQuality !== "normal",
+  );
+  const save = () => {
+    onSave();
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant={hasSeed ? "secondary" : "primary"}
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-2"
+      >
+        <Pencil size={15} />
+        {hasSeed ? "Edit seed" : "Set seed"}
+      </Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Seed settings">
+        <div className="space-y-4">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm text-slate-300">
+            These values are subtracted from subscribers and post metrics before
+            analytics are calculated. Per-post manual corrections still add on
+            top for unusual posts.
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <FormField label="Own / seed subscribers">
+              <Input
+                type="number"
+                min={0}
+                value={settings.seedSubscribersCount}
+                onChange={(event) =>
+                  setValue("seedSubscribersCount", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Known fake subscribers">
+              <Input
+                type="number"
+                min={0}
+                value={settings.knownFakeSubscribersCount}
+                onChange={(event) =>
+                  setValue("knownFakeSubscribersCount", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Own views per post">
+              <Input
+                type="number"
+                min={0}
+                value={settings.ownViewsPerPost}
+                onChange={(event) =>
+                  setValue("ownViewsPerPost", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Own reactions per post">
+              <Input
+                type="number"
+                min={0}
+                value={settings.ownReactionsPerPost}
+                onChange={(event) =>
+                  setValue("ownReactionsPerPost", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Active posts window">
+              <Input
+                type="number"
+                min={1}
+                value={settings.activeSubscribersWindow}
+                onChange={(event) =>
+                  setValue("activeSubscribersWindow", event.target.value)
+                }
+              />
+            </FormField>
+            <FormField label="Subscriber base quality">
+              <select
+                value={settings.subscriberBaseQuality}
+                onChange={(event) =>
+                  setValue("subscriberBaseQuality", event.target.value)
+                }
+                className="w-full rounded-lg border border-slate-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-slate-500"
+              >
+                <option value="normal">Normal</option>
+                <option value="suspicious">Suspicious</option>
+                <option value="polluted">Polluted</option>
+                <option value="invalid">Invalid</option>
+              </select>
+            </FormField>
             <div className="md:col-span-2">
               <FormField label="Data quality notes">
                 <textarea
@@ -1234,7 +1331,7 @@ function KpiSettingsControl({
               Cancel
             </Button>
             <Button type="button" disabled={isSaving} onClick={save}>
-              {isSaving ? "Saving..." : "Save KPI"}
+              {isSaving ? "Saving..." : "Save seed"}
             </Button>
           </div>
         </div>
@@ -1453,6 +1550,61 @@ function DataSourcesPanel({
         </div>
       </SimplePanel>
     </section>
+  );
+}
+
+function SyncStatusModal({
+  open,
+  onClose,
+  latestSnapshot,
+  mtprotoStats,
+}: {
+  open: boolean;
+  onClose: () => void;
+  latestSnapshot: any;
+  mtprotoStats: any;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Sync status">
+      {latestSnapshot ? (
+        <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+          <SnapshotItem
+            label="Latest snapshot"
+            value={new Date(latestSnapshot.syncedAt).toLocaleString()}
+          />
+          <SnapshotItem label="Status" value={mtprotoStats?.status || "unknown"} />
+          <SnapshotItem
+            label="Followers"
+            value={formatNullableNumber(mtprotoStats?.followers?.current)}
+          />
+          <SnapshotItem
+            label="Views / Post"
+            value={formatNullableNumber(mtprotoStats?.views_per_post?.current, 1)}
+          />
+          <SnapshotItem
+            label="Shares / Post"
+            value={formatNullableNumber(mtprotoStats?.shares_per_post?.current, 1)}
+          />
+          <SnapshotItem
+            label="Reactions / Post"
+            value={formatNullableNumber(
+              mtprotoStats?.reactions_per_post?.current,
+              1,
+            )}
+          />
+          <SnapshotItem
+            label="Notifications enabled"
+            value={formatTelegramPercent(mtprotoStats?.enabled_notifications)}
+          />
+          <SnapshotItem
+            label="Telegram window"
+            value={formatStatsPeriod(mtprotoStats?.period, mtprotoStats?.graphs)}
+          />
+        </div>
+      ) : (
+        <EmptyState text="No channel snapshot yet." />
+      )}
+    </Modal>
   );
 }
 
@@ -1900,7 +2052,7 @@ function PostsTable({
     { label: "Manual correction", className: "text-right" },
   ];
   const gridTemplateColumns =
-    "7rem 14rem 6rem 6rem 7rem 7rem 7rem 8rem 13rem";
+    "7rem minmax(18rem,1fr) 6rem 6rem 7rem 7rem 7rem 8rem 13rem";
   const [floatingHeader, setFloatingHeader] = useState({
     visible: false,
     left: 0,
@@ -2001,7 +2153,7 @@ function PostsTable({
   const renderHeaderMarkup = (measure = false) => (
     <div
       ref={measure ? headerContentRef : null}
-      className="grid min-w-[1200px]"
+      className="grid min-w-[1200px] w-full"
       style={{ gridTemplateColumns }}
     >
       {columns.map((column) => (
@@ -2071,7 +2223,7 @@ function PostsTable({
         className="overflow-x-auto"
         onScroll={syncHeaderScroll}
       >
-        <div className="min-w-[1200px] text-sm">
+        <div className="min-w-[1200px] w-full text-sm">
           {sortedPosts.map((post) => {
             const views = toNumber(post.viewsCount);
             const reactions = toNumber(post.reactionsCount);

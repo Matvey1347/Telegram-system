@@ -25,6 +25,8 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @Type(() => Number) @IsInt() currentSubscribersCount?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) seedSubscribersCount?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) activeSubscribersWindow?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownViewsPerPost?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownReactionsPerPost?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) targetCpa?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpa?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpa?: number;

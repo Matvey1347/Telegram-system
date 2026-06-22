@@ -402,6 +402,8 @@ model TelegramChannel {
   seedSubscribersCount    Int      @default(0)
   activeSubscribersWindow Int      @default(5)
   knownFakeSubscribersCount Int    @default(0)
+  ownViewsPerPost         Int      @default(0)
+  ownReactionsPerPost     Int      @default(0)
   subscriberBaseQuality   String   @default("normal")
   dataQualityNotes        String?
   targetCpa               Decimal?
