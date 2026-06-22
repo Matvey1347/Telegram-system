@@ -288,11 +288,13 @@ export function CustomSelect({
   onChange,
   options,
   placeholder = 'Select',
+  disabled = false,
 }: {
   value?: string;
   onChange: (value: string) => void;
   options: SelectOption[];
   placeholder?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -315,8 +317,9 @@ export function CustomSelect({
     <div ref={rootRef} className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring"
+        className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring disabled:opacity-50"
       >
         <span className="flex min-w-0 items-center gap-2">
           {selected ? <OptionIcon iconUrl={selected.iconUrl} iconEmoji={selected.iconEmoji} fallback={selected.iconFallback} /> : null}

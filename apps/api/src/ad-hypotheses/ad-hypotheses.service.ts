@@ -64,7 +64,13 @@ export class AdHypothesesService {
 
   private campaignInclude() {
     return {
-      telegramChannel: true,
+      telegramChannel: {
+        include: {
+          inviteLinks: {
+            select: { id: true, joinedCount: true },
+          },
+        },
+      },
       promo: true,
       inviteLinks: {
         select: { id: true, joinedCount: true },
@@ -111,24 +117,35 @@ export class AdHypothesesService {
       : null;
   }
 
+  private selectedInviteLinkJoined(campaign: any) {
+    const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
+    if (!selectedLinkId) return null;
+    const inviteLinks = [
+      ...(Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : []),
+      ...(Array.isArray(campaign.telegramChannel?.inviteLinks)
+        ? campaign.telegramChannel.inviteLinks
+        : []),
+    ];
+    const selectedLink = inviteLinks.find((link: any) => link.id === selectedLinkId);
+    return this.nullableNumber(selectedLink?.joinedCount);
+  }
+
   private campaignJoined(campaign: any) {
+    const selectedLinkJoined = this.selectedInviteLinkJoined(campaign);
+    if (selectedLinkJoined != null) return selectedLinkJoined;
+    const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
+      ? campaign.inviteLinks.reduce(
+          (sum: number, link: any) => sum + Number(link.joinedCount || 0),
+          0,
+        )
+      : null;
+    if (inviteLinksJoined != null && inviteLinksJoined > 0) {
+      return inviteLinksJoined;
+    }
     const newSubscribers = this.nullableNumber(campaign.newSubscribers);
     if (newSubscribers != null) return newSubscribers;
     const analyticsJoined = this.nullableNumber(campaign.analytics?.joinedCount);
-    const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
-      ? campaign.inviteLinks
-          .filter(
-            (link: any) =>
-              !campaign.telegramInviteLinkId ||
-              link.id === campaign.telegramInviteLinkId,
-          )
-          .reduce((sum: number, link: any) => sum + Number(link.joinedCount || 0), 0)
-      : null;
-    return this.decimal(
-      analyticsJoined ??
-        (inviteLinksJoined && inviteLinksJoined > 0 ? inviteLinksJoined : null) ??
-        campaign.joinedCount,
-    );
+    return this.decimal(analyticsJoined ?? campaign.joinedCount);
   }
 
   private campaignLeft(campaign: any) {
@@ -171,6 +188,12 @@ export class AdHypothesesService {
     return 'acceptable';
   }
 
+  private effectiveKpiStatus(storedStatus: unknown, calculatedStatus: KpiStatus) {
+    return storedStatus && storedStatus !== 'unknown'
+      ? (storedStatus as KpiStatus)
+      : calculatedStatus;
+  }
+
   private decision(status: KpiStatus) {
     if (status === 'good') {
       return 'Hypothesis performs well. Candidate for repeat and scaling.';
@@ -194,6 +217,10 @@ export class AdHypothesesService {
     const engagementRate =
       views && reactions ? (Number(reactions) / Number(views)) * 100 : null;
     const kpiStatus = this.campaignKpiStatus(campaign, cpa);
+    const effectiveKpiStatus = this.effectiveKpiStatus(
+      campaign.overallStatus,
+      kpiStatus,
+    );
     return {
       id: campaign.id,
       campaignId: campaign.id,
@@ -223,7 +250,7 @@ export class AdHypothesesService {
         : null,
       source: this.sourceLabel(campaign),
       sourcePostUrl: campaign.sourcePostUrl,
-      kpiStatus: campaign.overallStatus || kpiStatus,
+      kpiStatus: effectiveKpiStatus,
     };
   }
 

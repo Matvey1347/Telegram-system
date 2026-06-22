@@ -17,7 +17,6 @@ import {
   FolderTree,
   Landmark,
   LayoutDashboard,
-  Lightbulb,
   LogOut,
   Plus,
   Megaphone,
@@ -55,7 +54,6 @@ const groups = [
       { label: 'Networks', href: '/telegram-channel-networks', icon: Share2 },
       { label: 'Promos', href: '/promos', icon: Megaphone },
       { label: 'Ad Campaigns', href: '/ad-campaigns', icon: Target },
-      { label: 'Hypotheses', href: '/ad-hypotheses', icon: Lightbulb },
     ],
   },
   {
