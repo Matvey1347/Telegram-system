@@ -202,6 +202,7 @@ export type TelegramChannelNetworkMember = {
   title: string;
   name?: string;
   username?: string | null;
+  photoUrl?: string | null;
   subscribersCount?: number | null;
   currentSubscribersCount?: number | null;
   activeSubscribersEstimate?: number | null;
@@ -212,6 +213,7 @@ export type TelegramChannelNetworkChannelSummary = {
   title: string;
   name?: string;
   username?: string | null;
+  photoUrl?: string | null;
   subscribersCount?: number | null;
   currentSubscribersCount?: number | null;
   activeSubscribersEstimate?: number | null;

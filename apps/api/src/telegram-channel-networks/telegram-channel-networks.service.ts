@@ -72,6 +72,7 @@ export class TelegramChannelNetworksService {
     id: string;
     title: string;
     username: string | null;
+    photoUrl: string | null;
     currentSubscribersCount: number | null;
   }) {
     const [audience, finance] = await Promise.all([
@@ -84,6 +85,7 @@ export class TelegramChannelNetworksService {
       title: channel.title,
       name: channel.title,
       username: channel.username,
+      photoUrl: channel.photoUrl,
       subscribersCount: audience.subscribersCount,
       currentSubscribersCount: channel.currentSubscribersCount,
       activeSubscribersEstimate: audience.activeSubscribersEstimate,
@@ -167,6 +169,7 @@ export class TelegramChannelNetworksService {
         title: channel.title,
         name: channel.name,
         username: channel.username,
+        photoUrl: channel.photoUrl,
         subscribersCount: channel.subscribersCount,
         currentSubscribersCount: channel.currentSubscribersCount,
         activeSubscribersEstimate: channel.activeSubscribersEstimate,

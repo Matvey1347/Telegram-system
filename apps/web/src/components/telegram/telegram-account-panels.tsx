@@ -591,6 +591,7 @@ function SourceChannelsList({
   sourceType: "BOT" | "MTPROTO";
   queryFn: () => Promise<TelegramSourceChannelAccess[]>;
 }) {
+  const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState<TelegramSourceChannelAccess | null>(
     null,
   );
@@ -600,22 +601,60 @@ function SourceChannelsList({
   });
   return (
     <div className="mt-4 border-t border-slate-800 pt-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-slate-200">Channel access</p>
+      <button
+        type="button"
+        onClick={() => setModalOpen(true)}
+        className="flex w-full items-center justify-between gap-2 rounded-md px-0 py-1 text-left transition hover:text-blue-300"
+      >
+        <span className="text-sm font-semibold text-slate-200">
+          Channel access
+        </span>
         <span className="text-xs text-slate-400">
           {isLoading ? "Loading..." : `${data.length} channels`}
         </span>
-      </div>
-      {!isLoading && !data.length ? (
-        <p className="text-xs text-slate-500">No synced channel access yet.</p>
-      ) : null}
-      <div className="space-y-2">
-        {data.slice(0, 5).map((channel) => (
+      </button>
+      <SourceChannelsModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        channels={data}
+        isLoading={isLoading}
+        onSelect={setSelected}
+      />
+      <ChannelAccessModal
+        access={selected}
+        sourceType={sourceType}
+        onClose={() => setSelected(null)}
+      />
+    </div>
+  );
+}
+
+function SourceChannelsModal({
+  open,
+  onClose,
+  channels,
+  isLoading,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  channels: TelegramSourceChannelAccess[];
+  isLoading: boolean;
+  onSelect: (channel: TelegramSourceChannelAccess) => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Channel access">
+      <div className="space-y-3">
+        {isLoading ? <LoadingState /> : null}
+        {!isLoading && !channels.length ? (
+          <EmptyState text="No synced channel access yet." />
+        ) : null}
+        {channels.map((channel) => (
           <button
             key={channel.channelId}
             type="button"
-            onClick={() => setSelected(channel)}
-            className="w-full rounded-md border border-slate-800 bg-slate-900/40 p-2 text-left hover:border-slate-600"
+            onClick={() => onSelect(channel)}
+            className="w-full rounded-md border border-slate-800 bg-slate-900/40 p-3 text-left hover:border-slate-600"
           >
             <div className="flex items-center gap-2">
               <TelegramEntityAvatar
@@ -656,12 +695,7 @@ function SourceChannelsList({
           </button>
         ))}
       </div>
-      <ChannelAccessModal
-        access={selected}
-        sourceType={sourceType}
-        onClose={() => setSelected(null)}
-      />
-    </div>
+    </Modal>
   );
 }
 

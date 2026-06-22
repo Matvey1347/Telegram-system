@@ -25,9 +25,11 @@ import {
   type CurrencySettings,
   type ExchangeRate,
   type ImportedTelegramSource,
+  type TelegramAnalyticsSources,
   type TelegramChannel,
   type TelegramChannelFinancialSummary,
   type TelegramChannelNetwork,
+  type TelegramChannelNetworkMember,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import {
@@ -76,6 +78,14 @@ function formatNumber(value: unknown, decimals = 0) {
 function formatNullableNumber(value: unknown, decimals = 0) {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return formatNumber(value, decimals);
+}
+
+function formatDataType(value: string) {
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatPercent(value: unknown, decimals = 1) {
@@ -176,66 +186,249 @@ function ChannelSourcesSummary({
   channelId: string;
   fallbackAdminCount: number;
 }) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedSource, setSelectedSource] =
+    useState<TelegramChannelSourceAccess | null>(null);
   const { data = [], isLoading } = useQuery({
     queryKey: ["telegram-channel-sources", channelId],
     queryFn: () => telegramChannelsApi.sources(channelId),
   });
+  const { data: analyticsSources, isLoading: analyticsSourcesLoading } =
+    useQuery({
+      queryKey: ["telegram-channel-analytics-sources", channelId],
+      queryFn: () => telegramChannelsApi.analyticsSources(channelId),
+      enabled: modalOpen,
+    });
+  const sourcesCount = data.length || fallbackAdminCount;
   return (
     <div className="mt-3 border-t border-slate-800 pt-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-slate-200">Access sources</p>
-        <span className="text-xs text-slate-400">
-          {isLoading
-            ? "Loading..."
-            : `${data.length || fallbackAdminCount} sources`}
+      <button
+        type="button"
+        onClick={() => setModalOpen(true)}
+        className="flex w-full items-center justify-between gap-2 rounded-md px-0 py-1 text-left transition hover:text-blue-300"
+      >
+        <span className="text-sm font-semibold text-slate-200">
+          Access sources
         </span>
-      </div>
-      {!isLoading && !data.length ? (
-        <p className="text-xs text-slate-500">
-          No detailed access data yet. Run Sync channels from the account card
-          to refresh permissions.
-        </p>
-      ) : null}
-      <div className="space-y-2">
-        {data.map((source) => (
-          <div
-            key={`${source.sourceType}:${source.sourceId}`}
-            className="min-h-28 rounded-md border border-slate-800 bg-slate-900/40 p-2"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <TelegramSourceAvatar
-                  avatarUrl={source.avatarUrl}
-                  sourceType={source.sourceType}
-                  alt={source.displayName}
-                  size="md"
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-white">
-                    {source.displayName}
-                  </p>
-                  <p className="text-xs text-slate-400">{source.sourceType}</p>
+        <span className="text-xs text-slate-400">
+          {isLoading ? "Loading..." : `${sourcesCount} sources`}
+        </span>
+      </button>
+      <ChannelSourcesModal
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setSelectedSource(null);
+        }}
+        sources={analyticsSources?.sources || data}
+        dataAttribution={analyticsSources?.dataAttribution || []}
+        isLoading={analyticsSourcesLoading}
+        onSelectSource={setSelectedSource}
+      />
+      <SourceAccessModal
+        access={selectedSource}
+        onClose={() => setSelectedSource(null)}
+      />
+    </div>
+  );
+}
+
+function ChannelSourcesModal({
+  open,
+  onClose,
+  sources,
+  dataAttribution,
+  isLoading,
+  onSelectSource,
+}: {
+  open: boolean;
+  onClose: () => void;
+  sources: Array<TelegramChannelSourceAccess & { usedFor?: string[] }>;
+  dataAttribution: TelegramAnalyticsSources["dataAttribution"];
+  isLoading: boolean;
+  onSelectSource: (source: TelegramChannelSourceAccess) => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Sync sources and scope">
+      <div className="space-y-4">
+        <div>
+          <p className="mb-2 text-sm font-medium text-slate-200">
+            Connected sources
+          </p>
+          {isLoading ? <LoadingState /> : null}
+          {!isLoading && !sources.length ? (
+            <EmptyState text="No synced source access for this channel yet." />
+          ) : null}
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {sources.map((source) => (
+              <button
+                key={`${source.sourceType}:${source.sourceId}`}
+                type="button"
+                onClick={() => onSelectSource(source)}
+                className="flex min-h-36 flex-col rounded-md border border-slate-800 bg-slate-900/40 p-3 text-left hover:border-slate-600"
+              >
+                <div className="flex items-center gap-3">
+                  <TelegramSourceAvatar
+                    avatarUrl={source.avatarUrl}
+                    sourceType={source.sourceType}
+                    alt={source.displayName}
+                    size="md"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-white">
+                      {source.displayName}
+                    </p>
+                    <p className="flex items-center gap-1 text-xs text-slate-400">
+                      <span>{source.sourceType}</span>
+                      <span>·</span>
+                      <AccessBadge
+                        label={formatRole(source.role)}
+                        tip={roleTooltip(source.role, source.sourceType)}
+                      />
+                    </p>
+                  </div>
                 </div>
-              </div>
+                <div
+                  className={`mt-2 flex min-h-11 flex-wrap items-center gap-1 text-xs ${source.canBeUsedForAnalytics ? "text-emerald-300" : "text-amber-300"}`}
+                >
+                  <span>
+                    {source.canBeUsedForAnalytics
+                      ? "Can be used for analytics"
+                      : "Not enough access for analytics"}
+                  </span>
+                  <PermissionSummaryBadges source={source} />
+                </div>
+                <p className="mt-auto pt-2 text-xs text-slate-400">
+                  Used for:{" "}
+                  {source.usedFor?.length
+                    ? source.usedFor.map(formatDataType).join(", ")
+                    : "-"}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-sm font-medium text-slate-200">
+            Data attribution
+          </p>
+          <div className="rounded-lg border border-slate-800">
+            {dataAttribution.length ? (
+              dataAttribution.map((item) => (
+                <div
+                  key={item.dataType}
+                  className="flex flex-col gap-1 border-t border-slate-800 px-3 py-2 first:border-t-0 md:flex-row md:items-center md:justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{item.label}</span>
+                    <span
+                      className={`text-xs ${item.status === "SUCCESS" ? "text-emerald-300" : item.status === "FAILED" ? "text-rose-300" : "text-slate-400"}`}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-400">
+                    {item.sources.length
+                      ? `Loaded from ${item.sources.map((source) => source.displayName || source.sourceType).join(" / ")}`
+                      : `Not available${item.errorMessage ? `: ${item.errorMessage}` : ""}`}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <p className="px-3 py-2 text-sm text-slate-400">
+                {isLoading ? "Loading attribution..." : "No attribution data yet."}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-md border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-300">
+          <p>Now syncing: idle</p>
+          <p>Last sync payload: Run sync to capture detailed result in UI</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Source choice is recorded per data type; unavailable rows explain
+            which permission is missing.
+          </p>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SourceAccessModal({
+  access,
+  onClose,
+}: {
+  access: TelegramChannelSourceAccess | null;
+  onClose: () => void;
+}) {
+  if (!access) return null;
+  const permissions = [
+    ["Can create/publish posts", access.permissions.canPostMessages],
+    ["Can edit posts", access.permissions.canEditMessages],
+    ["Can delete posts", access.permissions.canDeleteMessages],
+    ["Can invite users", access.permissions.canInviteUsers],
+    ["Can manage invite links", access.permissions.canManageInviteLinks],
+    ["Can view/export analytics", access.permissions.canViewStats],
+  ] as const;
+  return (
+    <Modal open={!!access} onClose={onClose} title="Source access">
+      <div className="space-y-4 text-sm">
+        <div className="flex items-center gap-3">
+          <TelegramSourceAvatar
+            avatarUrl={access.avatarUrl}
+            sourceType={access.sourceType}
+            alt={access.displayName}
+            size="md"
+          />
+          <div>
+            <p className="font-semibold text-white">{access.displayName}</p>
+            <p className="flex items-center gap-1 text-xs text-slate-400">
+              <span>{access.sourceType}</span>
+              <span>·</span>
               <AccessBadge
-                label={formatRole(source.role)}
-                tip={roleTooltip(source.role, source.sourceType)}
+                label={formatRole(access.role)}
+                tip={roleTooltip(access.role, access.sourceType)}
+              />
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+            <p className="text-xs text-slate-400">Role in channel</p>
+            <div className="mt-1">
+              <AccessBadge
+                label={formatRole(access.role)}
+                tip={roleTooltip(access.role, access.sourceType)}
               />
             </div>
-            <div
-              className={`mt-2 flex flex-wrap items-center gap-1 text-xs ${source.canBeUsedForAnalytics ? "text-emerald-300" : "text-amber-300"}`}
-            >
-              <span>
-                {source.canBeUsedForAnalytics
-                  ? "Can be used for analytics"
-                  : "Not enough access for analytics"}
-              </span>
-              <PermissionSummaryBadges source={source} />
-            </div>
           </div>
-        ))}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+            <p className="text-xs text-slate-400">Analytics</p>
+            <p className="mt-1 font-medium text-slate-100">
+              {access.canBeUsedForAnalytics
+                ? "Can be used for analytics"
+                : "Not enough access for analytics"}
+            </p>
+          </div>
+        </div>
+        <div className="rounded-md border border-slate-800 bg-slate-900/40 p-3">
+          <p className="mb-2 font-medium text-slate-200">Permissions</p>
+          <p className="mb-3 text-xs text-slate-400">
+            {inviteLinksVisibility(access)}
+          </p>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {permissions.map(([label, enabled]) => (
+              <p
+                key={label}
+                className={enabled ? "text-emerald-300" : "text-slate-500"}
+              >
+                {enabled ? "Yes" : "No"} · {label}
+              </p>
+            ))}
+          </div>
+        </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -269,17 +462,13 @@ function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
           <div>
             <p className="text-slate-500">Data quality</p>
             {audience?.dataQuality ? (
-              <span
-                className={`mt-1 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(
-                  audience.dataQuality === "normal"
-                    ? "good"
-                    : audience.dataQuality === "borderline"
-                      ? "acceptable"
-                      : "bad",
-                )}`}
-              >
-                {audience.dataQuality}
-              </span>
+              <DataQualityBadge
+                quality={audience.dataQuality}
+                reason={audience?.dataQualityReason}
+                warning={audience?.dataQualityWarning}
+                rawViewRate={audience?.rawViewRate}
+                subscriberBaseQuality={audience?.subscriberBaseQuality}
+              />
             ) : (
               <p className="mt-0.5 truncate font-medium text-slate-100">-</p>
             )}
@@ -322,6 +511,89 @@ function ChannelFinanceMiniSummary({ channel }: { channel: TelegramChannel }) {
       )}
     </div>
   );
+}
+
+function DataQualityBadge({
+  quality,
+  reason,
+  warning,
+  rawViewRate,
+  subscriberBaseQuality,
+}: {
+  quality: string;
+  reason?: string | null;
+  warning?: string | null;
+  rawViewRate?: number | null;
+  subscriberBaseQuality?: string | null;
+}) {
+  const reasonText = dataQualityReasonText(reason);
+  const badgeClass = kpiBadgeClass(
+    quality === "normal"
+      ? "good"
+      : quality === "borderline"
+        ? "acceptable"
+        : "bad",
+  );
+  return (
+    <span className="group relative mt-1 inline-flex cursor-help">
+      <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${badgeClass}`}>
+        {quality}
+      </span>
+      <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+        <span className="block font-semibold text-white">
+          Data quality: {quality}
+        </span>
+        <span className="mt-1 block text-slate-300">
+          This checks whether subscriber-based metrics look trustworthy.
+        </span>
+        <span className="mt-2 block text-slate-400">
+          Normal: raw view rate up to 80%. Borderline: 80-120%.
+          Suspicious: 120-200%. Anomalous: above 200% or invalid input.
+        </span>
+        {rawViewRate != null ? (
+          <span className="mt-2 block text-slate-300">
+            Current raw view rate: {formatPercent(rawViewRate, 1)}.
+          </span>
+        ) : null}
+        {subscriberBaseQuality && subscriberBaseQuality !== "normal" ? (
+          <span className="mt-1 block text-amber-200">
+            Subscriber base: {subscriberBaseQuality}.
+          </span>
+        ) : null}
+        {reasonText ? (
+          <span className="mt-1 block text-slate-300">{reasonText}</span>
+        ) : null}
+        {warning ? (
+          <span className="mt-1 block text-amber-200">{warning}</span>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+function dataQualityReasonText(reason?: string | null) {
+  if (reason === "views_within_normal_range") {
+    return "Views are within the expected range for the subscriber base.";
+  }
+  if (reason === "views_close_to_subscribers_limit") {
+    return "Views are close to subscriber count, so the estimate may be less stable.";
+  }
+  if (reason === "views_exceed_subscribers") {
+    return "Views exceed subscribers, which can indicate external traffic, reposts, viral reach, or manipulation.";
+  }
+  if (reason === "views_strongly_exceed_subscribers") {
+    return "Views strongly exceed subscribers, so active subscriber metrics are capped.";
+  }
+  if (reason === "subscriber_base_polluted") {
+    return "Subscriber base is marked suspicious or polluted, so metrics are downgraded.";
+  }
+  if (reason === "missing_subscribers_or_views") {
+    return "There are not enough valid subscribers or views to calculate this reliably.";
+  }
+  if (reason === "views_uplift_without_new_subscribers") {
+    return "Views increased without matching subscriber growth.";
+  }
+  return "";
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
@@ -1125,6 +1397,7 @@ function NetworksTable({
                     <p className="mt-1 text-xs text-slate-400">
                       {formatNumber(summary.channelsCount)} channels
                     </p>
+                    <NetworkChannelsPreview channels={network.channels} />
                   </div>
                 </td>
                 <td className="px-3 py-4">
@@ -1181,6 +1454,57 @@ function NetworksTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function NetworkChannelsPreview({
+  channels,
+}: {
+  channels: TelegramChannelNetworkMember[];
+}) {
+  const visibleChannels = channels.slice(0, 3);
+  const hiddenCount = Math.max(channels.length - visibleChannels.length, 0);
+
+  if (!visibleChannels.length) return null;
+
+  return (
+    <div className="mt-2 flex max-w-full flex-wrap gap-1.5">
+      {visibleChannels.map((channel) => {
+        const title = channel.title || channel.name || "-";
+        const username = normalizeUsername(channel.username);
+
+        return (
+          <Link
+            key={channel.id}
+            href={`/telegram/channels/${channel.id}`}
+            className="group flex max-w-[180px] items-center gap-2 rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1 transition hover:border-blue-500/60 hover:bg-blue-950/20"
+            title={username ? `${title} (@${username})` : title}
+          >
+            <TelegramEntityAvatar
+              imageUrl={channel.photoUrl}
+              kind="channel"
+              alt={title}
+              size="sm"
+            />
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium leading-tight text-slate-200 group-hover:text-blue-200">
+                {title}
+              </span>
+              {username ? (
+                <span className="block truncate text-[10px] leading-tight text-slate-500">
+                  @{username}
+                </span>
+              ) : null}
+            </span>
+          </Link>
+        );
+      })}
+      {hiddenCount ? (
+        <span className="inline-flex h-10 items-center rounded-md border border-slate-800 bg-slate-950/80 px-2 text-xs font-medium text-slate-400">
+          +{formatNumber(hiddenCount)}
+        </span>
+      ) : null}
     </div>
   );
 }
