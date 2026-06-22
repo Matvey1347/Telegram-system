@@ -336,7 +336,11 @@ export function Card({ children, className = '' }: PropsWithChildren<{ className
 }
 
 export function Table({ children }: PropsWithChildren) {
-  return <table className="w-full text-left text-sm text-neutral-200">{children}</table>;
+  return (
+    <div className="table-scroll w-full">
+      <table className="w-max min-w-full text-left text-sm text-neutral-200">{children}</table>
+    </div>
+  );
 }
 
 export function EntityCard({ title, children, actions, className = '' }: PropsWithChildren<{ title: React.ReactNode; actions?: React.ReactNode; className?: string }>) {

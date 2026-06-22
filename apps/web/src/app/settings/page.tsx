@@ -5,12 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { Button, Card, ConfirmDeleteModal, Input, LoadingState, PageHeader } from '@/components/ui/primitives';
-import { accountApi, authApi, getDashboardSummary, workspacesApi } from '@/lib/api';
+import { accountApi, authApi, workspacesApi } from '@/lib/api';
 
 export default function SettingsPage() {
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ['me-settings'], queryFn: authApi.me });
-  const summary = useQuery({ queryKey: ['dashboard-settings'], queryFn: getDashboardSummary });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
@@ -33,7 +32,6 @@ export default function SettingsPage() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['workspaces'] }),
         qc.invalidateQueries({ queryKey: ['me-settings'] }),
-        qc.invalidateQueries({ queryKey: ['dashboard-settings'] }),
       ]);
       if (!remainingWorkspaceId && typeof window !== 'undefined') {
         window.location.reload();
@@ -75,8 +73,7 @@ export default function SettingsPage() {
               <label className="mb-1 block text-sm text-neutral-300">Workspace name</label>
               <Input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-neutral-400">Campaign count: {summary.data?.bestCampaigns?.length ?? 0}</p>
+            <div className="flex justify-end gap-3">
               <div className="flex items-center gap-2">
                 <Button
                   variant="danger"

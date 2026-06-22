@@ -136,7 +136,7 @@ export default function AdHypothesisDetailPage() {
       ) : null}
       {summary ? (
         <>
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
             <MetricCard title="Campaigns count" value={formatNumber(summary.campaignsCount)} />
             <MetricCard title="Total spend" value={formatNumber(summary.totalSpend, 2)} />
             <MetricCard
@@ -236,8 +236,8 @@ function CampaignsTable({
   campaigns: AdHypothesisCampaignSummary[];
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="w-full min-w-[1480px] table-fixed text-sm">
+    <div className="table-scroll w-full rounded-lg border border-slate-700">
+      <table className="w-max min-w-[1480px] text-sm">
         <thead className="bg-slate-900/60 text-slate-300">
           <tr>
             <th className="w-64 px-3 py-2 text-left">Campaign</th>

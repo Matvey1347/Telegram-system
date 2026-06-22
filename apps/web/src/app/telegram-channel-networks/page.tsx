@@ -165,7 +165,7 @@ export default function TelegramChannelNetworksPage() {
       {!isLoading && !networks.length ? (
         <EmptyState text="No channel networks yet." />
       ) : null}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
         {networks.map((network) => (
           <NetworkCard
             key={network.id}

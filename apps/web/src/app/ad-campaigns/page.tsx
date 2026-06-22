@@ -147,7 +147,7 @@ export default function AdCampaignsPage() {
       {syncRuns?.length ? (
         <div className="mt-4 border-t border-slate-800 pt-3">
           <p className="mb-2 text-sm font-medium text-slate-200">Recent sync runs</p>
-          <div className="grid gap-2 text-xs text-slate-300 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-2 text-xs text-slate-300">
             {syncRuns.map((run) => (
               <div key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
                 <p className="font-medium">{new Date(run.startedAt).toLocaleString()}</p>

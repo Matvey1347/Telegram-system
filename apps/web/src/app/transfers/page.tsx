@@ -38,8 +38,8 @@ export default function TransfersPage() {
       </div>
     </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transfers</div> : null}
-    <div className="overflow-x-auto rounded-lg border border-neutral-800">
-      <table className="min-w-[980px] w-full text-left text-sm">
+    <div className="table-scroll w-full rounded-lg border border-neutral-800">
+      <table className="w-max min-w-[980px] text-left text-sm">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">From account</th><th className="px-3 py-2">From amount</th><th className="px-3 py-2">To account</th><th className="px-3 py-2">To amount</th><th className="px-3 py-2">Exchange rate</th><th className="px-3 py-2">Transfer loss</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Actions</th></tr>
         </thead>

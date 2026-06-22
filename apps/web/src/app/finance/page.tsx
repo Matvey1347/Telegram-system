@@ -242,8 +242,8 @@ function FinanceSection({ title, href, children }: { title: string; href: string
 function FinanceTable({ title, href, headers, children }: { title: string; href: string; headers: string[]; children: ReactNode }) {
   return (
     <FinanceSection title={title} href={href}>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm text-neutral-200">
+      <div className="table-scroll w-full">
+        <table className="w-max min-w-full text-left text-sm text-neutral-200">
           <thead className="text-xs uppercase text-neutral-500">
             <tr>{headers.map((header, index) => <th key={`${header}-${index}`} className="px-4 py-3 font-semibold">{header}</th>)}</tr>
           </thead>

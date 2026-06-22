@@ -58,3 +58,15 @@ button:disabled,
 .app-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #525252;
 }
+
+.table-scroll {
+  overflow-x: auto;
+  overflow-y: clip;
+}
+
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #0f172a;
+}

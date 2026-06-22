@@ -196,7 +196,7 @@ export default function AdCampaignDetailPage() {
             </form>
           </Card>
 
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
             <Card>
               <h3 className="mb-3 text-lg font-semibold">Statuses</h3>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

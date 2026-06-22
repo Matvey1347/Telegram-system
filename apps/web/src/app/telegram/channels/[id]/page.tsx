@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   type ReactNode,
   useEffect,
   useLayoutEffect,
@@ -14,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleHelp,
   Database,
   Eye,
@@ -33,6 +35,7 @@ import {
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
+import { MoneyStack } from "@/components/ui/money-stack";
 import {
   Button,
   DateInput,
@@ -46,6 +49,7 @@ import {
   type ToastItem,
 } from "@/components/ui/primitives";
 import {
+  currenciesApi,
   getTelegramChannelAnalytics,
   getTelegramChannelPosts,
   syncTelegramChannelNow,
@@ -85,6 +89,14 @@ function formatNullableNumber(value: unknown, decimals = 0) {
 function formatPercent(value: unknown, decimals = 1) {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return `${formatNumber(value, decimals)}%`;
+}
+
+function hasNumericValue(value: unknown) {
+  return value != null && Number.isFinite(Number(value));
+}
+
+function hasPositiveValue(value: unknown) {
+  return hasNumericValue(value) && Number(value) > 0;
 }
 
 function hasKpiSettings(channel?: TelegramChannel) {
@@ -183,6 +195,14 @@ export default function TelegramChannelAnalyticsPage() {
     queryKey: ["telegram-channel-analytics-sources", id],
     queryFn: () => telegramChannelsApi.analyticsSources(id),
   });
+  const { data: currencySettings } = useQuery({
+    queryKey: ["currency-settings"],
+    queryFn: currenciesApi.getSettings,
+  });
+  const { data: rates } = useQuery({
+    queryKey: ["currency-rates"],
+    queryFn: currenciesApi.listRates,
+  });
 
   useEffect(() => {
     const source = channel || data?.channel;
@@ -258,21 +278,6 @@ export default function TelegramChannelAnalyticsPage() {
       pushToast(error?.response?.data?.message || "Failed to save settings.", "error"),
   });
 
-  const createSnapshotMutation = useMutation({
-    mutationFn: () => telegramChannelsApi.createAudienceSnapshot(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience-snapshots", id],
-      });
-      pushToast("Audience snapshot created.", "success");
-    },
-    onError: (error: any) =>
-      pushToast(
-        error?.response?.data?.message || "Failed to create snapshot.",
-        "error",
-      ),
-  });
-
   const manualMetricsMutation = useMutation({
     mutationFn: ({
       postId,
@@ -324,16 +329,23 @@ export default function TelegramChannelAnalyticsPage() {
   const mtprotoStats = latestSnapshot?.normalizedStats;
   const mtprotoGraphs = useMemo(
     () =>
-      mtprotoGraphConfigs.map((config) => ({
-        ...config,
-        graph: mtprotoStats?.graphs?.[config.key],
-        chart:
+      mtprotoGraphConfigs
+        .map((config) => {
+          const chart =
           normalizeStoredTelegramGraph(data?.channelStatsPoints, config.key) ||
-          normalizeTelegramGraph(mtprotoStats?.graphs?.[config.key]),
-      })),
+          normalizeTelegramGraph(mtprotoStats?.graphs?.[config.key]);
+          return {
+            ...config,
+            chart,
+          };
+        })
+        .filter(hasRenderableTelegramGraphItem),
     [data?.channelStatsPoints, mtprotoStats],
   );
   const activeChannel = (channel || data?.channel) as TelegramChannel | undefined;
+  const hasKpi = Boolean(
+    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+  );
 
   const computed = useMemo(() => {
     const viewsTotal = posts.reduce(
@@ -422,6 +434,92 @@ export default function TelegramChannelAnalyticsPage() {
     posts,
     visiblePosts.length,
   ]);
+  const statCards = [
+    {
+      key: "subscribers",
+      show: hasPositiveValue(computed.subscribers),
+      title: "Subscribers",
+      value: formatNumber(computed.subscribers),
+      hint: "Latest channel value",
+    },
+    {
+      key: "posts",
+      show: hasPositiveValue(computed.postsCount),
+      title: "Posts Synced",
+      value: formatNumber(computed.postsCount),
+      hint: `${computed.visiblePostsCount} with text`,
+    },
+    {
+      key: "views",
+      show: hasPositiveValue(computed.viewsTotal),
+      title: "Total Views",
+      value: formatNumber(computed.viewsTotal),
+      hint: "Sum from post metrics",
+    },
+    {
+      key: "avgViews",
+      show: hasNumericValue(computed.averagePostViews),
+      title: "Average Views",
+      value: formatNullableNumber(computed.averagePostViews),
+      hint: "Posts with views > 0",
+    },
+    {
+      key: "err",
+      show: hasNumericValue(computed.err),
+      title: "ERR",
+      value: formatPercent(computed.err, 2),
+      hint: `Eligible posts: ${computed.eligiblePostsCount}`,
+    },
+    {
+      key: "reactions",
+      show: hasPositiveValue(computed.reactionsTotal),
+      title: "Reactions",
+      value: formatNumber(computed.reactionsTotal),
+      hint: `Rate: ${formatPercent(computed.reactionRate, 2)}`,
+    },
+    {
+      key: "forwards",
+      show: hasPositiveValue(computed.forwardsTotal),
+      title: "Forwards",
+      value: formatNumber(computed.forwardsTotal),
+      hint: `Rate: ${formatPercent(computed.forwardRate, 2)}`,
+    },
+    {
+      key: "joined",
+      show: hasPositiveValue(computed.joinedFromLinks),
+      title: "Joined From Links",
+      value: formatNumber(computed.joinedFromLinks),
+      hint: "Invite-link usage",
+    },
+    {
+      key: "cpa",
+      show: hasNumericValue(computed.cpa),
+      title: "Campaign CPA",
+      value: formatNumber(computed.cpa, 2),
+      hint: "Spend / joined from links",
+    },
+    {
+      key: "comments",
+      show: hasPositiveValue(computed.commentsTotal),
+      title: "Comments",
+      value: formatNumber(computed.commentsTotal),
+      hint: "Post comments",
+    },
+    {
+      key: "inviteLinks",
+      show: inviteLinks.length > 0,
+      title: "Invite Links",
+      value: formatNumber(inviteLinks.length),
+      hint: "Imported invite links",
+    },
+    {
+      key: "campaigns",
+      show: campaigns.length > 0,
+      title: "Campaigns",
+      value: formatNumber(campaigns.length),
+      hint: "Attribution source: invite links",
+    },
+  ].filter((card) => card.show);
 
   const topPosts = useMemo(
     () =>
@@ -453,6 +551,11 @@ export default function TelegramChannelAnalyticsPage() {
       }),
     [campaigns],
   );
+  const hasAudienceChart = audienceSnapshots.some(
+    (snapshot) =>
+      snapshot.subscribersCount != null ||
+      snapshot.activeSubscribersEstimate != null,
+  );
 
   return (
     <AppShell>
@@ -461,6 +564,12 @@ export default function TelegramChannelAnalyticsPage() {
         subtitle={data?.channel?.username || "Analytics"}
         action={
           <div className="flex gap-2">
+            <KpiSettingsControl
+              settings={settings}
+              setSettings={setSettings}
+              isSaving={settingsMutation.isPending}
+              onSave={() => settingsMutation.mutate()}
+            />
             <Button
               variant="secondary"
               disabled={syncMutation.isPending}
@@ -499,98 +608,40 @@ export default function TelegramChannelAnalyticsPage() {
         setCustomTo={setCustomTo}
       />
 
-      <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(520px,100%),1fr))] gap-4">
         <AudienceOverview audience={audience} />
         <FinancialOverview
           summary={financialSummary}
-          currency={
-            financialSummary?.kpiCurrency || activeChannel?.kpiCurrency || ""
-          }
+          currencySettings={currencySettings}
+          rates={rates}
           hasKpi={hasKpiSettings(activeChannel)}
         />
       </section>
 
-      <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <KpiSettingsCard
-          settings={settings}
-          setSettings={setSettings}
-          isSaving={settingsMutation.isPending}
-          onSave={() => settingsMutation.mutate()}
-        />
-        <AudienceSnapshotsPanel
-          snapshots={audienceSnapshots}
-          isCreating={createSnapshotMutation.isPending}
-          onCreate={() => createSnapshotMutation.mutate()}
-        />
-      </section>
+      {hasKpi || hasAudienceChart ? (
+        <section className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(520px,100%),1fr))] gap-4">
+          {hasKpi ? <KpiSummaryPanel settings={settings} /> : null}
+          <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
+        </section>
+      ) : null}
 
-      <section className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          title="Subscribers"
-          value={formatNumber(computed.subscribers)}
-          hint="Latest channel value"
-        />
-        <MetricCard
-          title="Posts Synced"
-          value={formatNumber(computed.postsCount)}
-          hint={`${computed.visiblePostsCount} with text`}
-        />
-        <MetricCard
-          title="Total Views"
-          value={formatNumber(computed.viewsTotal)}
-          hint="Sum from post metrics"
-        />
-        <MetricCard
-          title="Average Views"
-          value={formatNullableNumber(computed.averagePostViews)}
-          hint="Posts with views > 0"
-        />
-        <MetricCard
-          title="ERR"
-          value={formatPercent(computed.err, 2)}
-          hint={`Eligible posts: ${computed.eligiblePostsCount}`}
-        />
-        <MetricCard
-          title="Reactions"
-          value={formatNumber(computed.reactionsTotal)}
-          hint={`Rate: ${formatPercent(computed.reactionRate, 2)}`}
-        />
-        <MetricCard
-          title="Forwards"
-          value={formatNumber(computed.forwardsTotal)}
-          hint={`Rate: ${formatPercent(computed.forwardRate, 2)}`}
-        />
-        <MetricCard
-          title="Joined From Links"
-          value={formatNumber(computed.joinedFromLinks)}
-          hint="Invite-link usage"
-        />
-        <MetricCard
-          title="Campaign CPA"
-          value={computed.cpa == null ? "-" : formatNumber(computed.cpa, 2)}
-          hint="Spend / joined from links"
-        />
-        <MetricCard
-          title="Comments"
-          value={formatNumber(computed.commentsTotal)}
-          hint="Post comments"
-        />
-        <MetricCard
-          title="Invite Links"
-          value={formatNumber(inviteLinks.length)}
-          hint="Imported invite links"
-        />
-        <MetricCard
-          title="Campaigns"
-          value={formatNumber(campaigns.length)}
-          hint="Attribution source: invite links"
-        />
-      </section>
+      {statCards.length ? (
+        <section className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-4">
+          {statCards.map((card) => (
+            <MetricCard
+              key={card.key}
+              title={card.title}
+              value={card.value}
+              hint={card.hint}
+            />
+          ))}
+        </section>
+      ) : null}
 
       <section className="mt-6">
         <SimplePanel title="Snapshot">
           {latestSnapshot ? (
-            <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-3 text-sm">
               <SnapshotItem
                 label="Latest snapshot"
                 value={new Date(latestSnapshot.syncedAt).toLocaleString()}
@@ -644,87 +695,87 @@ export default function TelegramChannelAnalyticsPage() {
         </SimplePanel>
       </section>
 
-      <section className="mt-6">
-        <h3 className="mb-3 text-lg font-semibold">Charts</h3>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {mtprotoGraphs.map(({ key, title, graph, chart }) => (
-            <SimplePanel key={key} title={title}>
-              {chart ? (
+      {mtprotoGraphs.length ? (
+        <section className="mt-6">
+          <h3 className="mb-3 text-lg font-semibold">Charts</h3>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
+            {mtprotoGraphs.map(({ key, title, chart }) => (
+              <SimplePanel key={key} title={title}>
                 <MtprotoGraphChart chart={chart} />
-              ) : (
-                <TelegramGraphPlaceholder graph={graph} />
-              )}
-            </SimplePanel>
-          ))}
-        </div>
-      </section>
+              </SimplePanel>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
-      <section className="mt-6">
-        <SectionToggle
-          title="Campaign Attribution"
-          open={openSections.campaigns}
-          onToggle={() =>
-            setOpenSections((prev) => ({ ...prev, campaigns: !prev.campaigns }))
-          }
-        />
-        {openSections.campaigns ? (
-          campaignRows.length ? (
+      {campaignRows.length ? (
+        <section className="mt-6">
+          <SectionToggle
+            title="Campaign Attribution"
+            open={openSections.campaigns}
+            onToggle={() =>
+              setOpenSections((prev) => ({ ...prev, campaigns: !prev.campaigns }))
+            }
+          />
+          {openSections.campaigns ? (
             <CampaignsTable campaigns={campaignRows} />
-          ) : (
-            <EmptyState text="No campaigns for this channel." />
-          )
-        ) : null}
-      </section>
+          ) : null}
+        </section>
+      ) : null}
 
-      <section className="mt-6">
-        <SectionToggle
-          title="All Posts Metrics"
-          open={openSections.posts}
-          onToggle={() =>
-            setOpenSections((prev) => ({ ...prev, posts: !prev.posts }))
-          }
-        />
-        {openSections.posts ? (
-          <>
-            {isPostsLoading ? <LoadingState /> : null}
-            {postsError ? (
-              <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
-                Failed to load posts.
-              </div>
-            ) : null}
-            {!isPostsLoading && !postsError ? (
-              <PostsTable
-                posts={visiblePosts}
-                subscribers={computed.subscribers}
-                savingPostId={
-                  manualMetricsMutation.isPending
-                    ? manualMetricsMutation.variables?.postId
-                    : null
-                }
-                onSaveManualMetrics={(postId, payload) =>
-                  manualMetricsMutation.mutate({ postId, payload })
-                }
-              />
-            ) : null}
-          </>
-        ) : null}
-      </section>
+      {isPostsLoading || postsError || visiblePosts.length ? (
+        <section className="mt-6">
+          <SectionToggle
+            title="All Posts Metrics"
+            open={openSections.posts}
+            onToggle={() =>
+              setOpenSections((prev) => ({ ...prev, posts: !prev.posts }))
+            }
+          />
+          {openSections.posts ? (
+            <>
+              {isPostsLoading ? <LoadingState /> : null}
+              {postsError ? (
+                <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
+                  Failed to load posts.
+                </div>
+              ) : null}
+              {!isPostsLoading && !postsError && visiblePosts.length ? (
+                <PostsTable
+                  posts={visiblePosts}
+                  subscribers={computed.subscribers}
+                  savingPostId={
+                    manualMetricsMutation.isPending
+                      ? manualMetricsMutation.variables?.postId
+                      : null
+                  }
+                  onSaveManualMetrics={(postId, payload) =>
+                    manualMetricsMutation.mutate({ postId, payload })
+                  }
+                />
+              ) : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
-      <section className="mt-6">
-        <SectionToggle
-          title="Raw Invite Links"
-          open={openSections.inviteLinks}
-          onToggle={() =>
-            setOpenSections((prev) => ({
-              ...prev,
-              inviteLinks: !prev.inviteLinks,
-            }))
-          }
-        />
-        {openSections.inviteLinks ? (
-          <InviteLinksTable links={topInviteLinks} />
-        ) : null}
-      </section>
+      {topInviteLinks.length ? (
+        <section className="mt-6">
+          <SectionToggle
+            title="Raw Invite Links"
+            open={openSections.inviteLinks}
+            onToggle={() =>
+              setOpenSections((prev) => ({
+                ...prev,
+                inviteLinks: !prev.inviteLinks,
+              }))
+            }
+          />
+          {openSections.inviteLinks ? (
+            <InviteLinksTable links={topInviteLinks} />
+          ) : null}
+        </section>
+      ) : null}
 
       <SyncScopeModal
         open={syncScopeOpen}
@@ -848,7 +899,7 @@ function SimplePanel({
 }
 
 function OverviewGrid({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{children}</div>;
+  return <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-3">{children}</div>;
 }
 
 function AudienceOverview({ audience }: { audience: any }) {
@@ -891,15 +942,75 @@ function AudienceOverview({ audience }: { audience: any }) {
 
 function FinancialOverview({
   summary,
-  currency,
+  currencySettings,
+  rates,
   hasKpi,
 }: {
   summary: any;
-  currency: string;
+  currencySettings: any;
+  rates: any[] | undefined;
   hasKpi: boolean;
 }) {
+  const primaryCurrency = currencySettings?.primaryCurrency || summary?.kpiCurrency || "";
   const hasPaidLaunches =
     toNumber(summary?.campaignsCount) > 0 || toNumber(summary?.totalAdSpend) > 0;
+  if (!hasKpi && !hasPaidLaunches) return null;
+  const moneyValue = (value: unknown) =>
+    value == null ? (
+      "-"
+    ) : (
+      <MoneyStack
+        amount={value as number}
+        currency={primaryCurrency}
+        settings={currencySettings}
+        rates={rates}
+        mainClassName="font-semibold text-white"
+        subClassName="text-xs text-slate-400"
+      />
+    );
+  const metrics = [
+    {
+      key: "spend",
+      show: hasPositiveValue(summary?.totalAdSpend),
+      node: <SnapshotItem label="Total ad spend" value={moneyValue(summary?.totalAdSpend)} />,
+    },
+    {
+      key: "campaigns",
+      show: hasPositiveValue(summary?.campaignsCount),
+      node: <SnapshotItem label="Campaigns count" value={formatNumber(summary?.campaignsCount)} />,
+    },
+    {
+      key: "joined",
+      show: hasPositiveValue(summary?.totalJoinedSubscribers),
+      node: <SnapshotItem label="Total joined subscribers" value={formatNumber(summary?.totalJoinedSubscribers)} />,
+    },
+    {
+      key: "active",
+      show: hasPositiveValue(summary?.paidActiveSubscribersEstimate),
+      node: <SnapshotItem label="Active subscribers from ads" value={formatNullableNumber(summary?.paidActiveSubscribersEstimate)} />,
+    },
+    {
+      key: "avgCpa",
+      show: hasNumericValue(summary?.avgCpa),
+      node: <SnapshotItem label="Avg CPA" value={moneyValue(summary?.avgCpa)} />,
+    },
+    {
+      key: "activeCpa",
+      show: hasNumericValue(summary?.activeCpa),
+      node: <SnapshotItem label="Active CPA" value={moneyValue(summary?.activeCpa)} />,
+    },
+    {
+      key: "activeRate",
+      show: hasNumericValue(summary?.avgActiveRate),
+      node: <SnapshotItem label="Avg active rate" value={formatPercent(summary?.avgActiveRate)} />,
+    },
+    {
+      key: "retention",
+      show: hasNumericValue(summary?.avgRetention7d),
+      node: <SnapshotItem label="Avg retention 7d" value={formatPercent(summary?.avgRetention7d)} />,
+    },
+  ].filter((metric) => metric.show);
+  const showKpiStatus = hasKpi && summary?.kpiStatus && summary.kpiStatus !== "unknown";
   return (
     <SimplePanel title="KPI / Financial overview">
       {hasKpi && !hasPaidLaunches ? (
@@ -907,56 +1018,23 @@ function FinancialOverview({
           No paid launches yet.
         </div>
       ) : null}
-      <OverviewGrid>
-        <SnapshotItem
-          label="Total ad spend"
-          value={`${formatNumber(summary?.totalAdSpend, 2)} ${currency}`}
-        />
-        <SnapshotItem
-          label="Campaigns count"
-          value={formatNumber(summary?.campaignsCount)}
-        />
-        <SnapshotItem
-          label="Total joined subscribers"
-          value={formatNumber(summary?.totalJoinedSubscribers)}
-        />
-        <SnapshotItem
-          label="Active subscribers from ads"
-          value={formatNullableNumber(summary?.paidActiveSubscribersEstimate)}
-        />
-        <SnapshotItem
-          label="Avg CPA"
-          value={
-            summary?.avgCpa == null
-              ? "-"
-              : `${formatNumber(summary.avgCpa, 2)} ${currency}`
-          }
-        />
-        <SnapshotItem
-          label="Active CPA"
-          value={
-            summary?.activeCpa == null
-              ? "-"
-              : `${formatNumber(summary.activeCpa, 2)} ${currency}`
-          }
-        />
-        <SnapshotItem
-          label="Avg active rate"
-          value={formatPercent(summary?.avgActiveRate)}
-        />
-        <SnapshotItem
-          label="Avg retention 7d"
-          value={formatPercent(summary?.avgRetention7d)}
-        />
-        <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-          <p className="text-xs text-slate-400">KPI status</p>
-          <span
-            className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
-          >
-            {summary?.kpiLabel || "-"}
-          </span>
-        </div>
-      </OverviewGrid>
+      {metrics.length || showKpiStatus ? (
+        <OverviewGrid>
+          {metrics.map((metric) => (
+            <Fragment key={metric.key}>{metric.node}</Fragment>
+          ))}
+          {showKpiStatus ? (
+            <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+              <p className="text-xs text-slate-400">KPI status</p>
+              <span
+                className={`mt-2 inline-flex rounded border px-2 py-0.5 text-xs ${kpiBadgeClass(summary?.kpiStatus)}`}
+              >
+                {summary?.kpiLabel || "-"}
+              </span>
+            </div>
+          ) : null}
+        </OverviewGrid>
+      ) : null}
     </SimplePanel>
   );
 }
@@ -970,7 +1048,7 @@ type SettingsState = {
   kpiCurrency: string;
 };
 
-function KpiSettingsCard({
+function KpiSettingsControl({
   settings,
   setSettings,
   isSaving,
@@ -993,61 +1071,16 @@ function KpiSettingsCard({
   };
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold">KPI</h3>
-        {hasKpi ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800"
-            title="Edit KPI"
-          >
-            <Pencil size={15} />
-          </button>
-        ) : null}
-      </div>
-      {hasKpi ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <SnapshotItem
-            label="Target CPA"
-            value={
-              settings.targetCpa
-                ? `${formatNumber(settings.targetCpa, 2)} ${settings.kpiCurrency}`
-                : "-"
-            }
-          />
-          <SnapshotItem
-            label="Acceptable CPA"
-            value={
-              settings.acceptableCpa
-                ? `${formatNumber(settings.acceptableCpa, 2)} ${settings.kpiCurrency}`
-                : "-"
-            }
-          />
-          <SnapshotItem
-            label="Stop CPA"
-            value={
-              settings.stopCpa
-                ? `${formatNumber(settings.stopCpa, 2)} ${settings.kpiCurrency}`
-                : "-"
-            }
-          />
-          <SnapshotItem label="Currency" value={settings.kpiCurrency || "-"} />
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed border-slate-700 p-4">
-          <p className="text-sm text-slate-400">No KPI set yet.</p>
-          <Button
-            type="button"
-            className="mt-3"
-            variant="secondary"
-            onClick={() => setOpen(true)}
-          >
-            Set KPI
-          </Button>
-        </div>
-      )}
+    <>
+      <Button
+        type="button"
+        variant={hasKpi ? "secondary" : "primary"}
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-2"
+      >
+        <Pencil size={15} />
+        {hasKpi ? "Edit KPI" : "Set KPI"}
+      </Button>
       <Modal open={open} onClose={() => setOpen(false)} title="KPI settings">
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1104,76 +1137,128 @@ function KpiSettingsCard({
           </div>
         </div>
       </Modal>
+    </>
+  );
+}
+
+function KpiSummaryPanel({ settings }: { settings: SettingsState }) {
+  const hasKpi = Boolean(
+    settings.targetCpa || settings.acceptableCpa || settings.stopCpa,
+  );
+  return (
+    <SimplePanel title="KPI targets">
+      {hasKpi ? (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+            <p className="text-xs uppercase text-slate-500">Optimization goal</p>
+            <p className="mt-1 text-sm text-slate-300">
+              CPA thresholds for paid campaign decisions.
+            </p>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(160px,100%),1fr))] gap-3">
+            <KpiTarget tone="good" label="Target" value={settings.targetCpa} currency={settings.kpiCurrency} />
+            <KpiTarget tone="warn" label="Acceptable" value={settings.acceptableCpa} currency={settings.kpiCurrency} />
+            <KpiTarget tone="bad" label="Stop" value={settings.stopCpa} currency={settings.kpiCurrency} />
+            <KpiTarget tone="neutral" label="Currency" value={settings.kpiCurrency} />
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/20 p-4">
+          <p className="text-sm font-medium text-slate-200">No KPI configured</p>
+          <p className="mt-1 text-sm text-slate-400">
+            Set CPA thresholds from the top bar to evaluate campaign performance.
+          </p>
+        </div>
+      )}
+    </SimplePanel>
+  );
+}
+
+function KpiTarget({
+  tone,
+  label,
+  value,
+  currency,
+}: {
+  tone: "good" | "warn" | "bad" | "neutral";
+  label: string;
+  value?: string;
+  currency?: string;
+}) {
+  const toneClass = {
+    good: "border-emerald-800/80 bg-emerald-950/30 text-emerald-200",
+    warn: "border-yellow-800/80 bg-yellow-950/30 text-yellow-200",
+    bad: "border-rose-800/80 bg-rose-950/30 text-rose-200",
+    neutral: "border-slate-800 bg-slate-900/30 text-slate-200",
+  }[tone];
+  const display =
+    label === "Currency"
+      ? value || "-"
+      : value
+        ? `${formatNumber(value, 2)} ${currency || ""}`.trim()
+        : "-";
+  return (
+    <div className={`rounded-lg border p-3 ${toneClass}`}>
+      <p className="text-xs opacity-80">{label}</p>
+      <p className="mt-1 text-lg font-semibold">{display}</p>
     </div>
   );
 }
 
 function AudienceSnapshotsPanel({
   snapshots,
-  isCreating,
-  onCreate,
 }: {
   snapshots: TelegramChannelAudienceSnapshot[];
-  isCreating: boolean;
-  onCreate: () => void;
 }) {
-  const chartRows = snapshots.map((snapshot) => ({
-    label: formatLocalDate(snapshot.collectedAt),
-    subscribersCount: snapshot.subscribersCount ?? null,
-    activeSubscribersEstimate: snapshot.activeSubscribersEstimate ?? null,
-  }));
+  const chartRows = snapshots
+    .map((snapshot) => ({
+      label: formatLocalDate(snapshot.collectedAt),
+      subscribersCount: snapshot.subscribersCount ?? null,
+      activeSubscribersEstimate: snapshot.activeSubscribersEstimate ?? null,
+    }))
+    .filter(
+      (row) =>
+        row.subscribersCount != null || row.activeSubscribersEstimate != null,
+    );
+  if (!chartRows.length) return null;
   return (
     <SimplePanel title="Audience chart">
-      <div className="mb-3 flex justify-end">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={isCreating}
-          onClick={onCreate}
-        >
-          {isCreating ? "Creating..." : "Create snapshot"}
-        </Button>
+      <div className="h-64 rounded-lg bg-slate-900/40 p-2">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={chartRows}
+            margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
+          >
+            <CartesianGrid stroke="#1e293b" strokeDasharray="4 4" />
+            <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+            <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} width={48} />
+            <Tooltip
+              contentStyle={{
+                background: "#020617",
+                border: "1px solid #334155",
+                borderRadius: 10,
+              }}
+              labelStyle={{ color: "#e2e8f0" }}
+            />
+            <Line
+              type="linear"
+              dataKey="subscribersCount"
+              stroke="#38bdf8"
+              strokeWidth={2}
+              dot={false}
+              name="Subscribers"
+            />
+            <Line
+              type="linear"
+              dataKey="activeSubscribersEstimate"
+              stroke="#22c55e"
+              strokeWidth={2}
+              dot={false}
+              name="Active estimate"
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
-      {chartRows.length ? (
-        <div className="h-64 rounded-lg bg-slate-900/40 p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={chartRows}
-              margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
-            >
-              <CartesianGrid stroke="#1e293b" strokeDasharray="4 4" />
-              <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} />
-              <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} width={48} />
-              <Tooltip
-                contentStyle={{
-                  background: "#020617",
-                  border: "1px solid #334155",
-                  borderRadius: 10,
-                }}
-                labelStyle={{ color: "#e2e8f0" }}
-              />
-              <Line
-                type="linear"
-                dataKey="subscribersCount"
-                stroke="#38bdf8"
-                strokeWidth={2}
-                dot={false}
-                name="Subscribers"
-              />
-              <Line
-                type="linear"
-                dataKey="activeSubscribersEstimate"
-                stroke="#22c55e"
-                strokeWidth={2}
-                dot={false}
-                name="Active estimate"
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <EmptyState text="No audience snapshots yet." />
-      )}
     </SimplePanel>
   );
 }
@@ -1627,8 +1712,8 @@ function TopPostsTable({
   subscribers: number;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
+    <div className="table-scroll w-full">
+      <table className="w-max min-w-full text-sm">
         <thead className="text-slate-400">
           <tr>
             <th className="px-2 py-1 text-left">Date</th>
@@ -1681,75 +1766,248 @@ function PostsTable({
     },
   ) => void;
 }) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const headerScrollRef = useRef<HTMLDivElement | null>(null);
+  const floatingHeaderScrollRef = useRef<HTMLDivElement | null>(null);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const headerContentRef = useRef<HTMLDivElement | null>(null);
+  const [sortState, setSortState] = useState<{
+    key:
+      | "postDate"
+      | "viewsCount"
+      | "forwardsCount"
+      | "reactionsCount"
+      | "commentsCount"
+      | "err"
+      | "reactionRate"
+      | null;
+    direction: "asc" | "desc";
+  }>({
+    key: null,
+    direction: "desc",
+  });
+  const columns = [
+    { label: "Date", className: "text-left", sortKey: "postDate" as const },
+    { label: "Text", className: "text-left" },
+    { label: "Views", className: "text-right", sortKey: "viewsCount" as const },
+    { label: "Forwards", className: "text-right", sortKey: "forwardsCount" as const },
+    { label: "Reactions", className: "text-right", sortKey: "reactionsCount" as const },
+    { label: "Comments", className: "text-right", sortKey: "commentsCount" as const },
+    { label: "ERR", className: "text-right", sortKey: "err" as const },
+    { label: "Reaction Rate", className: "text-right", sortKey: "reactionRate" as const },
+    { label: "Manual correction", className: "text-right" },
+  ];
+  const gridTemplateColumns =
+    "7rem 14rem 6rem 6rem 7rem 7rem 7rem 8rem 13rem";
+  const [floatingHeader, setFloatingHeader] = useState({
+    visible: false,
+    left: 0,
+    width: 0,
+    height: 0,
+  });
+  const syncHeaderScroll = () => {
+    if (!bodyScrollRef.current) return;
+    const scrollLeft = bodyScrollRef.current.scrollLeft;
+    if (headerScrollRef.current) {
+      headerScrollRef.current.scrollLeft = scrollLeft;
+    }
+    if (floatingHeaderScrollRef.current) {
+      floatingHeaderScrollRef.current.scrollLeft = scrollLeft;
+    }
+  };
+  const toggleSort = (
+    key: NonNullable<typeof sortState.key>,
+  ) => {
+    setSortState((prev) => ({
+      key,
+      direction:
+        prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+  const sortedPosts = useMemo(() => {
+    if (!sortState.key) return posts;
+
+    const getSortValue = (post: any) => {
+      const views = toNumber(post.viewsCount);
+      const reactions = toNumber(post.reactionsCount);
+      switch (sortState.key) {
+        case "postDate":
+          return new Date(post.postDate ?? 0).getTime();
+        case "viewsCount":
+          return views;
+        case "forwardsCount":
+          return toNumber(post.forwardsCount);
+        case "reactionsCount":
+          return reactions;
+        case "commentsCount":
+          return toNumber(post.commentsCount);
+        case "err":
+          return subscribers > 0 ? (views / subscribers) * 100 : -1;
+        case "reactionRate":
+          return views > 0 ? (reactions / views) * 100 : -1;
+        default:
+          return 0;
+      }
+    };
+
+    return [...posts].sort((a, b) => {
+      const aValue = getSortValue(a);
+      const bValue = getSortValue(b);
+      const result = aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      return sortState.direction === "asc" ? result : -result;
+    });
+  }, [posts, sortState, subscribers]);
+
+  useEffect(() => {
+    const updateFloatingHeader = () => {
+      const wrapper = wrapperRef.current;
+      const header = headerContentRef.current;
+      if (!wrapper || !header) return;
+
+      const rect = wrapper.getBoundingClientRect();
+      const headerHeight = header.getBoundingClientRect().height;
+      const shouldShow = rect.top <= 0 && rect.bottom > headerHeight;
+
+      setFloatingHeader((prev) => {
+        const next = {
+          visible: shouldShow,
+          left: rect.left,
+          width: rect.width,
+          height: headerHeight,
+        };
+        if (
+          prev.visible === next.visible &&
+          prev.left === next.left &&
+          prev.width === next.width &&
+          prev.height === next.height
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    };
+
+    updateFloatingHeader();
+    window.addEventListener("scroll", updateFloatingHeader, { passive: true });
+    window.addEventListener("resize", updateFloatingHeader);
+    return () => {
+      window.removeEventListener("scroll", updateFloatingHeader);
+      window.removeEventListener("resize", updateFloatingHeader);
+    };
+  }, []);
+
+  const renderHeaderMarkup = (measure = false) => (
+    <div
+      ref={measure ? headerContentRef : null}
+      className="grid min-w-[1200px]"
+      style={{ gridTemplateColumns }}
+    >
+      {columns.map((column) => (
+        <div
+          key={column.label}
+          className={`whitespace-nowrap px-3 py-2 ${column.className}`}
+        >
+          {column.sortKey ? (
+            <button
+              type="button"
+              onClick={() => toggleSort(column.sortKey)}
+              className={`inline-flex items-center gap-1 ${
+                column.className.includes("text-right") ? "ml-auto" : ""
+              }`}
+            >
+              <span>{column.label}</span>
+              {sortState.key === column.sortKey ? (
+                sortState.direction === "asc" ? (
+                  <ChevronUp size={14} />
+                ) : (
+                  <ChevronDown size={14} />
+                )
+              ) : (
+                <ChevronDown size={14} className="opacity-35" />
+              )}
+            </button>
+          ) : (
+            column.label
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
   if (!posts.length)
     return <EmptyState text="No post metrics with text yet." />;
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="w-full min-w-[1120px] table-fixed text-sm">
-        <thead className="bg-slate-900/60 text-slate-300">
-          <tr>
-            <th className="w-28 whitespace-nowrap px-3 py-2 text-left">
-              Date
-            </th>
-            <th className="w-56 px-3 py-2 text-left">Text</th>
-            <th className="w-24 whitespace-nowrap px-3 py-2 text-right">
-              Views
-            </th>
-            <th className="w-24 whitespace-nowrap px-3 py-2 text-right">
-              Forwards
-            </th>
-            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
-              Reactions
-            </th>
-            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
-              Comments
-            </th>
-            <th className="w-28 whitespace-nowrap px-3 py-2 text-right">
-              ERR
-            </th>
-            <th className="w-32 whitespace-nowrap px-3 py-2 text-right">
-              Reaction Rate
-            </th>
-            <th className="w-52 whitespace-nowrap px-3 py-2 text-left">
-              Manual correction
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {posts.map((post) => {
+    <div ref={wrapperRef} className="w-full rounded-lg border border-slate-700">
+      <div
+        ref={headerScrollRef}
+        className="overflow-hidden rounded-t-lg border-b border-slate-800 bg-slate-900 text-xs font-semibold text-slate-300"
+      >
+        {renderHeaderMarkup(true)}
+      </div>
+      {floatingHeader.visible
+        ? createPortal(
+            <div
+              className="fixed top-0 z-[90]"
+              style={{
+                left: floatingHeader.left,
+                width: floatingHeader.width,
+              }}
+            >
+              <div
+                ref={floatingHeaderScrollRef}
+                className="overflow-hidden rounded-t-lg border border-slate-700 border-b-slate-800 bg-slate-900 text-xs font-semibold text-slate-300 shadow-[0_8px_24px_rgba(0,0,0,0.45)]"
+              >
+                {renderHeaderMarkup()}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      <div
+        ref={bodyScrollRef}
+        className="overflow-x-auto"
+        onScroll={syncHeaderScroll}
+      >
+        <div className="min-w-[1200px] text-sm">
+          {sortedPosts.map((post) => {
             const views = toNumber(post.viewsCount);
             const reactions = toNumber(post.reactionsCount);
             return (
-              <tr key={post.id} className="border-t border-slate-800">
-                <td className="whitespace-nowrap px-3 py-2">
+              <div
+                key={post.id}
+                className="grid border-t border-slate-800"
+                style={{ gridTemplateColumns }}
+              >
+                <div className="whitespace-nowrap px-3 py-2">
                   {formatLocalDate(post.postDate)}
-                </td>
-                <td className="px-3 py-2">
+                </div>
+                <div className="min-w-0 px-3 py-2">
                   <PostTextTooltip text={post.text || "-"} />
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(views)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(post.forwardsCount)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(reactions)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(post.commentsCount)}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {subscribers > 0
                     ? formatPercent((views / subscribers) * 100, 2)
                     : "-"}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right">
+                </div>
+                <div className="whitespace-nowrap px-3 py-2 text-right">
                   {views > 0
                     ? formatPercent((reactions / views) * 100, 2)
                     : "-"}
-                </td>
-                <td className="px-3 py-2">
+                </div>
+                <div className="px-3 py-2">
                   <PostManualMetricsEditor
                     post={post}
                     isSaving={savingPostId === post.id}
@@ -1757,12 +2015,12 @@ function PostsTable({
                       onSaveManualMetrics(post.id, payload)
                     }
                   />
-                </td>
-              </tr>
+                </div>
+              </div>
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1877,7 +2135,7 @@ function PostManualMetricsEditor({
 
   return (
     <>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-end gap-2">
         {hasCorrection ? (
           <div className="min-w-0 space-y-1 text-xs text-slate-300">
             <p className="flex items-center gap-1 whitespace-nowrap">
@@ -1977,8 +2235,8 @@ function InviteLinksTable({ links }: { links: any[] }) {
 
 function CampaignsTable({ campaigns }: { campaigns: any[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="min-w-full text-sm">
+    <div className="table-scroll w-full rounded-lg border border-slate-700">
+      <table className="w-max min-w-full text-sm">
         <thead className="bg-slate-900/60 text-slate-300">
           <tr>
             <th className="px-3 py-2 text-left">Campaign</th>
@@ -2024,11 +2282,11 @@ function CampaignsTable({ campaigns }: { campaigns: any[] }) {
   );
 }
 
-function SnapshotItem({ label, value }: { label: string; value: string }) {
+function SnapshotItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
       <p className="text-xs text-slate-400">{label}</p>
-      <p className="mt-1 font-semibold">{value || "-"}</p>
+      <div className="mt-1 font-semibold">{value || "-"}</div>
     </div>
   );
 }
@@ -2303,6 +2561,21 @@ function normalizeTelegramGraph(graph: any): TelegramGraphChartData | null {
   return rows.length ? { rows, series } : null;
 }
 
+function hasRenderableTelegramChart(
+  chart: TelegramGraphChartData | null,
+): chart is TelegramGraphChartData {
+  if (!chart?.rows.length || !chart.series.length) return false;
+  return chart.rows.some((row) =>
+    chart.series.some((series) => Number.isFinite(Number(row[series.key]))),
+  );
+}
+
+function hasRenderableTelegramGraphItem<T extends { chart: TelegramGraphChartData | null }>(
+  item: T,
+): item is T & { chart: TelegramGraphChartData } {
+  return hasRenderableTelegramChart(item.chart);
+}
+
 function normalizeTelegramColor(value: unknown, fallback: string) {
   const match = String(value || "").match(/#[0-9a-f]{6}/i);
   return match?.[0] || fallback;
@@ -2385,20 +2658,6 @@ function TelegramGraphLegend({
           {item.name}
         </span>
       ))}
-    </div>
-  );
-}
-
-function TelegramGraphPlaceholder({ graph }: { graph: any }) {
-  const message =
-    graph?.status === "pending"
-      ? "Telegram is preparing this graph asynchronously. Run Sync again later."
-      : graph?.status === "error"
-        ? `Telegram graph error: ${graph.error || "unknown error"}`
-        : "This graph is unavailable for the channel.";
-  return (
-    <div className="h-44 rounded bg-slate-900/40 p-3 text-sm text-slate-400">
-      {message}
     </div>
   );
 }

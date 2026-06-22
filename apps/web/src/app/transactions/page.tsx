@@ -55,8 +55,8 @@ export default function TransactionsPage() {
       </div>
     </Card>
     {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transactions</div> : null}
-    <div className="overflow-x-auto rounded-lg border border-neutral-800">
-      <table className="min-w-[760px] w-full text-left text-sm">
+    <div className="table-scroll w-full rounded-lg border border-neutral-800">
+      <table className="w-max min-w-[760px] text-left text-sm">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Price</th><th className="px-3 py-2">Category</th><th className="px-3 py-2">Account</th><th className="px-3 py-2">Actions</th></tr>
         </thead>

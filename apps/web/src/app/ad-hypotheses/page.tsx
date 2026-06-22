@@ -181,7 +181,7 @@ export default function AdHypothesesPage() {
       {!isLoading && !hypotheses.length ? (
         <EmptyState text="No hypotheses yet." />
       ) : null}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
         {hypotheses.map((hypothesis) => (
           <HypothesisCard
             key={hypothesis.id}

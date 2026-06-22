@@ -20,7 +20,7 @@ export default function DashboardPage() {
       {error ? <Card className="text-red-300">Failed to load dashboard.</Card> : null}
       {data ? (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
             <Card><p className="text-sm text-neutral-400">Total Balance Primary</p><p className="text-xl font-semibold">{n(data.totalBalancePrimary)} {data.primaryCurrency ?? ''}</p></Card>
             <Card><p className="text-sm text-neutral-400">Total Balance Secondary</p><p className="text-xl font-semibold">{n(data.totalBalanceSecondary)} {data.secondaryCurrency ?? ''}</p></Card>
             <Card><p className="text-sm text-neutral-400">Income</p><p className="text-xl font-semibold">{n(data.incomeForPeriod)}</p></Card>

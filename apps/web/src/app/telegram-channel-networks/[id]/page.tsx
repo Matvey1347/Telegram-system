@@ -159,7 +159,7 @@ export default function TelegramChannelNetworkDetailPage() {
       ) : null}
       {summary ? (
         <>
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-4">
             <MetricCard title="Channels count" value={formatNumber(summary.channelsCount)} />
             <MetricCard
               title="Total subscribers"
@@ -381,8 +381,8 @@ function ChannelsTable({
   channels: TelegramChannelNetworkChannelSummary[];
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="w-full min-w-[1120px] table-fixed text-sm">
+    <div className="table-scroll w-full rounded-lg border border-slate-700">
+      <table className="w-max min-w-[1120px] text-sm">
         <thead className="bg-slate-900/60 text-slate-300">
           <tr>
             <th className="w-56 px-3 py-2 text-left">Channel</th>

@@ -275,7 +275,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
         <button onClick={logout} className="mt-6 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-900"><LogOut size={16} /> Logout</button>
       </aside>
-      <main className="ml-64 min-h-screen w-[calc(100%-16rem)] min-w-0 p-8"><div className="mx-auto w-full max-w-7xl min-w-0">{children}</div></main>
+      <main className="ml-64 min-h-screen w-[calc(100%-16rem)] min-w-0 px-4 py-5 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
     </div>
   );
 }
