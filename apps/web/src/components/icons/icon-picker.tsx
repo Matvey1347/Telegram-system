@@ -375,6 +375,10 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
         type="button"
         ref={triggerRef}
         onClick={() => {
+          if (open) {
+            closePicker();
+            return;
+          }
           setStandardIconsReady(false);
           setOpen(true);
         }}

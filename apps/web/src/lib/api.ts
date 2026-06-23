@@ -407,7 +407,7 @@ export type AdCampaignAnalyticsFields = AdCampaignAnalyticsInput & {
   analyticsLastAutoSyncedAt?: string | null;
   analyticsLastManualSyncedAt?: string | null;
 };
-export type AdCampaign = AdCampaignAnalyticsFields & { id: string; title: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdCampaign = AdCampaignAnalyticsFields & { id: string; title: string; status?: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
 export type AdCampaignAnalyticsSummary = AdCampaignAnalyticsFields & {
   cost?: number | null;
   cpa?: number | null;
@@ -495,6 +495,7 @@ export type AdHypothesisDetail = AdHypothesis & { campaigns: AdCampaign[]; campa
 export type CreateAdHypothesisPayload = { name: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds: string[] };
 export type UpdateAdHypothesisPayload = { name?: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds?: string[] };
 export type DashboardSummary = {
+  period: { dateFrom: string; dateTo: string };
   totalBalancePrimary: number;
   totalBalanceSecondary: number;
   primaryCurrency?: Currency;
@@ -505,6 +506,23 @@ export type DashboardSummary = {
   adSpendForPeriod: number;
   totalJoinedFromAds: number;
   averageCPA: number | null;
+  campaignsCount: number;
+  periodCampaignsCount: number;
+  telegramChannelsCount: number;
+  ownChannelsCount: number;
+  externalChannelsCount: number;
+  workspaceMembersCount: number;
+  totalSubscribers: number;
+  activeSubscribersEstimate: number;
+  anomalousChannelsCount: number;
+  dailyTrend: Array<{ date: string; income: number; expenses: number; profit: number; adSpend: number; joined: number }>;
+  categoryBreakdown: Array<{ id?: string | null; name: string; type: TransactionType; amount: number; count: number; iconId?: string | null; icon?: Icon | null }>;
+  accountBalances: Array<{ id: string; name: string; currency: Currency; iconId?: string | null; icon?: Icon | null; balance: number; primary: number; secondary: number }>;
+  channelPerformance: Array<{ id: string; title: string; username?: string | null; photoUrl?: string | null; spend: number; joined: number; campaigns: number; cpa: number | null }>;
+  topOwnChannels: Array<{ id: string; title: string; username?: string | null; photoUrl?: string | null; subscribers: number; activeSubscribers: number; viewRate?: number | null; dataQuality?: string | null }>;
+  campaignStatusCounts: Record<string, number>;
+  adQualityCounts: Record<string, number>;
+  hypothesisStatusCounts: Record<string, number>;
   bestCampaigns: AdCampaign[];
   worstCampaigns: AdCampaign[];
 };
@@ -707,6 +725,6 @@ export const currenciesApi = {
   syncRates: async () => (await api.post<{ success: boolean; updated: number }>('/currencies/sync-rates')).data,
 };
 
-export async function getDashboardSummary() {
-  return (await api.get<DashboardSummary>('/dashboard/summary')).data;
+export async function getDashboardSummary(params?: { dateFrom?: string; dateTo?: string }) {
+  return (await api.get<DashboardSummary>('/dashboard/summary', { params })).data;
 }
