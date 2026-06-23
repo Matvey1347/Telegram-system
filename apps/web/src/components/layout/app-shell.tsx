@@ -20,7 +20,6 @@ import {
   LogOut,
   Plus,
   Search,
-  Megaphone,
   MessageCircle,
   RadioTower,
   ReceiptText,
@@ -51,8 +50,7 @@ const groups = [
     icon: MessageCircle,
     children: [
       { label: 'Telegram', href: '/telegram-channels', icon: RadioTower },
-      { label: 'Promos', href: '/promos', icon: Megaphone },
-      { label: 'Ad Campaigns', href: '/ad-campaigns', icon: Target },
+      { label: 'Ads', href: '/ad-campaigns', icon: Target },
     ],
   },
   {

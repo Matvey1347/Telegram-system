@@ -496,11 +496,6 @@ function ChannelFinanceMiniSummary({
     inactiveSubscribers && hasPositiveNumber(summary?.totalAdSpend)
       ? Number(summary?.totalAdSpend) / inactiveSubscribers
       : null;
-  const subscriberDefinitionsTip =
-    `Subscriber: current Telegram channel subscriber count.\n` +
-    `Active: estimated paid subscribers still active from ad traffic, based on the ${channel.activeSubscribersWindow || 5}-post active window.\n` +
-    "Inactive: joined subscribers from ads minus active paid subscribers.";
-
   if (hasPositiveNumber(summary?.totalAdSpend)) {
     metrics.push({
       label: "Finance",
@@ -515,7 +510,10 @@ function ChannelFinanceMiniSummary({
     metrics.push({
       label: "CPA / sub",
       value: moneyValue(summary?.avgCpa),
-      tip: `CPA / sub: ad spend divided by joined subscribers.\n\n${subscriberDefinitionsTip}`,
+      tip:
+        "CPA / sub: ad spend divided by joined subscribers.\n\n" +
+        "Joined subscriber: a subscriber who joined through paid ad invite links for this channel.\n\n" +
+        "This is not the total current Telegram subscriber count.",
     });
   }
   if (hasPositiveNumber(summary?.activeCpa)) {
@@ -523,14 +521,18 @@ function ChannelFinanceMiniSummary({
       label: "CPA / active",
       value: moneyValue(summary?.activeCpa),
       prominent: true,
-      tip: `CPA / active: ad spend divided by estimated active paid subscribers.\n\n${subscriberDefinitionsTip}`,
+      tip:
+        "CPA / active: ad spend divided by estimated active paid subscribers.\n\n" +
+        `Active subscriber: a joined paid subscriber still estimated active, based on the ${channel.activeSubscribersWindow || 5}-post active window.`,
     });
   }
   if (hasPositiveNumber(inactiveCpa)) {
     metrics.push({
       label: "CPA / inactive",
       value: moneyValue(inactiveCpa),
-      tip: `CPA / inactive: ad spend divided by inactive paid subscribers.\n\n${subscriberDefinitionsTip}`,
+      tip:
+        "CPA / inactive: ad spend divided by inactive paid subscribers.\n\n" +
+        "Inactive subscriber: joined paid subscriber minus active paid subscriber.",
     });
   }
   if (hasPositiveNumber(summary?.totalJoinedSubscribers)) {

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent, ClipboardEvent, MouseEventHandler } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
@@ -11,6 +12,7 @@ import {
   advertisingChannelsApi,
   getTelegramChannelInviteLinks,
   getTelegramChannelPromos,
+  promosApi,
   telegramChannelsApi,
   telegramSyncApi,
   workspacesApi,
@@ -18,6 +20,8 @@ import {
   type AdCampaign,
   type AdCampaignKpiStatus,
   type AdHypothesis,
+  type Promo,
+  type TelegramChannel,
 } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
@@ -36,9 +40,14 @@ type CampaignValues = {
   notes?: string;
 };
 
-type AdCampaignsViewMode = 'campaigns' | 'hypotheses';
+type AdCampaignsViewMode = 'campaigns' | 'promos' | 'hypotheses';
 
 const AD_CAMPAIGNS_VIEW_MODE_STORAGE_KEY = 'ad-campaigns:view-mode';
+const AD_CAMPAIGNS_VIEW_OPTIONS = [
+  { value: 'campaigns', label: 'Campaigns', iconEmoji: '🎯' },
+  { value: 'promos', label: 'Promos', iconEmoji: '📣' },
+  { value: 'hypotheses', label: 'Hypotheses', iconEmoji: '🧪' },
+];
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -84,6 +93,9 @@ export default function AdCampaignsPage() {
   const [hypothesisFormOpen, setHypothesisFormOpen] = useState(false);
   const [editingHypothesis, setEditingHypothesis] = useState<AdHypothesis | null>(null);
   const [deletingHypothesis, setDeletingHypothesis] = useState<AdHypothesis | null>(null);
+  const [promoFormOpen, setPromoFormOpen] = useState(false);
+  const [editingPromo, setEditingPromo] = useState<Promo | null>(null);
+  const [deletingPromo, setDeletingPromo] = useState<Promo | null>(null);
 
   const { data: workspace } = useQuery({ queryKey: ['workspace-selected'], queryFn: workspacesApi.selected });
   const { data: currencySettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
@@ -110,10 +122,14 @@ export default function AdCampaignsPage() {
     queryKey: ['ad-hypotheses'],
     queryFn: adHypothesesApi.list,
   });
+  const { data: promos = [], isLoading: promosLoading, error: promosError } = useQuery({
+    queryKey: ['promos', channelFilter],
+    queryFn: () => promosApi.list(channelFilter ? { telegramChannelId: channelFilter } : undefined),
+  });
 
   useEffect(() => {
     const savedViewMode = window.localStorage.getItem(AD_CAMPAIGNS_VIEW_MODE_STORAGE_KEY);
-    if (savedViewMode === 'campaigns' || savedViewMode === 'hypotheses') {
+    if (savedViewMode === 'campaigns' || savedViewMode === 'promos' || savedViewMode === 'hypotheses') {
       setViewMode(savedViewMode);
     }
   }, []);
@@ -196,6 +212,37 @@ export default function AdCampaignsPage() {
     },
     onError: (error) => pushToast(getErrorMessage(error, 'Failed to delete hypothesis.'), 'error'),
   });
+  const createPromoMutation = useMutation({
+    mutationFn: promosApi.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['promos'] });
+      qc.invalidateQueries({ queryKey: ['channel-promos'] });
+      setPromoFormOpen(false);
+      pushToast('Promo created.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to create promo.'), 'error'),
+  });
+  const updatePromoMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<Promo> }) => promosApi.update(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['promos'] });
+      qc.invalidateQueries({ queryKey: ['channel-promos'] });
+      setEditingPromo(null);
+      setPromoFormOpen(false);
+      pushToast('Promo updated.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update promo.'), 'error'),
+  });
+  const deletePromoMutation = useMutation({
+    mutationFn: (id: string) => promosApi.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['promos'] });
+      qc.invalidateQueries({ queryKey: ['channel-promos'] });
+      setDeletingPromo(null);
+      pushToast('Promo deleted.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to delete promo.'), 'error'),
+  });
 
   const campaigns = data ?? [];
   const ownTelegramChannels = useMemo(
@@ -204,6 +251,7 @@ export default function AdCampaignsPage() {
   );
   const visibleCampaigns = useMemo(() => sortCampaigns(filterCampaigns(campaigns, search, dateFrom, dateTo), sort), [campaigns, search, dateFrom, dateTo, sort]);
   const visibleHypotheses = useMemo(() => filterHypotheses(hypotheses, search), [hypotheses, search]);
+  const visiblePromos = useMemo(() => filterPromos(promos, search), [promos, search]);
   const handleViewModeChange = (nextViewMode: AdCampaignsViewMode) => {
     setViewMode(nextViewMode);
     window.localStorage.setItem(AD_CAMPAIGNS_VIEW_MODE_STORAGE_KEY, nextViewMode);
@@ -214,62 +262,22 @@ export default function AdCampaignsPage() {
       setHypothesisFormOpen(true);
       return;
     }
+    if (viewMode === 'promos') {
+      setEditingPromo(null);
+      setPromoFormOpen(true);
+      return;
+    }
     setCreateOpen(true);
   };
 
-  return <AppShell><PageHeader title="Ad Campaigns" subtitle="Track ad spend by channel, source and hypothesis" action={<Button onClick={openCreateForCurrentView}>{viewMode === 'hypotheses' ? 'Create hypothesis' : 'Create campaign'}</Button>} />
-    <Card className="mb-4">
-      <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-7 xl:items-end">
-        <FormField label="Period">
-          <DateRangeInput
-            from={dateFrom}
-            to={dateTo}
-            onChange={(range) => {
-              setDateFrom(range.from);
-              setDateTo(range.to);
-            }}
-            disabled={viewMode === 'hypotheses'}
-          />
-        </FormField>
-        <FormField label="View">
-          <Select value={viewMode} onChange={(e) => handleViewModeChange(e.target.value as AdCampaignsViewMode)}>
-            <option value="campaigns">Campaigns</option>
-            <option value="hypotheses">Hypotheses</option>
-          </Select>
-        </FormField>
-        <FormField label="Channel">
-          <CustomSelect
-            value={channelFilter}
-            onChange={setChannelFilter}
-            disabled={viewMode === 'hypotheses'}
-            placeholder="All channels"
-            options={[
-              { value: '', label: 'All channels', iconFallback: 'All channels' },
-              ...ownTelegramChannels.map((channel: any) => ({
-                value: channel.id,
-                label: channel.title,
-                iconUrl: channel.photoUrl,
-                iconFallback: channel.title,
-              })),
-            ]}
-          />
-        </FormField>
-        <FormField label="Sort">
-          <Select value={sort} onChange={(e) => setSort(e.target.value)} disabled={viewMode === 'hypotheses'}>
-            <option value="date_desc">Newest</option>
-            <option value="date_asc">Oldest</option>
-            <option value="cost_desc">Highest spend</option>
-            <option value="joined_desc">Most joined</option>
-          </Select>
-        </FormField>
-        <FormField label="Search">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={viewMode === 'campaigns' ? 'Campaign, source, channel' : 'Hypothesis'} />
-        </FormField>
-        <div className="flex items-end gap-2 md:col-span-4 xl:col-span-1">
+  return <AppShell><PageHeader title="Ads" subtitle="Promos, campaigns, hypotheses and performance" action={
+    <div className="flex items-center gap-2">
+      {viewMode === 'campaigns' ? (
+        <>
           <Button
             type="button"
-            variant="primary"
-            className="inline-flex h-11 flex-1 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+            variant="secondary"
+            className="inline-flex items-center gap-2"
             disabled={syncMutation.isPending}
             onClick={() => syncMutation.mutate()}
           >
@@ -281,11 +289,72 @@ export default function AdCampaignsPage() {
             title="Analytics details"
             aria-label="Analytics details"
             onClick={() => setSyncDetailsOpen(true)}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
           >
             <CircleHelp size={22} />
           </button>
+        </>
+      ) : null}
+      <Button onClick={openCreateForCurrentView}>{viewMode === 'hypotheses' ? 'Create hypothesis' : viewMode === 'promos' ? 'Create promo' : 'Create campaign'}</Button>
+    </div>
+  } />
+    <Card className="mb-4">
+      <div className="grid min-w-0 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_minmax(0,1.4fr)] 2xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.1fr)_minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.9fr)] 2xl:items-end">
+        <div className="min-w-0">
+          <FormField label="View">
+            <CustomSelect
+              value={viewMode}
+              onChange={(value) => handleViewModeChange(value as AdCampaignsViewMode)}
+              options={AD_CAMPAIGNS_VIEW_OPTIONS}
+            />
+          </FormField>
         </div>
+        <div className="min-w-0">
+          <FormField label="Channel">
+            <CustomSelect
+              value={channelFilter}
+              onChange={setChannelFilter}
+              disabled={viewMode === 'hypotheses'}
+              placeholder="All channels"
+              options={[
+                { value: '', label: 'All channels', iconFallback: 'All channels' },
+                ...ownTelegramChannels.map((channel: any) => ({
+                  value: channel.id,
+                  label: channel.title,
+                  iconUrl: channel.photoUrl,
+                  iconFallback: channel.title,
+                })),
+              ]}
+            />
+          </FormField>
+        </div>
+        <div className="min-w-0">
+          <FormField label="Search">
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={viewMode === 'campaigns' ? 'Campaign, source, channel' : viewMode === 'promos' ? 'Promo, text, channel' : 'Hypothesis'} />
+          </FormField>
+        </div>
+        {viewMode === 'campaigns' ? <div className="min-w-0">
+          <FormField label="Period">
+            <DateRangeInput
+              from={dateFrom}
+              to={dateTo}
+              onChange={(range) => {
+                setDateFrom(range.from);
+                setDateTo(range.to);
+              }}
+            />
+          </FormField>
+        </div> : null}
+        {viewMode === 'campaigns' ? <div className="min-w-0">
+          <FormField label="Sort">
+            <Select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="date_desc">Newest</option>
+              <option value="date_asc">Oldest</option>
+              <option value="cost_desc">Highest spend</option>
+              <option value="joined_desc">Most joined</option>
+            </Select>
+          </FormField>
+        </div> : null}
       </div>
     </Card>
 
@@ -317,9 +386,22 @@ export default function AdCampaignsPage() {
         onDelete={setDeletingHypothesis}
       />
     ) : null}
+    {viewMode === 'promos' ? (
+      <PromosSection
+        promos={visiblePromos}
+        loading={promosLoading}
+        error={promosError}
+        onEdit={(promo) => {
+          setEditingPromo(promo);
+          setPromoFormOpen(true);
+        }}
+        onDelete={setDeletingPromo}
+      />
+    ) : null}
 
     <CampaignModal open={createOpen} title="Create Campaign" channels={channels ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v: any) => createMutation.mutate(v)} />
     <CampaignModal open={!!editing} title="Edit Campaign" channels={channels ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v: any) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
+    <PromoModal open={promoFormOpen} title={editingPromo ? 'Edit Promo' : 'Create Promo'} initial={editingPromo ?? undefined} onClose={() => { setPromoFormOpen(false); setEditingPromo(null); }} onSubmit={(payload) => editingPromo ? updatePromoMutation.mutate({ id: editingPromo.id, payload }) : createPromoMutation.mutate(payload)} channels={ownTelegramChannels} />
     <HypothesisFormModal
       open={hypothesisFormOpen}
       hypothesis={editingHypothesis}
@@ -339,6 +421,7 @@ export default function AdCampaignsPage() {
     <SyncDetailsModal open={syncDetailsOpen} onClose={() => setSyncDetailsOpen(false)} performance={performance} syncRuns={syncRuns || []} hasCampaigns={campaigns.length > 0} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
     <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis && deleteHypothesisMutation.mutate(deletingHypothesis.id)} label="Delete" />
+    <ConfirmDeleteModal open={!!deletingPromo} entityName={deletingPromo?.title ?? 'promo'} onClose={() => setDeletingPromo(null)} onConfirm={() => deletingPromo && deletePromoMutation.mutate(deletingPromo.id)} label="Delete" />
   </AppShell>;
 }
 
@@ -386,7 +469,6 @@ function calculatedKpiStatus(value: number | null, channel?: AdCampaign['telegra
 }
 
 function effectiveCampaignKpiStatus(campaign: AdCampaign, primaryCostPerJoined: number | null, costPerJoined: number | null): AdCampaignKpiStatus {
-  if (campaign.overallStatus && campaign.overallStatus !== 'unknown') return campaign.overallStatus;
   return calculatedKpiStatus(primaryCostPerJoined ?? costPerJoined, campaign.telegramChannel);
 }
 
@@ -439,6 +521,17 @@ function filterHypotheses(hypotheses: AdHypothesis[], search: string) {
   ].filter(Boolean).join(' ').toLowerCase().includes(query));
 }
 
+function filterPromos(promos: Promo[], search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) return promos;
+  return promos.filter((promo) => [
+    promo.title,
+    promo.text,
+    promo.telegramChannel?.title,
+    promo.status,
+  ].filter(Boolean).join(' ').toLowerCase().includes(query));
+}
+
 function displayCampaignTitle(campaign: any) {
   const date = toInputDate(campaign?.placementDate || campaign?.startedAt || campaign?.createdAt);
   let title = String(campaign?.title || '').trim();
@@ -485,9 +578,37 @@ function CampaignsTable({
   onDelete: (campaign: any) => void;
   onToggleExclude: (campaign: any, excludeFromAnalytics: boolean) => void;
 }) {
+  const [promoTooltip, setPromoTooltip] = useState<{
+    promo: Promo;
+    left: number;
+    top: number;
+  } | null>(null);
+  const [kpiTooltip, setKpiTooltip] = useState<{
+    channel: TelegramChannel;
+    left: number;
+    top: number;
+  } | null>(null);
+
+  const showPromoTooltip = (promo: Promo, element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const width = 320;
+    const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
+    const top = Math.min(rect.bottom + 10, Math.max(16, window.innerHeight - 260));
+    setPromoTooltip({ promo, left, top });
+  };
+  const showKpiTooltip = (channel: TelegramChannel | undefined, element: HTMLElement) => {
+    if (!channel) return;
+    const rect = element.getBoundingClientRect();
+    const width = 430;
+    const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
+    const top = Math.min(rect.bottom + 10, Math.max(16, window.innerHeight - 96));
+    setKpiTooltip({ channel, left, top });
+  };
+
   return (
-    <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
-      <table className="w-full min-w-[1160px] table-fixed text-left text-sm">
+    <>
+      <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
+        <table className="w-full min-w-[1160px] table-fixed text-left text-sm">
           <colgroup>
             <col className="w-[390px]" />
             <col className="w-[280px]" />
@@ -520,7 +641,13 @@ function CampaignsTable({
                 <tr key={campaign.id} className={`align-top text-slate-200 transition-colors hover:bg-neutral-900 ${index % 2 ? 'bg-neutral-950' : 'bg-black'}`}>
                   <td className="px-4 py-4">
                     <div className="min-w-0 space-y-3">
-                      <p className="truncate font-semibold text-white">{displayCampaignTitleWithDate(campaign)}</p>
+                      <div className="truncate font-semibold text-white">
+                        <CampaignTitleWithPromo
+                          campaign={campaign}
+                          onPromoEnter={showPromoTooltip}
+                          onPromoLeave={() => setPromoTooltip(null)}
+                        />
+                      </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                         <SourceChip source={campaign.telegramChannel} fallback="-" compact />
                       </div>
@@ -539,11 +666,16 @@ function CampaignsTable({
                       left={left}
                       moneySettings={moneySettings}
                       rates={rates}
+                      kpiStatus={kpiStatus}
                     />
                   </td>
                   <td className="px-4 py-4">
                     <div className="flex flex-wrap gap-1">
-                      <KpiStatusBadge status={kpiStatus} />
+                      <KpiStatusBadge
+                        status={kpiStatus}
+                        onMouseEnter={(event) => showKpiTooltip(campaign.telegramChannel, event.currentTarget)}
+                        onMouseLeave={() => setKpiTooltip(null)}
+                      />
                       {metrics.length ? metrics.slice(0, 3).map((metric) => (
                         <span key={metric.label} className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">{metric.label}: {metric.value}</span>
                       )) : (
@@ -567,7 +699,78 @@ function CampaignsTable({
               );
             })}
           </tbody>
-      </table>
+        </table>
+      </div>
+      {promoTooltip ? <PromoTooltip promo={promoTooltip.promo} left={promoTooltip.left} top={promoTooltip.top} /> : null}
+      {kpiTooltip ? <KpiTooltip channel={kpiTooltip.channel} left={kpiTooltip.left} top={kpiTooltip.top} /> : null}
+    </>
+  );
+}
+
+function CampaignTitleWithPromo({
+  campaign,
+  onPromoEnter,
+  onPromoLeave,
+}: {
+  campaign: AdCampaign;
+  onPromoEnter: (promo: Promo, element: HTMLElement) => void;
+  onPromoLeave: () => void;
+}) {
+  const title = displayCampaignTitleWithDate(campaign);
+  const promo = campaign.promo;
+  const promoTitle = String(promo?.title || '').trim();
+  const canPreviewPromo = Boolean(promo && (promo.imageData || promo.text));
+
+  if (!promo || !promoTitle || !canPreviewPromo) return <>{title}</>;
+
+  const promoSegment = promoTitleSegment(title, promoTitle);
+  const index = title.indexOf(promoSegment);
+  if (index < 0) return <>{title}</>;
+
+  const before = title.slice(0, index);
+  const after = title.slice(index + promoSegment.length);
+
+  return (
+    <>
+      {before}
+      <span
+        className="cursor-help text-sky-200 decoration-sky-400/70 decoration-dotted underline-offset-4 hover:underline"
+        onMouseEnter={(event) => onPromoEnter(promo, event.currentTarget)}
+        onMouseLeave={onPromoLeave}
+      >
+        {promoSegment}
+      </span>
+      {after}
+    </>
+  );
+}
+
+function promoTitleSegment(title: string, promoTitle: string) {
+  if (title.includes(promoTitle)) return promoTitle;
+
+  const parts = title.split('|').map((part) => part.trim());
+  const startsWithDate = /^\d{4}-\d{2}-\d{2}$/.test(parts[0] || '');
+  if (startsWithDate && parts.length >= 3) return parts[2];
+  if (!startsWithDate && parts.length >= 2) return parts[1];
+
+  return promoTitle;
+}
+
+function PromoTooltip({ promo, left, top }: { promo: Promo; left: number; top: number }) {
+  return (
+    <div
+      className="fixed z-[80] w-[320px] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950 shadow-2xl"
+      style={{ left, top }}
+    >
+      {promo.imageData ? (
+        <div className="flex justify-center bg-neutral-900 p-2">
+          <img src={promo.imageData} alt="" className="max-h-36 max-w-full rounded-lg object-contain" />
+        </div>
+      ) : null}
+      <div className="space-y-2 p-3">
+        <div className="font-semibold text-white">{promo.title}</div>
+        {promo.text ? <p className="line-clamp-5 whitespace-pre-wrap text-sm leading-snug text-neutral-300">{promo.text}</p> : null}
+      </div>
     </div>
   );
 }
@@ -583,6 +786,7 @@ function PerformanceCell({
   left,
   moneySettings,
   rates,
+  kpiStatus,
 }: {
   cost: number;
   currency: string;
@@ -594,7 +798,9 @@ function PerformanceCell({
   left: number;
   moneySettings: any;
   rates: any[] | undefined;
+  kpiStatus: AdCampaignKpiStatus;
 }) {
+  const kpiTextClass = kpiMetricTextClass(kpiStatus);
   return (
     <div className="grid grid-cols-[minmax(90px,1fr)_minmax(70px,0.7fr)_minmax(80px,0.8fr)] gap-3">
       <div>
@@ -603,17 +809,24 @@ function PerformanceCell({
       </div>
       <div>
         <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Joined</p>
-        <p className="font-semibold leading-snug text-emerald-300">{formatMetric(joined)}</p>
+        <p className={`font-semibold leading-snug ${kpiTextClass}`}>{formatMetric(joined)}</p>
         <p className="text-xs leading-snug text-slate-500">Net {formatMetric(net)}{left > 0 ? ` / left ${formatMetric(left)}` : ''}</p>
       </div>
       <div>
         <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">CPA</p>
         {costPerJoined !== null ? (
-          <MoneyStack amount={costPerJoined} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCostPerJoined} mainClassName="font-semibold leading-snug text-white" subClassName="text-xs leading-snug text-slate-500" />
+          <MoneyStack amount={costPerJoined} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCostPerJoined} mainClassName={`font-semibold leading-snug ${kpiTextClass}`} subClassName="text-xs leading-snug text-slate-500" />
         ) : <p className="text-slate-500">-</p>}
       </div>
     </div>
   );
+}
+
+function kpiMetricTextClass(status?: AdCampaignKpiStatus | null) {
+  if (status === 'good') return 'text-emerald-300';
+  if (status === 'acceptable') return 'text-yellow-200';
+  if (status === 'bad') return 'text-rose-200';
+  return 'text-white';
 }
 
 function SourceChip({ source, fallback, compact = false }: { source: any; fallback?: string; compact?: boolean }) {
@@ -781,15 +994,60 @@ function kpiStatusTitle(status?: AdCampaignKpiStatus | null) {
   return 'KPI range or enough CPA data is missing.';
 }
 
-function KpiStatusBadge({ status }: { status?: AdCampaignKpiStatus | null }) {
+function KpiStatusBadge({
+  status,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  status?: AdCampaignKpiStatus | null;
+  onMouseEnter?: MouseEventHandler<HTMLSpanElement>;
+  onMouseLeave?: MouseEventHandler<HTMLSpanElement>;
+}) {
   return (
     <span
-      className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiStatusClass(status)}`}
+      className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiStatusClass(status)} ${onMouseEnter ? 'cursor-help' : ''}`}
       title={kpiStatusTitle(status)}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {kpiStatusLabel(status)}
     </span>
   );
+}
+
+function KpiTooltip({ channel, left, top }: { channel: TelegramChannel; left: number; top: number }) {
+  return (
+    <div
+      className="fixed z-[80] rounded-lg border border-slate-700 bg-neutral-950 px-3 py-2 shadow-2xl"
+      style={{ left, top, width: 430 }}
+    >
+      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+        <span className="text-white">KPI $:</span>
+        <KpiRangeChip tone="target" label={`target ${formatKpiRange(channel.targetCpaFrom, channel.targetCpa)}`} />
+        <KpiRangeChip tone="ok" label={`ok ${formatKpiRange(channel.acceptableCpaFrom, channel.acceptableCpa)}`} />
+        <KpiRangeChip tone="stop" label={`stop ${formatKpiRange(channel.stopCpaFrom ?? channel.stopCpa, null, true)}`} />
+      </div>
+    </div>
+  );
+}
+
+function KpiRangeChip({ tone, label }: { tone: 'target' | 'ok' | 'stop'; label: string }) {
+  const className = {
+    target: 'border-emerald-700 bg-emerald-950/50 text-emerald-200',
+    ok: 'border-yellow-700 bg-yellow-950/50 text-yellow-200',
+    stop: 'border-rose-700 bg-rose-950/50 text-rose-200',
+  }[tone];
+  return <span className={`rounded border px-2 py-1 ${className}`}>{label}</span>;
+}
+
+function formatKpiRange(from?: number | string | null, to?: number | string | null, openEnded = false) {
+  const fromValue = numberOrNull(from);
+  const toValue = numberOrNull(to);
+  if (openEnded && fromValue != null) return `${formatMetric(fromValue, 2)}+`;
+  if (fromValue != null && toValue != null) return `${formatMetric(fromValue, 2)}-${formatMetric(toValue, 2)}`;
+  if (fromValue != null) return `${formatMetric(fromValue, 2)}+`;
+  if (toValue != null) return `≤${formatMetric(toValue, 2)}`;
+  return '-';
 }
 
 function SyncRunSummary({ run, compact = false, inline = false }: { run: any; compact?: boolean; inline?: boolean }) {
@@ -826,6 +1084,52 @@ function MiniPerformance({ label, value }: { label: string; value: React.ReactNo
       <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
       {typeof value === 'string' ? <p className="font-semibold leading-snug text-white">{value}</p> : value}
     </div>
+  );
+}
+
+function PromosSection({
+  promos,
+  loading,
+  error,
+  onEdit,
+  onDelete,
+}: {
+  promos: Promo[];
+  loading: boolean;
+  error: unknown;
+  onEdit: (promo: Promo) => void;
+  onDelete: (promo: Promo) => void;
+}) {
+  return (
+    <>
+      {loading ? <LoadingState /> : null}
+      {error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load promos.</div> : null}
+      {!loading && !promos.length ? <EmptyState text="No promos yet." /> : null}
+      {promos.length ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {promos.map((promo) => (
+            <Card key={promo.id} className="min-h-[260px]">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-lg font-semibold text-white">{promo.title}</h3>
+                  {promo.telegramChannel ? <SourceChip source={promo.telegramChannel} compact /> : null}
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <IconButton onClick={() => onEdit(promo)} />
+                  <IconButton kind="delete" onClick={() => onDelete(promo)} />
+                </div>
+              </div>
+              {promo.imageData ? (
+                <div className="mb-3 flex h-36 items-center justify-center overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
+                  <img src={promo.imageData} alt="" className="max-h-full max-w-full object-contain" />
+                </div>
+              ) : null}
+              {promo.text ? <p className="line-clamp-5 whitespace-pre-wrap text-sm leading-relaxed text-neutral-300">{promo.text}</p> : <p className="text-sm text-neutral-500">No description.</p>}
+            </Card>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -907,6 +1211,135 @@ function HypothesesSection({
         </div>
       ) : null}
     </>
+  );
+}
+
+function PromoModal({
+  open,
+  onClose,
+  onSubmit,
+  title,
+  initial,
+  channels,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (payload: { telegramChannelId: string; title: string; imageData?: string; text?: string }) => void;
+  title: string;
+  initial?: Promo;
+  channels: TelegramChannel[];
+}) {
+  const channelOptions = useMemo(
+    () => channels.map((channel) => ({ value: channel.id, label: channel.title, iconUrl: channel.photoUrl, iconFallback: channel.title })),
+    [channels],
+  );
+  const { register, handleSubmit, setValue, watch, reset, formState: { errors } } = useForm({
+    defaultValues: {
+      telegramChannelId: initial?.telegramChannelId ?? '',
+      title: initial?.title ?? '',
+      imageData: initial?.imageData ?? '',
+      notes: initial?.text ?? '',
+    },
+  });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageData = watch('imageData') as string | undefined;
+  const selectedChannelId = watch('telegramChannelId') as string;
+
+  useEffect(() => {
+    if (!open) return;
+    reset({
+      telegramChannelId: initial?.telegramChannelId ?? '',
+      title: initial?.title ?? '',
+      imageData: initial?.imageData ?? '',
+      notes: initial?.text ?? '',
+    });
+  }, [initial, open, reset]);
+
+  useEffect(() => {
+    if (!open || selectedChannelId || channels.length !== 1) return;
+    setValue('telegramChannelId', channels[0].id);
+  }, [channels, open, selectedChannelId, setValue]);
+
+  const applyImageFile = (file?: File) => {
+    if (!file) return;
+    setUploadingImage(true);
+    promosApi
+      .uploadImage(file)
+      .then((res) => setValue('imageData', String(res.imageUrl || '')))
+      .finally(() => setUploadingImage(false));
+  };
+
+  const submit = (values: any) => {
+    const notes = String(values.notes ?? '').trim();
+    onSubmit({
+      telegramChannelId: values.telegramChannelId,
+      title: String(values.title || '').trim(),
+      imageData: values.imageData || undefined,
+      text: notes || undefined,
+    });
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <form className="space-y-3" onSubmit={handleSubmit(submit)}>
+        <FormField label="Channel" required error={errors.telegramChannelId ? 'Required field' : undefined}>
+          <CustomSelect
+            value={selectedChannelId}
+            onChange={(value) => setValue('telegramChannelId', value)}
+            placeholder="Select channel"
+            options={channelOptions}
+          />
+        </FormField>
+        <FormField label="Title" required error={errors.title ? 'Required field' : undefined}>
+          <Input {...register('title', { required: true })} />
+        </FormField>
+        <div className="block text-sm">
+          <span className="mb-1 block text-neutral-300">Promo image</span>
+          {!imageData ? (
+            <div
+              tabIndex={0}
+              onPaste={(event: ClipboardEvent<HTMLDivElement>) => {
+                const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith('image/'));
+                if (!imageItem) return;
+                const file = imageItem.getAsFile();
+                if (!file) return;
+                event.preventDefault();
+                applyImageFile(file);
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              className="cursor-pointer rounded-xl border border-dashed border-neutral-600 bg-neutral-900/70 p-4 transition hover:border-neutral-400 focus:border-blue-500 focus:outline-none"
+            >
+              <p className="text-sm text-neutral-200">Click to choose image or paste with Ctrl+V</p>
+              <p className="mt-1 text-xs text-neutral-400">Supports screenshots and copied image files</p>
+              {uploadingImage ? <p className="mt-1 text-xs text-blue-300">Uploading image...</p> : null}
+            </div>
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(event: ChangeEvent<HTMLInputElement>) => applyImageFile(event.target.files?.[0])}
+            className="hidden"
+          />
+          {imageData ? (
+            <div className="mt-2 flex h-40 items-center justify-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900">
+              <img src={imageData} alt="" className="max-h-full max-w-full object-contain" />
+            </div>
+          ) : null}
+          {imageData ? <div className="mt-2"><Button variant="secondary" type="button" onClick={() => setValue('imageData', '')}>Remove image</Button></div> : null}
+        </div>
+        <input type="hidden" {...register('telegramChannelId', { required: true })} />
+        <input type="hidden" {...register('imageData')} />
+        <FormField label="Description">
+          <Textarea {...register('notes')} />
+        </FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="submit">Save</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
