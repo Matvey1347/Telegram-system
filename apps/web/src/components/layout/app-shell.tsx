@@ -18,6 +18,7 @@ import {
   Gauge,
   Landmark,
   LogOut,
+  Menu,
   Plus,
   Search,
   MessageCircle,
@@ -27,6 +28,7 @@ import {
   Target,
   UserRound,
   Users,
+  X,
 } from 'lucide-react';
 
 const dashboardItem = { label: 'Dashboard', href: '/', icon: Gauge } as const;
@@ -73,6 +75,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const [globalSearch, setGlobalSearch] = useState('');
   const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     return localStorage.getItem('selected-workspace-id') ?? '';
@@ -144,6 +147,19 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [globalSearch]);
 
   useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
     if (!workspaces?.length) return;
     if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
     const nextWorkspaceId = workspaces[0].id;
@@ -181,9 +197,42 @@ export function AppShell({ children }: PropsWithChildren) {
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-neutral-950 text-neutral-100">
-      <aside className="fixed left-0 top-0 z-30 flex h-screen w-64 flex-col border-r border-neutral-800 bg-neutral-950 p-5">
+      <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-neutral-800 bg-neutral-950/95 px-3 backdrop-blur lg:hidden">
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-800 text-neutral-200 hover:bg-neutral-900"
+          aria-label="Open navigation"
+        >
+          <Menu size={20} />
+        </button>
+        <span className="text-sm font-semibold">Telegram System</span>
+        <span className="h-10 w-10" aria-hidden="true" />
+      </header>
+      {mobileMenuOpen ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-black/65 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-label="Close navigation"
+        />
+      ) : null}
+      <aside
+        className={`fixed left-0 top-0 z-40 flex h-[100dvh] w-[min(19rem,calc(100vw-1.25rem))] -translate-x-full flex-col border-r border-neutral-800 bg-neutral-950 p-4 shadow-2xl transition-transform duration-200 lg:z-30 lg:h-screen lg:w-64 lg:translate-x-0 lg:p-5 lg:shadow-none ${mobileMenuOpen ? 'translate-x-0' : ''}`}
+        onClickCapture={(event) => {
+          if ((event.target as HTMLElement).closest('a')) setMobileMenuOpen(false);
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(false)}
+          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-900 lg:hidden"
+          aria-label="Close navigation"
+        >
+          <X size={18} />
+        </button>
         <div className="mb-8">
-          <h1 className="text-xl font-semibold">Telegram System</h1>
+          <h1 className="pr-10 text-xl font-semibold lg:pr-0">Telegram System</h1>
           <p className="mt-1 text-sm text-neutral-400">Finance, ads and analytics</p>
         </div>
 
@@ -292,7 +341,7 @@ export function AppShell({ children }: PropsWithChildren) {
 
         <button onClick={logout} className="mt-6 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-900"><LogOut size={16} /> Logout</button>
       </aside>
-      <main className="ml-64 min-h-screen w-[calc(100%-16rem)] min-w-0 px-4 py-5 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
+      <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
     </div>
   );
 }

@@ -230,7 +230,7 @@ export function DateInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
         <CalendarDays size={16} className="text-neutral-400" />
       </button>
       {open ? (
-        <div className={`absolute z-50 w-[300px] rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
+        <div className={`absolute z-50 w-[min(300px,calc(100vw-2rem))] rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
           <div className="mb-2 flex items-center justify-between">
             <button type="button" className="rounded p-1 hover:bg-neutral-800" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}><ChevronLeft size={16} /></button>
             <p className="text-sm font-medium">{cursor.toLocaleString(undefined, { month: 'long', year: 'numeric' })}</p>
@@ -378,7 +378,7 @@ export function DateRangeInput({ from = '', to = '', onChange, disabled, classNa
         <CalendarDays size={16} className="text-neutral-400" />
       </button>
       {open ? (
-        <div className={`absolute z-50 w-[320px] rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
+        <div className={`absolute z-50 w-[min(320px,calc(100vw-2rem))] rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
           <div className="mb-2 flex items-center justify-between">
             <button type="button" className="rounded p-1 hover:bg-neutral-800" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}><ChevronLeft size={16} /></button>
             <p className="text-sm font-medium">{cursor.toLocaleString(undefined, { month: 'long', year: 'numeric' })}</p>
@@ -506,7 +506,7 @@ export function CustomSelect({
 }
 
 export function Card({ children, className = '' }: PropsWithChildren<{ className?: string }>) {
-  return <div className={`rounded-2xl border border-neutral-800 bg-neutral-900 p-5 ${className}`}>{children}</div>;
+  return <div className={`rounded-lg border border-neutral-800 bg-neutral-900 p-4 sm:p-5 ${className}`}>{children}</div>;
 }
 
 export function Table({ children }: PropsWithChildren) {
@@ -555,12 +555,12 @@ export function Modal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className={`flex max-h-[84vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-900 shadow-2xl ${size === 'sm' ? 'max-w-[560px]' : 'max-w-[660px]'}`}>
-        <div className="mb-1 flex items-center justify-between p-5 pb-3">
-          <h3 className="text-xl font-semibold">{title}</h3>
+      <div className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${size === 'sm' ? 'max-w-[560px]' : 'max-w-[660px]'}`}>
+        <div className="mb-1 flex items-center justify-between p-4 pb-3 sm:p-5 sm:pb-3">
+          <h3 className="text-lg font-semibold sm:text-xl">{title}</h3>
           <button onClick={onClose} className="cursor-pointer rounded-lg border border-neutral-700 p-2 hover:bg-neutral-800"><X size={16} /></button>
         </div>
-        <div className="min-h-0 overflow-y-auto px-5 pb-5">
+        <div className="min-h-0 overflow-y-auto px-4 pb-4 sm:px-5 sm:pb-5">
           {children}
         </div>
       </div>
@@ -601,9 +601,9 @@ export function ConfirmDeleteModal({
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
-    <div className="mb-6 flex items-start justify-between gap-4">
-      <div><h2 className="text-3xl font-semibold">{title}</h2>{subtitle ? <p className="mt-1 text-neutral-400">{subtitle}</p> : null}</div>
-      {action}
+    <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div><h2 className="text-2xl font-semibold sm:text-3xl">{title}</h2>{subtitle ? <p className="mt-1 text-sm text-neutral-400 sm:text-base">{subtitle}</p> : null}</div>
+      {action ? <div className="w-full sm:w-auto [&>a]:inline-flex [&>a]:w-full [&>button]:w-full sm:[&>a]:w-auto sm:[&>button]:w-auto">{action}</div> : null}
     </div>
   );
 }
