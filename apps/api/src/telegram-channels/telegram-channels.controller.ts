@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -75,6 +77,25 @@ export class TelegramChannelsController {
     @Param('id') id: string,
   ) {
     return this.service.financialSummary(user.sub, id);
+  }
+  @Get(':id/export') async exportChannel(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Res() response: Response,
+  ) {
+    const { buffer, filename } = await this.service.exportChannelWorkbook(
+      user.sub,
+      id,
+    );
+    response.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    response.send(buffer);
   }
   @Delete(':id') remove(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.remove(user.sub, id);

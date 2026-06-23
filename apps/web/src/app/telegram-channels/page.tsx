@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, CircleHelp, RefreshCw } from "lucide-react";
+import { ArrowUpRight, CircleHelp, Download, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -104,6 +104,28 @@ function formatLocalDate(value?: string | Date | null) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function safeExportFileName(value: string) {
+  return (
+    value
+      .trim()
+      .replace(/^@/, "")
+      .replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || "telegram-channel"
+  );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function isOwnChannel(channel: TelegramChannel) {
@@ -1136,6 +1158,8 @@ export default function TelegramChannelsPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [mtprotoCreateOpen, setMtprotoCreateOpen] = useState(false);
   const [botCreateOpen, setBotCreateOpen] = useState(false);
   const tab = parseTelegramTab(searchParams.get("tab"));
@@ -1333,6 +1357,37 @@ export default function TelegramChannelsPage() {
   const error = channelsError || peopleError;
   const emptyText =
     channelFilter === "own" ? "No own channels" : "No external channels";
+  const handleExport = async (channelIds: string[]) => {
+    const selectedChannels = (channels || []).filter((channel) =>
+      channelIds.includes(channel.id),
+    );
+    if (!selectedChannels.length) {
+      pushToast("Select at least one channel.", "error");
+      return;
+    }
+    setExporting(true);
+    try {
+      for (const channel of selectedChannels) {
+        const blob = await telegramChannelsApi.export(channel.id);
+        const baseName = safeExportFileName(channel.username || channel.title);
+        downloadBlob(
+          blob,
+          `${baseName}_export_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        );
+      }
+      setExportOpen(false);
+      pushToast(
+        selectedChannels.length === 1
+          ? "Export downloaded."
+          : `Downloaded ${selectedChannels.length} export files.`,
+        "success",
+      );
+    } catch (requestError) {
+      pushToast(requestErrorMessage(requestError, "Export failed."), "error");
+    } finally {
+      setExporting(false);
+    }
+  };
   const headerAction =
     tab === "networks" ? (
       <Button
@@ -1349,6 +1404,20 @@ export default function TelegramChannelsPage() {
       <Button onClick={() => setMtprotoCreateOpen(true)}>
         Connect account
       </Button>
+    ) : tab === "channels" ? (
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setExportOpen(true)}
+          disabled={!channels?.length}
+          className="inline-flex items-center gap-2"
+        >
+          <Download size={16} />
+          Export
+        </Button>
+        <Button onClick={() => setImportOpen(true)}>Import</Button>
+      </div>
     ) : (
       <Button onClick={() => setImportOpen(true)}>Import</Button>
     );
@@ -1564,6 +1633,14 @@ export default function TelegramChannelsPage() {
         onClose={() => setImportOpen(false)}
         onSubmit={(input) => importMutation.mutate(input)}
         isSubmitting={importMutation.isPending}
+      />
+      <ExportChannelsModal
+        open={exportOpen}
+        channels={channels || []}
+        defaultChannelIds={filteredChannels.map((channel) => channel.id)}
+        isSubmitting={exporting}
+        onClose={() => setExportOpen(false)}
+        onSubmit={handleExport}
       />
       <ConfirmDeleteModal
         open={!!deleting}
@@ -2047,6 +2124,92 @@ function ImportChannelModal({
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function ExportChannelsModal({
+  open,
+  channels,
+  defaultChannelIds,
+  isSubmitting,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  channels: TelegramChannel[];
+  defaultChannelIds: string[];
+  isSubmitting: boolean;
+  onClose: () => void;
+  onSubmit: (channelIds: string[]) => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedIds(
+      defaultChannelIds.length
+        ? defaultChannelIds
+        : channels.map((channel) => channel.id),
+    );
+  }, [channels, defaultChannelIds, open]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allSelected =
+    channels.length > 0 && selectedIds.length === channels.length;
+  const toggleChannel = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? [] : channels.map((channel) => channel.id));
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Export channels">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-slate-400">
+            One Excel file will be downloaded for each selected channel.
+          </p>
+          <Button type="button" variant="secondary" onClick={toggleAll}>
+            {allSelected ? "Clear all" : "Select all"}
+          </Button>
+        </div>
+        <div className="max-h-96 space-y-2 overflow-auto rounded-lg border border-slate-800 p-2">
+          {channels.map((channel) => (
+            <ChannelSelectRow
+              key={channel.id}
+              channel={channel}
+              checked={selectedSet.has(channel.id)}
+              onToggle={() => toggleChannel(channel.id)}
+            />
+          ))}
+          {!channels.length ? (
+            <p className="p-2 text-sm text-slate-400">
+              No channels available for export.
+            </p>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-slate-400">
+            Selected: {formatNumber(selectedIds.length)}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isSubmitting || !selectedIds.length}
+              onClick={() => onSubmit(selectedIds)}
+            >
+              {isSubmitting ? "Exporting..." : "Export"}
+            </Button>
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }

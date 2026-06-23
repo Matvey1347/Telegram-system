@@ -612,6 +612,7 @@ export const transfersApi = {
 export const telegramChannelsApi = {
   ...crud<TelegramChannel>('/telegram-channels'),
   import: async (input: string) => (await api.post<ImportedTelegramSource>('/telegram-channels/import', { input })).data,
+  export: async (id: string) => (await api.get<Blob>(`/telegram-channels/${id}/export`, { responseType: 'blob' })).data,
   sources: async (id: string) => (await api.get<TelegramChannelSourceAccess[]>(`/telegram-channels/${id}/sources`)).data,
   analyticsSources: async (id: string) => (await api.get<TelegramAnalyticsSources>(`/telegram-channels/${id}/analytics-sources`)).data,
   audience: async (id: string) => (await api.get<TelegramChannelAudience>(`/telegram-channels/${id}/audience`)).data,
