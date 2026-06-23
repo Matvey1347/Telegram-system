@@ -98,7 +98,7 @@ export default function WorkspaceMembersPage() {
                   onChange={(avatarIconId) => updateMutation.mutate({ id: m.id, payload: { avatarIconId } })}
                   buttonLabel="Upload avatar"
                   className={`!h-16 !w-16 !overflow-hidden !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner ${!m.avatarIconId ? '[&>svg]:hidden' : ''}`}
-                  iconClassName="!h-full !w-full !rounded-2xl !border-0 !bg-transparent"
+                  iconClassName="!h-full !w-full !rounded-2xl !border-0 !bg-transparent !text-4xl"
                 />
                 {!m.avatarIconId ? (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl text-2xl font-semibold text-neutral-300">

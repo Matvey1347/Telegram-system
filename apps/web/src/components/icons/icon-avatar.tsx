@@ -3,10 +3,17 @@
 import type { Icon } from '@/lib/api';
 
 const sizes = {
-  xs: 'h-5 w-5 text-[11px]',
-  sm: 'h-7 w-7 text-xs',
-  md: 'h-9 w-9 text-sm',
-  lg: 'h-12 w-12 text-base',
+  xs: 'h-5 w-5',
+  sm: 'h-7 w-7',
+  md: 'h-9 w-9',
+  lg: 'h-12 w-12',
+} as const;
+
+const emojiSizes = {
+  xs: 'text-sm',
+  sm: 'text-lg',
+  md: 'text-2xl',
+  lg: 'text-3xl',
 } as const;
 
 export function IconAvatar({
@@ -29,7 +36,7 @@ export function IconAvatar({
   }
 
   if (icon?.emoji) {
-    return <span className={base}>{icon.emoji}</span>;
+    return <span className={`${base} ${emojiSizes[size]}`}>{icon.emoji}</span>;
   }
 
   const fallback = (label?.trim()?.[0] || '·').toUpperCase();

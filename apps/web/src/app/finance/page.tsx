@@ -18,7 +18,7 @@ import {
 } from '@/lib/api';
 import { formatMoney, formatRate } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, LoadingState, PageHeader } from '@/components/ui/primitives';
+import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, PageHeader, Skeleton } from '@/components/ui/primitives';
 
 type DateFilters = { dateFrom: string; dateTo: string };
 type CategoryStats = { count: number; totalPrimary: number };
@@ -100,13 +100,12 @@ export default function FinancePage() {
         </div>
       </Card>
 
-      {loadingAccounts || loadingTransactions || loadingTransfers || loadingCategories ? <LoadingState /> : null}
       {transactionsError ? <div className="mb-4 text-red-300">Failed to load transactions</div> : null}
       {transfersError ? <div className="mb-4 text-red-300">Failed to load transfers</div> : null}
       {categoriesError ? <div className="mb-4 text-red-300">Failed to load categories</div> : null}
 
       <div className="space-y-6">
-        <FinanceSection title="Accounts" href="/accounts">
+        <FinanceSection title="Accounts" href="/accounts" isLoading={loadingAccounts} skeleton="cards">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {accounts?.map((account) => (
               <EntityCard
@@ -124,7 +123,7 @@ export default function FinancePage() {
           {!loadingAccounts && !accounts?.length ? <EmptyState text="No accounts yet" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Transactions" href="/transactions">
+        <FinanceSection title="Transactions" href="/transactions" isLoading={loadingTransactions} skeleton="table">
           <div className="table-scroll w-full rounded-lg border border-neutral-800">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -167,7 +166,7 @@ export default function FinancePage() {
           {!loadingTransactions && !transactions?.length ? <EmptyState text="No transactions" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Categories" href="/categories">
+        <FinanceSection title="Categories" href="/categories" isLoading={loadingCategories} skeleton="cards">
           <div className="mb-6 flex flex-wrap items-center gap-3">
             {([
               { value: 'expense', label: 'Expenses', icon: CircleMinus },
@@ -214,7 +213,7 @@ export default function FinancePage() {
           {!loadingCategories && !categories?.length ? <EmptyState text="No categories" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Transfers" href="/transfers">
+        <FinanceSection title="Transfers" href="/transfers" isLoading={loadingTransfers} skeleton="table">
           <div className="table-scroll w-full rounded-lg border border-neutral-800">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -243,15 +242,33 @@ export default function FinancePage() {
   );
 }
 
-function FinanceSection({ title, href, children }: { title: string; href: string; children: ReactNode }) {
+function FinanceSection({ title, href, children, isLoading, skeleton }: { title: string; href: string; children: ReactNode; isLoading?: boolean; skeleton?: 'cards' | 'table' }) {
   return (
     <section>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-white">{title}</h2>
         <Link href={href}><Button variant="secondary">Open</Button></Link>
       </div>
-      {children}
+      {isLoading ? <FinanceSectionSkeleton variant={skeleton} /> : children}
     </section>
+  );
+}
+
+function FinanceSectionSkeleton({ variant = 'cards' }: { variant?: 'cards' | 'table' }) {
+  if (variant === 'table') {
+    return (
+      <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 p-3" role="status" aria-label="Loading section">
+        <div className="space-y-3">
+          {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-11 w-full" />)}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" role="status" aria-label="Loading section">
+      {Array.from({ length: 3 }, (_, index) => <Card key={index}><Skeleton className="h-5 w-1/2" /><Skeleton className="mt-5 h-8 w-2/3" /><Skeleton className="mt-4 h-3 w-full" /><Skeleton className="mt-2 h-3 w-4/5" /></Card>)}
+    </div>
   );
 }
 

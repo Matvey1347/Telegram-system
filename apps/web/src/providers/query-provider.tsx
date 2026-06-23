@@ -1,6 +1,6 @@
 'use client';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { keepPreviousData, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PropsWithChildren, useState } from 'react';
 
 export function QueryProvider({ children }: PropsWithChildren) {
@@ -9,7 +9,9 @@ export function QueryProvider({ children }: PropsWithChildren) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30_000,
+            staleTime: 60_000,
+            gcTime: 20 * 60_000,
+            placeholderData: keepPreviousData,
             refetchOnWindowFocus: false,
             retry: 1,
           },

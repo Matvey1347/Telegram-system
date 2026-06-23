@@ -21,7 +21,7 @@ import {
 import { Activity, Banknote, Megaphone, RadioTower, Target, TrendingUp, Users } from 'lucide-react';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
-import { Card, DateRangeInput, EmptyState, FormField, LoadingState, PageHeader, Table } from '@/components/ui/primitives';
+import { Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
 import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, transactionCategoriesApi } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
@@ -152,7 +152,7 @@ export default function DashboardPage() {
         </div>
       </Card>
 
-      {isLoading ? <LoadingState /> : null}
+      {isLoading && !data ? <DashboardSkeleton /> : null}
       {error ? <Card className="text-red-300">Failed to load dashboard.</Card> : null}
 
       {data ? (
@@ -323,6 +323,21 @@ export default function DashboardPage() {
         </div>
       ) : null}
     </AppShell>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6" aria-label="Loading dashboard" role="status">
+      <span className="sr-only">Loading dashboard</span>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 8 }, (_, index) => <Card key={index}><Skeleton className="h-4 w-24" /><Skeleton className="mt-4 h-8 w-32" /><Skeleton className="mt-3 h-3 w-40" /></Card>)}
+      </div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card><Skeleton className="h-5 w-32" /><Skeleton className="mt-5 h-[290px] w-full" /></Card>
+        <Card><Skeleton className="h-5 w-28" /><Skeleton className="mt-5 h-[290px] w-full" /></Card>
+      </div>
+    </div>
   );
 }
 

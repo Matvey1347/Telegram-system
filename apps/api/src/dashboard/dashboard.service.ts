@@ -51,9 +51,12 @@ export class DashboardService {
   ) {}
 
   async summary(userId: string, input?: { dateFrom?: string; dateTo?: string }) {
-    const workspaceId =
-      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const workspaceId = await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const { from, to } = dateRange(input);
+    return this.buildSummary(workspaceId, from, to);
+  }
+
+  private async buildSummary(workspaceId: string, from: Date, to: Date) {
     const [workspace, accounts, tx, campaigns, channels, hypotheses, members] = await Promise.all([
       this.prisma.workspace.findUniqueOrThrow({
         where: { id: workspaceId },

@@ -632,7 +632,26 @@ export function FormError({ message }: { message?: string }) {
 }
 
 export function LoadingState({ text = 'Loading...' }: { text?: string }) {
-  return <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5 text-neutral-300">{text}</div>;
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 p-4 sm:p-5" role="status" aria-label={text}>
+      <span className="sr-only">{text}</span>
+      <div className="space-y-3" aria-hidden="true">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-4/5" />
+        <div className="grid grid-cols-2 gap-3 pt-2 sm:grid-cols-4">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-neutral-800/80 ${className}`} aria-hidden="true" />;
 }
 
 export function EmptyState({ text = 'No data yet.' }: { text?: string }) {

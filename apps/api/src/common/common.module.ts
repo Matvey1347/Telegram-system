@@ -3,6 +3,7 @@ import { CurrencyConversionService } from './currency-conversion.service';
 import { SchemaBootstrapService } from './schema-bootstrap.service';
 import { TokenEncryptionService } from './security/token-encryption.service';
 import { WorkspaceService } from './workspace.service';
+import { ResponseCacheService } from './response-cache.service';
 
 @Global()
 @Module({
@@ -11,11 +12,13 @@ import { WorkspaceService } from './workspace.service';
     CurrencyConversionService,
     TokenEncryptionService,
     SchemaBootstrapService,
+    ResponseCacheService,
   ],
   exports: [
     WorkspaceService,
     CurrencyConversionService,
     TokenEncryptionService,
+    ResponseCacheService,
   ],
 })
 export class CommonModule {}

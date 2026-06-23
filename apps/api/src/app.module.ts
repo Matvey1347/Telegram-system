@@ -1,3 +1,4 @@
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -26,6 +27,7 @@ import { TelegramUserAccountsModule } from './telegram-user-accounts/telegram-us
 import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { IconsModule } from './icons/icons.module';
+import { ResponseCacheInterceptor } from './common/response-cache.interceptor';
 
 @Module({
   imports: [
@@ -60,5 +62,6 @@ import { IconsModule } from './icons/icons.module';
     IconsModule,
   ],
   controllers: [AppController],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: ResponseCacheInterceptor }],
 })
 export class AppModule {}
