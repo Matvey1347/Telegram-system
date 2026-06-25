@@ -431,12 +431,150 @@ export class TelegramChannelsService {
 
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.telegramChannel.findMany({
+    const channels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
       include: {
         adminLinks: { include: { telegramUserAccountIntegration: true } },
+        sourceAccesses: { select: { id: true } },
+        audienceSnapshots: {
+          orderBy: { collectedAt: 'desc' },
+          take: 1,
+          select: {
+            subscribersCount: true,
+            activeSubscribersEstimate: true,
+            viewRate: true,
+            dataQuality: true,
+            dataQualityReason: true,
+            hasExternalTrafficAnomaly: true,
+            hasSubscriberBasePollution: true,
+            postsWindow: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    if (!channels.length) return channels;
+
+    const channelIds = channels.map((channel) => channel.id);
+    const [campaigns, inviteLinks] = await Promise.all([
+      this.prisma.adCampaign.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: { in: channelIds },
+          excludeFromAnalytics: false,
+        },
+        include: { inviteLinks: { select: { joinedCount: true } } },
+      }),
+      this.prisma.telegramInviteLink.findMany({
+        where: { workspaceId, telegramChannelId: { in: channelIds } },
+        select: { id: true, telegramChannelId: true, joinedCount: true },
+      }),
+    ]);
+
+    const campaignsByChannel = new Map<string, typeof campaigns>();
+    for (const campaign of campaigns) {
+      const items = campaignsByChannel.get(campaign.telegramChannelId) ?? [];
+      items.push(campaign);
+      campaignsByChannel.set(campaign.telegramChannelId, items);
+    }
+    const inviteLinksByChannel = new Map<string, typeof inviteLinks>();
+    for (const link of inviteLinks) {
+      const items = inviteLinksByChannel.get(link.telegramChannelId) ?? [];
+      items.push(link);
+      inviteLinksByChannel.set(link.telegramChannelId, items);
+    }
+
+    return channels.map((channel) => {
+      const { sourceAccesses, audienceSnapshots, ...channelData } = channel;
+      const snapshot = audienceSnapshots[0];
+      const audience = {
+        subscribersCount: snapshot?.subscribersCount ?? channel.currentSubscribersCount ?? null,
+        activeSubscribersEstimate: snapshot?.activeSubscribersEstimate ?? null,
+        paidActiveSubscribersEstimate: snapshot?.activeSubscribersEstimate ?? null,
+        viewRate: snapshot?.viewRate ?? null,
+        dataQuality: snapshot?.dataQuality ?? null,
+        dataQualityReason: snapshot?.dataQualityReason ?? null,
+        dataQualityWarning: null,
+        rawViewRate: null,
+        subscriberBaseQuality: null,
+        hasExternalTrafficAnomaly: snapshot?.hasExternalTrafficAnomaly ?? false,
+        hasSubscriberBasePollution: snapshot?.hasSubscriberBasePollution ?? false,
+        postsWindow: snapshot?.postsWindow ?? channel.activeSubscribersWindow,
+      };
+      const channelCampaigns = campaignsByChannel.get(channel.id) ?? [];
+      const channelInviteLinks = inviteLinksByChannel.get(channel.id) ?? [];
+      const selectedInviteLinks = new Map(
+        channelInviteLinks.map((link) => [link.id, Number(link.joinedCount || 0)]),
+      );
+      const totalAdSpend = channelCampaigns.reduce(
+        (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
+        0,
+      );
+      const totalJoinedSubscribers = channelCampaigns.reduce((sum, campaign) => {
+        const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
+        if (selectedLinkId && selectedInviteLinks.has(selectedLinkId)) {
+          return sum + Number(selectedInviteLinks.get(selectedLinkId) || 0);
+        }
+        const campaignJoined = Number(campaign.joinedCount || 0);
+        const linkedJoined = campaign.inviteLinks.reduce(
+          (linkSum, link) => linkSum + Number(link.joinedCount || 0),
+          0,
+        );
+        return sum + Math.max(campaignJoined, linkedJoined, Number(campaign.newSubscribers || 0));
+      }, 0);
+      const paidFromCampaigns = channelCampaigns.reduce(
+        (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
+        0,
+      );
+      const paidActiveSubscribersEstimate = paidFromCampaigns || audience.paidActiveSubscribersEstimate || 0;
+      const average = (values: Array<number | null>) => {
+        const present = values.filter((value): value is number => value != null && Number.isFinite(value));
+        return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
+      };
+      const avgCpa = totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
+      const targetFrom = channel.targetCpaFrom == null ? null : Number(channel.targetCpaFrom);
+      const targetTo = channel.targetCpa == null ? null : Number(channel.targetCpa);
+      const acceptableFrom = channel.acceptableCpaFrom == null ? null : Number(channel.acceptableCpaFrom);
+      const acceptableTo = channel.acceptableCpa == null ? null : Number(channel.acceptableCpa);
+      const stopFrom = channel.stopCpaFrom == null ? (channel.stopCpa == null ? null : Number(channel.stopCpa)) : Number(channel.stopCpaFrom);
+      const inRange = (value: number, from: number | null, to: number | null) =>
+        (from != null || to != null) && (from == null || value >= from) && (to == null || value <= to);
+      const kpiStatus = avgCpa == null
+        ? 'unknown'
+        : inRange(avgCpa, targetFrom, targetTo)
+          ? 'good'
+          : inRange(avgCpa, acceptableFrom, acceptableTo)
+            ? 'acceptable'
+            : inRange(avgCpa, stopFrom, null)
+              ? 'bad'
+              : 'unknown';
+
+      return {
+        ...channelData,
+        preview: {
+          audience,
+          sourcesCount: sourceAccesses.length || channel.adminLinks.length,
+          financialSummary: {
+            totalAdSpend,
+            campaignsCount: channelCampaigns.length,
+            totalJoinedSubscribers,
+            avgCpa,
+            activeSubscribersEstimate: audience.activeSubscribersEstimate,
+            paidActiveSubscribersEstimate,
+            activeCpa: paidActiveSubscribersEstimate > 0 ? totalAdSpend / paidActiveSubscribersEstimate : null,
+            avgActiveRate: average(channelCampaigns.map((campaign) => campaign.activeRate)),
+            avgRetention7d: average(channelCampaigns.map((campaign) => campaign.retention7d)),
+            dataQuality: audience.dataQuality,
+            dataQualityReason: audience.dataQualityReason,
+            dataQualityWarning: null,
+            hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
+            hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
+            kpiStatus,
+            kpiLabel: kpiStatus === 'good' ? 'Good' : kpiStatus === 'acceptable' ? 'Acceptable' : kpiStatus === 'bad' ? 'Stop' : '-',
+          },
+        },
+      };
     });
   }
 

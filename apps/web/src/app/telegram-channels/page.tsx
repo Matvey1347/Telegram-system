@@ -199,25 +199,20 @@ function PersonPreview({
 
 function ChannelSourcesSummary({
   channelId,
-  fallbackAdminCount,
+  sourcesCount,
 }: {
   channelId: string;
-  fallbackAdminCount: number;
+  sourcesCount: number;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedSource, setSelectedSource] =
     useState<TelegramChannelSourceAccess | null>(null);
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["telegram-channel-sources", channelId],
-    queryFn: () => telegramChannelsApi.sources(channelId),
-  });
   const { data: analyticsSources, isLoading: analyticsSourcesLoading } =
     useQuery({
       queryKey: ["telegram-channel-analytics-sources", channelId],
       queryFn: () => telegramChannelsApi.analyticsSources(channelId),
       enabled: modalOpen,
     });
-  const sourcesCount = data.length || fallbackAdminCount;
   return (
     <div className="mt-3 border-t border-slate-800 pt-3">
       <button
@@ -229,7 +224,7 @@ function ChannelSourcesSummary({
           Access sources
         </span>
         <span className="text-xs text-slate-400">
-          {isLoading ? "Loading..." : `${sourcesCount} sources`}
+          {`${sourcesCount} sources`}
         </span>
       </button>
       <ChannelSourcesModal
@@ -238,7 +233,7 @@ function ChannelSourcesSummary({
           setModalOpen(false);
           setSelectedSource(null);
         }}
-        sources={analyticsSources?.sources || data}
+        sources={analyticsSources?.sources || []}
         dataAttribution={analyticsSources?.dataAttribution || []}
         isLoading={analyticsSourcesLoading}
         onSelectSource={setSelectedSource}
@@ -463,15 +458,8 @@ function ChannelFinanceMiniSummary({
   rates?: ExchangeRate[];
   actions?: ReactNode;
 }) {
-  const { data: audience, isLoading: audienceLoading } = useQuery({
-    queryKey: ["telegram-channel-audience", channel.id],
-    queryFn: () => telegramChannelsApi.audience(channel.id),
-  });
-  const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["telegram-channel-financial-summary", channel.id],
-    queryFn: () => telegramChannelsApi.financialSummary(channel.id),
-  });
-  const loading = audienceLoading || summaryLoading;
+  const audience = channel.preview?.audience;
+  const summary = channel.preview?.financialSummary;
   const primaryCurrency = moneySettings?.primaryCurrency || "USD";
   const hasNumber = (value: unknown) =>
     value != null && Number.isFinite(Number(value));
@@ -593,10 +581,7 @@ function ChannelFinanceMiniSummary({
 
   return (
     <div className={`mt-2 rounded-md border p-3 ${kpiTone}`}>
-      {loading ? (
-        <p className="text-xs text-slate-400">Loading analytics...</p>
-      ) : (
-        <div className="space-y-2">
+      <div className="space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] uppercase tracking-wide text-slate-500">
@@ -710,8 +695,7 @@ function ChannelFinanceMiniSummary({
               {actions}
             </div>
           ) : null}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1541,7 +1525,7 @@ export default function TelegramChannelsPage() {
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
                       channelId={channel.id}
-                      fallbackAdminCount={channel.adminLinks?.length || 0}
+                      sourcesCount={channel.preview?.sourcesCount ?? channel.adminLinks?.length ?? 0}
                     />
                   ) : null}
                 </EntityCard>
