@@ -24,8 +24,9 @@ export class PromosService {
       where: {
         workspaceId,
         telegramChannelId: query.telegramChannelId || undefined,
+        assignedMemberId: query.assignedMemberId || undefined,
       },
-      include: { telegramChannel: true },
+      include: { telegramChannel: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -33,20 +34,22 @@ export class PromosService {
     const workspaceId = await this.workspace(userId);
     const row = await this.prisma.promo.findFirst({
       where: { id, workspaceId },
-      include: { telegramChannel: true },
+      include: { telegramChannel: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     if (!row) throw new NotFoundException('Promo not found');
     return row;
   }
   async create(userId: string, dto: CreatePromoDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     return this.prisma.promo.create({
-      data: { workspaceId, ...dto, text: dto.text ?? '' },
+      data: { workspaceId, ...dto, assignedMemberId, createdByUserId: userId, text: dto.text ?? '' },
+      include: { telegramChannel: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
   async update(userId: string, id: string, dto: UpdatePromoDto) {
     await this.findOne(userId, id);
-    return this.prisma.promo.update({ where: { id }, data: dto });
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)).assignedMemberId;
+    return this.prisma.promo.update({ where: { id }, data: { ...dto, assignedMemberId }, include: { telegramChannel: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude } });
   }
   async remove(userId: string, id: string) {
     await this.findOne(userId, id);

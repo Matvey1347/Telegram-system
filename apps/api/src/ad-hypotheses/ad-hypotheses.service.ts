@@ -88,6 +88,8 @@ export class AdHypothesesService {
 
   private includeHypothesisCampaigns() {
     return {
+      assignedMember: WorkspaceService.assignedMemberInclude,
+      createdByUser: WorkspaceService.createdByUserInclude,
       campaigns: {
         include: {
           adCampaign: {
@@ -348,6 +350,10 @@ export class AdHypothesesService {
       conclusion: hypothesis.conclusion,
       createdAt: hypothesis.createdAt,
       updatedAt: hypothesis.updatedAt,
+      assignedMemberId: hypothesis.assignedMemberId,
+      assignedMember: hypothesis.assignedMember,
+      createdByUserId: hypothesis.createdByUserId,
+      createdByUser: hypothesis.createdByUser,
       campaignsCount: summary.campaignsCount,
       summary,
     };
@@ -382,7 +388,7 @@ export class AdHypothesesService {
   }
 
   async create(userId: string, dto: CreateAdHypothesisDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const { uniqueIds } = await this.validateCampaigns(
       workspaceId,
       dto.adCampaignIds,
@@ -394,6 +400,8 @@ export class AdHypothesesService {
         description: dto.description?.trim() || null,
         status: this.normalizeStatus(dto.status),
         conclusion: dto.conclusion?.trim() || null,
+        assignedMemberId,
+        createdByUserId: userId,
         campaigns: {
           create: uniqueIds.map((adCampaignId) => ({
             workspaceId,
@@ -416,6 +424,9 @@ export class AdHypothesesService {
       select: { id: true },
     });
     if (!existing) throw new NotFoundException('Ad hypothesis not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
 
     const uniqueIds = dto.adCampaignIds
       ? (await this.validateCampaigns(workspaceId, dto.adCampaignIds)).uniqueIds
@@ -436,6 +447,7 @@ export class AdHypothesesService {
             dto.conclusion === undefined
               ? undefined
               : dto.conclusion?.trim() || null,
+          assignedMemberId,
         },
       });
       if (uniqueIds) {

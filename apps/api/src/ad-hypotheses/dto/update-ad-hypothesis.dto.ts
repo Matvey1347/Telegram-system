@@ -16,6 +16,7 @@ export const AD_HYPOTHESIS_STATUSES = [
 ] as const;
 
 export class UpdateAdHypothesisDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional()
   @IsString()
   @MinLength(2)

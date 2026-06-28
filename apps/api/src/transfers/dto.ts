@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 
 export class CreateTransferDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() fromAccountId!: string;
   @IsString() toAccountId!: string;
   @Type(() => Number) @IsNumber() @Min(0) fromAmount!: number;
@@ -17,6 +18,7 @@ export class CreateTransferDto {
   @IsOptional() @IsString() description?: string;
 }
 export class UpdateTransferDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() fromAccountId?: string;
   @IsOptional() @IsString() toAccountId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) fromAmount?: number;
@@ -26,6 +28,7 @@ export class UpdateTransferDto {
 }
 
 export class TransferQueryDto {
+  @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsString() accountId?: string;

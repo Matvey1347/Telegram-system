@@ -6,13 +6,14 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { AccountsService } from './accounts.service';
-import { CreateAccountDto, UpdateAccountDto } from './dto';
+import { AccountQueryDto, CreateAccountDto, UpdateAccountDto } from './dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('accounts')
@@ -20,8 +21,8 @@ export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}
 
   @Get()
-  findAll(@CurrentUser() user: JwtUser) {
-    return this.accountsService.findAll(user.sub);
+  findAll(@CurrentUser() user: JwtUser, @Query() query: AccountQueryDto) {
+    return this.accountsService.findAll(user.sub, query);
   }
 
   @Post()

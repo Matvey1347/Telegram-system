@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 
 export class CreateAdvertisingSourceDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() title!: string;
   @IsOptional() @IsIn(['person', 'channel']) kind?: 'person' | 'channel';
   @IsOptional() @IsString() telegramUrl?: string;
@@ -21,6 +22,7 @@ export class CreateAdvertisingSourceDto {
 }
 
 export class UpdateAdvertisingSourceDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsIn(['person', 'channel']) kind?: 'person' | 'channel';
   @IsOptional() @IsString() telegramUrl?: string;
@@ -30,4 +32,8 @@ export class UpdateAdvertisingSourceDto {
   @IsOptional() @IsString() imageUrl?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) subscribersCount?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) channelTags?: string[];
+}
+
+export class AdvertisingSourceQueryDto {
+  @IsOptional() @IsString() assignedMemberId?: string;
 }

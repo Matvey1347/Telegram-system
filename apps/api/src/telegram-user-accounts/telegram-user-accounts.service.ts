@@ -184,6 +184,7 @@ export class TelegramUserAccountsService {
     const workspaceId = await this.getWorkspaceId(userId);
     const rows = await this.prisma.telegramUserAccountIntegration.findMany({
       where: { workspaceId },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.safe(row));
@@ -193,6 +194,7 @@ export class TelegramUserAccountsService {
     const workspaceId = await this.getWorkspaceId(userId);
     const row = await this.prisma.telegramUserAccountIntegration.findFirst({
       where: { id, workspaceId },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     if (!row) throw new NotFoundException('Telegram user account not found');
     return this.safe(row);
@@ -213,7 +215,7 @@ export class TelegramUserAccountsService {
   }
 
   async create(userId: string, dto: CreateTelegramUserAccountDto) {
-    const workspaceId = await this.getWorkspaceId(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const creds = this.resolveApiCredentials(dto);
     const apiHash = this.encryptionService.encrypt(creds.apiHash);
     const encryptedPhone = this.encryptionService.encrypt(dto.phone);
@@ -230,7 +232,10 @@ export class TelegramUserAccountsService {
         phoneAuthTag: encryptedPhone.authTag,
         phoneMasked: this.maskPhone(dto.phone),
         status: TelegramUserAccountStatus.pending,
+        assignedMemberId,
+        createdByUserId: userId,
       },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     return this.safe(row);
   }
@@ -247,6 +252,9 @@ export class TelegramUserAccountsService {
       apiId: dto.apiId,
       isActive: dto.isActive,
     };
+    if (dto.assignedMemberId !== undefined) {
+      data.assignedMemberId = (await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)).assignedMemberId;
+    }
     if (dto.apiHash) {
       const encrypted = this.encryptionService.encrypt(dto.apiHash);
       data.apiHashEncrypted = encrypted.encrypted;
@@ -256,6 +264,7 @@ export class TelegramUserAccountsService {
     const row = await this.prisma.telegramUserAccountIntegration.update({
       where: { id },
       data,
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     return this.safe(row);
   }

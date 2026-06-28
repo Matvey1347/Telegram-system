@@ -10,8 +10,10 @@ import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { formatMoney } from '@/lib/money';
+import { MemberBadge } from '@/components/workspace/member-badge';
+import { MemberSelect } from '@/components/workspace/member-select';
 
-type Values = { name: string; currency: string; initialBalance: number; iconId?: string | null };
+type Values = { name: string; currency: string; initialBalance: number; iconId?: string | null; assignedMemberId?: string | null };
 
 export default function AccountsPage() {
   const qc = useQueryClient();
@@ -38,6 +40,7 @@ export default function AccountsPage() {
           <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{a.currency}</span>
         </div>
         <AccountStatsSummary account={a} displayMode={settings?.currencyDisplayMode} />
+        <div className="mt-3 border-t border-neutral-800 pt-3"><MemberBadge member={a.assignedMember} /></div>
       </EntityCard>)}
     </div>
     {!isLoading && !data?.length ? <EmptyState text="No accounts yet" /> : null}
@@ -85,15 +88,15 @@ function AccountStatLine({ label, value, currency, displayMode, tone }: { label:
 }
 
 function AccountModal({ open, onClose, onSubmit, title, initial, currencies }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; initial?: Account; currencies: string[] }) {
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<Values>({ defaultValues: initial ? { name: initial.name, currency: initial.currency, initialBalance: Number(initial.initialBalance), iconId: initial.iconId ?? null } : { currency: 'USD', initialBalance: 0, name: '', iconId: null } });
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<Values>({ defaultValues: initial ? { name: initial.name, currency: initial.currency, initialBalance: Number(initial.initialBalance), iconId: initial.iconId ?? null, assignedMemberId: initial.assignedMemberId } : { currency: 'USD', initialBalance: 0, name: '', iconId: null } });
   const currencyOptions = Array.from(new Set([watch('currency'), ...currencies].filter(Boolean))).sort();
   useEffect(() => {
     if (!open) return;
     reset(
       initial
-        ? { name: initial.name, currency: initial.currency, initialBalance: Number(initial.initialBalance), iconId: initial.iconId ?? null }
+        ? { name: initial.name, currency: initial.currency, initialBalance: Number(initial.initialBalance), iconId: initial.iconId ?? null, assignedMemberId: initial.assignedMemberId }
         : { currency: 'USD', initialBalance: 0, name: '', iconId: null },
     );
   }, [open, initial, reset]);
-  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit((v) => { onSubmit(v); reset(); })}><IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} buttonLabel="Add icon" /><FormField label="Name" required error={errors.name ? 'Required field' : undefined}><Input {...register('name', { required: true })} /></FormField><FormField label="Currency"><Select {...register('currency', { required: true })} value={watch('currency')}>{currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</Select></FormField><FormField label="Initial Balance"><Input type="number" step="0.01" {...register('initialBalance', { valueAsNumber: true })} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
+  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit((v) => { onSubmit(v); reset(); })}><IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} buttonLabel="Add icon" /><FormField label="Name" required error={errors.name ? 'Required field' : undefined}><Input {...register('name', { required: true })} /></FormField><FormField label="Member"><MemberSelect value={watch('assignedMemberId')} onChange={(assignedMemberId) => setValue('assignedMemberId', assignedMemberId || null)} defaultToCurrent={!initial} /></FormField><FormField label="Currency"><Select {...register('currency', { required: true })} value={watch('currency')}>{currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</Select></FormField><FormField label="Initial Balance"><Input type="number" step="0.01" {...register('initialBalance', { valueAsNumber: true })} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
 }

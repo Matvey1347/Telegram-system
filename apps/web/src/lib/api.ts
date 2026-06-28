@@ -88,6 +88,13 @@ export type WorkspaceMember = {
   };
   temporaryPassword?: string;
 };
+export type AssignedMember = WorkspaceMember;
+export type EntityAssignment = {
+  assignedMemberId?: string | null;
+  assignedMember?: AssignedMember | null;
+  createdByUserId?: string | null;
+  createdByUser?: Pick<User, 'id' | 'email' | 'name'> | null;
+};
 export type GlobalSearchResult = {
   id: string;
   type: string;
@@ -101,10 +108,10 @@ export type GlobalSearchResult = {
 export type Currency = string;
 export type TransactionType = 'income' | 'expense';
 export type AccountTransactionStats = { count: number; incomeCount: number; expenseCount: number; received: number; spent: number; transferredIn: number; transferredOut: number; delta: number };
-export type Account = { id: string; name: string; currency: Currency; initialBalance: number; balance?: number; calculatedBalance?: number; convertedBalance?: number | null; convertedCurrency?: Currency; transactionStats?: AccountTransactionStats; isActive: boolean; iconId?: string | null; icon?: Icon | null };
+export type Account = EntityAssignment & { id: string; name: string; currency: Currency; initialBalance: number; balance?: number; calculatedBalance?: number | null; convertedBalance?: number | null; convertedCurrency?: Currency; transactionStats?: AccountTransactionStats; isActive: boolean; iconId?: string | null; icon?: Icon | null };
 export type TransactionCategory = { id: string; name: string; type: TransactionType; isSystem: boolean; key?: string | null; iconId?: string | null; icon?: Icon | null };
-export type Transaction = { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
-export type Transfer = { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
+export type Transaction = EntityAssignment & { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
+export type Transfer = EntityAssignment & { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
 export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
 export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean; preview?: { audience: Pick<TelegramChannelAudience, 'subscribersCount' | 'activeSubscribersEstimate' | 'paidActiveSubscribersEstimate' | 'viewRate' | 'dataQuality' | 'dataQualityReason' | 'dataQualityWarning' | 'rawViewRate' | 'subscriberBaseQuality' | 'hasExternalTrafficAnomaly' | 'hasSubscriberBasePollution' | 'postsWindow'>; financialSummary: TelegramChannelFinancialSummary; sourcesCount: number } };
 export type TelegramPost = {
@@ -581,6 +588,7 @@ export const workspaceMembersApi = {
 };
 export const accountsApi = crud<Account>('/accounts');
 export type TransactionQuery = {
+  assignedMemberId?: string;
   dateFrom?: string;
   dateTo?: string;
   categoryId?: string;
@@ -600,6 +608,7 @@ export const transactionCategoriesApi = {
   remove: async (id: string) => (await api.delete(`/finance/categories/${id}`)).data,
 };
 export type TransferQuery = {
+  assignedMemberId?: string;
   dateFrom?: string;
   dateTo?: string;
   accountId?: string;

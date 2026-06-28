@@ -12,6 +12,7 @@ const normalizeCurrency = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toUpperCase() : value;
 
 export class CreateAccountDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString()
   name!: string;
 
@@ -34,6 +35,7 @@ export class CreateAccountDto {
 }
 
 export class UpdateAccountDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional()
   @IsString()
   name?: string;
@@ -57,4 +59,8 @@ export class UpdateAccountDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+export class AccountQueryDto {
+  @IsOptional() @IsString() assignedMemberId?: string;
 }

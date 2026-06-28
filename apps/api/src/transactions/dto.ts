@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 
 export class CreateTransactionDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() accountId!: string;
   @IsEnum(TransactionType) type!: TransactionType;
   @Type(() => Number) @IsNumber() @Min(0) amount!: number;
@@ -27,6 +28,7 @@ export class CreateTransactionDto {
 }
 
 export class UpdateTransactionDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() accountId?: string;
   @IsOptional() @IsEnum(TransactionType) type?: TransactionType;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) amount?: number;
@@ -43,6 +45,7 @@ export class UpdateTransactionDto {
 }
 
 export class TransactionQueryDto {
+  @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsString() categoryId?: string;

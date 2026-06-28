@@ -28,6 +28,8 @@ export class InvestmentsService {
         },
         account: true,
         transaction: true,
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
       },
       orderBy: { date: 'desc' },
     });
@@ -43,6 +45,8 @@ export class InvestmentsService {
         },
         account: true,
         transaction: true,
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
       },
     });
     if (!row) throw new NotFoundException('Investment not found');
@@ -63,7 +67,7 @@ export class InvestmentsService {
   }
 
   async create(userId: string, dto: CreateInvestmentDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const [workspace, workspaceMember, account] = await Promise.all([
       this.prisma.workspace.findFirst({ where: { id: workspaceId } }),
       this.prisma.workspaceMember.findFirst({
@@ -101,6 +105,7 @@ export class InvestmentsService {
             dto.notes || `Investment from ${workspaceMember.user.name}`,
           date: new Date(dto.date),
           createdByUserId: userId,
+          assignedMemberId,
         },
       });
 
@@ -117,6 +122,7 @@ export class InvestmentsService {
           date: new Date(dto.date),
           notes: dto.notes,
           createdByUserId: userId,
+          assignedMemberId,
         },
         include: {
           workspaceMember: {
@@ -126,6 +132,8 @@ export class InvestmentsService {
           },
           account: true,
           transaction: true,
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
         },
       });
     });
@@ -138,6 +146,9 @@ export class InvestmentsService {
       include: { workspaceMember: { include: { user: true } } },
     });
     if (!existing) throw new NotFoundException('Investment not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
 
     const workspaceMemberId =
       dto.workspaceMemberId ?? existing.workspaceMemberId;
@@ -179,6 +190,7 @@ export class InvestmentsService {
             description:
               notes || `Investment from ${workspaceMember.user.name}`,
             date,
+            assignedMemberId,
           },
         });
       }
@@ -194,6 +206,7 @@ export class InvestmentsService {
           exchangeRateToPrimary,
           date,
           notes,
+          assignedMemberId,
         },
         include: {
           workspaceMember: {
@@ -203,6 +216,8 @@ export class InvestmentsService {
           },
           account: true,
           transaction: true,
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
         },
       });
     });

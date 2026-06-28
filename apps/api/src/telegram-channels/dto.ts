@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 
 export class CreateTelegramChannelDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() title!: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() telegramChatId?: string;
@@ -18,6 +19,7 @@ export class CreateTelegramChannelDto {
 }
 
 export class UpdateTelegramChannelDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() telegramChatId?: string;

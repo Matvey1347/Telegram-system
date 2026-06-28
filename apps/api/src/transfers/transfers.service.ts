@@ -72,6 +72,8 @@ export class TransfersService {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const where: Prisma.TransferWhereInput = { workspaceId };
+    if (query.assignedMemberId)
+      where.assignedMemberId = query.assignedMemberId;
     if (query.dateFrom || query.dateTo) {
       where.date = {};
       if (query.dateFrom) where.date.gte = new Date(query.dateFrom);
@@ -90,7 +92,7 @@ export class TransfersService {
     const transfers = await this.prisma.transfer.findMany({
       where,
       orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
-      include: { fromAccount: true, toAccount: true },
+      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     return this.withLosses(workspaceId, transfers);
   }
@@ -99,15 +101,15 @@ export class TransfersService {
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const row = await this.prisma.transfer.findFirst({
       where: { id, workspaceId },
-      include: { fromAccount: true, toAccount: true },
+      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     if (!row) throw new NotFoundException('Transfer not found');
     const [transfer] = await this.withLosses(workspaceId, [row]);
     return transfer;
   }
   async create(userId: string, dto: CreateTransferDto) {
-    const workspaceId =
-      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const [from, to] = await Promise.all([
       this.prisma.account.findFirst({
         where: { id: dto.fromAccountId, workspaceId },
@@ -135,7 +137,10 @@ export class TransfersService {
         toCurrency: to.currency,
         transferLossCurrency: to.currency,
         ...calc,
+        assignedMemberId,
+        createdByUserId: userId,
       },
+      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
   async update(userId: string, id: string, dto: UpdateTransferDto) {
@@ -145,6 +150,9 @@ export class TransfersService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Transfer not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
     const fromAccountId = dto.fromAccountId ?? existing.fromAccountId;
     const toAccountId = dto.toAccountId ?? existing.toAccountId;
     const [from, to] = await Promise.all([
@@ -176,7 +184,9 @@ export class TransfersService {
         toCurrency: to.currency,
         transferLossCurrency: to.currency,
         ...calc,
+        assignedMemberId,
       },
+      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
   async remove(userId: string, id: string) {

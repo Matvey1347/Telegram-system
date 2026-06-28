@@ -113,6 +113,7 @@ export class TelegramBotsService {
     const workspaceId = await this.workspace(userId);
     const rows = await this.prisma.telegramBotIntegration.findMany({
       where: { workspaceId },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.safe(row));
@@ -122,6 +123,7 @@ export class TelegramBotsService {
     const workspaceId = await this.workspace(userId);
     const row = await this.prisma.telegramBotIntegration.findFirst({
       where: { id, workspaceId },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     if (!row) throw new NotFoundException('Telegram bot not found');
     return row;
@@ -141,7 +143,7 @@ export class TelegramBotsService {
   }
 
   async create(userId: string, dto: CreateTelegramBotDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const bot = await this.getMe(dto.botToken);
     const encrypted = this.encryptionService.encrypt(dto.botToken);
     const row = await this.prisma.telegramBotIntegration.create({
@@ -157,7 +159,10 @@ export class TelegramBotsService {
         firstName: bot.first_name || null,
         lastCheckedAt: new Date(),
         lastErrorMessage: null,
+        assignedMemberId,
+        createdByUserId: userId,
       },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     await this.syncKnownChannelAccess(
       workspaceId,
@@ -171,6 +176,9 @@ export class TelegramBotsService {
   async update(userId: string, id: string, dto: UpdateTelegramBotDto) {
     const existing = await this.findOne(userId, id);
     const data: Record<string, unknown> = { label: dto.label };
+    if (dto.assignedMemberId !== undefined) {
+      data.assignedMemberId = (await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)).assignedMemberId;
+    }
     if (dto.botToken) {
       const bot = await this.getMe(dto.botToken);
       const encrypted = this.encryptionService.encrypt(dto.botToken);
@@ -189,6 +197,7 @@ export class TelegramBotsService {
     const row = await this.prisma.telegramBotIntegration.update({
       where: { id: existing.id },
       data,
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     return this.safe(row);
   }

@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 
 export class CreateInvestmentDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() workspaceMemberId!: string;
   @IsString() accountId!: string;
   @Type(() => Number) @IsNumber() @Min(0) amount!: number;
@@ -21,6 +22,7 @@ export class CreateInvestmentDto {
 }
 
 export class UpdateInvestmentDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() workspaceMemberId?: string;
   @IsOptional() @IsString() accountId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) amount?: number;

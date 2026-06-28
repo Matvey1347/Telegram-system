@@ -1,6 +1,7 @@
 import { ArrayMinSize, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateTelegramChannelNetworkDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional()
   @IsString()
   @MinLength(2)

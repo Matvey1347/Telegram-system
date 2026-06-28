@@ -434,6 +434,8 @@ export class TelegramChannelsService {
     const channels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
       include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         adminLinks: { include: { telegramUserAccountIntegration: true } },
         sourceAccesses: { select: { id: true } },
         audienceSnapshots: {
@@ -584,6 +586,8 @@ export class TelegramChannelsService {
       where: { id, workspaceId },
       include: {
         adminLinks: { include: { telegramUserAccountIntegration: true } },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
       },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
@@ -603,18 +607,22 @@ export class TelegramChannelsService {
   }
 
   async create(userId: string, dto: CreateTelegramChannelDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     return this.prisma.telegramChannel.create({
       data: {
         workspaceId,
         ...dto,
         username: this.normalizeUsername(dto.username),
+        assignedMemberId,
+        createdByUserId: userId,
       },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
 
   async update(userId: string, id: string, dto: UpdateTelegramChannelDto) {
     await this.findOne(userId, id);
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)).assignedMemberId;
     return this.prisma.telegramChannel.update({
       where: { id },
       data: {
@@ -627,7 +635,9 @@ export class TelegramChannelsService {
           dto.dataQualityNotes === undefined
             ? undefined
             : String(dto.dataQualityNotes || '').trim() || null,
+        assignedMemberId,
       },
+      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
 

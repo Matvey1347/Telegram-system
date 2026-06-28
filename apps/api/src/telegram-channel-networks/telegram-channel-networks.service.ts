@@ -164,6 +164,10 @@ export class TelegramChannelNetworksService {
       description: network.description,
       createdAt: network.createdAt,
       updatedAt: network.updatedAt,
+      assignedMemberId: network.assignedMemberId,
+      assignedMember: network.assignedMember,
+      createdByUserId: network.createdByUserId,
+      createdByUser: network.createdByUser,
       channels: channelSummaries.map((channel) => ({
         id: channel.id,
         title: channel.title,
@@ -184,6 +188,8 @@ export class TelegramChannelNetworksService {
     const networks = await this.prisma.telegramChannelNetwork.findMany({
       where: { workspaceId },
       include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         channels: {
           include: { telegramChannel: true },
           orderBy: { createdAt: 'asc' },
@@ -199,6 +205,8 @@ export class TelegramChannelNetworksService {
     const network = await this.prisma.telegramChannelNetwork.findFirst({
       where: { id: networkId, workspaceId },
       include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         channels: {
           include: { telegramChannel: true },
           orderBy: { createdAt: 'asc' },
@@ -210,7 +218,7 @@ export class TelegramChannelNetworksService {
   }
 
   async create(userId: string, dto: CreateTelegramChannelNetworkDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     const { uniqueIds } = await this.validateChannels(
       workspaceId,
       dto.telegramChannelIds,
@@ -220,6 +228,8 @@ export class TelegramChannelNetworksService {
         workspaceId,
         name: dto.name.trim(),
         description: dto.description?.trim() || null,
+        assignedMemberId,
+        createdByUserId: userId,
         channels: {
           create: uniqueIds.map((telegramChannelId) => ({
             workspaceId,
@@ -243,6 +253,9 @@ export class TelegramChannelNetworksService {
     });
     if (!existing)
       throw new NotFoundException('Telegram channel network not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
 
     const uniqueIds = dto.telegramChannelIds
       ? (await this.validateChannels(workspaceId, dto.telegramChannelIds)).uniqueIds
@@ -257,6 +270,7 @@ export class TelegramChannelNetworksService {
             dto.description === undefined
               ? undefined
               : dto.description?.trim() || null,
+          assignedMemberId,
         },
       });
       if (uniqueIds) {

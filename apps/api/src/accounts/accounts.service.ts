@@ -3,7 +3,7 @@ import { CurrencyConversionService } from '../common/currency-conversion.service
 import { CurrenciesService } from '../currencies/currencies.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
-import { CreateAccountDto, UpdateAccountDto } from './dto';
+import { AccountQueryDto, CreateAccountDto, UpdateAccountDto } from './dto';
 
 const dec = (value: unknown) => Number(value ?? 0);
 
@@ -126,12 +126,14 @@ export class AccountsService {
     );
   }
 
-  async findAll(userId: string) {
+  async findAll(userId: string, query: AccountQueryDto = {}) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const accounts = await this.prisma.account.findMany({
-      where: { workspaceId },
+      where: { workspaceId, assignedMemberId: query.assignedMemberId || undefined },
       include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         icon: {
           select: {
             id: true,
@@ -153,6 +155,8 @@ export class AccountsService {
     const account = await this.prisma.account.findFirst({
       where: { id, workspaceId },
       include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         icon: {
           select: {
             id: true,
@@ -169,8 +173,11 @@ export class AccountsService {
   }
 
   async create(userId: string, dto: CreateAccountDto) {
-    const workspaceId =
-      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
     if (dto.iconId !== undefined && dto.iconId !== null) {
       const icon = await this.prisma.icon.findFirst({
         where: { id: dto.iconId, workspaceId },
@@ -185,6 +192,8 @@ export class AccountsService {
         initialBalance: dto.initialBalance,
         isActive: dto.isActive ?? true,
         iconId: dto.iconId ?? undefined,
+        assignedMemberId,
+        createdByUserId: userId,
       },
       include: {
         icon: {
@@ -196,6 +205,8 @@ export class AccountsService {
             imageUrl: true,
           },
         },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
       },
     });
     await this.currenciesService.ensureRatesForWorkspace(workspaceId);
@@ -209,6 +220,15 @@ export class AccountsService {
       where: { id, workspaceId },
     });
     if (!account) throw new NotFoundException('Account not found');
+    const assignedMemberId =
+      dto.assignedMemberId === undefined
+        ? undefined
+        : (
+            await this.workspaceService.resolveAssignedMemberId(
+              userId,
+              dto.assignedMemberId,
+            )
+          ).assignedMemberId;
 
     if (dto.iconId !== undefined && dto.iconId !== null) {
       const icon = await this.prisma.icon.findFirst({
@@ -223,6 +243,7 @@ export class AccountsService {
         ...dto,
         currency: dto.currency?.toUpperCase(),
         iconId: dto.iconId === undefined ? undefined : dto.iconId,
+        assignedMemberId,
       },
       include: {
         icon: {
@@ -234,6 +255,8 @@ export class AccountsService {
             imageUrl: true,
           },
         },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
       },
     });
     if (dto.currency && dto.currency.toUpperCase() !== account.currency) {

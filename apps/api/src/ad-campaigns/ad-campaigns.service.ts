@@ -369,6 +369,7 @@ export class AdCampaignsService {
       category: advertisingCategory.name,
       categoryId: advertisingCategory.id,
       memberId: null,
+      assignedMemberId: campaign.assignedMemberId,
       amount: campaign.price,
       currency: campaign.currency,
       exchangeRateToPrimary: campaign.exchangeRateToPrimary,
@@ -444,11 +445,14 @@ export class AdCampaignsService {
       where: {
         workspaceId,
         telegramChannelId: query.telegramChannelId || undefined,
+        assignedMemberId: query.assignedMemberId || undefined,
       },
       include: {
         telegramChannel: true,
         promo: true,
         account: true,
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         advertisingTelegramChannels: {
           include: {
             telegramChannel: {
@@ -478,6 +482,8 @@ export class AdCampaignsService {
         telegramChannel: true,
         promo: true,
         account: true,
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         advertisingTelegramChannels: {
           include: {
             telegramChannel: {
@@ -500,7 +506,7 @@ export class AdCampaignsService {
   }
 
   async create(userId: string, dto: CreateAdCampaignDto) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     await this.ensurePromoBelongsToChannel(
       workspaceId,
       dto.promoId,
@@ -553,6 +559,8 @@ export class AdCampaignsService {
           accountId: account.id,
           placementDate,
           notes: dto.notes,
+          assignedMemberId,
+          createdByUserId: userId,
           ...this.analyticsInputData(dto),
         },
       });
@@ -593,6 +601,9 @@ export class AdCampaignsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Campaign not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
 
     if (dto.telegramChannelId && dto.promoId) {
       await this.ensurePromoBelongsToChannel(
@@ -674,6 +685,7 @@ export class AdCampaignsService {
           accountId: account.id,
           placementDate: dto.date ? new Date(dto.date) : undefined,
           notes: dto.notes,
+          assignedMemberId,
           ...this.analyticsInputData(dto),
         },
       });

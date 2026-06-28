@@ -93,6 +93,8 @@ export class TransactionsService {
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.type && query.type !== 'all') where.type = query.type;
     if (query.accountId) where.accountId = query.accountId;
+    if (query.assignedMemberId)
+      where.assignedMemberId = query.assignedMemberId;
     if (query.search?.trim()) {
       where.OR = [
         { description: { contains: query.search.trim(), mode: 'insensitive' } },
@@ -131,6 +133,8 @@ export class TransactionsService {
           },
         },
         member: { include: { user: true } },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         adCampaign: true,
         investment: true,
         icon: {
@@ -179,6 +183,8 @@ export class TransactionsService {
           },
         },
         member: { include: { user: true } },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         icon: {
           select: {
             id: true,
@@ -195,8 +201,8 @@ export class TransactionsService {
   }
 
   async create(userId: string, dto: CreateTransactionDto) {
-    const workspaceId =
-      await this.workspaceService.resolveWorkspaceIdForUser(userId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
     await this.financeCategoriesService.ensureSystemCategories(workspaceId);
 
     const account = await this.prisma.account.findFirst({
@@ -235,6 +241,8 @@ export class TransactionsService {
         memberId: dto.memberId,
         currency: account.currency,
         iconId: dto.iconId ?? undefined,
+        assignedMemberId,
+        createdByUserId: userId,
       },
       include: {
         account: {
@@ -264,6 +272,8 @@ export class TransactionsService {
           },
         },
         member: { include: { user: true } },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         icon: {
           select: {
             id: true,
@@ -286,6 +296,9 @@ export class TransactionsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Transaction not found');
+    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
+      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
+    ).assignedMemberId;
 
     const type = dto.type ?? existing.type;
     const categoryId = dto.categoryId ?? existing.categoryId;
@@ -331,6 +344,7 @@ export class TransactionsService {
         date: dto.date ? new Date(dto.date) : undefined,
         amountInPrimaryCurrency: amount * rate,
         iconId: dto.iconId === undefined ? undefined : dto.iconId,
+        assignedMemberId,
       },
       include: {
         account: {
@@ -360,6 +374,8 @@ export class TransactionsService {
           },
         },
         member: { include: { user: true } },
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
         icon: {
           select: {
             id: true,
