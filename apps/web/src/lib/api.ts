@@ -112,8 +112,45 @@ export type Account = EntityAssignment & { id: string; name: string; currency: C
 export type TransactionCategory = { id: string; name: string; type: TransactionType; isSystem: boolean; key?: string | null; iconId?: string | null; icon?: Icon | null };
 export type Transaction = EntityAssignment & { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
 export type Transfer = EntityAssignment & { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
+export type TelegramChannelAdAnalysisStatus =
+  | 'NEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'WATCH_LATER'
+  | 'BLACKLIST'
+  | 'TESTED';
+export type TelegramChannelAdAnalysis = {
+  id: string;
+  workspaceId: string;
+  telegramChannelId: string;
+  analyzedAt: string;
+  status: TelegramChannelAdAnalysisStatus;
+  verdict?: string | null;
+  price?: number | string | null;
+  currency: string;
+  avgViews?: number | null;
+  avgReactions?: number | null;
+  avgForwards?: number | null;
+  postsCount?: number | null;
+  cpm?: number | string | null;
+  reasonTags: string[];
+  reasonSummary?: string | null;
+  notes?: string | null;
+  nextReviewAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  warning?: string | null;
+};
+export type TelegramChannelAdAnalysisPayload = {
+  analyzedAt: string;
+  status: 'APPROVED' | 'REJECTED';
+  price?: number;
+  currency?: string;
+  notes?: string;
+  postLimit?: number;
+};
 export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
-export type TelegramChannel = { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean; preview?: { audience: Pick<TelegramChannelAudience, 'subscribersCount' | 'activeSubscribersEstimate' | 'paidActiveSubscribersEstimate' | 'viewRate' | 'dataQuality' | 'dataQualityReason' | 'dataQualityWarning' | 'rawViewRate' | 'subscriberBaseQuality' | 'hasExternalTrafficAnomaly' | 'hasSubscriberBasePollution' | 'postsWindow'>; financialSummary: TelegramChannelFinancialSummary; sourcesCount: number } };
+export type TelegramChannel = EntityAssignment & { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean; preview?: { audience: Pick<TelegramChannelAudience, 'subscribersCount' | 'activeSubscribersEstimate' | 'paidActiveSubscribersEstimate' | 'viewRate' | 'dataQuality' | 'dataQualityReason' | 'dataQualityWarning' | 'rawViewRate' | 'subscriberBaseQuality' | 'hasExternalTrafficAnomaly' | 'hasSubscriberBasePollution' | 'postsWindow'>; financialSummary: TelegramChannelFinancialSummary; sourcesCount: number; adAnalysis?: { latest?: TelegramChannelAdAnalysis | null; historyCount: number; metrics?: { avgViews?: number | null; avgReactions?: number | null; avgForwards?: number | null; postsCount?: number | null; cpm?: number | string | null } } } };
 export type TelegramPost = {
   id: string;
   telegramChannelId: string;
@@ -628,6 +665,10 @@ export const telegramChannelsApi = {
   createAudienceSnapshot: async (id: string) => (await api.post<TelegramChannelAudienceSnapshot>(`/telegram-channels/${id}/audience-snapshot`)).data,
   audienceSnapshots: async (id: string, limit?: number) => (await api.get<TelegramChannelAudienceSnapshot[]>(`/telegram-channels/${id}/audience-snapshots`, { params: limit ? { limit } : undefined })).data,
   financialSummary: async (id: string) => (await api.get<TelegramChannelFinancialSummary>(`/telegram-channels/${id}/financial-summary`)).data,
+  adAnalyses: async (channelId: string) => (await api.get<TelegramChannelAdAnalysis[]>(`/telegram-channels/${channelId}/ad-analyses`)).data,
+  createAdAnalysis: async (channelId: string, payload: TelegramChannelAdAnalysisPayload) => (await api.post<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses`, payload)).data,
+  updateAdAnalysis: async (channelId: string, analysisId: string, payload: Partial<TelegramChannelAdAnalysisPayload>) => (await api.patch<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses/${analysisId}`, payload)).data,
+  deleteAdAnalysis: async (channelId: string, analysisId: string) => (await api.delete<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses/${analysisId}`)).data,
   updatePostManualMetrics: async (channelId: string, postId: string, payload: { manualOwnViews?: number; manualOwnReactions?: number; excludeFromAnalytics?: boolean }) => (await api.patch<TelegramPost>(`/telegram-channels/${channelId}/posts/${postId}/manual-metrics`, payload)).data,
 };
 export const telegramChannelNetworksApi = {

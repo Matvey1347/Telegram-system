@@ -16,12 +16,14 @@ import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   DeepSyncDto,
+  CreateTelegramChannelAdAnalysisDto,
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
   UpdateTelegramChannelDto,
+  UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
@@ -42,6 +44,35 @@ export class TelegramChannelsController {
   @Post('import')
   import(@CurrentUser() user: JwtUser, @Body() dto: ImportTelegramChannelDto) {
     return this.service.importChannel(user.sub, dto);
+  }
+  @Get(':id/ad-analyses')
+  adAnalyses(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.adAnalyses(user.sub, id);
+  }
+  @Post(':id/ad-analyses')
+  createAdAnalysis(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: CreateTelegramChannelAdAnalysisDto,
+  ) {
+    return this.service.createAdAnalysis(user.sub, id, dto);
+  }
+  @Patch(':id/ad-analyses/:analysisId')
+  updateAdAnalysis(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('analysisId') analysisId: string,
+    @Body() dto: UpdateTelegramChannelAdAnalysisDto,
+  ) {
+    return this.service.updateAdAnalysis(user.sub, id, analysisId, dto);
+  }
+  @Delete(':id/ad-analyses/:analysisId')
+  deleteAdAnalysis(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('analysisId') analysisId: string,
+  ) {
+    return this.service.deleteAdAnalysis(user.sub, id, analysisId);
   }
   @Get(':id') findOne(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.findOne(user.sub, id);

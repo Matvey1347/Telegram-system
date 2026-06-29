@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, CircleHelp, Download, RefreshCw } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import {
@@ -28,6 +28,9 @@ import {
   type ImportedTelegramSource,
   type TelegramAnalyticsSources,
   type TelegramChannel,
+  type TelegramChannelAdAnalysis,
+  type TelegramChannelAdAnalysisPayload,
+  type TelegramChannelAdAnalysisStatus,
   type TelegramChannelFinancialSummary,
   type TelegramChannelNetwork,
   type TelegramChannelNetworkMember,
@@ -36,6 +39,7 @@ import {
 import {
   Button,
   ConfirmDeleteModal,
+  DateInput,
   EmptyState,
   EntityCard,
   FormField,
@@ -44,6 +48,7 @@ import {
   LoadingState,
   Modal,
   PageHeader,
+  Select,
   Textarea,
   ToastStack,
   type ToastItem,
@@ -130,6 +135,64 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function isOwnChannel(channel: TelegramChannel) {
   return Array.isArray(channel.adminLinks) && channel.adminLinks.length > 0;
+}
+
+const adAnalysisStatusLabels: Record<TelegramChannelAdAnalysisStatus, string> = {
+  NEW: "New",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  WATCH_LATER: "Watch later",
+  BLACKLIST: "Blacklist",
+  TESTED: "Tested",
+};
+
+function ExternalChannelAdAnalysis({
+  channel,
+  onEdit,
+  onDelete,
+}: {
+  channel: TelegramChannel;
+  onEdit: (analysis?: TelegramChannelAdAnalysis) => void;
+  onDelete: (analysis: TelegramChannelAdAnalysis) => void;
+}) {
+  const summary = channel.preview?.adAnalysis;
+  const latest = summary?.latest;
+  if (!latest) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 px-3 py-2">
+        <span className="text-xs text-slate-400">No ad analysis yet</span>
+        <Button type="button" variant="secondary" onClick={() => onEdit()}>
+          Analyze
+        </Button>
+      </div>
+    );
+  }
+  const chip = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200";
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+      <span className={chip}>{latest.currency} {formatNumber(latest.price, 2)}</span>
+      <span className={chip}>CPM {latest.currency} {latest.cpm == null ? "-" : formatNumber(latest.cpm, 2)}</span>
+      <span className={chip}>{adAnalysisStatusLabels[latest.status]}</span>
+      {latest.reasonSummary ? <span className={`${chip} max-w-full truncate`}>{latest.reasonSummary}</span> : null}
+      <span className="text-xs text-slate-500">{formatLocalDate(latest.analyzedAt)}</span>
+      <div className="ml-auto flex items-center gap-2">
+        <IconButton
+          type="button"
+          aria-label="Edit analysis"
+          title="Edit analysis"
+          onClick={() => onEdit(latest)}
+        />
+        <IconButton
+          type="button"
+          kind="delete"
+          aria-label="Delete analysis"
+          title="Delete analysis"
+          onClick={() => onDelete(latest)}
+        />
+      </div>
+      {(summary?.historyCount ?? 0) > 1 ? <span className="text-xs text-slate-500">{summary?.historyCount} analyses</span> : null}
+    </div>
+  );
 }
 
 function isPersonSource(
@@ -1157,6 +1220,14 @@ export default function TelegramChannelsPage() {
     useState<TelegramChannelNetwork | null>(null);
   const [deletingNetwork, setDeletingNetwork] =
     useState<TelegramChannelNetwork | null>(null);
+  const [analysisEditor, setAnalysisEditor] = useState<{
+    channel: TelegramChannel;
+    analysis?: TelegramChannelAdAnalysis;
+  } | null>(null);
+  const [deletingAnalysis, setDeletingAnalysis] = useState<{
+    channel: TelegramChannel;
+    analysis: TelegramChannelAdAnalysis;
+  } | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const pushToast = (
     message: string,
@@ -1237,6 +1308,60 @@ export default function TelegramChannelsPage() {
     onError: (requestError: unknown) =>
       pushToast(
         requestErrorMessage(requestError, "Failed to import source."),
+        "error",
+      ),
+  });
+  const saveAnalysisMutation = useMutation({
+    mutationFn: ({
+      channelId,
+      analysisId,
+      payload,
+    }: {
+      channelId: string;
+      analysisId?: string;
+      payload: TelegramChannelAdAnalysisPayload;
+    }) =>
+      analysisId
+        ? telegramChannelsApi.updateAdAnalysis(channelId, analysisId, payload)
+        : telegramChannelsApi.createAdAnalysis(channelId, payload),
+    onSuccess: (analysis) => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-ad-analyses", analysis.telegramChannelId],
+      });
+      setAnalysisEditor(null);
+      pushToast(
+        analysis.warning
+          ? `Analysis saved. Sync warning: ${analysis.warning}`
+          : "Ad analysis saved.",
+        analysis.warning ? "info" : "success",
+      );
+    },
+    onError: (requestError: unknown) =>
+      pushToast(
+        requestErrorMessage(requestError, "Failed to save ad analysis."),
+        "error",
+      ),
+  });
+  const deleteAnalysisMutation = useMutation({
+    mutationFn: ({
+      channelId,
+      analysisId,
+    }: {
+      channelId: string;
+      analysisId: string;
+    }) => telegramChannelsApi.deleteAdAnalysis(channelId, analysisId),
+    onSuccess: (analysis) => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-ad-analyses", analysis.telegramChannelId],
+      });
+      setDeletingAnalysis(null);
+      pushToast("Ad analysis deleted.", "success");
+    },
+    onError: (requestError: unknown) =>
+      pushToast(
+        requestErrorMessage(requestError, "Failed to delete ad analysis."),
         "error",
       ),
   });
@@ -1522,6 +1647,17 @@ export default function TelegramChannelsPage() {
                       </>
                     }
                   />
+                  {!hasAdminLink ? (
+                    <ExternalChannelAdAnalysis
+                      channel={channel}
+                      onEdit={(analysis) =>
+                        setAnalysisEditor({ channel, analysis })
+                      }
+                      onDelete={(analysis) =>
+                        setDeletingAnalysis({ channel, analysis })
+                      }
+                    />
+                  ) : null}
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
                       channelId={channel.id}
@@ -1673,6 +1809,36 @@ export default function TelegramChannelsPage() {
         }
         label="Delete"
       />
+      <AdAnalysisModal
+        open={!!analysisEditor}
+        channel={analysisEditor?.channel}
+        analysis={analysisEditor?.analysis}
+        currencies={currencySettings?.supportedCurrencies ?? []}
+        isSubmitting={saveAnalysisMutation.isPending}
+        onClose={() => setAnalysisEditor(null)}
+        onSubmit={(payload) => {
+          if (!analysisEditor) return;
+          saveAnalysisMutation.mutate({
+            channelId: analysisEditor.channel.id,
+            analysisId: analysisEditor.analysis?.id,
+            payload,
+          });
+        }}
+      />
+      <ConfirmDeleteModal
+        open={!!deletingAnalysis}
+        entityName={deletingAnalysis?.channel.title ?? ""}
+        description="This deletes only this ad analysis. The Telegram channel and its data remain untouched."
+        onClose={() => setDeletingAnalysis(null)}
+        onConfirm={() => {
+          if (!deletingAnalysis) return;
+          deleteAnalysisMutation.mutate({
+            channelId: deletingAnalysis.channel.id,
+            analysisId: deletingAnalysis.analysis.id,
+          });
+        }}
+        label="Delete analysis"
+      />
       <ToastStack
         items={toasts}
         onClose={(id) =>
@@ -1680,6 +1846,126 @@ export default function TelegramChannelsPage() {
         }
       />
     </AppShell>
+  );
+}
+
+type AdAnalysisFormValues = {
+  price?: number;
+  currency?: string;
+  analyzedAt: string;
+  status: "APPROVED" | "REJECTED";
+  notes?: string;
+};
+
+function AdAnalysisModal({
+  open,
+  channel,
+  analysis,
+  currencies,
+  isSubmitting,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  channel?: TelegramChannel;
+  analysis?: TelegramChannelAdAnalysis;
+  currencies: string[];
+  isSubmitting: boolean;
+  onClose: () => void;
+  onSubmit: (payload: TelegramChannelAdAnalysisPayload) => void;
+}) {
+  const {
+    register,
+    handleSubmit,
+    reset,
+    control,
+    formState: { errors },
+  } = useForm<AdAnalysisFormValues>();
+  useEffect(() => {
+    if (!open) return;
+    const existingStatus =
+      analysis?.status === "REJECTED" ? "REJECTED" : "APPROVED";
+    reset({
+      price: analysis?.price == null ? undefined : Number(analysis.price),
+      currency: analysis?.currency || "",
+      analyzedAt: analysis?.analyzedAt
+        ? formatLocalDate(analysis.analyzedAt)
+        : formatLocalDate(new Date()),
+      status: existingStatus,
+      notes: analysis?.notes || "",
+    });
+  }, [analysis, open, reset]);
+  const currencyOptions = Array.from(
+    new Set([analysis?.currency, ...currencies].filter(Boolean) as string[]),
+  ).sort();
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${analysis ? "Edit analysis" : "Analyze"} ${channel?.title || "channel"}`}
+      allowOverflow
+    >
+      <form
+        className="space-y-4"
+        onSubmit={handleSubmit((values) =>
+          onSubmit({
+            ...values,
+            price: values.price == null || Number.isNaN(values.price)
+              ? undefined
+              : values.price,
+            currency: values.currency?.toUpperCase() || undefined,
+            postLimit: 20,
+          }),
+        )}
+      >
+        <div className="grid gap-3 sm:grid-cols-3">
+          <FormField label="Price">
+            <Input type="number" min="0" step="0.01" {...register("price", { valueAsNumber: true })} />
+          </FormField>
+          <FormField label="Currency">
+            <Select {...register("currency")}>
+              <option value="">Select currency</option>
+              {currencyOptions.map((currency) => (
+                <option key={currency} value={currency}>{currency}</option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField label="Status">
+            <Select {...register("status")}>
+              <option value="APPROVED">Approved</option>
+              <option value="REJECTED">Rejected</option>
+            </Select>
+          </FormField>
+        </div>
+        <FormField label="Date" required error={errors.analyzedAt ? "Date is required" : undefined}>
+          <Controller
+            name="analyzedAt"
+            control={control}
+            rules={{ required: true }}
+            render={({ field }) => (
+              <DateInput
+                name={field.name}
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                placeholder="Select date"
+              />
+            )}
+          />
+        </FormField>
+        <FormField label="Notes">
+          <Textarea rows={3} {...register("notes")} />
+        </FormField>
+        <p className="text-xs text-slate-500">
+          Average views, reactions, forwards and CPM are calculated from the latest 20 Telegram posts.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving..." : "Save analysis"}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

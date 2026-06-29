@@ -1,6 +1,9 @@
 import { Type } from 'class-transformer';
+import { TelegramChannelAdAnalysisStatus } from '@prisma/client';
 import {
+  IsArray,
   IsBoolean,
+  IsDateString,
   IsIn,
   IsInt,
   IsNumber,
@@ -73,4 +76,39 @@ export class UpdateTelegramPostManualMetricsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) manualOwnViews?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) manualOwnReactions?: number;
   @IsOptional() @IsBoolean() excludeFromAnalytics?: boolean;
+}
+
+export class CreateTelegramChannelAdAnalysisDto {
+  @IsIn([
+    TelegramChannelAdAnalysisStatus.APPROVED,
+    TelegramChannelAdAnalysisStatus.REJECTED,
+  ])
+  status!: TelegramChannelAdAnalysisStatus;
+  @IsDateString() analyzedAt!: string;
+  @IsOptional() @IsString() verdict?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) price?: number;
+  @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) reasonTags?: string[];
+  @IsOptional() @IsString() reasonSummary?: string;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsDateString() nextReviewAt?: string | Date;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) postLimit?: number;
+}
+
+export class UpdateTelegramChannelAdAnalysisDto {
+  @IsOptional()
+  @IsIn([
+    TelegramChannelAdAnalysisStatus.APPROVED,
+    TelegramChannelAdAnalysisStatus.REJECTED,
+  ])
+  status?: TelegramChannelAdAnalysisStatus;
+  @IsOptional() @IsDateString() analyzedAt?: string;
+  @IsOptional() @IsString() verdict?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) price?: number;
+  @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) reasonTags?: string[];
+  @IsOptional() @IsString() reasonSummary?: string;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsDateString() nextReviewAt?: string | Date;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) postLimit?: number;
 }

@@ -140,6 +140,7 @@ export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
 }
 
 export function DateInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const locale = props.lang === 'ru' ? 'ru-RU' : undefined;
   const formatLocalDate = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -172,10 +173,22 @@ export function DateInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
     const recalc = () => {
       if (!rootRef.current) return;
       const rect = rootRef.current.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-      const estimatedHeight = 320;
-      const spaceBelow = viewportHeight - rect.bottom;
-      const spaceAbove = rect.top;
+      let boundaryTop = 0;
+      let boundaryBottom = window.innerHeight;
+      let ancestor = rootRef.current.parentElement;
+      while (ancestor) {
+        const overflowY = window.getComputedStyle(ancestor).overflowY;
+        if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'hidden') {
+          const boundary = ancestor.getBoundingClientRect();
+          boundaryTop = Math.max(0, boundary.top);
+          boundaryBottom = Math.min(window.innerHeight, boundary.bottom);
+          break;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      const estimatedHeight = 340;
+      const spaceBelow = boundaryBottom - rect.bottom;
+      const spaceAbove = rect.top - boundaryTop;
       setOpenUp(spaceBelow < estimatedHeight && spaceAbove > spaceBelow);
     };
     recalc();
@@ -216,7 +229,7 @@ export function DateInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   }
 
   const selectedIso = value || '';
-  const display = selectedIso ? selectedIso.split('-').reverse().join('.') : 'Select date';
+  const display = selectedIso ? selectedIso.split('-').reverse().join('.') : (props.placeholder || 'Select date');
 
   return (
     <div ref={rootRef} className="relative">
@@ -233,11 +246,11 @@ export function DateInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
         <div className={`absolute z-50 w-[min(300px,calc(100vw-2rem))] rounded-lg border border-neutral-700 bg-neutral-900 p-3 shadow-xl ${openUp ? 'bottom-full mb-1' : 'mt-1'}`}>
           <div className="mb-2 flex items-center justify-between">
             <button type="button" className="rounded p-1 hover:bg-neutral-800" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}><ChevronLeft size={16} /></button>
-            <p className="text-sm font-medium">{cursor.toLocaleString(undefined, { month: 'long', year: 'numeric' })}</p>
+            <p className="text-sm font-medium">{cursor.toLocaleString(locale, { month: 'long', year: 'numeric' })}</p>
             <button type="button" className="rounded p-1 hover:bg-neutral-800" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}><ChevronRight size={16} /></button>
           </div>
           <div className="mb-1 grid grid-cols-7 gap-1 text-center text-xs text-neutral-400">
-            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => <span key={d}>{d}</span>)}
+            {(locale === 'ru-RU' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']).map((d) => <span key={d}>{d}</span>)}
           </div>
           <div className="grid grid-cols-7 gap-1">
             {cells.map((cell) => {
@@ -546,7 +559,8 @@ export function Modal({
   title,
   children,
   size = 'md',
-}: PropsWithChildren<{ open: boolean; onClose: () => void; title: string; size?: 'md' | 'sm' }>) {
+  allowOverflow = false,
+}: PropsWithChildren<{ open: boolean; onClose: () => void; title: string; size?: 'md' | 'sm'; allowOverflow?: boolean }>) {
   if (!open) return null;
   return (
     <div
@@ -555,12 +569,12 @@ export function Modal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${size === 'sm' ? 'max-w-[560px]' : 'max-w-[660px]'}`}>
+      <div className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'} ${size === 'sm' ? 'max-w-[560px]' : 'max-w-[660px]'}`}>
         <div className="mb-1 flex items-center justify-between p-4 pb-3 sm:p-5 sm:pb-3">
           <h3 className="text-lg font-semibold sm:text-xl">{title}</h3>
           <button onClick={onClose} className="cursor-pointer rounded-lg border border-neutral-700 p-2 hover:bg-neutral-800"><X size={16} /></button>
         </div>
-        <div className="min-h-0 overflow-y-auto px-4 pb-4 sm:px-5 sm:pb-5">
+        <div className={`min-h-0 px-4 pb-4 sm:px-5 sm:pb-5 ${allowOverflow ? 'overflow-visible' : 'overflow-y-auto'}`}>
           {children}
         </div>
       </div>

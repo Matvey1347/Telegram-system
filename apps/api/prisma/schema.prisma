@@ -89,6 +89,15 @@ enum IconType {
   image
 }
 
+enum TelegramChannelAdAnalysisStatus {
+  NEW
+  APPROVED
+  REJECTED
+  WATCH_LATER
+  BLACKLIST
+  TESTED
+}
+
 model User {
   id                             String                           @id @default(cuid())
   email                          String                           @unique
@@ -136,6 +145,7 @@ model Workspace {
   telegramChannelNetworks          TelegramChannelNetwork[]
   telegramChannelNetworkMembers    TelegramChannelNetworkMember[]
   telegramChannelStatsPoints       TelegramChannelStatsPoint[]
+  telegramChannelAdAnalyses        TelegramChannelAdAnalysis[]
   telegramPosts                    TelegramPost[]
   promos                           Promo[]
   advertisingSources               AdvertisingSource[]
@@ -491,6 +501,7 @@ model TelegramChannel {
   audienceSnapshots TelegramChannelAudienceSnapshot[]
   networkMembers    TelegramChannelNetworkMember[]
   statsPoints       TelegramChannelStatsPoint[]
+  adAnalyses        TelegramChannelAdAnalysis[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -498,6 +509,36 @@ model TelegramChannel {
   @@index([workspaceId, username])
   @@index([workspaceId, telegramChatId])
   @@index([workspaceId, assignedMemberId])
+}
+
+model TelegramChannelAdAnalysis {
+  id                String                          @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  analyzedAt        DateTime                        @default(now())
+  status            TelegramChannelAdAnalysisStatus @default(WATCH_LATER)
+  verdict           String?
+  price             Decimal?
+  currency          String                          @default("USD") @db.VarChar(3)
+  avgViews          Float?
+  avgReactions      Float?
+  avgForwards       Float?
+  postsCount        Int?
+  cpm               Decimal?
+  reasonTags        String[]                        @default([])
+  reasonSummary     String?
+  notes             String?
+  nextReviewAt      DateTime?
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, telegramChannelId])
+  @@index([workspaceId, analyzedAt])
+  @@index([workspaceId, status])
 }
 
 model TelegramChannelDailyStats {

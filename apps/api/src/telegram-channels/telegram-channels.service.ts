@@ -19,11 +19,13 @@ import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.clien
 import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
 import {
   AttachCampaignDto,
+  CreateTelegramChannelAdAnalysisDto,
   CreateTelegramChannelDto,
   DeepSyncDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   UpdateTelegramChannelDto,
+  UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
 } from './dto';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
@@ -436,6 +438,8 @@ export class TelegramChannelsService {
       include: {
         assignedMember: WorkspaceService.assignedMemberInclude,
         createdByUser: WorkspaceService.createdByUserInclude,
+        adAnalyses: { orderBy: { analyzedAt: 'desc' }, take: 1 },
+        _count: { select: { adAnalyses: true } },
         adminLinks: { include: { telegramUserAccountIntegration: true } },
         sourceAccesses: { select: { id: true } },
         audienceSnapshots: {
@@ -488,7 +492,13 @@ export class TelegramChannelsService {
     }
 
     return channels.map((channel) => {
-      const { sourceAccesses, audienceSnapshots, ...channelData } = channel;
+      const {
+        sourceAccesses,
+        audienceSnapshots,
+        adAnalyses,
+        _count,
+        ...channelData
+      } = channel;
       const snapshot = audienceSnapshots[0];
       const audience = {
         subscribersCount: snapshot?.subscribersCount ?? channel.currentSubscribersCount ?? null,
@@ -557,6 +567,19 @@ export class TelegramChannelsService {
         preview: {
           audience,
           sourcesCount: sourceAccesses.length || channel.adminLinks.length,
+          adAnalysis: {
+            latest: adAnalyses[0] ?? null,
+            historyCount: _count.adAnalyses,
+            metrics: adAnalyses[0]
+              ? {
+                  avgViews: adAnalyses[0].avgViews,
+                  avgReactions: adAnalyses[0].avgReactions,
+                  avgForwards: adAnalyses[0].avgForwards,
+                  postsCount: adAnalyses[0].postsCount,
+                  cpm: adAnalyses[0].cpm,
+                }
+              : undefined,
+          },
           financialSummary: {
             totalAdSpend,
             campaignsCount: channelCampaigns.length,
@@ -638,6 +661,177 @@ export class TelegramChannelsService {
         assignedMemberId,
       },
       include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+    });
+  }
+
+  private async calculateAdAnalysisMetrics(
+    workspaceId: string,
+    channelId: string,
+    postLimit = 20,
+    price?: number | null,
+  ) {
+    const posts = await this.prisma.telegramPost.findMany({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        excludeFromAnalytics: false,
+      },
+      orderBy: { postDate: 'desc' },
+      take: Math.max(1, Math.min(200, postLimit)),
+      select: {
+        viewsCount: true,
+        reactionsCount: true,
+        forwardsCount: true,
+      },
+    });
+    const average = (values: Array<number | null>) => {
+      const present = values.filter((value): value is number => value != null);
+      return present.length
+        ? present.reduce((sum, value) => sum + value, 0) / present.length
+        : null;
+    };
+    const avgViews = average(posts.map((post) => post.viewsCount));
+    const avgReactions = average(posts.map((post) => post.reactionsCount));
+    const avgForwards = average(posts.map((post) => post.forwardsCount));
+    return {
+      postsCount: posts.length,
+      avgViews,
+      avgReactions,
+      avgForwards,
+      cpm: price != null && avgViews != null && avgViews > 0
+        ? (price / avgViews) * 1000
+        : null,
+    };
+  }
+
+  async adAnalyses(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    return this.prisma.telegramChannelAdAnalysis.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { analyzedAt: 'desc' },
+    });
+  }
+
+  async createAdAnalysis(
+    userId: string,
+    channelId: string,
+    dto: CreateTelegramChannelAdAnalysisDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId, isActive: true },
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+
+    let warning: string | null = null;
+    if (channel.username || channel.telegramChatId) {
+      try {
+        const account = await this.connectedAccount(
+          workspaceId,
+          channelId,
+          await this.bestMtprotoAccountId(
+            workspaceId,
+            channelId,
+            TelegramChannelDataType.POSTS,
+          ),
+        );
+        await this.syncPublicChannelInfo(workspaceId, channelId, account);
+        await this.syncPostsMetricsForWorkspace(workspaceId, channelId, {
+          telegramUserAccountId: account.id,
+          postLimit: dto.postLimit ?? 20,
+        });
+      } catch (error) {
+        warning = error instanceof Error
+          ? error.message
+          : 'Telegram post metrics sync failed';
+        this.logger.warn(
+          `Ad analysis continues without fresh sync for channel=${channelId}: ${warning}`,
+        );
+      }
+    }
+
+    const metrics = await this.calculateAdAnalysisMetrics(
+      workspaceId,
+      channelId,
+      dto.postLimit,
+      dto.price,
+    );
+    const analysis = await this.prisma.telegramChannelAdAnalysis.create({
+      data: {
+        workspaceId,
+        telegramChannelId: channelId,
+        analyzedAt: new Date(dto.analyzedAt),
+        status: dto.status,
+        verdict: dto.verdict?.trim() || null,
+        price: dto.price,
+        currency: (dto.currency || 'USD').trim().toUpperCase(),
+        reasonTags: dto.reasonTags ?? [],
+        reasonSummary: dto.reasonSummary?.trim() || null,
+        notes: dto.notes?.trim() || null,
+        nextReviewAt: dto.nextReviewAt
+          ? new Date(dto.nextReviewAt)
+          : null,
+        ...metrics,
+      },
+    });
+    return { ...analysis, warning };
+  }
+
+  async updateAdAnalysis(
+    userId: string,
+    channelId: string,
+    analysisId: string,
+    dto: UpdateTelegramChannelAdAnalysisDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const existing = await this.prisma.telegramChannelAdAnalysis.findFirst({
+      where: { id: analysisId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!existing) throw new NotFoundException('Ad analysis not found');
+    const price = dto.price === undefined
+      ? (existing.price == null ? null : Number(existing.price))
+      : dto.price;
+    const metrics = await this.calculateAdAnalysisMetrics(
+      workspaceId,
+      channelId,
+      dto.postLimit,
+      price,
+    );
+    return this.prisma.telegramChannelAdAnalysis.update({
+      where: { id: analysisId },
+      data: {
+        analyzedAt: dto.analyzedAt ? new Date(dto.analyzedAt) : undefined,
+        status: dto.status,
+        verdict: dto.verdict === undefined ? undefined : dto.verdict.trim() || null,
+        price: dto.price,
+        currency: dto.currency?.trim().toUpperCase(),
+        reasonTags: dto.reasonTags,
+        reasonSummary: dto.reasonSummary === undefined
+          ? undefined
+          : dto.reasonSummary.trim() || null,
+        notes: dto.notes === undefined ? undefined : dto.notes.trim() || null,
+        nextReviewAt: dto.nextReviewAt === undefined
+          ? undefined
+          : new Date(dto.nextReviewAt),
+        ...metrics,
+      },
+    });
+  }
+
+  async deleteAdAnalysis(
+    userId: string,
+    channelId: string,
+    analysisId: string,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const existing = await this.prisma.telegramChannelAdAnalysis.findFirst({
+      where: { id: analysisId, workspaceId, telegramChannelId: channelId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Ad analysis not found');
+    return this.prisma.telegramChannelAdAnalysis.delete({
+      where: { id: analysisId },
     });
   }
 
