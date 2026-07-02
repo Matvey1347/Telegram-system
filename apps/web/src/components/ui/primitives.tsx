@@ -76,11 +76,18 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const menuOptions = options.filter((o) => !o.hidden);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const filteredMenuOptions = menuOptions.filter((option) =>
+    option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
       if (!rootRef.current) return;
-      if (!rootRef.current.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch('');
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
@@ -98,7 +105,12 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       <button
         type="button"
         disabled={props.disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((value) => {
+            if (value) setSearch('');
+            return !value;
+          });
+        }}
         className={`flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring disabled:opacity-50 ${props.className ?? ''}`}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -108,8 +120,24 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
         <ChevronDown size={16} className="text-neutral-400" />
       </button>
       {open ? (
-        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          {menuOptions.map((opt) => (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+          <div className="border-b border-neutral-800 p-2">
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setOpen(false);
+                  setSearch('');
+                }
+              }}
+              placeholder="Search..."
+              className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
+            />
+          </div>
+          <div className="max-h-60 overflow-auto">
+          {filteredMenuOptions.map((opt) => (
             <button
               key={opt.key}
               type="button"
@@ -118,6 +146,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
                 if (opt.disabled) return;
                 commit(opt.value);
                 setOpen(false);
+                setSearch('');
               }}
               className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
             >
@@ -128,6 +157,10 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
               {opt.value === currentValue ? <Check size={14} className="text-blue-300" /> : null}
             </button>
           ))}
+          {!filteredMenuOptions.length ? (
+            <p className="px-3 py-3 text-center text-sm text-neutral-500">No options found</p>
+          ) : null}
+          </div>
         </div>
       ) : null}
       <input type="hidden" name={props.name} value={currentValue} />
@@ -460,14 +493,21 @@ export function CustomSelect({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selected = options.find((o) => o.value === value);
+  const filteredOptions = options.filter((option) =>
+    option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
       if (!rootRef.current) return;
       const target = event.target as Node;
-      if (!rootRef.current.contains(target)) setOpen(false);
+      if (!rootRef.current.contains(target)) {
+        setOpen(false);
+        setSearch('');
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
@@ -481,7 +521,12 @@ export function CustomSelect({
       <button
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((value) => {
+            if (value) setSearch('');
+            return !value;
+          });
+        }}
         className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring disabled:opacity-50"
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -492,7 +537,23 @@ export function CustomSelect({
       </button>
       {open ? (
         <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          {options.map((opt) => {
+          <div className="border-b border-neutral-800 p-2">
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setOpen(false);
+                  setSearch('');
+                }
+              }}
+              placeholder="Search..."
+              className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
+            />
+          </div>
+          <div className="max-h-60 overflow-auto">
+          {filteredOptions.map((opt) => {
             const isSelected = opt.value === value;
             return (
               <button
@@ -501,6 +562,7 @@ export function CustomSelect({
                 onClick={() => {
                   onChange(opt.value);
                   setOpen(false);
+                  setSearch('');
                 }}
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-neutral-800"
               >
@@ -512,6 +574,10 @@ export function CustomSelect({
               </button>
             );
           })}
+          {!filteredOptions.length ? (
+            <p className="px-3 py-3 text-center text-sm text-neutral-500">No options found</p>
+          ) : null}
+          </div>
         </div>
       ) : null}
     </div>
