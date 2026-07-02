@@ -21,14 +21,18 @@ import {
   AttachCampaignDto,
   CreateTelegramChannelAdAnalysisDto,
   CreateTelegramChannelDto,
+  CreateTelegramManagedPostDto,
   DeepSyncDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
+  ScheduleTelegramManagedPostDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
+  UpdateTelegramManagedPostDto,
 } from './dto';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
+import { telegramMarkupToHtml } from '../telegram/shared/telegram-markup';
 
 @Injectable()
 export class TelegramChannelsService {
@@ -447,7 +451,7 @@ export class TelegramChannelsService {
         },
         _count: { select: { adAnalyses: true } },
         adminLinks: { include: { telegramUserAccountIntegration: true } },
-        sourceAccesses: { select: { id: true } },
+        sourceAccesses: { select: { id: true, canPostMessages: true } },
         audienceSnapshots: {
           orderBy: { collectedAt: 'desc' },
           take: 1,
@@ -573,6 +577,9 @@ export class TelegramChannelsService {
         preview: {
           audience,
           sourcesCount: sourceAccesses.length || channel.adminLinks.length,
+          canPostMessages: sourceAccesses.some(
+            (source) => source.canPostMessages,
+          ),
           adAnalysis: {
             latest: adAnalyses[0] ?? null,
             historyCount: _count.adAnalyses,
@@ -708,6 +715,274 @@ export class TelegramChannelsService {
         ? (price / avgViews) * 1000
         : null,
     };
+  }
+
+  async managedPosts(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    return this.prisma.telegramManagedPost.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createManagedPost(
+    userId: string,
+    channelId: string,
+    dto: CreateTelegramManagedPostDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const title = dto.title.trim();
+    if (!title) throw new BadRequestException('Title is required');
+    return this.prisma.telegramManagedPost.create({
+      data: {
+        workspaceId,
+        telegramChannelId: channelId,
+        title,
+        text: dto.text ?? null,
+        imageUrls: dto.imageUrls ?? [],
+        createdByUserId: userId,
+      },
+    });
+  }
+
+  async updateManagedPost(
+    userId: string,
+    channelId: string,
+    postId: string,
+    dto: UpdateTelegramManagedPostDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const post = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!post) throw new NotFoundException('Post draft not found');
+    if (post.status === 'PUBLISHED')
+      throw new BadRequestException('Published posts cannot be edited');
+    if (dto.title !== undefined && !dto.title.trim())
+      throw new BadRequestException('Title is required');
+    return this.prisma.telegramManagedPost.update({
+      where: { id: postId },
+      data: {
+        title: dto.title?.trim(),
+        text: dto.text,
+        imageUrls: dto.imageUrls,
+        lastError: null,
+      },
+    });
+  }
+
+  private async publishManagedPost(
+    workspaceId: string,
+    channelId: string,
+    postId: string,
+    scheduleAt?: Date,
+  ) {
+    const [post, channel, sources] = await Promise.all([
+      this.prisma.telegramManagedPost.findFirst({
+        where: { id: postId, workspaceId, telegramChannelId: channelId },
+      }),
+      this.prisma.telegramChannel.findFirst({
+        where: { id: channelId, workspaceId, isActive: true },
+      }),
+      this.sourceAccessService.sourcesForChannel(workspaceId, channelId),
+    ]);
+    if (!post || !channel) throw new NotFoundException('Post or channel not found');
+    if (!post.text?.trim() && !post.imageUrls.length)
+      throw new BadRequestException('Text or at least one image is required');
+    const existingScheduledSource =
+      scheduleAt && post.status === 'SCHEDULED' && post.sourceId
+        ? sources.find(
+            (item) =>
+              item.sourceType === TelegramSourceType.MTPROTO &&
+              item.sourceId === post.sourceId &&
+              item.permissions.canPostMessages,
+          )
+        : undefined;
+    const mtprotoSource = existingScheduledSource ?? sources.find(
+      (item) =>
+        item.sourceType === TelegramSourceType.MTPROTO &&
+        item.permissions.canPostMessages,
+    );
+    const source = mtprotoSource ?? sources.find(
+      (item) =>
+        item.sourceType === TelegramSourceType.BOT &&
+        item.permissions.canPostMessages,
+    );
+    if (!source) {
+      throw new BadRequestException(
+        'No connected source has posting permission',
+      );
+    }
+    if (scheduleAt && source.sourceType !== TelegramSourceType.MTPROTO)
+      throw new BadRequestException(
+        'Scheduling requires a connected MTProto source with posting permission',
+      );
+    const channelRef = this.channelRef(channel);
+    if (!channelRef) throw new BadRequestException('Channel has no Telegram reference');
+    try {
+      const html = telegramMarkupToHtml(post.text || '');
+      let ids: string[];
+      if (source.sourceType === TelegramSourceType.MTPROTO) {
+        const account = await this.connectedAccount(
+          workspaceId,
+          channelId,
+          source.sourceId,
+        );
+        if (
+          scheduleAt &&
+          post.status === 'SCHEDULED' &&
+          post.telegramMessageIds.length
+        ) {
+          await this.mtprotoClient.deleteScheduledPost({
+            ...this.accountCredentials(account),
+            channelRef,
+            messageIds: post.telegramMessageIds,
+          });
+        }
+        ids = await this.mtprotoClient.publishPost({
+          ...this.accountCredentials(account),
+          channelRef,
+          html,
+          imageUrls: post.imageUrls,
+          scheduleAt,
+        });
+      } else {
+        const bot = await this.prisma.telegramBotIntegration.findFirst({
+          where: { id: source.sourceId, workspaceId, isActive: true },
+        });
+        if (!bot) throw new BadRequestException('Telegram bot is not connected');
+        const token = this.encryptionService.decrypt({
+          encrypted: bot.botTokenEncrypted,
+          iv: bot.botTokenIv,
+          authTag: bot.botTokenAuthTag,
+        });
+        const chatId = channel.username ? `@${channel.username}` : channel.telegramChatId;
+        const call = async (method: string, body: Record<string, unknown>) => {
+          const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, ...body }),
+          });
+          const payload = await response.json() as { ok?: boolean; description?: string; result?: any };
+          if (!response.ok || !payload.ok)
+            throw new BadRequestException(payload.description || 'Telegram Bot API publish failed');
+          return payload.result;
+        };
+        if (post.imageUrls.length > 1) {
+          const caption = html.length <= 1024 ? html : '';
+          const result = await call('sendMediaGroup', {
+            media: post.imageUrls.map((media, index) => ({
+              type: 'photo',
+              media,
+              ...(index === 0 && caption
+                ? { caption, parse_mode: 'HTML' }
+                : {}),
+            })),
+          }) as Array<{ message_id: number }>;
+          ids = result.map((message) => String(message.message_id));
+          if (html && !caption) {
+            const textResult = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
+            ids.push(String(textResult.message_id));
+          }
+        } else if (post.imageUrls.length === 1) {
+          const caption = html.length <= 1024 ? html : '';
+          const result = await call('sendPhoto', {
+            photo: post.imageUrls[0],
+            caption,
+            parse_mode: 'HTML',
+          }) as { message_id: number };
+          ids = [String(result.message_id)];
+          if (html && !caption) {
+            const textResult = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
+            ids.push(String(textResult.message_id));
+          }
+        } else {
+          const result = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
+          ids = [String(result.message_id)];
+        }
+      }
+      return this.prisma.telegramManagedPost.update({
+        where: { id: post.id },
+        data: {
+          status: scheduleAt ? 'SCHEDULED' : 'PUBLISHED',
+          scheduledAt: scheduleAt ?? null,
+          publishedAt: scheduleAt ? null : new Date(),
+          telegramMessageIds: ids,
+          sourceType: source.sourceType,
+          sourceId: source.sourceId,
+          lastError: null,
+        },
+      });
+    } catch (error) {
+      await this.prisma.telegramManagedPost.update({
+        where: { id: post.id },
+        data: {
+          status: 'FAILED',
+          lastError: error instanceof Error ? error.message : 'Publish failed',
+        },
+      });
+      throw error;
+    }
+  }
+
+  async publishManagedPostNow(userId: string, channelId: string, postId: string) {
+    return this.publishManagedPost(
+      await this.workspace(userId),
+      channelId,
+      postId,
+    );
+  }
+
+  async scheduleManagedPost(
+    userId: string,
+    channelId: string,
+    postId: string,
+    dto: ScheduleTelegramManagedPostDto,
+  ) {
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (scheduledAt.getTime() <= Date.now())
+      throw new BadRequestException('Schedule date must be in the future');
+    return this.publishManagedPost(
+      await this.workspace(userId),
+      channelId,
+      postId,
+      scheduledAt,
+    );
+  }
+
+  async deleteManagedPost(userId: string, channelId: string, postId: string) {
+    const workspaceId = await this.workspace(userId);
+    const post = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+      include: { telegramChannel: true },
+    });
+    if (!post) throw new NotFoundException('Post draft not found');
+    if (post.status === 'SCHEDULED' && post.telegramMessageIds.length) {
+      if (
+        post.sourceType !== TelegramSourceType.MTPROTO ||
+        !post.sourceId
+      ) {
+        throw new BadRequestException(
+          'Scheduled post has no MTProto source and cannot be cancelled safely',
+        );
+      }
+      const account = await this.connectedAccount(
+        workspaceId,
+        channelId,
+        post.sourceId,
+      );
+      const channelRef = this.channelRef(post.telegramChannel);
+      if (!channelRef)
+        throw new BadRequestException('Channel has no Telegram reference');
+      await this.mtprotoClient.deleteScheduledPost({
+        ...this.accountCredentials(account),
+        channelRef,
+        messageIds: post.telegramMessageIds,
+      });
+    }
+    return this.prisma.telegramManagedPost.delete({ where: { id: postId } });
   }
 
   async adAnalyses(userId: string, channelId: string) {

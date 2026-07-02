@@ -485,20 +485,26 @@ export function CustomSelect({
   options,
   placeholder = 'Select',
   disabled = false,
+  dropdownDirection = 'down',
+  searchable = true,
 }: {
   value?: string;
   onChange: (value: string) => void;
   options: SelectOption[];
   placeholder?: string;
   disabled?: boolean;
+  dropdownDirection?: 'up' | 'down';
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selected = options.find((o) => o.value === value);
-  const filteredOptions = options.filter((option) =>
-    option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
-  );
+  const filteredOptions = searchable
+    ? options.filter((option) =>
+        option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+      )
+    : options;
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
@@ -533,11 +539,18 @@ export function CustomSelect({
           {selected ? <OptionIcon iconUrl={selected.iconUrl} iconEmoji={selected.iconEmoji} fallback={selected.iconFallback} /> : null}
           <span className={`truncate ${selected ? toneClass(selected.tone) : 'text-neutral-400'}`}>{selected?.label || placeholder}</span>
         </span>
-        <ChevronDown size={16} className="text-neutral-400" />
+        <ChevronDown
+          size={16}
+          className={`text-neutral-400 transition-transform ${dropdownDirection === 'up' && open ? 'rotate-180' : ''}`}
+        />
       </button>
       {open ? (
-        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          <div className="border-b border-neutral-800 p-2">
+        <div
+          className={`absolute z-50 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl ${
+            dropdownDirection === 'up' ? 'bottom-full mb-1' : 'mt-1'
+          }`}
+        >
+          {searchable ? <div className="border-b border-neutral-800 p-2">
             <input
               autoFocus
               value={search}
@@ -551,7 +564,7 @@ export function CustomSelect({
               placeholder="Search..."
               className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
             />
-          </div>
+          </div> : null}
           <div className="max-h-60 overflow-auto">
           {filteredOptions.map((opt) => {
             const isSelected = opt.value === value;
@@ -626,7 +639,7 @@ export function Modal({
   children,
   size = 'md',
   allowOverflow = false,
-}: PropsWithChildren<{ open: boolean; onClose: () => void; title: string; size?: 'md' | 'sm'; allowOverflow?: boolean }>) {
+}: PropsWithChildren<{ open: boolean; onClose: () => void; title: string; size?: 'md' | 'sm' | 'xl'; allowOverflow?: boolean }>) {
   if (!open) return null;
   return (
     <div
@@ -635,7 +648,7 @@ export function Modal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'} ${size === 'sm' ? 'max-w-[560px]' : 'max-w-[660px]'}`}>
+      <div className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'} ${size === 'sm' ? 'max-w-[560px]' : size === 'xl' ? 'max-w-[1280px]' : 'max-w-[660px]'}`}>
         <div className="mb-1 flex items-center justify-between p-4 pb-3 sm:p-5 sm:pb-3">
           <h3 className="text-lg font-semibold sm:text-xl">{title}</h3>
           <button onClick={onClose} className="cursor-pointer rounded-lg border border-neutral-700 p-2 hover:bg-neutral-800"><X size={16} /></button>

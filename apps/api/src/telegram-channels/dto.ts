@@ -78,6 +78,22 @@ export class UpdateTelegramPostManualMetricsDto {
   @IsOptional() @IsBoolean() excludeFromAnalytics?: boolean;
 }
 
+export class CreateTelegramManagedPostDto {
+  @IsString() title!: string;
+  @IsOptional() @IsString() text?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
+}
+
+export class UpdateTelegramManagedPostDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() text?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
+}
+
+export class ScheduleTelegramManagedPostDto {
+  @IsDateString() scheduledAt!: string;
+}
+
 export class CreateTelegramChannelAdAnalysisDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsIn([

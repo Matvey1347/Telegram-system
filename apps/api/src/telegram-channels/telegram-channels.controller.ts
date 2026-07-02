@@ -17,14 +17,17 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   DeepSyncDto,
   CreateTelegramChannelAdAnalysisDto,
+  CreateTelegramManagedPostDto,
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
+  ScheduleTelegramManagedPostDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
+  UpdateTelegramManagedPostDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
 
@@ -44,6 +47,52 @@ export class TelegramChannelsController {
   @Post('import')
   import(@CurrentUser() user: JwtUser, @Body() dto: ImportTelegramChannelDto) {
     return this.service.importChannel(user.sub, dto);
+  }
+  @Get(':id/managed-posts')
+  managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.managedPosts(user.sub, id);
+  }
+  @Post(':id/managed-posts')
+  createManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: CreateTelegramManagedPostDto,
+  ) {
+    return this.service.createManagedPost(user.sub, id, dto);
+  }
+  @Patch(':id/managed-posts/:postId')
+  updateManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Body() dto: UpdateTelegramManagedPostDto,
+  ) {
+    return this.service.updateManagedPost(user.sub, id, postId, dto);
+  }
+  @Post(':id/managed-posts/:postId/publish')
+  publishManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.service.publishManagedPostNow(user.sub, id, postId);
+  }
+  @Post(':id/managed-posts/:postId/schedule')
+  scheduleManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Body() dto: ScheduleTelegramManagedPostDto,
+  ) {
+    return this.service.scheduleManagedPost(user.sub, id, postId, dto);
+  }
+  @Delete(':id/managed-posts/:postId')
+  deleteManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.service.deleteManagedPost(user.sub, id, postId);
   }
   @Get(':id/ad-analyses')
   adAnalyses(@CurrentUser() user: JwtUser, @Param('id') id: string) {

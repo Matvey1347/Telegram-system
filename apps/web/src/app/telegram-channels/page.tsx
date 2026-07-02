@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, CircleHelp, Download, RefreshCw } from "lucide-react";
+import { ArrowUpRight, CircleHelp, Download, ImagePlus, RefreshCw, Send, X } from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -21,6 +21,7 @@ import { MemberSelect } from "@/components/workspace/member-select";
 import {
   advertisingChannelsApi,
   currenciesApi,
+  iconsApi,
   syncTelegramChannelNow,
   telegramChannelNetworksApi,
   telegramChannelsApi,
@@ -36,11 +37,13 @@ import {
   type TelegramChannelFinancialSummary,
   type TelegramChannelNetwork,
   type TelegramChannelNetworkMember,
+  type TelegramManagedPost,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import {
   Button,
   ConfirmDeleteModal,
+  CustomSelect,
   DateInput,
   EmptyState,
   EntityCard,
@@ -778,7 +781,7 @@ function ChannelFinanceMiniSummary({
           ) : null}
 
           {actions ? (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+            <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] items-center gap-2 pt-1 [&>*]:w-full">
               {actions}
             </div>
           ) : null}
@@ -1248,6 +1251,8 @@ export default function TelegramChannelsPage() {
     channel: TelegramChannel;
     analysis?: TelegramChannelAdAnalysis;
   } | null>(null);
+  const [postComposerChannel, setPostComposerChannel] =
+    useState<TelegramChannel | null>(null);
   const [deletingAnalysis, setDeletingAnalysis] = useState<{
     channel: TelegramChannel;
     analysis: TelegramChannelAdAnalysis;
@@ -1660,9 +1665,21 @@ export default function TelegramChannelsPage() {
                           </Button>
                         ) : null}
                         {hasAdminLink ? (
+                          channel.preview?.canPostMessages ? (
+                            <Button
+                              className="inline-flex h-11 min-w-36 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                              variant="primary"
+                              onClick={() => setPostComposerChannel(channel)}
+                            >
+                              <Send size={16} />
+                              Posts
+                            </Button>
+                          ) : null
+                        ) : null}
+                        {hasAdminLink ? (
                           <Link
                             href={`/telegram/channels/${channel.id}`}
-                            className="flex h-11 min-w-28 items-center justify-center gap-2 rounded-md border border-slate-600/80 px-3 py-2 text-center text-sm font-semibold text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-900 hover:text-white"
+                            className="col-span-full flex h-11 w-full items-center justify-center gap-2 rounded-md border border-slate-600/80 px-3 py-2 text-center text-sm font-semibold text-slate-200 transition hover:border-blue-400/70 hover:bg-slate-900 hover:text-white"
                           >
                             Open
                             <ArrowUpRight size={16} />
@@ -1849,6 +1866,14 @@ export default function TelegramChannelsPage() {
           });
         }}
       />
+      <TelegramPostComposerModal
+        channel={postComposerChannel}
+        onClose={() => setPostComposerChannel(null)}
+        onChanged={() => {
+          queryClient.invalidateQueries({ queryKey: ["telegram-managed-posts"] });
+          pushToast("Post saved.", "success");
+        }}
+      />
       <ConfirmDeleteModal
         open={!!deletingAnalysis}
         entityName={deletingAnalysis?.channel.title ?? ""}
@@ -1881,6 +1906,256 @@ type AdAnalysisFormValues = {
   notes?: string;
   assignedMemberId?: string | null;
 };
+
+function MultiImageUpload({
+  value,
+  onChange,
+  disabled,
+  onUploadingChange,
+}: {
+  value: string[];
+  onChange: (urls: string[]) => void;
+  disabled?: boolean;
+  onUploadingChange: (uploading: boolean) => void;
+}) {
+  return (
+    <FormField label="Images">
+      <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-700 bg-neutral-950/50 px-4 py-4 text-sm text-neutral-300 hover:border-blue-600 hover:text-white ${disabled ? "pointer-events-none opacity-50" : ""}`}>
+        <ImagePlus size={18} />
+        Upload images
+        <input
+          className="sr-only"
+          type="file"
+          accept="image/*"
+          multiple
+          disabled={disabled}
+          onChange={async (event) => {
+            const files = Array.from(event.target.files || []);
+            event.target.value = "";
+            if (!files.length) return;
+            onUploadingChange(true);
+            try {
+              const uploaded = await Promise.all(
+                files.map((file) => iconsApi.upload(file)),
+              );
+              onChange([...value, ...uploaded.map((item) => item.imageUrl)]);
+            } finally {
+              onUploadingChange(false);
+            }
+          }}
+        />
+      </label>
+      {value.length ? (
+        <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {value.map((url, index) => (
+            <div key={`${url}-${index}`} className="group relative aspect-square overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
+              <img src={url} alt="" className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
+                className="absolute right-1 top-1 rounded-md bg-black/75 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                aria-label="Remove image"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </FormField>
+  );
+}
+
+function TelegramPostComposerModal({
+  channel,
+  onClose,
+  onChanged,
+}: {
+  channel: TelegramChannel | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [mode, setMode] = useState<"draft" | "publish" | "schedule">("draft");
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [busy, setBusy] = useState(false);
+  const [deletingPost, setDeletingPost] =
+    useState<TelegramManagedPost | null>(null);
+  const posts = useQuery({
+    queryKey: ["telegram-managed-posts", channel?.id],
+    queryFn: () => telegramChannelsApi.managedPosts(channel!.id),
+    enabled: !!channel,
+  });
+  useEffect(() => {
+    if (!channel) return;
+    setEditing(null);
+    setTitle("");
+    setText("");
+    setImageUrls([]);
+    setMode("draft");
+    setScheduleDate("");
+    setScheduleTime("09:00");
+  }, [channel]);
+  const persist = async () => {
+    if (!channel || !title.trim()) throw new Error("Title is required");
+    const payload = { title: title.trim(), text, imageUrls };
+    return editing
+      ? telegramChannelsApi.updateManagedPost(channel.id, editing.id, payload)
+      : telegramChannelsApi.createManagedPost(channel.id, payload);
+  };
+  const run = async (mode: "draft" | "publish" | "schedule") => {
+    if (!channel) return;
+    setBusy(true);
+    try {
+      const post = await persist();
+      if (mode === "publish")
+        await telegramChannelsApi.publishManagedPost(channel.id, post.id);
+      if (mode === "schedule") {
+        if (!scheduleDate || !scheduleTime)
+          throw new Error("Schedule date and time are required");
+        await telegramChannelsApi.scheduleManagedPost(
+          channel.id,
+          post.id,
+          new Date(`${scheduleDate}T${scheduleTime}`).toISOString(),
+        );
+      }
+      await posts.refetch();
+      onChanged();
+      if (mode !== "draft") onClose();
+      setEditing(post);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+    <Modal open={!!channel} onClose={onClose} title={`Posts · ${channel?.title || ""}`} size="xl">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
+      <div className="min-w-0 space-y-4">
+        <FormField label="Internal title" required>
+          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+        </FormField>
+        <FormField label="Telegram text">
+          <Textarea rows={8} value={text} onChange={(event) => setText(event.target.value)} placeholder="**bold**  __italic__  ~~strike~~  ||spoiler||  `code`" />
+        </FormField>
+        <MultiImageUpload
+          value={imageUrls}
+          onChange={setImageUrls}
+          disabled={busy}
+          onUploadingChange={setBusy}
+        />
+        <FormField label="Publishing mode">
+          <CustomSelect
+            value={mode}
+            dropdownDirection="up"
+            searchable={false}
+            onChange={(value) =>
+              setMode(value as "draft" | "publish" | "schedule")
+            }
+            options={[
+              { value: "draft", label: "Save as draft", iconEmoji: "📝" },
+              { value: "publish", label: "Publish now", iconEmoji: "🚀" },
+              { value: "schedule", label: "Schedule in Telegram", iconEmoji: "🕒" },
+            ]}
+          />
+        </FormField>
+        {mode === "schedule" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Publish date" required>
+              <DateInput value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} placeholder="Select date" />
+            </FormField>
+            <FormField label="Publish time" required>
+              <Input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
+            </FormField>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={() => run(mode)}
+            disabled={
+              busy ||
+              !title.trim() ||
+              (mode !== "draft" && !text.trim() && !imageUrls.length) ||
+              (mode === "schedule" && (!scheduleDate || !scheduleTime))
+            }
+          >
+            {mode === "draft" ? "Save draft" : mode === "publish" ? "Publish now" : editing?.status === "SCHEDULED" ? "Update scheduled post" : "Schedule post"}
+          </Button>
+        </div>
+      </div>
+        <div className="min-w-0 border-t border-neutral-800 pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+          <p className="mb-3 text-sm font-semibold">Drafts and posts</p>
+          {posts.isLoading ? <LoadingState /> : null}
+          {posts.data?.length ? (
+            <div className="max-h-[62vh] space-y-2 overflow-auto pr-1">
+              {posts.data.map((post) => (
+                <div key={post.id} className="flex items-center gap-2 rounded-lg border border-neutral-800 p-1 hover:bg-neutral-900">
+                  <button type="button" onClick={() => {
+                    setEditing(post);
+                    setTitle(post.title);
+                    setText(post.text || "");
+                    setImageUrls(post.imageUrls);
+                    setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
+                    setScheduleDate(post.scheduledAt ? post.scheduledAt.slice(0, 10) : "");
+                    setScheduleTime(post.scheduledAt ? post.scheduledAt.slice(11, 16) : "09:00");
+                  }} className="flex min-w-0 flex-1 items-center justify-between px-2 py-1 text-left">
+                    <span className="truncate">{post.title}</span>
+                    <span className="ml-2 text-xs text-neutral-500">{post.status}</span>
+                  </button>
+                  <IconButton
+                    type="button"
+                    kind="delete"
+                    aria-label={`Delete ${post.title}`}
+                    onClick={() => setDeletingPost(post)}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : !posts.isLoading ? <EmptyState text="No posts yet" /> : null}
+        </div>
+      </div>
+    </Modal>
+    <ConfirmDeleteModal
+      open={!!deletingPost}
+      onClose={() => setDeletingPost(null)}
+      entityName={deletingPost?.title ?? ""}
+      label="Delete post"
+      description={
+        deletingPost?.status === "SCHEDULED"
+          ? "This will cancel the scheduled message in Telegram and delete it from this system."
+          : "This deletes the record only from this system. Published Telegram messages remain untouched."
+      }
+      onConfirm={async () => {
+        if (!channel || !deletingPost) return;
+        setBusy(true);
+        try {
+          await telegramChannelsApi.deleteManagedPost(
+            channel.id,
+            deletingPost.id,
+          );
+          if (editing?.id === deletingPost.id) {
+            setEditing(null);
+            setTitle("");
+            setText("");
+            setImageUrls([]);
+            setMode("draft");
+          }
+          setDeletingPost(null);
+          await posts.refetch();
+          onChanged();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    />
+    </>
+  );
+}
 
 function AdAnalysisModal({
   open,

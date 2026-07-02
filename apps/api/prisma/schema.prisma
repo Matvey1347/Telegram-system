@@ -98,6 +98,14 @@ enum TelegramChannelAdAnalysisStatus {
   TESTED
 }
 
+enum TelegramManagedPostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
 model User {
   id                             String                           @id @default(cuid())
   email                          String                           @unique
@@ -118,6 +126,7 @@ model User {
   createdAdCampaigns             AdCampaign[]                     @relation("AdCampaignCreatedBy")
   createdAdHypotheses            AdHypothesis[]                   @relation("AdHypothesisCreatedBy")
   createdTelegramChannelNetworks TelegramChannelNetwork[]         @relation("TelegramChannelNetworkCreatedBy")
+  createdTelegramManagedPosts    TelegramManagedPost[]            @relation("TelegramManagedPostCreatedBy")
   createdAt                      DateTime                         @default(now())
   updatedAt                      DateTime                         @updatedAt
 }
@@ -147,6 +156,7 @@ model Workspace {
   telegramChannelStatsPoints       TelegramChannelStatsPoint[]
   telegramChannelAdAnalyses        TelegramChannelAdAnalysis[]
   telegramPosts                    TelegramPost[]
+  telegramManagedPosts             TelegramManagedPost[]
   promos                           Promo[]
   advertisingSources               AdvertisingSource[]
   adCampaigns                      AdCampaign[]
@@ -498,6 +508,7 @@ model TelegramChannel {
   sourceAccesses    TelegramChannelSourceAccess[]
   dataSources       TelegramChannelDataSource[]
   posts             TelegramPost[]
+  managedPosts      TelegramManagedPost[]
   statsSnapshots    TelegramChannelStatsSnapshot[]
   audienceSnapshots TelegramChannelAudienceSnapshot[]
   networkMembers    TelegramChannelNetworkMember[]
@@ -992,6 +1003,33 @@ model TelegramPost {
   @@unique([telegramChannelId, telegramMessageId])
   @@index([telegramChannelId, postDate])
   @@index([workspaceId, telegramChannelId, postDate])
+}
+
+model TelegramManagedPost {
+  id                 String                    @id @default(cuid())
+  workspaceId        String
+  telegramChannelId  String
+  title              String
+  text               String?
+  imageUrls          String[]                  @default([])
+  status             TelegramManagedPostStatus @default(DRAFT)
+  scheduledAt        DateTime?
+  publishedAt        DateTime?
+  telegramMessageIds String[]                  @default([])
+  sourceType         TelegramSourceType?
+  sourceId           String?
+  lastError          String?
+  createdByUserId    String?
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  createdByUser   User?           @relation("TelegramManagedPostCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, telegramChannelId, createdAt])
+  @@index([status, scheduledAt])
 }
 
 model TelegramPostMetricSnapshot {

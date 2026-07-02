@@ -801,6 +801,77 @@ export class TelegramMtprotoClient {
     }
   }
 
+  async publishPost(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    html: string;
+    imageUrls: string[];
+    scheduleAt?: Date | null;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const entity = await client.getEntity(params.channelRef);
+      const schedule = params.scheduleAt
+        ? Math.floor(params.scheduleAt.getTime() / 1000)
+        : undefined;
+      const messageIds: string[] = [];
+      if (params.imageUrls.length) {
+        const caption = params.html.length <= 1024 ? params.html : '';
+        const result = await client.sendFile(entity, {
+          file: params.imageUrls,
+          caption,
+          parseMode: 'html',
+          scheduleDate: schedule,
+        });
+        const messages = Array.isArray(result) ? result : [result];
+        for (const message of messages) {
+          if (message?.id != null) messageIds.push(String(message.id));
+        }
+        if (params.html && !caption) {
+          const textMessage = await client.sendMessage(entity, {
+            message: params.html,
+            parseMode: 'html',
+            schedule,
+          });
+          if (textMessage?.id != null) messageIds.push(String(textMessage.id));
+        }
+      } else {
+        const message = await client.sendMessage(entity, {
+          message: params.html,
+          parseMode: 'html',
+          schedule,
+        });
+        if (message?.id != null) messageIds.push(String(message.id));
+      }
+      return messageIds;
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
+  async deleteScheduledPost(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    messageIds: string[];
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const peer = await client.getInputEntity(params.channelRef);
+      await client.invoke(
+        new Api.messages.DeleteScheduledMessages({
+          peer,
+          id: params.messageIds.map(Number).filter(Number.isFinite),
+        }),
+      );
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
   async getChannelPostsMetrics(params: {
     apiId: string;
     apiHash: string;
