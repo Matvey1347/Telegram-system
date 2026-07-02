@@ -92,7 +92,7 @@ export class TransfersService {
     const transfers = await this.prisma.transfer.findMany({
       where,
       orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
-      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: { fromAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, toAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     return this.withLosses(workspaceId, transfers);
   }
@@ -101,7 +101,7 @@ export class TransfersService {
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const row = await this.prisma.transfer.findFirst({
       where: { id, workspaceId },
-      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: { fromAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, toAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
     if (!row) throw new NotFoundException('Transfer not found');
     const [transfer] = await this.withLosses(workspaceId, [row]);
@@ -140,7 +140,7 @@ export class TransfersService {
         assignedMemberId,
         createdByUserId: userId,
       },
-      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: { fromAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, toAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
   async update(userId: string, id: string, dto: UpdateTransferDto) {
@@ -186,7 +186,7 @@ export class TransfersService {
         ...calc,
         assignedMemberId,
       },
-      include: { fromAccount: true, toAccount: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: { fromAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, toAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
     });
   }
   async remove(userId: string, id: string) {

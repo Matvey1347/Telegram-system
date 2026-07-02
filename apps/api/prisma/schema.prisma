@@ -283,23 +283,24 @@ model WorkspaceMember {
   role         WorkspaceRole @default(admin)
   avatarIconId String?
 
-  workspace                       Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user                            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  avatarIcon                      Icon?                            @relation(fields: [avatarIconId], references: [id], onDelete: SetNull)
-  investments                     Investment[]
-  investmentTransactions          Transaction[]                    @relation("MemberInvestmentTransactions")
-  assignedAccounts                Account[]                        @relation("AccountAssignedMember")
-  assignedTransactions            Transaction[]                    @relation("TransactionAssignedMember")
-  assignedTransfers               Transfer[]                       @relation("TransferAssignedMember")
-  assignedInvestments             Investment[]                     @relation("InvestmentAssignedMember")
-  assignedTelegramChannels        TelegramChannel[]                @relation("TelegramChannelAssignedMember")
-  assignedTelegramBots            TelegramBotIntegration[]         @relation("TelegramBotAssignedMember")
-  assignedTelegramUserAccounts    TelegramUserAccountIntegration[] @relation("TelegramUserAccountAssignedMember")
-  assignedPromos                  Promo[]                          @relation("PromoAssignedMember")
-  assignedAdvertisingSources      AdvertisingSource[]              @relation("AdvertisingSourceAssignedMember")
-  assignedAdCampaigns             AdCampaign[]                     @relation("AdCampaignAssignedMember")
-  assignedAdHypotheses            AdHypothesis[]                   @relation("AdHypothesisAssignedMember")
-  assignedTelegramChannelNetworks TelegramChannelNetwork[]         @relation("TelegramChannelNetworkAssignedMember")
+  workspace                         Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user                              User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatarIcon                        Icon?                            @relation(fields: [avatarIconId], references: [id], onDelete: SetNull)
+  investments                       Investment[]
+  investmentTransactions            Transaction[]                    @relation("MemberInvestmentTransactions")
+  assignedAccounts                  Account[]                        @relation("AccountAssignedMember")
+  assignedTransactions              Transaction[]                    @relation("TransactionAssignedMember")
+  assignedTransfers                 Transfer[]                       @relation("TransferAssignedMember")
+  assignedInvestments               Investment[]                     @relation("InvestmentAssignedMember")
+  assignedTelegramChannels          TelegramChannel[]                @relation("TelegramChannelAssignedMember")
+  assignedTelegramBots              TelegramBotIntegration[]         @relation("TelegramBotAssignedMember")
+  assignedTelegramUserAccounts      TelegramUserAccountIntegration[] @relation("TelegramUserAccountAssignedMember")
+  assignedPromos                    Promo[]                          @relation("PromoAssignedMember")
+  assignedAdvertisingSources        AdvertisingSource[]              @relation("AdvertisingSourceAssignedMember")
+  assignedAdCampaigns               AdCampaign[]                     @relation("AdCampaignAssignedMember")
+  assignedAdHypotheses              AdHypothesis[]                   @relation("AdHypothesisAssignedMember")
+  assignedTelegramChannelNetworks   TelegramChannelNetwork[]         @relation("TelegramChannelNetworkAssignedMember")
+  assignedTelegramChannelAdAnalyses TelegramChannelAdAnalysis[]      @relation("TelegramChannelAdAnalysisAssignedMember")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -515,6 +516,7 @@ model TelegramChannelAdAnalysis {
   id                String                          @id @default(cuid())
   workspaceId       String
   telegramChannelId String
+  assignedMemberId  String?
   analyzedAt        DateTime                        @default(now())
   status            TelegramChannelAdAnalysisStatus @default(WATCH_LATER)
   verdict           String?
@@ -530,8 +532,9 @@ model TelegramChannelAdAnalysis {
   notes             String?
   nextReviewAt      DateTime?
 
-  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel  @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  assignedMember  WorkspaceMember? @relation("TelegramChannelAdAnalysisAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -539,6 +542,7 @@ model TelegramChannelAdAnalysis {
   @@index([workspaceId, telegramChannelId])
   @@index([workspaceId, analyzedAt])
   @@index([workspaceId, status])
+  @@index([workspaceId, assignedMemberId])
 }
 
 model TelegramChannelDailyStats {

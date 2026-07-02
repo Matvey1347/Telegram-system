@@ -65,6 +65,7 @@ export class DashboardService {
       this.prisma.account.findMany({
         where: { workspaceId, isActive: true },
         include: {
+          assignedMember: WorkspaceService.assignedMemberInclude,
           icon: {
             select: {
               id: true,

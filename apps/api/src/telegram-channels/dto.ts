@@ -79,6 +79,7 @@ export class UpdateTelegramPostManualMetricsDto {
 }
 
 export class CreateTelegramChannelAdAnalysisDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsIn([
     TelegramChannelAdAnalysisStatus.APPROVED,
     TelegramChannelAdAnalysisStatus.REJECTED,
@@ -96,6 +97,7 @@ export class CreateTelegramChannelAdAnalysisDto {
 }
 
 export class UpdateTelegramChannelAdAnalysisDto {
+  @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional()
   @IsIn([
     TelegramChannelAdAnalysisStatus.APPROVED,

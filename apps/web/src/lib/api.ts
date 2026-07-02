@@ -123,6 +123,8 @@ export type TelegramChannelAdAnalysis = {
   id: string;
   workspaceId: string;
   telegramChannelId: string;
+  assignedMemberId?: string | null;
+  assignedMember?: WorkspaceMember | null;
   analyzedAt: string;
   status: TelegramChannelAdAnalysisStatus;
   verdict?: string | null;
@@ -148,6 +150,7 @@ export type TelegramChannelAdAnalysisPayload = {
   currency?: string;
   notes?: string;
   postLimit?: number;
+  assignedMemberId?: string | null;
 };
 export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
 export type TelegramChannel = EntityAssignment & { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean; preview?: { audience: Pick<TelegramChannelAudience, 'subscribersCount' | 'activeSubscribersEstimate' | 'paidActiveSubscribersEstimate' | 'viewRate' | 'dataQuality' | 'dataQualityReason' | 'dataQualityWarning' | 'rawViewRate' | 'subscriberBaseQuality' | 'hasExternalTrafficAnomaly' | 'hasSubscriberBasePollution' | 'postsWindow'>; financialSummary: TelegramChannelFinancialSummary; sourcesCount: number; adAnalysis?: { latest?: TelegramChannelAdAnalysis | null; historyCount: number; metrics?: { avgViews?: number | null; avgReactions?: number | null; avgForwards?: number | null; postsCount?: number | null; cpm?: number | string | null } } } };

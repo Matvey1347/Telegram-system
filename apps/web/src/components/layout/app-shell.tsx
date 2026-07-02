@@ -5,9 +5,10 @@ import { PropsWithChildren, useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { logout } from '@/lib/auth';
-import { globalSearchApi, iconsApi, workspacesApi, type GlobalSearchResult } from '@/lib/api';
+import { accountApi, globalSearchApi, iconsApi, workspacesApi, type GlobalSearchResult } from '@/lib/api';
 import { CustomSelect } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
+import { IconAvatar } from '@/components/icons/icon-avatar';
 import {
   ArrowRightLeft,
   ChevronDown,
@@ -26,8 +27,6 @@ import {
   ReceiptText,
   Settings,
   Target,
-  UserRound,
-  Users,
   X,
 } from 'lucide-react';
 
@@ -55,15 +54,6 @@ const groups = [
       { label: 'Ads', href: '/ad-campaigns', icon: Target },
     ],
   },
-  {
-    key: 'workspace',
-    label: 'Workspace',
-    icon: Users,
-    children: [
-      { label: 'Members', href: '/workspace-members', icon: Users },
-      { label: 'My Profile', href: '/account', icon: UserRound },
-    ],
-  },
 ] as const;
 
 export function AppShell({ children }: PropsWithChildren) {
@@ -81,6 +71,7 @@ export function AppShell({ children }: PropsWithChildren) {
     return localStorage.getItem('selected-workspace-id') ?? '';
   });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
+  const { data: currentAccount } = useQuery({ queryKey: ['account-me'], queryFn: accountApi.me });
   const { data: searchResults = [], isFetching: searchFetching } = useQuery({
     queryKey: ['global-search', debouncedGlobalSearch],
     queryFn: () => globalSearchApi.search(debouncedGlobalSearch),
@@ -126,7 +117,7 @@ export function AppShell({ children }: PropsWithChildren) {
     },
   });
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    const defaults = { finance: false, telegram: false, workspace: false };
+    const defaults = { finance: false, telegram: false };
     if (typeof window === 'undefined') return defaults;
     try {
       const raw = localStorage.getItem('sidebar-open-groups');
@@ -180,7 +171,8 @@ export function AppShell({ children }: PropsWithChildren) {
       return next;
     });
   };
-  const settingsActive = pathname === '/settings';
+  const settingsActive =
+    pathname === '/settings' || pathname === '/workspace-members';
   const dashboardActive = pathname === '/';
   const activeWorkspaceId = selectedWorkspaceId || workspaces?.[0]?.id || '';
 
@@ -339,7 +331,33 @@ export function AppShell({ children }: PropsWithChildren) {
           </Link>
         </nav>
 
-        <button onClick={logout} className="mt-6 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-900"><LogOut size={16} /> Logout</button>
+        <div className="mt-5 border-t border-neutral-800 pt-4">
+          <Link
+            href="/account"
+            className={`flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 transition ${
+              pathname === '/account'
+                ? 'border-blue-700/70 bg-blue-950/30'
+                : 'border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900'
+            }`}
+          >
+            <IconAvatar
+              icon={currentAccount?.avatarIcon}
+              label={currentAccount?.name || currentAccount?.email || 'User'}
+              size="md"
+              className="!rounded-full"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-white">
+                {currentAccount?.name || 'My profile'}
+              </span>
+              <span className="block truncate text-xs text-neutral-500">
+                {currentAccount?.email || 'Account settings'}
+              </span>
+            </span>
+            <ChevronRight size={16} className="shrink-0 text-neutral-500" />
+          </Link>
+          <button onClick={logout} className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"><LogOut size={16} /> Logout</button>
+        </div>
       </aside>
       <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
     </div>

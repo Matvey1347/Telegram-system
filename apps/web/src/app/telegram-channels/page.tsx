@@ -16,6 +16,8 @@ import {
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
+import { MemberBadge } from "@/components/workspace/member-badge";
+import { MemberSelect } from "@/components/workspace/member-select";
 import {
   advertisingChannelsApi,
   currenciesApi,
@@ -168,13 +170,35 @@ function ExternalChannelAdAnalysis({
     );
   }
   const chip = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200";
+  const hasPrice = latest.price != null;
+  const analysisTone =
+    latest.status === "APPROVED"
+      ? "border-emerald-700/80 bg-emerald-950/25"
+      : latest.status === "REJECTED"
+        ? "border-rose-700/80 bg-rose-950/25"
+        : "border-slate-800 bg-slate-950/50";
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/50 p-2">
-      <span className={chip}>{latest.currency} {formatNumber(latest.price, 2)}</span>
-      <span className={chip}>CPM {latest.currency} {latest.cpm == null ? "-" : formatNumber(latest.cpm, 2)}</span>
-      <span className={chip}>{adAnalysisStatusLabels[latest.status]}</span>
-      {latest.reasonSummary ? <span className={`${chip} max-w-full truncate`}>{latest.reasonSummary}</span> : null}
+    <div className={`mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 ${analysisTone}`}>
+      {hasPrice ? (
+        <>
+          <span className={chip}>{latest.currency} {formatNumber(latest.price, 2)}</span>
+          <span className={chip}>CPM {latest.currency} {latest.cpm == null ? "-" : formatNumber(latest.cpm, 2)}</span>
+        </>
+      ) : null}
+      <span
+        className={`${chip} ${
+          latest.status === "APPROVED"
+            ? "border-emerald-700 text-emerald-300"
+            : latest.status === "REJECTED"
+              ? "border-rose-700 text-rose-300"
+              : ""
+        }`}
+      >
+        {adAnalysisStatusLabels[latest.status]}
+      </span>
+      {latest.notes ? <span className={`${chip} max-w-full truncate`}>{latest.notes}</span> : null}
       <span className="text-xs text-slate-500">{formatLocalDate(latest.analyzedAt)}</span>
+      <MemberBadge member={latest.assignedMember} />
       <div className="ml-auto flex items-center gap-2">
         <IconButton
           type="button"
@@ -1855,6 +1879,7 @@ type AdAnalysisFormValues = {
   analyzedAt: string;
   status: "APPROVED" | "REJECTED";
   notes?: string;
+  assignedMemberId?: string | null;
 };
 
 function AdAnalysisModal({
@@ -1879,6 +1904,8 @@ function AdAnalysisModal({
     handleSubmit,
     reset,
     control,
+    setValue,
+    watch,
     formState: { errors },
   } = useForm<AdAnalysisFormValues>();
   useEffect(() => {
@@ -1893,6 +1920,7 @@ function AdAnalysisModal({
         : formatLocalDate(new Date()),
       status: existingStatus,
       notes: analysis?.notes || "",
+      assignedMemberId: analysis?.assignedMemberId,
     });
   }, [analysis, open, reset]);
   const currencyOptions = Array.from(
@@ -1933,27 +1961,38 @@ function AdAnalysisModal({
           </FormField>
           <FormField label="Status">
             <Select {...register("status")}>
-              <option value="APPROVED">Approved</option>
-              <option value="REJECTED">Rejected</option>
+              <option value="APPROVED" className="text-emerald-300">Approved</option>
+              <option value="REJECTED" className="text-rose-300">Rejected</option>
             </Select>
           </FormField>
         </div>
-        <FormField label="Date" required error={errors.analyzedAt ? "Date is required" : undefined}>
-          <Controller
-            name="analyzedAt"
-            control={control}
-            rules={{ required: true }}
-            render={({ field }) => (
-              <DateInput
-                name={field.name}
-                value={field.value}
-                onBlur={field.onBlur}
-                onChange={field.onChange}
-                placeholder="Select date"
-              />
-            )}
-          />
-        </FormField>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Date" required error={errors.analyzedAt ? "Date is required" : undefined}>
+            <Controller
+              name="analyzedAt"
+              control={control}
+              rules={{ required: true }}
+              render={({ field }) => (
+                <DateInput
+                  name={field.name}
+                  value={field.value}
+                  onBlur={field.onBlur}
+                  onChange={field.onChange}
+                  placeholder="Select date"
+                />
+              )}
+            />
+          </FormField>
+          <FormField label="Member">
+            <MemberSelect
+              value={watch("assignedMemberId")}
+              onChange={(assignedMemberId) =>
+                setValue("assignedMemberId", assignedMemberId || null)
+              }
+              defaultToCurrent={!analysis}
+            />
+          </FormField>
+        </div>
         <FormField label="Notes">
           <Textarea rows={3} {...register("notes")} />
         </FormField>

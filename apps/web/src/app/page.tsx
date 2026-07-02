@@ -21,6 +21,7 @@ import {
 import { Activity, Banknote, Megaphone, RadioTower, Target, TrendingUp, Users } from 'lucide-react';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
+import { accountDisplayName } from '@/lib/account-display';
 import { Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
 import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, transactionCategoriesApi } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
@@ -254,7 +255,7 @@ export default function DashboardPage() {
                           className="h-6 w-6 shrink-0 rounded-none border-0 bg-transparent hover:bg-transparent"
                           iconClassName="!h-6 !w-6 !rounded-none !border-0 !bg-transparent !text-xl"
                         />
-                        <span className="truncate">{account.name}</span>
+                        <span className="truncate">{accountDisplayName(account)}</span>
                       </span>
                     }
                     value={formatMoney(account.balance, account.currency, 'symbol')}

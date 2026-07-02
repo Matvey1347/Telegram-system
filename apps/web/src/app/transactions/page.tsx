@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
+import { accountDisplayName } from '@/lib/account-display';
 import { Account, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
@@ -71,7 +72,7 @@ export default function TransactionsPage() {
         <FormField label="Period"><DateRangeInput from={filters.dateFrom} to={filters.dateTo} onChange={(range) => setFilters((prev) => ({ ...prev, dateFrom: range.from, dateTo: range.to }))} /></FormField>
         <FormField label="Type"><Select value={filters.type} onChange={(e) => setFilter('type', e.target.value)}><option value="all">All</option><option value="income">Income</option><option value="expense">Expense</option></Select></FormField>
         <FormField label="Category"><Select value={filters.categoryId} onChange={(e) => setFilter('categoryId', e.target.value)} disabled={filters.type === 'all'}><option value="">All</option>{filterCategories?.map((c) => <option key={c.id} value={c.id} {...iconOptionProps(c)}>{c.name}</option>)}</Select></FormField>
-        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}</Select></FormField>
+        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{accountDisplayName(a)}</option>)}</Select></FormField>
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
         <FormField label="Search"><Input value={filters.search} onChange={(e) => setFilter('search', e.target.value)} placeholder="Description" /></FormField>
       </div>
@@ -120,7 +121,7 @@ export default function TransactionsPage() {
                     onChange={(iconId) => t.account?.id && updateAccountIconMutation.mutate({ id: t.account.id, iconId })}
                     className="shrink-0"
                   />
-                  <span>{t.account?.name ?? '-'}</span>
+                  <span>{accountDisplayName(t.account)}</span>
                 </div>
               </td>
               <td className="px-3 py-2"><div className="flex gap-2"><IconButton onClick={() => setEditing(t)} /><IconButton kind="delete" onClick={() => setDeleting(t)} /></div></td>
@@ -210,7 +211,7 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
             onChange={(event) => setValue('accountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
           >
             <option value="" disabled hidden>Select account</option>
-            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name} ({a.currency})</option>)}
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{accountDisplayName(a)} ({a.currency})</option>)}
           </Select>
         </FormField>
         <FormField label="Amount">

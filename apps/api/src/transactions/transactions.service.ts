@@ -108,6 +108,7 @@ export class TransactionsService {
       include: {
         account: {
           include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
             icon: {
               select: {
                 id: true,
@@ -158,6 +159,7 @@ export class TransactionsService {
       include: {
         account: {
           include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
             icon: {
               select: {
                 id: true,
@@ -247,6 +249,7 @@ export class TransactionsService {
       include: {
         account: {
           include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
             icon: {
               select: {
                 id: true,
@@ -349,6 +352,7 @@ export class TransactionsService {
       include: {
         account: {
           include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
             icon: {
               select: {
                 id: true,

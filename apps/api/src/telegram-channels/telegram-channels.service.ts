@@ -438,7 +438,13 @@ export class TelegramChannelsService {
       include: {
         assignedMember: WorkspaceService.assignedMemberInclude,
         createdByUser: WorkspaceService.createdByUserInclude,
-        adAnalyses: { orderBy: { analyzedAt: 'desc' }, take: 1 },
+        adAnalyses: {
+          orderBy: { analyzedAt: 'desc' },
+          take: 1,
+          include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
+          },
+        },
         _count: { select: { adAnalyses: true } },
         adminLinks: { include: { telegramUserAccountIntegration: true } },
         sourceAccesses: { select: { id: true } },
@@ -709,6 +715,9 @@ export class TelegramChannelsService {
     await this.findOne(userId, channelId);
     return this.prisma.telegramChannelAdAnalysis.findMany({
       where: { workspaceId, telegramChannelId: channelId },
+      include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+      },
       orderBy: { analyzedAt: 'desc' },
     });
   }
@@ -718,7 +727,11 @@ export class TelegramChannelsService {
     channelId: string,
     dto: CreateTelegramChannelAdAnalysisDto,
   ) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { id: channelId, workspaceId, isActive: true },
     });
@@ -761,6 +774,7 @@ export class TelegramChannelsService {
       data: {
         workspaceId,
         telegramChannelId: channelId,
+        assignedMemberId,
         analyzedAt: new Date(dto.analyzedAt),
         status: dto.status,
         verdict: dto.verdict?.trim() || null,
@@ -773,6 +787,9 @@ export class TelegramChannelsService {
           ? new Date(dto.nextReviewAt)
           : null,
         ...metrics,
+      },
+      include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
       },
     });
     return { ...analysis, warning };
@@ -789,6 +806,15 @@ export class TelegramChannelsService {
       where: { id: analysisId, workspaceId, telegramChannelId: channelId },
     });
     if (!existing) throw new NotFoundException('Ad analysis not found');
+    const assignedMemberId =
+      dto.assignedMemberId === undefined
+        ? undefined
+        : (
+            await this.workspaceService.resolveAssignedMemberId(
+              userId,
+              dto.assignedMemberId,
+            )
+          ).assignedMemberId;
     const price = dto.price === undefined
       ? (existing.price == null ? null : Number(existing.price))
       : dto.price;
@@ -801,6 +827,7 @@ export class TelegramChannelsService {
     return this.prisma.telegramChannelAdAnalysis.update({
       where: { id: analysisId },
       data: {
+        assignedMemberId,
         analyzedAt: dto.analyzedAt ? new Date(dto.analyzedAt) : undefined,
         status: dto.status,
         verdict: dto.verdict === undefined ? undefined : dto.verdict.trim() || null,
@@ -815,6 +842,9 @@ export class TelegramChannelsService {
           ? undefined
           : new Date(dto.nextReviewAt),
         ...metrics,
+      },
+      include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
       },
     });
   }

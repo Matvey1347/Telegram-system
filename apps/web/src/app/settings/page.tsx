@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { Button, Card, ConfirmDeleteModal, Input, LoadingState, PageHeader } from '@/components/ui/primitives';
 import { accountApi, authApi, workspacesApi } from '@/lib/api';
+import { WorkspaceMembersSection } from '@/components/workspace/workspace-members-section';
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -49,7 +50,10 @@ export default function SettingsPage() {
     <AppShell>
       <PageHeader title="Settings" />
       {me.isLoading ? <LoadingState /> : null}
-      <div>
+      <div className="space-y-6">
+        <Card>
+          <WorkspaceMembersSection embedded />
+        </Card>
         <Card>
           <h3 className="text-lg font-semibold">Workspace</h3>
           <div className="mt-4 space-y-3">

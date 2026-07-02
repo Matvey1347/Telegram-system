@@ -18,6 +18,7 @@ import {
 } from '@/lib/api';
 import { formatMoney, formatRate } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
+import { AccountName } from '@/components/accounts/account-name';
 import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, PageHeader, Skeleton } from '@/components/ui/primitives';
 
 type DateFilters = { dateFrom: string; dateTo: string };
@@ -110,7 +111,7 @@ export default function FinancePage() {
             {accounts?.map((account) => (
               <EntityCard
                 key={account.id}
-                title={<div className="flex items-center gap-2"><InlineIconPicker iconId={account.iconId ?? null} onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })} /><span>{account.name}</span></div>}
+                title={<div className="flex items-center gap-2"><InlineIconPicker iconId={account.iconId ?? null} onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })} /><AccountName account={account} /></div>}
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <MoneyStack amount={account.balance ?? account.calculatedBalance} currency={account.currency} settings={settings} rates={rates} amountInPrimary={account.convertedCurrency === settings?.primaryCurrency ? account.convertedBalance : null} />
@@ -155,7 +156,7 @@ export default function FinancePage() {
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
                         <InlineIconPicker iconId={transaction.account?.iconId ?? null} onChange={(iconId) => transaction.account?.id && updateAccountIconMutation.mutate({ id: transaction.account.id, iconId })} className="shrink-0" />
-                        <span>{transaction.account?.name ?? '-'}</span>
+                        <AccountName account={transaction.account} />
                       </div>
                     </td>
                   </tr>
@@ -306,11 +307,11 @@ function AccountStatLine({ label, value, currency, displayMode, tone }: { label:
   );
 }
 
-function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
+function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'assignedMember'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
   return (
     <div className="flex items-center gap-2">
       <InlineIconPicker iconId={account?.iconId ?? null} onChange={onIconChange} className="shrink-0" />
-      <span className="min-w-0 truncate">{account?.name ?? fallback}</span>
+      <AccountName account={account} fallback={fallback} className="min-w-0" />
     </div>
   );
 }

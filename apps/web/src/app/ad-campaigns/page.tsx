@@ -28,6 +28,7 @@ import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
 import { CircleHelp, RefreshCw } from 'lucide-react';
+import { accountDisplayName } from '@/lib/account-display';
 
 type CampaignValues = {
   telegramChannelId: string;
@@ -70,7 +71,7 @@ function toInputDate(value?: string | Date | null) {
 function accountSelectOption(account: Account) {
   return {
     value: account.id,
-    label: `${account.name} (${account.currency})`,
+    label: `${accountDisplayName(account)} (${account.currency})`,
     iconUrl: account.icon?.imageUrl ?? undefined,
     iconEmoji: account.icon?.emoji ?? undefined,
     iconFallback: account.name,

@@ -10,8 +10,8 @@ import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { formatMoney } from '@/lib/money';
-import { MemberBadge } from '@/components/workspace/member-badge';
 import { MemberSelect } from '@/components/workspace/member-select';
+import { AccountName } from '@/components/accounts/account-name';
 
 type Values = { name: string; currency: string; initialBalance: number; iconId?: string | null; assignedMemberId?: string | null };
 
@@ -34,13 +34,12 @@ export default function AccountsPage() {
     {isLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load accounts</div> : null}
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><span>{a.name}</span></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
+      {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><AccountName account={a} /></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
         <div className="mb-2 flex items-center justify-between gap-2">
           <MoneyStack amount={a.balance ?? a.calculatedBalance} currency={a.currency} settings={settings} rates={rates} amountInPrimary={a.convertedCurrency === settings?.primaryCurrency ? a.convertedBalance : null} />
           <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{a.currency}</span>
         </div>
         <AccountStatsSummary account={a} displayMode={settings?.currencyDisplayMode} />
-        <div className="mt-3 border-t border-neutral-800 pt-3"><MemberBadge member={a.assignedMember} /></div>
       </EntityCard>)}
     </div>
     {!isLoading && !data?.length ? <EmptyState text="No accounts yet" /> : null}

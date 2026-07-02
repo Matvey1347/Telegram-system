@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
+import { accountDisplayName } from '@/lib/account-display';
 import { Account, Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
@@ -62,7 +63,7 @@ export default function TransfersPage() {
     <Card className="mb-4">
       <div className="grid gap-3 md:grid-cols-4">
         <FormField label="Period"><DateRangeInput from={filters.dateFrom} to={filters.dateTo} onChange={(range) => setFilters((prev) => ({ ...prev, dateFrom: range.from, dateTo: range.to }))} /></FormField>
-        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}</Select></FormField>
+        <FormField label="Account"><Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}><option value="">All</option>{accounts?.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{accountDisplayName(a)}</option>)}</Select></FormField>
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
       </div>
     </Card>
@@ -136,7 +137,7 @@ function TransferModal({ open, onClose, onSubmit, title, accounts, initial, erro
             onChange={(event) => setValue('fromAccountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
           >
             <option value="" disabled hidden>Select</option>
-            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{accountDisplayName(a)}</option>)}
           </Select>
         </FormField>
         <FormField label="To Account" required error={errors.toAccountId ? 'Required field' : undefined}>
@@ -146,7 +147,7 @@ function TransferModal({ open, onClose, onSubmit, title, accounts, initial, erro
             onChange={(event) => setValue('toAccountId', event.target.value, { shouldDirty: true, shouldValidate: true })}
           >
             <option value="" disabled hidden>Select</option>
-            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{a.name}</option>)}
+            {accounts.map((a) => <option key={a.id} value={a.id} {...iconOptionProps(a)}>{accountDisplayName(a)}</option>)}
           </Select>
         </FormField>
         <FormField label="From Amount"><Input type="number" step="0.01" {...register('fromAmount', { valueAsNumber: true })} /></FormField>
