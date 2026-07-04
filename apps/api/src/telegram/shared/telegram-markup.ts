@@ -1,3 +1,5 @@
+import { parseTelegramSpoilers } from '@telegram-system/shared/telegram-spoilers';
+
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, '&amp;')
@@ -14,7 +16,9 @@ function convertBlockquotes(value: string) {
   const flush = () => {
     if (!quoteType) return;
     const attribute = quoteType === 'expandable' ? ' expandable' : '';
-    output.push(`<blockquote${attribute}>${quoteLines.join('\n')}</blockquote>`);
+    output.push(
+      `<blockquote${attribute}>${quoteLines.join('\n')}</blockquote>`,
+    );
     quoteType = null;
     quoteLines = [];
   };
@@ -22,11 +26,7 @@ function convertBlockquotes(value: string) {
   for (const line of lines) {
     const expandable = line.match(/^&gt;&gt;\s?(.*)$/);
     const regular = line.match(/^&gt;\s?(.*)$/);
-    const nextType = expandable
-      ? 'expandable'
-      : regular
-        ? 'regular'
-        : null;
+    const nextType = expandable ? 'expandable' : regular ? 'regular' : null;
     if (!nextType) {
       flush();
       output.push(line);
@@ -44,7 +44,7 @@ export function telegramMarkupToHtml(raw: string) {
   const tokens: string[] = [];
   const token = (html: string) => {
     const index = tokens.push(html) - 1;
-    return `\u0000${index}\u0000`;
+    return `\uE000${index}\uE001`;
   };
 
   let value = raw.replace(
@@ -53,7 +53,9 @@ export function telegramMarkupToHtml(raw: string) {
       const languageClass = language
         ? ` class="language-${escapeHtml(language)}"`
         : '';
-      return token(`<pre><code${languageClass}>${escapeHtml(code)}</code></pre>`);
+      return token(
+        `<pre><code${languageClass}>${escapeHtml(code)}</code></pre>`,
+      );
     },
   );
   value = value.replace(/`([^`\n]+)`/g, (_match, code: string) =>
@@ -78,15 +80,24 @@ export function telegramMarkupToHtml(raw: string) {
       }
     },
   );
+  const spoilers = parseTelegramSpoilers(value);
+  value = spoilers.text;
+  for (const entity of [...spoilers.entities].reverse()) {
+    const end = entity.offset + entity.length;
+    value = value.slice(0, end) + token('</tg-spoiler>') + value.slice(end);
+    value =
+      value.slice(0, entity.offset) +
+      token('<tg-spoiler>') +
+      value.slice(entity.offset);
+  }
   value = escapeHtml(value)
     .replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>')
     .replace(/__([^\n]+?)__/g, '<i>$1</i>')
     .replace(/\+\+([^\n]+?)\+\+/g, '<u>$1</u>')
-    .replace(/~~([^\n]+?)~~/g, '<s>$1</s>')
-    .replace(/\|\|([^\n]+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
+    .replace(/~~([^\n]+?)~~/g, '<s>$1</s>');
 
   return convertBlockquotes(value).replace(
-    /\u0000(\d+)\u0000/g,
+    /\uE000(\d+)\uE001/g,
     (_match, index: string) => tokens[Number(index)] ?? '',
   );
 }

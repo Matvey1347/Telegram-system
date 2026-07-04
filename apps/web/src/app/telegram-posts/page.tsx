@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -204,14 +204,32 @@ function TelegramPostWorkspace({
     queryFn: () =>
       telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
   });
-  const availableIcons = useQuery({
-    queryKey: ["icons"],
-    queryFn: () => iconsApi.list(),
+  const groupIconIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          (postGroups.data || [])
+            .map((group) => group.icon)
+            .filter((iconId): iconId is string => Boolean(iconId)),
+        ),
+      ],
+    [postGroups.data],
+  );
+  const groupIconQueries = useQueries({
+    queries: groupIconIds.map((iconId) => ({
+      queryKey: ["icon", iconId],
+      queryFn: () => iconsApi.get(iconId),
+    })),
   });
   const iconsById = useMemo(
     () =>
-      new Map((availableIcons.data || []).map((item) => [item.id, item])),
-    [availableIcons.data],
+      new Map(
+        groupIconQueries
+          .map((query) => query.data)
+          .filter((item) => Boolean(item))
+          .map((item) => [item!.id, item!]),
+      ),
+    [groupIconQueries],
   );
   const members = useQuery({
     queryKey: ["workspace-members"],
@@ -1572,22 +1590,53 @@ function GroupSummary({
   summary: PostGroup["statusSummary"];
   compact?: boolean;
 }) {
+  const visibleStatuses = [
+    {
+      label: "Draft",
+      count: summary.draftCount,
+      emoji: "📝",
+      className: "border-blue-800/70 bg-blue-950/30 text-blue-200",
+    },
+    {
+      label: "Scheduled",
+      count: summary.scheduledCount,
+      emoji: "🕒",
+      className: "border-amber-800/70 bg-amber-950/30 text-amber-200",
+    },
+    {
+      label: "Published",
+      count: summary.publishedCount,
+      emoji: "✅",
+      className: "border-emerald-800/70 bg-emerald-950/30 text-emerald-200",
+    },
+    {
+      label: "Failed",
+      count: summary.failedCount,
+      emoji: "⚠️",
+      className: "border-red-800/70 bg-red-950/30 text-red-200",
+    },
+  ].filter((item) => item.count > 0);
   return (
     <div className="space-y-2">
       {!compact ? <GroupStatusBadge status={summary.computedStatus} /> : null}
-      <div className="grid grid-cols-4 gap-1 text-center text-[11px]">
-        {[
-          ["Draft", summary.draftCount],
-          ["Scheduled", summary.scheduledCount],
-          ["Published", summary.publishedCount],
-          ["Failed", summary.failedCount],
-        ].map(([label, count]) => (
-          <div key={label} className="rounded-md bg-neutral-950 px-1 py-2">
-            <span className="block font-semibold text-white">{count}</span>
-            <span className="text-neutral-500">{label}</span>
-          </div>
-        ))}
-      </div>
+      {visibleStatuses.length ? (
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {visibleStatuses.map((item) => (
+            <div
+              key={item.label}
+              className={`flex min-w-[92px] flex-1 items-center justify-center gap-2 rounded-md border px-2 py-2 ${item.className}`}
+            >
+              <span className="text-sm">{item.emoji}</span>
+              <span>
+                <span className="mr-1 font-semibold text-white">
+                  {item.count}
+                </span>
+                {item.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

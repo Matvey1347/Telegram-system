@@ -1,5 +1,6 @@
 import { Api } from 'telegram';
 import { HTMLParser } from 'telegram/extensions/html';
+import { parseTelegramSpoilers } from '@telegram-system/shared/telegram-spoilers';
 import {
   telegramHtmlToMtprotoHtml,
   telegramMarkupToHtml,
@@ -80,5 +81,61 @@ describe('telegramMarkupToHtml', () => {
     expect(text).toBe('hidden text');
     expect(entities).toHaveLength(1);
     expect(entities[0]).toBeInstanceOf(Api.MessageEntitySpoiler);
+  });
+});
+
+describe('parseTelegramSpoilers', () => {
+  it.each([
+    [
+      'hello ||secret|| world',
+      'hello secret world',
+      [{ type: 'spoiler', offset: 6, length: 6 }],
+    ],
+    ['||secret||', 'secret', [{ type: 'spoiler', offset: 0, length: 6 }]],
+    [
+      'a ||one|| b ||two|| c',
+      'a one b two c',
+      [
+        { type: 'spoiler', offset: 2, length: 3 },
+        { type: 'spoiler', offset: 8, length: 3 },
+      ],
+    ],
+    [
+      'привет ||секрет|| текст',
+      'привет секрет текст',
+      [{ type: 'spoiler', offset: 7, length: 6 }],
+    ],
+    [
+      'emoji 😀 ||hidden 😀 text|| end',
+      'emoji 😀 hidden 😀 text end',
+      [{ type: 'spoiler', offset: 9, length: 14 }],
+    ],
+  ] as const)('parses spoiler entities for %s', (input, text, entities) => {
+    expect(parseTelegramSpoilers(input)).toEqual({ text, entities });
+  });
+
+  it('leaves an unmatched delimiter as safe plain text', () => {
+    expect(parseTelegramSpoilers('broken ||secret')).toEqual({
+      text: 'broken ||secret',
+      entities: [],
+    });
+  });
+
+  it('keeps empty delimiters literal and creates no empty entity', () => {
+    expect(parseTelegramSpoilers('empty |||| test')).toEqual({
+      text: 'empty |||| test',
+      entities: [],
+    });
+  });
+
+  it('produces an explicit GramJS spoiler entity with UTF-16 offsets', () => {
+    const html = telegramMarkupToHtml('emoji 😀 ||hidden 😀 text|| end');
+    const [text, entities] = HTMLParser.parse(telegramHtmlToMtprotoHtml(html));
+    const spoiler = entities.find(
+      (entity) => entity instanceof Api.MessageEntitySpoiler,
+    );
+
+    expect(text).toBe('emoji 😀 hidden 😀 text end');
+    expect(spoiler).toMatchObject({ offset: 9, length: 14 });
   });
 });
