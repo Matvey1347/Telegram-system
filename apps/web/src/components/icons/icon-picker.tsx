@@ -319,6 +319,12 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
   const totalSearchResults = filteredStandardIcons.length + customIcons.length;
 
   const selectRecentStandard = (item: RecentStandardIcon) => {
+    setOpen(false);
+    createEmojiMutation.mutate(item);
+  };
+
+  const selectStandardIcon = (item: EmojiIcon) => {
+    setOpen(false);
     createEmojiMutation.mutate(item);
   };
 
@@ -486,7 +492,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                               type="button"
                               className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
                               title={item.name}
-                              onClick={() => createEmojiMutation.mutate(item)}
+                              onClick={() => selectStandardIcon(item)}
                             >
                               {item.emoji}
                             </button>
@@ -582,7 +588,7 @@ export function IconPicker({ iconId, onChange, buttonLabel = 'Add icon', classNa
                                       type="button"
                                       className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent text-[20px] leading-none hover:border-neutral-700 hover:bg-neutral-900"
                                       title={item.name}
-                                      onClick={() => createEmojiMutation.mutate(item)}
+                                      onClick={() => selectStandardIcon(item)}
                                     >
                                       {item.emoji}
                                     </button>

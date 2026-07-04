@@ -16,11 +16,18 @@ import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   DeepSyncDto,
+  CreatePostGroupDto,
   CreateTelegramChannelAdAnalysisDto,
   CreateTelegramManagedPostDto,
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
+  MovePostChannelDto,
+  PostGroupsQueryDto,
+  PostIdsDto,
+  PublishPostGroupDto,
+  ReorderPostGroupDto,
+  SchedulePostGroupSequenceDto,
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
   ScheduleTelegramManagedPostDto,
@@ -29,6 +36,7 @@ import {
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
   UpdateTelegramManagedPostDto,
+  UpdatePostGroupDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
 
@@ -48,6 +56,90 @@ export class TelegramChannelsController {
   @Post('import')
   import(@CurrentUser() user: JwtUser, @Body() dto: ImportTelegramChannelDto) {
     return this.service.importChannel(user.sub, dto);
+  }
+  @Get('post-groups')
+  postGroups(
+    @CurrentUser() user: JwtUser,
+    @Query() query: PostGroupsQueryDto,
+  ) {
+    return this.service.postGroups(user.sub, query);
+  }
+  @Post('post-groups')
+  createPostGroup(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreatePostGroupDto,
+  ) {
+    return this.service.createPostGroup(user.sub, dto);
+  }
+  @Get('post-groups/:groupId')
+  postGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.service.postGroup(user.sub, groupId);
+  }
+  @Patch('post-groups/:groupId')
+  updatePostGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: UpdatePostGroupDto,
+  ) {
+    return this.service.updatePostGroup(user.sub, groupId, dto);
+  }
+  @Delete('post-groups/:groupId')
+  deletePostGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.service.deletePostGroup(user.sub, groupId);
+  }
+  @Post('post-groups/:groupId/posts')
+  addPostsToGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: PostIdsDto,
+  ) {
+    return this.service.addPostsToGroup(user.sub, groupId, dto);
+  }
+  @Delete('post-groups/:groupId/posts/:postId')
+  removePostFromGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.service.removePostFromGroup(user.sub, groupId, postId);
+  }
+  @Post('post-groups/:groupId/reorder')
+  reorderPostGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: ReorderPostGroupDto,
+  ) {
+    return this.service.reorderPostGroup(user.sub, groupId, dto);
+  }
+  @Post('post-groups/:groupId/move-channel')
+  movePostGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: MovePostChannelDto,
+  ) {
+    return this.service.movePostGroup(user.sub, groupId, dto);
+  }
+  @Post('post-groups/:groupId/publish-all')
+  publishPostGroup(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: PublishPostGroupDto,
+  ) {
+    return this.service.publishPostGroup(user.sub, groupId, dto);
+  }
+  @Post('post-groups/:groupId/schedule-sequence')
+  schedulePostGroupSequence(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: SchedulePostGroupSequenceDto,
+  ) {
+    return this.service.schedulePostGroupSequence(user.sub, groupId, dto);
   }
   @Get(':id/managed-posts')
   managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
@@ -69,6 +161,15 @@ export class TelegramChannelsController {
     @Body() dto: UpdateTelegramManagedPostDto,
   ) {
     return this.service.updateManagedPost(user.sub, id, postId, dto);
+  }
+  @Post(':id/managed-posts/:postId/move-channel')
+  moveManagedPost(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Body() dto: MovePostChannelDto,
+  ) {
+    return this.service.moveManagedPost(user.sub, id, postId, dto);
   }
   @Post(':id/managed-posts/:postId/publish')
   publishManagedPost(

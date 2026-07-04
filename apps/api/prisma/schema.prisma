@@ -156,6 +156,7 @@ model Workspace {
   telegramChannelAdAnalyses        TelegramChannelAdAnalysis[]
   telegramPosts                    TelegramPost[]
   telegramManagedPosts             TelegramManagedPost[]
+  postGroups                       PostGroup[]
   promos                           Promo[]
   advertisingSources               AdvertisingSource[]
   adCampaigns                      AdCampaign[]
@@ -311,6 +312,7 @@ model WorkspaceMember {
   assignedTelegramChannelNetworks   TelegramChannelNetwork[]         @relation("TelegramChannelNetworkAssignedMember")
   assignedTelegramChannelAdAnalyses TelegramChannelAdAnalysis[]      @relation("TelegramChannelAdAnalysisAssignedMember")
   assignedTelegramManagedPosts      TelegramManagedPost[]            @relation("TelegramManagedPostAssignedMember")
+  createdPostGroups                 PostGroup[]                      @relation("PostGroupCreatedByMember")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -510,6 +512,7 @@ model TelegramChannel {
   dataSources       TelegramChannelDataSource[]
   posts             TelegramPost[]
   managedPosts      TelegramManagedPost[]
+  postGroups        PostGroup[]
   statsSnapshots    TelegramChannelStatsSnapshot[]
   audienceSnapshots TelegramChannelAudienceSnapshot[]
   networkMembers    TelegramChannelNetworkMember[]
@@ -1022,17 +1025,45 @@ model TelegramManagedPost {
   publishMode        String?
   lastError          String?
   assignedMemberId   String
+  icon               String?
+  groupId            String?
+  groupPosition      Int?
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   assignedMember  WorkspaceMember @relation("TelegramManagedPostAssignedMember", fields: [assignedMemberId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  group           PostGroup?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, telegramChannelId, createdAt])
   @@index([workspaceId, assignedMemberId])
+  @@index([groupId])
+  @@index([groupId, groupPosition])
   @@index([status, scheduledAt])
+}
+
+model PostGroup {
+  id                String  @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  title             String
+  description       String?
+  icon              String?
+  createdByMemberId String
+
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel       @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  createdByMember WorkspaceMember       @relation("PostGroupCreatedByMember", fields: [createdByMemberId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  posts           TelegramManagedPost[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([telegramChannelId])
+  @@index([createdByMemberId])
 }
 
 model TelegramPostMetricSnapshot {

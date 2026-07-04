@@ -1,4 +1,8 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
+import type {
+  BulkActionResult,
+  BulkActionResultItem,
+} from '@telegram-system/shared';
 import { clearAccessToken, getAccessToken } from './auth';
 
 function resolveApiBaseUrl() {
@@ -293,9 +297,14 @@ export type TelegramManagedPostStatus =
   | 'FAILED';
 export type TelegramManagedPost = {
   id: string;
+  workspaceId: string;
   telegramChannelId: string;
   assignedMemberId: string;
   assignedMember: WorkspaceMember;
+  icon?: string | null;
+  groupId?: string | null;
+  groupPosition?: number | null;
+  group?: PostGroup | null;
   title: string;
   text?: string | null;
   imageUrls: string[];
@@ -308,6 +317,37 @@ export type TelegramManagedPost = {
   createdAt: string;
   updatedAt: string;
 };
+export type PostGroupStatusSummary = {
+  totalPosts: number;
+  draftCount: number;
+  scheduledCount: number;
+  publishedCount: number;
+  failedCount: number;
+  computedStatus:
+    | 'EMPTY'
+    | 'HAS_ERRORS'
+    | 'ALL_DRAFT'
+    | 'ALL_SCHEDULED'
+    | 'ALL_PUBLISHED'
+    | 'MIXED';
+};
+export type PostGroup = {
+  id: string;
+  workspaceId: string;
+  telegramChannelId: string;
+  title: string;
+  description?: string | null;
+  icon?: string | null;
+  createdByMemberId: string;
+  createdByMember: WorkspaceMember;
+  telegramChannel?: TelegramChannel;
+  posts?: TelegramManagedPost[];
+  postsCount?: number;
+  statusSummary: PostGroupStatusSummary;
+  createdAt: string;
+  updatedAt: string;
+};
+export type { BulkActionResult, BulkActionResultItem };
 export type TelegramChannelAudience = {
   subscribersCount: number | null;
   knownFakeSubscribersCount?: number;
@@ -748,13 +788,13 @@ export const iconsApi = {
       await api.post<{ imageUrl: string }>('/icons/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         skipGlobalMutationFeedback: true,
-      } as any)
+      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
     ).data;
   },
-  createCustom: async (payload: { name: string; imageUrl: string }) => (await api.post<Icon>('/icons/custom', payload)).data,
-  createTemporaryImage: async (payload: { imageUrl: string; fileName?: string }) => (await api.post<Icon>('/icons/temporary-image', payload)).data,
-  createEmoji: async (payload: { name: string; emoji: string }) => (await api.post<Icon>('/icons/emoji', payload)).data,
-  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/icons/${id}`)).data,
+  createCustom: async (payload: { name: string; imageUrl: string }) => (await api.post<Icon>('/icons/custom', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
+  createTemporaryImage: async (payload: { imageUrl: string; fileName?: string }) => (await api.post<Icon>('/icons/temporary-image', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
+  createEmoji: async (payload: { name: string; emoji: string }) => (await api.post<Icon>('/icons/emoji', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
+  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/icons/${id}`, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
 };
 
 const crud = <T>(path: string) => ({
@@ -813,8 +853,20 @@ export const telegramChannelsApi = {
   audienceSnapshots: async (id: string, limit?: number) => (await api.get<TelegramChannelAudienceSnapshot[]>(`/telegram-channels/${id}/audience-snapshots`, { params: limit ? { limit } : undefined })).data,
   financialSummary: async (id: string) => (await api.get<TelegramChannelFinancialSummary>(`/telegram-channels/${id}/financial-summary`)).data,
   managedPosts: async (channelId: string) => (await api.get<TelegramManagedPost[]>(`/telegram-channels/${channelId}/managed-posts`)).data,
-  createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[]; assignedMemberId?: string }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
-  updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[]; assignedMemberId?: string }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
+  createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[]; assignedMemberId?: string; icon?: string | null }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
+  updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[]; assignedMemberId?: string; icon?: string | null }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
+  moveManagedPost: async (channelId: string, postId: string, targetTelegramChannelId: string) => (await api.post<BulkActionResult & { post: TelegramManagedPost }>(`/telegram-channels/${channelId}/managed-posts/${postId}/move-channel`, { targetTelegramChannelId })).data,
+  postGroups: async (params?: { telegramChannelId?: string; search?: string }) => (await api.get<PostGroup[]>('/telegram-channels/post-groups', { params })).data,
+  postGroup: async (groupId: string) => (await api.get<PostGroup>(`/telegram-channels/post-groups/${groupId}`)).data,
+  createPostGroup: async (payload: { telegramChannelId: string; title: string; description?: string | null; icon?: string | null; postIds?: string[] }) => (await api.post<PostGroup>('/telegram-channels/post-groups', payload)).data,
+  updatePostGroup: async (groupId: string, payload: { title?: string; description?: string | null; icon?: string | null }) => (await api.patch<PostGroup>(`/telegram-channels/post-groups/${groupId}`, payload)).data,
+  deletePostGroup: async (groupId: string) => (await api.delete<PostGroup>(`/telegram-channels/post-groups/${groupId}`)).data,
+  addPostsToGroup: async (groupId: string, postIds: string[]) => (await api.post<PostGroup>(`/telegram-channels/post-groups/${groupId}/posts`, { postIds })).data,
+  removePostFromGroup: async (groupId: string, postId: string) => (await api.delete<PostGroup>(`/telegram-channels/post-groups/${groupId}/posts/${postId}`)).data,
+  reorderPostGroup: async (groupId: string, orderedPostIds: string[]) => (await api.post<PostGroup>(`/telegram-channels/post-groups/${groupId}/reorder`, { orderedPostIds })).data,
+  movePostGroup: async (groupId: string, targetTelegramChannelId: string) => (await api.post<BulkActionResult & { group: PostGroup }>(`/telegram-channels/post-groups/${groupId}/move-channel`, { targetTelegramChannelId })).data,
+  publishPostGroup: async (groupId: string, payload: { includeScheduled?: boolean; includeFailed?: boolean; republishPublished?: boolean } = {}) => (await api.post<BulkActionResult>(`/telegram-channels/post-groups/${groupId}/publish-all`, payload)).data,
+  schedulePostGroupSequence: async (groupId: string, payload: { startDate: string; time: string; intervalDays: number; timezone?: string; includeDraftsOnly?: boolean; overwriteExistingScheduled?: boolean; includeFailed?: boolean }) => (await api.post<BulkActionResult>(`/telegram-channels/post-groups/${groupId}/schedule-sequence`, payload)).data,
   publishManagedPost: async (channelId: string, postId: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/publish`, { longTextMode })).data,
   scheduleManagedPost: async (channelId: string, postId: string, scheduledAt: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/schedule`, { scheduledAt, longTextMode })).data,
   deleteManagedPost: async (channelId: string, postId: string) => (await api.delete<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`)).data,

@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 
@@ -83,6 +84,7 @@ export class CreateTelegramManagedPostDto {
   @IsOptional() @IsString() text?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
   @IsOptional() @IsString() assignedMemberId?: string;
+  @IsOptional() @IsString() icon?: string | null;
 }
 
 export class UpdateTelegramManagedPostDto {
@@ -90,6 +92,54 @@ export class UpdateTelegramManagedPostDto {
   @IsOptional() @IsString() text?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
   @IsOptional() @IsString() assignedMemberId?: string;
+  @IsOptional() @IsString() icon?: string | null;
+}
+
+export class CreatePostGroupDto {
+  @IsString() telegramChannelId!: string;
+  @IsString() title!: string;
+  @IsOptional() @IsString() description?: string | null;
+  @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) postIds?: string[];
+}
+
+export class UpdatePostGroupDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string | null;
+  @IsOptional() @IsString() icon?: string | null;
+}
+
+export class PostGroupsQueryDto {
+  @IsOptional() @IsString() telegramChannelId?: string;
+  @IsOptional() @IsString() search?: string;
+}
+
+export class PostIdsDto {
+  @IsArray() @IsString({ each: true }) postIds!: string[];
+}
+
+export class ReorderPostGroupDto {
+  @IsArray() @IsString({ each: true }) orderedPostIds!: string[];
+}
+
+export class MovePostChannelDto {
+  @IsString() targetTelegramChannelId!: string;
+}
+
+export class PublishPostGroupDto {
+  @IsOptional() @IsBoolean() includeScheduled?: boolean;
+  @IsOptional() @IsBoolean() includeFailed?: boolean;
+  @IsOptional() @IsBoolean() republishPublished?: boolean;
+}
+
+export class SchedulePostGroupSequenceDto {
+  @IsDateString() startDate!: string;
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time!: string;
+  @Type(() => Number) @IsInt() @Min(1) intervalDays!: number;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsBoolean() includeDraftsOnly?: boolean;
+  @IsOptional() @IsBoolean() overwriteExistingScheduled?: boolean;
+  @IsOptional() @IsBoolean() includeFailed?: boolean;
 }
 
 export class ScheduleTelegramManagedPostDto {
