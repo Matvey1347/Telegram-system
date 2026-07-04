@@ -26,7 +26,8 @@ export type BulkActionResult = {
     | "PUBLISH_ALL"
     | "SCHEDULE_SEQUENCE"
     | "MOVE_GROUP_CHANNEL"
-    | "MOVE_POST_CHANNEL";
+    | "MOVE_POST_CHANNEL"
+    | "RESET_GROUP_TO_DRAFT";
   total: number;
   successCount: number;
   failedCount: number;

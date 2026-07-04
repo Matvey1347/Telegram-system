@@ -26,6 +26,7 @@ import {
   PostGroupsQueryDto,
   PostIdsDto,
   PublishPostGroupDto,
+  ReorderManagedPostSidebarDto,
   ReorderPostGroupDto,
   SchedulePostGroupSequenceDto,
   SyncChannelStatsDto,
@@ -44,6 +45,36 @@ import { TelegramChannelsService } from './telegram-channels.service';
 @Controller('telegram-channels')
 export class TelegramChannelsController {
   constructor(private service: TelegramChannelsService) {}
+  private async streamBulkAction(
+    res: Response,
+    action: (
+      onProgress: (item: unknown, current: number, total: number) => void,
+    ) => Promise<unknown>,
+  ) {
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    try {
+      const result = await action((item, current, total) => {
+        res.write(
+          `${JSON.stringify({ type: 'progress', item, current, total })}\n`,
+        );
+      });
+      res.write(`${JSON.stringify({ type: 'complete', result })}\n`);
+    } catch (error) {
+      res.write(
+        `${JSON.stringify({
+          type: 'error',
+          message:
+            error instanceof Error ? error.message : 'Bulk action failed',
+        })}\n`,
+      );
+    } finally {
+      res.end();
+    }
+  }
   @Get() findAll(@CurrentUser() user: JwtUser) {
     return this.service.findAll(user.sub);
   }
@@ -58,10 +89,7 @@ export class TelegramChannelsController {
     return this.service.importChannel(user.sub, dto);
   }
   @Get('post-groups')
-  postGroups(
-    @CurrentUser() user: JwtUser,
-    @Query() query: PostGroupsQueryDto,
-  ) {
+  postGroups(@CurrentUser() user: JwtUser, @Query() query: PostGroupsQueryDto) {
     return this.service.postGroups(user.sub, query);
   }
   @Post('post-groups')
@@ -72,10 +100,7 @@ export class TelegramChannelsController {
     return this.service.createPostGroup(user.sub, dto);
   }
   @Get('post-groups/:groupId')
-  postGroup(
-    @CurrentUser() user: JwtUser,
-    @Param('groupId') groupId: string,
-  ) {
+  postGroup(@CurrentUser() user: JwtUser, @Param('groupId') groupId: string) {
     return this.service.postGroup(user.sub, groupId);
   }
   @Patch('post-groups/:groupId')
@@ -125,6 +150,17 @@ export class TelegramChannelsController {
   ) {
     return this.service.movePostGroup(user.sub, groupId, dto);
   }
+  @Post('post-groups/:groupId/move-channel-stream')
+  movePostGroupStream(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: MovePostChannelDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.movePostGroup(user.sub, groupId, dto, onProgress),
+    );
+  }
   @Post('post-groups/:groupId/publish-all')
   publishPostGroup(
     @CurrentUser() user: JwtUser,
@@ -132,6 +168,34 @@ export class TelegramChannelsController {
     @Body() dto: PublishPostGroupDto,
   ) {
     return this.service.publishPostGroup(user.sub, groupId, dto);
+  }
+  @Post('post-groups/:groupId/publish-all-stream')
+  publishPostGroupStream(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: PublishPostGroupDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.publishPostGroup(user.sub, groupId, dto, onProgress),
+    );
+  }
+  @Post('post-groups/:groupId/reset-drafts')
+  resetPostGroupToDrafts(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.service.resetPostGroupToDrafts(user.sub, groupId);
+  }
+  @Post('post-groups/:groupId/reset-drafts-stream')
+  resetPostGroupToDraftsStream(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.resetPostGroupToDrafts(user.sub, groupId, onProgress),
+    );
   }
   @Post('post-groups/:groupId/schedule-sequence')
   schedulePostGroupSequence(
@@ -141,9 +205,33 @@ export class TelegramChannelsController {
   ) {
     return this.service.schedulePostGroupSequence(user.sub, groupId, dto);
   }
+  @Post('post-groups/:groupId/schedule-sequence-stream')
+  schedulePostGroupSequenceStream(
+    @CurrentUser() user: JwtUser,
+    @Param('groupId') groupId: string,
+    @Body() dto: SchedulePostGroupSequenceDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.schedulePostGroupSequence(
+        user.sub,
+        groupId,
+        dto,
+        onProgress,
+      ),
+    );
+  }
   @Get(':id/managed-posts')
   managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.managedPosts(user.sub, id);
+  }
+  @Post(':id/managed-posts/reorder-sidebar')
+  reorderManagedPostSidebar(
+    @CurrentUser() user: JwtUser,
+    @Param('id') channelId: string,
+    @Body() dto: ReorderManagedPostSidebarDto,
+  ) {
+    return this.service.reorderManagedPostSidebar(user.sub, channelId, dto);
   }
   @Post(':id/managed-posts')
   createManagedPost(

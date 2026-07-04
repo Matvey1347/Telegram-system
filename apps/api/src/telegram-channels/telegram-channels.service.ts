@@ -37,6 +37,7 @@ import {
   PostGroupsQueryDto,
   PostIdsDto,
   PublishPostGroupDto,
+  ReorderManagedPostSidebarDto,
   ReorderPostGroupDto,
   SchedulePostGroupSequenceDto,
   ScheduleTelegramManagedPostDto,
@@ -62,6 +63,12 @@ import {
   scheduleSequenceDates,
   validateCompletePostOrder,
 } from './post-groups.helpers';
+
+type BulkProgressCallback = (
+  item: BulkActionResultItem,
+  current: number,
+  total: number,
+) => void | Promise<void>;
 
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
@@ -908,9 +915,7 @@ export class TelegramChannelsService {
     return groups.map(({ posts, ...group }) => ({
       ...group,
       postsCount: posts.length,
-      statusSummary: postGroupStatusSummary(
-        posts.map((post) => post.status),
-      ),
+      statusSummary: postGroupStatusSummary(posts.map((post) => post.status)),
     }));
   }
 
@@ -1007,8 +1012,7 @@ export class TelegramChannelsService {
           dto.description === undefined
             ? undefined
             : dto.description?.trim() || null,
-        icon:
-          dto.icon === undefined ? undefined : dto.icon?.trim() || null,
+        icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
       },
     });
     return this.postGroupForWorkspace(workspaceId, groupId);
@@ -1026,11 +1030,7 @@ export class TelegramChannelsService {
     });
   }
 
-  async addPostsToGroup(
-    userId: string,
-    groupId: string,
-    dto: PostIdsDto,
-  ) {
+  async addPostsToGroup(userId: string, groupId: string, dto: PostIdsDto) {
     const workspaceId = await this.workspace(userId);
     const group = await this.prisma.postGroup.findFirst({
       where: { id: groupId, workspaceId },
@@ -1083,11 +1083,7 @@ export class TelegramChannelsService {
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
 
-  async removePostFromGroup(
-    userId: string,
-    groupId: string,
-    postId: string,
-  ) {
+  async removePostFromGroup(userId: string, groupId: string, postId: string) {
     const workspaceId = await this.workspace(userId);
     const post = await this.prisma.telegramManagedPost.findFirst({
       where: { id: postId, groupId, workspaceId },
@@ -1142,6 +1138,53 @@ export class TelegramChannelsService {
       orderBy: { createdAt: 'desc' },
       include: this.managedPostInclude,
     });
+  }
+
+  async reorderManagedPostSidebar(
+    userId: string,
+    channelId: string,
+    dto: ReorderManagedPostSidebarDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const [groups, posts] = await Promise.all([
+      this.prisma.postGroup.findMany({
+        where: { workspaceId, telegramChannelId: channelId },
+        select: { id: true },
+      }),
+      this.prisma.telegramManagedPost.findMany({
+        where: { workspaceId, telegramChannelId: channelId, groupId: null },
+        select: { id: true },
+      }),
+    ]);
+    const expected = [
+      ...groups.map((group) => `group:${group.id}`),
+      ...posts.map((post) => `post:${post.id}`),
+    ];
+    if (
+      dto.orderedItems.length !== expected.length ||
+      new Set(dto.orderedItems).size !== dto.orderedItems.length ||
+      dto.orderedItems.some((item) => !expected.includes(item))
+    ) {
+      throw new BadRequestException(
+        'orderedItems must contain every group and ungrouped post exactly once',
+      );
+    }
+    await this.prisma.$transaction(
+      dto.orderedItems.map((item, sidebarPosition) => {
+        const [type, id] = item.split(':', 2);
+        return type === 'group'
+          ? this.prisma.postGroup.update({
+              where: { id },
+              data: { sidebarPosition },
+            })
+          : this.prisma.telegramManagedPost.update({
+              where: { id },
+              data: { sidebarPosition },
+            });
+      }),
+    );
+    return { success: true };
   }
 
   async createManagedPost(
@@ -1212,8 +1255,7 @@ export class TelegramChannelsService {
         text: dto.text,
         imageUrls: dto.imageUrls,
         assignedMemberId,
-        icon:
-          dto.icon === undefined ? undefined : dto.icon?.trim() || null,
+        icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
         lastError: null,
       },
       include: this.managedPostInclude,
@@ -1577,10 +1619,20 @@ export class TelegramChannelsService {
     };
   }
 
+  private async appendBulkResult(
+    results: BulkActionResultItem[],
+    item: BulkActionResultItem,
+    onProgress?: BulkProgressCallback,
+  ) {
+    results.push(item);
+    await onProgress?.(item, results.length, item.total);
+  }
+
   async publishPostGroup(
     userId: string,
     groupId: string,
     dto: PublishPostGroupDto,
+    onProgress?: BulkProgressCallback,
   ): Promise<BulkActionResult> {
     const workspaceId = await this.workspace(userId);
     const group = await this.prisma.postGroup.findFirst({
@@ -1609,7 +1661,11 @@ export class TelegramChannelsService {
         republishPublished,
       });
       if (skipReason) {
-        results.push(this.skippedBulkItem(post, index, total, skipReason));
+        await this.appendBulkResult(
+          results,
+          this.skippedBulkItem(post, index, total, skipReason),
+          onProgress,
+        );
         continue;
       }
 
@@ -1638,18 +1694,22 @@ export class TelegramChannelsService {
             ? 'CAPTION_THEN_TEXT'
             : 'IMAGES_THEN_TEXT',
         );
-        results.push({
-          postId: post.id,
-          title: post.title,
-          index,
-          total,
-          previousStatus,
-          newStatus: published.status,
-          scheduledAt: null,
-          action: 'PUBLISHED',
-          success: true,
-          message: `Post ${index}/${total} published`,
-        });
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: published.status,
+            scheduledAt: null,
+            action: 'PUBLISHED',
+            success: true,
+            message: `Post ${index}/${total} published`,
+          },
+          onProgress,
+        );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Could not publish post';
@@ -1660,19 +1720,23 @@ export class TelegramChannelsService {
             lastError: message,
           },
         });
-        results.push({
-          postId: post.id,
-          title: post.title,
-          index,
-          total,
-          previousStatus,
-          newStatus: TelegramManagedPostStatus.FAILED,
-          scheduledAt: null,
-          action: 'FAILED',
-          success: false,
-          message: `Post ${index}/${total} failed: ${message}`,
-          error: message,
-        });
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: TelegramManagedPostStatus.FAILED,
+            scheduledAt: null,
+            action: 'FAILED',
+            success: false,
+            message: `Post ${index}/${total} failed: ${message}`,
+            error: message,
+          },
+          onProgress,
+        );
       }
     }
     return {
@@ -1683,10 +1747,106 @@ export class TelegramChannelsService {
     };
   }
 
+  async resetPostGroupToDrafts(
+    userId: string,
+    groupId: string,
+    onProgress?: BulkProgressCallback,
+  ): Promise<BulkActionResult> {
+    const workspaceId = await this.workspace(userId);
+    const group = await this.prisma.postGroup.findFirst({
+      where: { id: groupId, workspaceId },
+      include: {
+        posts: {
+          orderBy: [{ groupPosition: 'asc' }, { createdAt: 'asc' }],
+          include: { telegramChannel: true },
+        },
+      },
+    });
+    if (!group) throw new NotFoundException('Post group not found');
+    if (!group.posts.length)
+      throw new BadRequestException('Post group is empty');
+    const total = group.posts.length;
+    const results: BulkActionResultItem[] = [];
+
+    for (const [offset, post] of group.posts.entries()) {
+      const index = offset + 1;
+      const previousStatus = post.status;
+      if (previousStatus === TelegramManagedPostStatus.DRAFT) {
+        await this.appendBulkResult(
+          results,
+          this.skippedBulkItem(post, index, total, 'already a draft'),
+          onProgress,
+        );
+        continue;
+      }
+      try {
+        if (previousStatus === TelegramManagedPostStatus.SCHEDULED) {
+          await this.cancelScheduledManagedPost(workspaceId, post);
+        }
+        await this.prisma.telegramManagedPost.update({
+          where: { id: post.id },
+          data: {
+            status: TelegramManagedPostStatus.DRAFT,
+            scheduledAt: null,
+            publishedAt: null,
+            telegramMessageIds: [],
+            sourceType: null,
+            sourceId: null,
+            publishMode: null,
+            lastError: null,
+          },
+        });
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: TelegramManagedPostStatus.DRAFT,
+            scheduledAt: null,
+            action: 'CONVERTED_TO_DRAFT',
+            success: true,
+            message: `Post ${index}/${total} converted to draft`,
+          },
+          onProgress,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Could not reset post';
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: previousStatus,
+            scheduledAt: post.scheduledAt?.toISOString() ?? null,
+            action: 'FAILED',
+            success: false,
+            message: `Post ${index}/${total} failed: ${message}`,
+            error: message,
+          },
+          onProgress,
+        );
+      }
+    }
+    return {
+      groupId,
+      action: 'RESET_GROUP_TO_DRAFT',
+      ...bulkActionCounts(results),
+      results,
+    };
+  }
+
   async schedulePostGroupSequence(
     userId: string,
     groupId: string,
     dto: SchedulePostGroupSequenceDto,
+    onProgress?: BulkProgressCallback,
   ): Promise<BulkActionResult> {
     const workspaceId = await this.workspace(userId);
     const group = await this.prisma.postGroup.findFirst({
@@ -1700,8 +1860,7 @@ export class TelegramChannelsService {
     if (!group) throw new NotFoundException('Post group not found');
     if (!group.posts.length)
       throw new BadRequestException('Post group is empty');
-    const overwriteExistingScheduled =
-      dto.overwriteExistingScheduled ?? false;
+    const overwriteExistingScheduled = dto.overwriteExistingScheduled ?? false;
     const includeFailed = dto.includeFailed ?? true;
     const includeDraftsOnly = dto.includeDraftsOnly ?? false;
     const timezone = dto.timezone?.trim() || 'UTC';
@@ -1721,7 +1880,9 @@ export class TelegramChannelsService {
       timezone,
     );
     if (dates.some((date) => date.getTime() <= Date.now())) {
-      throw new BadRequestException('Every schedule date must be in the future');
+      throw new BadRequestException(
+        'Every schedule date must be in the future',
+      );
     }
     const scheduleByPostId = new Map(
       selectedPosts.map((post, index) => [post.id, dates[index]]),
@@ -1736,7 +1897,11 @@ export class TelegramChannelsService {
         const reason =
           scheduleGroupPostSkipReason(post.status, scheduleOptions) ||
           'post is not selected';
-        results.push(this.skippedBulkItem(post, index, total, reason));
+        await this.appendBulkResult(
+          results,
+          this.skippedBulkItem(post, index, total, reason),
+          onProgress,
+        );
         continue;
       }
       const previousStatus = post.status;
@@ -1750,34 +1915,42 @@ export class TelegramChannelsService {
             ? 'CAPTION_THEN_TEXT'
             : 'IMAGES_THEN_TEXT',
         );
-        results.push({
-          postId: post.id,
-          title: post.title,
-          index,
-          total,
-          previousStatus,
-          newStatus: scheduled.status,
-          scheduledAt: scheduled.scheduledAt?.toISOString() ?? null,
-          action: 'SCHEDULED',
-          success: true,
-          message: `Post ${index}/${total} scheduled for ${scheduledAt.toISOString()} (${timezone})`,
-        });
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: scheduled.status,
+            scheduledAt: scheduled.scheduledAt?.toISOString() ?? null,
+            action: 'SCHEDULED',
+            success: true,
+            message: `Post ${index}/${total} scheduled for ${scheduledAt.toISOString()} (${timezone})`,
+          },
+          onProgress,
+        );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Could not schedule post';
-        results.push({
-          postId: post.id,
-          title: post.title,
-          index,
-          total,
-          previousStatus,
-          newStatus: TelegramManagedPostStatus.FAILED,
-          scheduledAt: scheduledAt.toISOString(),
-          action: 'FAILED',
-          success: false,
-          message: `Post ${index}/${total} failed: ${message}`,
-          error: message,
-        });
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: TelegramManagedPostStatus.FAILED,
+            scheduledAt: scheduledAt.toISOString(),
+            action: 'FAILED',
+            success: false,
+            message: `Post ${index}/${total} failed: ${message}`,
+            error: message,
+          },
+          onProgress,
+        );
       }
     }
     return {
@@ -1892,8 +2065,7 @@ export class TelegramChannelsService {
             postId: post.id,
             title: post.title,
             previousStatus,
-            newStatus:
-              failedPost?.status ?? TelegramManagedPostStatus.FAILED,
+            newStatus: failedPost?.status ?? TelegramManagedPostStatus.FAILED,
             scheduledAt: failedPost?.scheduledAt?.toISOString() ?? null,
             action: 'RESCHEDULE_FAILED',
             success: false,
@@ -2011,6 +2183,7 @@ export class TelegramChannelsService {
     userId: string,
     groupId: string,
     dto: MovePostChannelDto,
+    onProgress?: BulkProgressCallback,
   ) {
     const workspaceId = await this.workspace(userId);
     const [group, targetChannel] = await Promise.all([
@@ -2048,7 +2221,7 @@ export class TelegramChannelsService {
       success: boolean;
       error?: string;
     }> = [];
-    for (const post of group.posts) {
+    for (const [index, post] of group.posts.entries()) {
       const moved = await this.moveManagedPostInternal(
         workspaceId,
         post.id,
@@ -2056,6 +2229,11 @@ export class TelegramChannelsService {
         true,
       );
       rawResults.push(moved.result);
+      await onProgress?.(
+        this.moveBulkResultItem(moved.result, index + 1, group.posts.length),
+        index + 1,
+        group.posts.length,
+      );
     }
     await this.prisma.postGroup.update({
       where: { id: group.id },

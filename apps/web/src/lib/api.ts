@@ -1,77 +1,149 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosRequestConfig } from "axios";
 import type {
   BulkActionResult,
   BulkActionResultItem,
-} from '@telegram-system/shared';
-import { clearAccessToken, getAccessToken } from './auth';
+} from "@telegram-system/shared";
+import { clearAccessToken, getAccessToken } from "./auth";
 
 function resolveApiBaseUrl() {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
 
-  if (!raw && process.env.NODE_ENV === 'production') {
-    throw new Error('NEXT_PUBLIC_API_URL is not defined');
+  if (!raw && process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_API_URL is not defined");
   }
 
-  const base = raw || 'http://localhost:4000/api';
+  const base = raw || "http://localhost:4000/api";
 
-  return base.endsWith('/api') ? base : `${base.replace(/\/+$/, '')}/api`;
+  return base.endsWith("/api") ? base : `${base.replace(/\/+$/, "")}/api`;
 }
 
-export const api = axios.create({ baseURL: resolveApiBaseUrl(), withCredentials: true });
+export const api = axios.create({
+  baseURL: resolveApiBaseUrl(),
+  withCredentials: true,
+});
 
-export const API_MUTATION_EVENT = 'telegram-system:api-mutation';
+export const API_MUTATION_EVENT = "telegram-system:api-mutation";
 
 type ApiMutationEventDetail = {
   id: string;
-  phase: 'start' | 'success' | 'error';
+  phase: "start" | "success" | "error";
   message?: string;
-  scope?: 'page' | 'modal';
+  scope?: "page" | "modal";
 };
 
 function emitMutationEvent(detail: ApiMutationEventDetail) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<ApiMutationEventDetail>(API_MUTATION_EVENT, { detail }),
   );
 }
 
 function isMutationMethod(method?: string) {
-  return ['post', 'put', 'patch', 'delete'].includes(
-    String(method || '').toLowerCase(),
+  return ["post", "put", "patch", "delete"].includes(
+    String(method || "").toLowerCase(),
   );
 }
 
 function successMessage(method?: string) {
-  if (String(method).toLowerCase() === 'delete') return 'Deleted successfully.';
-  if (String(method).toLowerCase() === 'post') return 'Created successfully.';
-  return 'Saved successfully.';
+  if (String(method).toLowerCase() === "delete") return "Deleted successfully.";
+  if (String(method).toLowerCase() === "post") return "Created successfully.";
+  return "Saved successfully.";
 }
 
 function errorMessage(error: unknown) {
   if (!axios.isAxiosError(error)) {
-    return 'Something went wrong. Please try again.';
+    return "Something went wrong. Please try again.";
   }
   if (!error.response) {
-    return 'Could not connect to the server. Check your connection and try again.';
+    return "Could not connect to the server. Check your connection and try again.";
   }
   const raw = error.response.data?.message;
-  const message = Array.isArray(raw) ? raw.join('\n') : String(raw || '').trim();
+  const message = Array.isArray(raw)
+    ? raw.join("\n")
+    : String(raw || "").trim();
   if (
     !message ||
     /internal server error/i.test(message) ||
     /^error$/i.test(message)
   ) {
-    return 'The server could not complete this action. Please try again.';
+    return "The server could not complete this action. Please try again.";
   }
   return message;
+}
+
+type BulkProgressHandler = (
+  item: BulkActionResultItem,
+  current: number,
+  total: number,
+) => void;
+
+async function streamBulkAction(
+  path: string,
+  payload: unknown,
+  onProgress: BulkProgressHandler,
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/x-ndjson",
+  };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const workspaceId = localStorage.getItem("selected-workspace-id");
+    if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+  }
+  const response = await fetch(`${resolveApiBaseUrl()}${path}`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(payload ?? {}),
+  });
+  if (!response.ok || !response.body) {
+    const body = await response.text();
+    throw new Error(body || `Request failed with status ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: BulkActionResult | null = null;
+  const consumeLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as
+      | {
+          type: "progress";
+          item: BulkActionResultItem;
+          current: number;
+          total: number;
+        }
+      | { type: "complete"; result: BulkActionResult }
+      | { type: "error"; message: string };
+    if (event.type === "progress") {
+      onProgress(event.item, event.current, event.total);
+    } else if (event.type === "complete") {
+      completed = event.result;
+    } else {
+      throw new Error(event.message);
+    }
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    lines.forEach(consumeLine);
+    if (done) break;
+  }
+  consumeLine(buffer);
+  if (!completed) throw new Error("The bulk action stream ended unexpectedly");
+  return completed;
 }
 
 export function isApiNetworkError(error: unknown) {
   return (
     axios.isAxiosError(error) &&
     !error.response &&
-    (error.code === 'ERR_NETWORK' ||
-      error.code === 'ERR_FAILED' ||
+    (error.code === "ERR_NETWORK" ||
+      error.code === "ERR_FAILED" ||
       error.code == null)
   );
 }
@@ -79,12 +151,12 @@ export function isApiNetworkError(error: unknown) {
 api.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
-  if (typeof window !== 'undefined') {
-    const workspaceId = localStorage.getItem('selected-workspace-id');
-    if (workspaceId) config.headers['X-Workspace-Id'] = workspaceId;
+  if (typeof window !== "undefined") {
+    const workspaceId = localStorage.getItem("selected-workspace-id");
+    if (workspaceId) config.headers["X-Workspace-Id"] = workspaceId;
   }
-  if (config.baseURL?.includes('.ngrok-free.app')) {
-    config.headers['ngrok-skip-browser-warning'] = 'true';
+  if (config.baseURL?.includes(".ngrok-free.app")) {
+    config.headers["ngrok-skip-browser-warning"] = "true";
   }
   if (isMutationMethod(config.method)) {
     if (
@@ -98,22 +170,22 @@ api.interceptors.request.use((config) => {
     }
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const scope =
-      typeof document !== 'undefined' &&
+      typeof document !== "undefined" &&
       document.querySelector('[data-app-modal="true"]')
-        ? 'modal'
-        : 'page';
+        ? "modal"
+        : "page";
     (
       config as typeof config & {
         mutationRequestId?: string;
-        mutationScope?: 'page' | 'modal';
+        mutationScope?: "page" | "modal";
       }
     ).mutationRequestId = requestId;
     (
       config as typeof config & {
-        mutationScope?: 'page' | 'modal';
+        mutationScope?: "page" | "modal";
       }
     ).mutationScope = scope;
-    emitMutationEvent({ id: requestId, phase: 'start', scope });
+    emitMutationEvent({ id: requestId, phase: "start", scope });
   }
   return config;
 });
@@ -127,13 +199,13 @@ api.interceptors.response.use(
     ).mutationRequestId;
     const scope = (
       response.config as typeof response.config & {
-        mutationScope?: 'page' | 'modal';
+        mutationScope?: "page" | "modal";
       }
     ).mutationScope;
     if (requestId) {
       emitMutationEvent({
         id: requestId,
-        phase: 'success',
+        phase: "success",
         message: successMessage(response.config.method),
         scope,
       });
@@ -142,19 +214,15 @@ api.interceptors.response.use(
   },
   (error) => {
     const requestId = (
-      error?.config as
-        | { mutationRequestId?: string }
-        | undefined
+      error?.config as { mutationRequestId?: string } | undefined
     )?.mutationRequestId;
     const scope = (
-      error?.config as
-        | { mutationScope?: 'page' | 'modal' }
-        | undefined
+      error?.config as { mutationScope?: "page" | "modal" } | undefined
     )?.mutationScope;
     if (requestId) {
       emitMutationEvent({
         id: requestId,
-        phase: 'error',
+        phase: "error",
         message: errorMessage(error),
         scope,
       });
@@ -162,18 +230,19 @@ api.interceptors.response.use(
     if (
       axios.isAxiosError(error) &&
       error.response?.status === 401 &&
-      typeof window !== 'undefined'
+      typeof window !== "undefined"
     ) {
       clearAccessToken();
-      if (!['/login', '/register'].includes(window.location.pathname)) window.location.href = '/login';
+      if (!["/login", "/register"].includes(window.location.pathname))
+        window.location.href = "/login";
     }
     return Promise.reject(error);
   },
 );
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member';
-export type CurrencyDisplayMode = 'code' | 'symbol';
-export type IconType = 'emoji' | 'image';
+export type WorkspaceRole = "owner" | "admin" | "member";
+export type CurrencyDisplayMode = "code" | "symbol";
+export type IconType = "emoji" | "image";
 export type Icon = {
   id: string;
   workspaceId?: string | null;
@@ -185,11 +254,36 @@ export type Icon = {
   createdAt?: string;
   updatedAt?: string;
 };
-export type WorkspaceInfo = { id: string; name: string; role: WorkspaceRole; primaryCurrency?: Currency; secondaryCurrency?: Currency; currencyDisplayMode?: CurrencyDisplayMode; avatarIcon?: Icon | null };
-export type User = { id: string; email: string; name: string; createdAt?: string };
-export type AuthResponse = { accessToken: string; user: User; workspace: WorkspaceInfo };
+export type WorkspaceInfo = {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+  primaryCurrency?: Currency;
+  secondaryCurrency?: Currency;
+  currencyDisplayMode?: CurrencyDisplayMode;
+  avatarIcon?: Icon | null;
+};
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  createdAt?: string;
+};
+export type AuthResponse = {
+  accessToken: string;
+  user: User;
+  workspace: WorkspaceInfo;
+};
 export type MeResponse = { user: User; workspace: WorkspaceInfo };
-export type AccountMe = { id: string; email: string; name: string; createdAt: string; avatarIconId?: string | null; avatarIcon?: Icon | null; workspace: WorkspaceInfo };
+export type AccountMe = {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+  avatarIconId?: string | null;
+  avatarIcon?: Icon | null;
+  workspace: WorkspaceInfo;
+};
 export type WorkspaceMember = {
   id: string;
   workspaceId: string;
@@ -213,7 +307,7 @@ export type EntityAssignment = {
   assignedMemberId?: string | null;
   assignedMember?: AssignedMember | null;
   createdByUserId?: string | null;
-  createdByUser?: Pick<User, 'id' | 'email' | 'name'> | null;
+  createdByUser?: Pick<User, "id" | "email" | "name"> | null;
 };
 export type GlobalSearchResult = {
   id: string;
@@ -226,19 +320,83 @@ export type GlobalSearchResult = {
   iconEmoji?: string | null;
 };
 export type Currency = string;
-export type TransactionType = 'income' | 'expense';
-export type AccountTransactionStats = { count: number; incomeCount: number; expenseCount: number; received: number; spent: number; transferredIn: number; transferredOut: number; delta: number };
-export type Account = EntityAssignment & { id: string; name: string; currency: Currency; initialBalance: number; balance?: number; calculatedBalance?: number | null; convertedBalance?: number | null; convertedCurrency?: Currency; transactionStats?: AccountTransactionStats; isActive: boolean; iconId?: string | null; icon?: Icon | null };
-export type TransactionCategory = { id: string; name: string; type: TransactionType; isSystem: boolean; key?: string | null; iconId?: string | null; icon?: Icon | null };
-export type Transaction = EntityAssignment & { id: string; accountId: string; type: TransactionType; amount: number; currency: Currency; exchangeRateToPrimary: number; amountInPrimaryCurrency: number; category: string; categoryId?: string | null; memberId?: string | null; description?: string; date: string; iconId?: string | null; icon?: Icon | null; account?: Account; categoryRef?: TransactionCategory; member?: WorkspaceMember; adCampaign?: { id: string; title: string } | null; investment?: { id: string; notes?: string | null } | null };
-export type Transfer = EntityAssignment & { id: string; fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; fromCurrency: Currency; toCurrency: Currency; exchangeRate?: number; transferLossAmount?: number; date: string; description?: string; fromAccount?: Account; toAccount?: Account };
+export type TransactionType = "income" | "expense";
+export type AccountTransactionStats = {
+  count: number;
+  incomeCount: number;
+  expenseCount: number;
+  received: number;
+  spent: number;
+  transferredIn: number;
+  transferredOut: number;
+  delta: number;
+};
+export type Account = EntityAssignment & {
+  id: string;
+  name: string;
+  currency: Currency;
+  initialBalance: number;
+  balance?: number;
+  calculatedBalance?: number | null;
+  convertedBalance?: number | null;
+  convertedCurrency?: Currency;
+  transactionStats?: AccountTransactionStats;
+  isActive: boolean;
+  iconId?: string | null;
+  icon?: Icon | null;
+};
+export type TransactionCategory = {
+  id: string;
+  name: string;
+  type: TransactionType;
+  isSystem: boolean;
+  key?: string | null;
+  iconId?: string | null;
+  icon?: Icon | null;
+};
+export type Transaction = EntityAssignment & {
+  id: string;
+  accountId: string;
+  type: TransactionType;
+  amount: number;
+  currency: Currency;
+  exchangeRateToPrimary: number;
+  amountInPrimaryCurrency: number;
+  category: string;
+  categoryId?: string | null;
+  memberId?: string | null;
+  description?: string;
+  date: string;
+  iconId?: string | null;
+  icon?: Icon | null;
+  account?: Account;
+  categoryRef?: TransactionCategory;
+  member?: WorkspaceMember;
+  adCampaign?: { id: string; title: string } | null;
+  investment?: { id: string; notes?: string | null } | null;
+};
+export type Transfer = EntityAssignment & {
+  id: string;
+  fromAccountId: string;
+  toAccountId: string;
+  fromAmount: number;
+  toAmount: number;
+  fromCurrency: Currency;
+  toCurrency: Currency;
+  exchangeRate?: number;
+  transferLossAmount?: number;
+  date: string;
+  description?: string;
+  fromAccount?: Account;
+  toAccount?: Account;
+};
 export type TelegramChannelAdAnalysisStatus =
-  | 'NEW'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'WATCH_LATER'
-  | 'BLACKLIST'
-  | 'TESTED';
+  | "NEW"
+  | "APPROVED"
+  | "REJECTED"
+  | "WATCH_LATER"
+  | "BLACKLIST"
+  | "TESTED";
 export type TelegramChannelAdAnalysis = {
   id: string;
   workspaceId: string;
@@ -265,15 +423,84 @@ export type TelegramChannelAdAnalysis = {
 };
 export type TelegramChannelAdAnalysisPayload = {
   analyzedAt: string;
-  status: 'APPROVED' | 'REJECTED';
+  status: "APPROVED" | "REJECTED";
   price?: number;
   currency?: string;
   notes?: string;
   postLimit?: number;
   assignedMemberId?: string | null;
 };
-export type TelegramChannelAdminLink = { id: string; telegramUserAccountIntegrationId: string; telegramUserAccountIntegration?: { id: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string } };
-export type TelegramChannel = EntityAssignment & { id: string; title: string; username?: string; telegramChatId?: string; inviteLink?: string; description?: string; language?: string; niche?: string; currentSubscribersCount?: number; seedSubscribersCount?: number; activeSubscribersWindow?: number; knownFakeSubscribersCount?: number; ownViewsPerPost?: number; ownReactionsPerPost?: number; subscriberBaseQuality?: string | null; dataQualityNotes?: string | null; targetCpaFrom?: number | string | null; targetCpa?: number | string | null; acceptableCpaFrom?: number | string | null; acceptableCpa?: number | string | null; stopCpaFrom?: number | string | null; stopCpa?: number | string | null; photoUrl?: string; sourceType?: string; lastPublicSyncedAt?: string; adminLinks?: TelegramChannelAdminLink[]; isActive: boolean; preview?: { audience: Pick<TelegramChannelAudience, 'subscribersCount' | 'activeSubscribersEstimate' | 'paidActiveSubscribersEstimate' | 'viewRate' | 'dataQuality' | 'dataQualityReason' | 'dataQualityWarning' | 'rawViewRate' | 'subscriberBaseQuality' | 'hasExternalTrafficAnomaly' | 'hasSubscriberBasePollution' | 'postsWindow'>; financialSummary: TelegramChannelFinancialSummary; sourcesCount: number; canPostMessages?: boolean; adAnalysis?: { latest?: TelegramChannelAdAnalysis | null; historyCount: number; metrics?: { avgViews?: number | null; avgReactions?: number | null; avgForwards?: number | null; postsCount?: number | null; cpm?: number | string | null } } } };
+export type TelegramChannelAdminLink = {
+  id: string;
+  telegramUserAccountIntegrationId: string;
+  telegramUserAccountIntegration?: {
+    id: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    photoUrl?: string;
+  };
+};
+export type TelegramChannel = EntityAssignment & {
+  id: string;
+  title: string;
+  username?: string;
+  telegramChatId?: string;
+  inviteLink?: string;
+  description?: string;
+  language?: string;
+  niche?: string;
+  currentSubscribersCount?: number;
+  seedSubscribersCount?: number;
+  activeSubscribersWindow?: number;
+  knownFakeSubscribersCount?: number;
+  ownViewsPerPost?: number;
+  ownReactionsPerPost?: number;
+  subscriberBaseQuality?: string | null;
+  dataQualityNotes?: string | null;
+  targetCpaFrom?: number | string | null;
+  targetCpa?: number | string | null;
+  acceptableCpaFrom?: number | string | null;
+  acceptableCpa?: number | string | null;
+  stopCpaFrom?: number | string | null;
+  stopCpa?: number | string | null;
+  photoUrl?: string;
+  sourceType?: string;
+  lastPublicSyncedAt?: string;
+  adminLinks?: TelegramChannelAdminLink[];
+  isActive: boolean;
+  preview?: {
+    audience: Pick<
+      TelegramChannelAudience,
+      | "subscribersCount"
+      | "activeSubscribersEstimate"
+      | "paidActiveSubscribersEstimate"
+      | "viewRate"
+      | "dataQuality"
+      | "dataQualityReason"
+      | "dataQualityWarning"
+      | "rawViewRate"
+      | "subscriberBaseQuality"
+      | "hasExternalTrafficAnomaly"
+      | "hasSubscriberBasePollution"
+      | "postsWindow"
+    >;
+    financialSummary: TelegramChannelFinancialSummary;
+    sourcesCount: number;
+    canPostMessages?: boolean;
+    adAnalysis?: {
+      latest?: TelegramChannelAdAnalysis | null;
+      historyCount: number;
+      metrics?: {
+        avgViews?: number | null;
+        avgReactions?: number | null;
+        avgForwards?: number | null;
+        postsCount?: number | null;
+        cpm?: number | string | null;
+      };
+    };
+  };
+};
 export type TelegramPost = {
   id: string;
   telegramChannelId: string;
@@ -290,11 +517,11 @@ export type TelegramPost = {
   reactions?: Array<{ reaction: string; count: number }> | null;
 };
 export type TelegramManagedPostStatus =
-  | 'DRAFT'
-  | 'SCHEDULED'
-  | 'PUBLISHING'
-  | 'PUBLISHED'
-  | 'FAILED';
+  | "DRAFT"
+  | "SCHEDULED"
+  | "PUBLISHING"
+  | "PUBLISHED"
+  | "FAILED";
 export type TelegramManagedPost = {
   id: string;
   workspaceId: string;
@@ -304,6 +531,7 @@ export type TelegramManagedPost = {
   icon?: string | null;
   groupId?: string | null;
   groupPosition?: number | null;
+  sidebarPosition?: number | null;
   group?: PostGroup | null;
   title: string;
   text?: string | null;
@@ -324,12 +552,12 @@ export type PostGroupStatusSummary = {
   publishedCount: number;
   failedCount: number;
   computedStatus:
-    | 'EMPTY'
-    | 'HAS_ERRORS'
-    | 'ALL_DRAFT'
-    | 'ALL_SCHEDULED'
-    | 'ALL_PUBLISHED'
-    | 'MIXED';
+    | "EMPTY"
+    | "HAS_ERRORS"
+    | "ALL_DRAFT"
+    | "ALL_SCHEDULED"
+    | "ALL_PUBLISHED"
+    | "MIXED";
 };
 export type PostGroup = {
   id: string;
@@ -339,6 +567,7 @@ export type PostGroup = {
   description?: string | null;
   icon?: string | null;
   createdByMemberId: string;
+  sidebarPosition?: number | null;
   createdByMember: WorkspaceMember;
   telegramChannel?: TelegramChannel;
   posts?: TelegramManagedPost[];
@@ -419,10 +648,14 @@ export type TelegramChannelFinancialSummary = {
   dataQualityWarning?: string | null;
   hasExternalTrafficAnomaly?: boolean;
   hasSubscriberBasePollution?: boolean;
-  kpiStatus: 'good' | 'acceptable' | 'bad' | 'unknown';
+  kpiStatus: "good" | "acceptable" | "bad" | "unknown";
   kpiLabel: string;
 };
-export type TelegramChannelNetworkKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type TelegramChannelNetworkKpiStatus =
+  | "good"
+  | "acceptable"
+  | "bad"
+  | "unknown";
 export type TelegramChannelNetworkSummary = {
   channelsCount: number;
   totalSubscribers: number;
@@ -508,11 +741,55 @@ export type TelegramPostAnalyticsItem = {
   commentsRateBySubscribers?: number | null;
   viewsRateBySubscribers?: number | null;
 };
-export type TelegramUserAccount = { id: string; label: string; apiId: string; phoneMasked?: string; telegramUserId?: string; username?: string; firstName?: string; lastName?: string; photoUrl?: string; nameColor?: number; status: 'pending' | 'needs_code' | 'needs_password' | 'connected' | 'error' | 'disabled'; lastErrorMessage?: string; lastCheckedAt?: string; lastSyncedAt?: string; isActive: boolean };
-export type TelegramBot = { id: string; label: string; botTokenMasked: string; botId?: string; username?: string; firstName?: string; lastErrorMessage?: string; lastCheckedAt?: string; isActive: boolean };
-export type TelegramSourceType = 'BOT' | 'MTPROTO';
-export type TelegramChannelSourceRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'UNKNOWN';
-export type TelegramChannelDataType = 'CHANNEL_INFO' | 'POSTS' | 'INVITE_LINKS' | 'STATS' | 'MEMBERS' | 'REACTIONS' | 'VIEWS' | 'OTHER';
+export type TelegramUserAccount = {
+  id: string;
+  label: string;
+  apiId: string;
+  phoneMasked?: string;
+  telegramUserId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  photoUrl?: string;
+  nameColor?: number;
+  status:
+    | "pending"
+    | "needs_code"
+    | "needs_password"
+    | "connected"
+    | "error"
+    | "disabled";
+  lastErrorMessage?: string;
+  lastCheckedAt?: string;
+  lastSyncedAt?: string;
+  isActive: boolean;
+};
+export type TelegramBot = {
+  id: string;
+  label: string;
+  botTokenMasked: string;
+  botId?: string;
+  username?: string;
+  firstName?: string;
+  lastErrorMessage?: string;
+  lastCheckedAt?: string;
+  isActive: boolean;
+};
+export type TelegramSourceType = "BOT" | "MTPROTO";
+export type TelegramChannelSourceRole =
+  | "OWNER"
+  | "ADMIN"
+  | "MEMBER"
+  | "UNKNOWN";
+export type TelegramChannelDataType =
+  | "CHANNEL_INFO"
+  | "POSTS"
+  | "INVITE_LINKS"
+  | "STATS"
+  | "MEMBERS"
+  | "REACTIONS"
+  | "VIEWS"
+  | "OTHER";
 export type TelegramSourcePermissions = {
   canPostMessages: boolean;
   canEditMessages: boolean;
@@ -565,23 +842,71 @@ export type TelegramChannelSourceAccess = {
   canBeUsedForAnalytics: boolean;
 };
 export type TelegramAnalyticsSources = {
-  channel: { id: string; telegramChatId?: string | null; title: string; username?: string | null } | null;
-  sources: Array<TelegramChannelSourceAccess & { usedFor: TelegramChannelDataType[] }>;
+  channel: {
+    id: string;
+    telegramChatId?: string | null;
+    title: string;
+    username?: string | null;
+  } | null;
+  sources: Array<
+    TelegramChannelSourceAccess & { usedFor: TelegramChannelDataType[] }
+  >;
   dataAttribution: Array<{
     dataType: TelegramChannelDataType;
     label: string;
-    status: 'SUCCESS' | 'PARTIAL' | 'FAILED' | 'SKIPPED';
-    sources: Array<{ sourceId: string; sourceType: TelegramSourceType; displayName?: string | null }>;
+    status: "SUCCESS" | "PARTIAL" | "FAILED" | "SKIPPED";
+    sources: Array<{
+      sourceId: string;
+      sourceType: TelegramSourceType;
+      displayName?: string | null;
+    }>;
     syncedAt?: string | null;
     errorMessage?: string | null;
   }>;
 };
-export type TelegramInviteLink = { id: string; telegramChannelId: string; adCampaignId?: string; name: string; url: string; joinedCount: number; isRevoked: boolean; expireDate?: string; memberLimit?: number; createsJoinRequest?: boolean; adCampaign?: AdCampaign };
-export type Promo = { id: string; telegramChannelId: string; title: string; text?: string; imageData?: string; status: 'draft' | 'active' | 'archived'; telegramChannel?: TelegramChannel };
-export type AdvertisingChannel = { id: string; selectionId?: string; kind?: 'person' | 'legacy_channel'; title: string; telegramUrl?: string; username?: string; contactInfo?: string; notes?: string; imageUrl?: string; subscribersCount?: number; channelTags?: string[]; createdAt?: string; updatedAt?: string };
+export type TelegramInviteLink = {
+  id: string;
+  telegramChannelId: string;
+  adCampaignId?: string;
+  name: string;
+  url: string;
+  joinedCount: number;
+  isRevoked: boolean;
+  expireDate?: string;
+  memberLimit?: number;
+  createsJoinRequest?: boolean;
+  adCampaign?: AdCampaign;
+};
+export type Promo = {
+  id: string;
+  telegramChannelId: string;
+  title: string;
+  text?: string;
+  imageData?: string;
+  status: "draft" | "active" | "archived";
+  telegramChannel?: TelegramChannel;
+};
+export type AdvertisingChannel = {
+  id: string;
+  selectionId?: string;
+  kind?: "person" | "legacy_channel";
+  title: string;
+  telegramUrl?: string;
+  username?: string;
+  contactInfo?: string;
+  notes?: string;
+  imageUrl?: string;
+  subscribersCount?: number;
+  channelTags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+};
 export type ImportedTelegramSource = TelegramChannel | AdvertisingChannel;
-export type AdCampaignHypothesisLink = { id: string; hypothesis: { id: string; name: string; status: AdHypothesisStatus } };
-export type AdCampaignKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type AdCampaignHypothesisLink = {
+  id: string;
+  hypothesis: { id: string; name: string; status: AdHypothesisStatus };
+};
+export type AdCampaignKpiStatus = "good" | "acceptable" | "bad" | "unknown";
 export type AdCampaignAnalyticsInput = {
   subscribersBefore?: number | null;
   avgViewsBefore?: number | null;
@@ -633,7 +958,42 @@ export type AdCampaignAnalyticsFields = AdCampaignAnalyticsInput & {
   analyticsLastAutoSyncedAt?: string | null;
   analyticsLastManualSyncedAt?: string | null;
 };
-export type AdCampaign = AdCampaignAnalyticsFields & { id: string; title: string; status?: string; telegramChannelId: string; ownTelegramChannelId?: string; promoId: string; telegramInviteLinkId?: string; accountId?: string; telegramChannel?: TelegramChannel; promo?: Promo | null; advertisingChannels: Array<TelegramChannel | AdvertisingChannel>; price: number; costAmount?: number; exchangeRateToPrimary: number; priceInPrimaryCurrency: number; currency: Currency; placementDate?: string; startedAt?: string; endedAt?: string; joinedCount: number; leftCount?: number; netGrowthCount?: number; sourcePostViews?: number | null; sourcePostUrl?: string | null; notes?: string; isMixedAttribution?: boolean; hypothesisLinks?: AdCampaignHypothesisLink[]; analytics?: { joinedCount: number; leftCount: number; netGrowth: number; costPerJoinedSubscriber?: number | null; costPerNetSubscriber?: number | null } };
+export type AdCampaign = AdCampaignAnalyticsFields & {
+  id: string;
+  title: string;
+  status?: string;
+  telegramChannelId: string;
+  ownTelegramChannelId?: string;
+  promoId: string;
+  telegramInviteLinkId?: string;
+  accountId?: string;
+  telegramChannel?: TelegramChannel;
+  promo?: Promo | null;
+  advertisingChannels: Array<TelegramChannel | AdvertisingChannel>;
+  price: number;
+  costAmount?: number;
+  exchangeRateToPrimary: number;
+  priceInPrimaryCurrency: number;
+  currency: Currency;
+  placementDate?: string;
+  startedAt?: string;
+  endedAt?: string;
+  joinedCount: number;
+  leftCount?: number;
+  netGrowthCount?: number;
+  sourcePostViews?: number | null;
+  sourcePostUrl?: string | null;
+  notes?: string;
+  isMixedAttribution?: boolean;
+  hypothesisLinks?: AdCampaignHypothesisLink[];
+  analytics?: {
+    joinedCount: number;
+    leftCount: number;
+    netGrowth: number;
+    costPerJoinedSubscriber?: number | null;
+    costPerNetSubscriber?: number | null;
+  };
+};
 export type AdCampaignAnalyticsSummary = AdCampaignAnalyticsFields & {
   cost?: number | null;
   cpa?: number | null;
@@ -672,8 +1032,13 @@ export type AdCampaignPerformanceSummary = {
   worstCampaigns: AdCampaign[];
   lastDailyAnalyticsSync?: DailyAnalyticsSyncRun | null;
 };
-export type AdHypothesisStatus = 'testing' | 'winner' | 'loser' | 'paused' | 'archived';
-export type AdHypothesisKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+export type AdHypothesisStatus =
+  | "testing"
+  | "winner"
+  | "loser"
+  | "paused"
+  | "archived";
+export type AdHypothesisKpiStatus = "good" | "acceptable" | "bad" | "unknown";
 export type AdHypothesisCampaignSummary = {
   id: string;
   campaignId: string;
@@ -693,7 +1058,12 @@ export type AdHypothesisCampaignSummary = {
   retention7d?: number | null;
   overallStatus?: AdCampaignKpiStatus | null;
   analyticsLastCalculatedAt?: string | null;
-  targetChannel?: { id: string; title: string; username?: string | null; photoUrl?: string | null } | null;
+  targetChannel?: {
+    id: string;
+    title: string;
+    username?: string | null;
+    photoUrl?: string | null;
+  } | null;
   source?: string | null;
   sourcePostUrl?: string | null;
   kpiStatus: AdHypothesisKpiStatus;
@@ -715,11 +1085,40 @@ export type AdHypothesisSummary = {
   kpiStatus: AdHypothesisKpiStatus;
   decision: string;
 };
-export type AdHypothesis = { id: string; name: string; description?: string | null; status: AdHypothesisStatus; conclusion?: string | null; createdAt: string; updatedAt: string; campaignsCount: number; summary: AdHypothesisSummary };
-export type AdHypothesisCampaign = { id: string; adCampaignId: string; adCampaign: AdCampaign };
-export type AdHypothesisDetail = AdHypothesis & { campaigns: AdCampaign[]; campaignSummaries: AdHypothesisCampaignSummary[] };
-export type CreateAdHypothesisPayload = { name: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds: string[] };
-export type UpdateAdHypothesisPayload = { name?: string; description?: string | null; status?: AdHypothesisStatus; conclusion?: string | null; adCampaignIds?: string[] };
+export type AdHypothesis = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: AdHypothesisStatus;
+  conclusion?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  campaignsCount: number;
+  summary: AdHypothesisSummary;
+};
+export type AdHypothesisCampaign = {
+  id: string;
+  adCampaignId: string;
+  adCampaign: AdCampaign;
+};
+export type AdHypothesisDetail = AdHypothesis & {
+  campaigns: AdCampaign[];
+  campaignSummaries: AdHypothesisCampaignSummary[];
+};
+export type CreateAdHypothesisPayload = {
+  name: string;
+  description?: string | null;
+  status?: AdHypothesisStatus;
+  conclusion?: string | null;
+  adCampaignIds: string[];
+};
+export type UpdateAdHypothesisPayload = {
+  name?: string;
+  description?: string | null;
+  status?: AdHypothesisStatus;
+  conclusion?: string | null;
+  adCampaignIds?: string[];
+};
 export type DashboardSummary = {
   period: { dateFrom: string; dateTo: string };
   totalBalancePrimary: number;
@@ -741,11 +1140,53 @@ export type DashboardSummary = {
   totalSubscribers: number;
   activeSubscribersEstimate: number;
   anomalousChannelsCount: number;
-  dailyTrend: Array<{ date: string; income: number; expenses: number; profit: number; adSpend: number; joined: number }>;
-  categoryBreakdown: Array<{ id?: string | null; name: string; type: TransactionType; amount: number; count: number; iconId?: string | null; icon?: Icon | null }>;
-  accountBalances: Array<{ id: string; name: string; currency: Currency; iconId?: string | null; icon?: Icon | null; balance: number; primary: number; secondary: number }>;
-  channelPerformance: Array<{ id: string; title: string; username?: string | null; photoUrl?: string | null; spend: number; joined: number; campaigns: number; cpa: number | null }>;
-  topOwnChannels: Array<{ id: string; title: string; username?: string | null; photoUrl?: string | null; subscribers: number; activeSubscribers: number; viewRate?: number | null; dataQuality?: string | null }>;
+  dailyTrend: Array<{
+    date: string;
+    income: number;
+    expenses: number;
+    profit: number;
+    adSpend: number;
+    joined: number;
+  }>;
+  categoryBreakdown: Array<{
+    id?: string | null;
+    name: string;
+    type: TransactionType;
+    amount: number;
+    count: number;
+    iconId?: string | null;
+    icon?: Icon | null;
+  }>;
+  accountBalances: Array<{
+    id: string;
+    name: string;
+    currency: Currency;
+    iconId?: string | null;
+    icon?: Icon | null;
+    balance: number;
+    primary: number;
+    secondary: number;
+  }>;
+  channelPerformance: Array<{
+    id: string;
+    title: string;
+    username?: string | null;
+    photoUrl?: string | null;
+    spend: number;
+    joined: number;
+    campaigns: number;
+    cpa: number | null;
+  }>;
+  topOwnChannels: Array<{
+    id: string;
+    title: string;
+    username?: string | null;
+    photoUrl?: string | null;
+    subscribers: number;
+    activeSubscribers: number;
+    viewRate?: number | null;
+    dataQuality?: string | null;
+  }>;
   campaignStatusCounts: Record<string, number>;
   adQualityCounts: Record<string, number>;
   hypothesisStatusCounts: Record<string, number>;
@@ -754,233 +1195,863 @@ export type DashboardSummary = {
 };
 
 export const authApi = {
-  login: async (email: string, password: string) => (await api.post<AuthResponse>('/auth/login', { email, password })).data,
-  register: async (payload: { email: string; password: string; name: string; workspaceName?: string }) => (await api.post<AuthResponse>('/auth/register', payload)).data,
-  me: async () => (await api.get<MeResponse>('/auth/me')).data,
+  login: async (email: string, password: string) =>
+    (await api.post<AuthResponse>("/auth/login", { email, password })).data,
+  register: async (payload: {
+    email: string;
+    password: string;
+    name: string;
+    workspaceName?: string;
+  }) => (await api.post<AuthResponse>("/auth/register", payload)).data,
+  me: async () => (await api.get<MeResponse>("/auth/me")).data,
 };
 
 export const accountApi = {
-  me: async () => (await api.get<AccountMe>('/account/me')).data,
-  updateMe: async (payload: { name?: string; email?: string; avatarIconId?: string | null }) => (await api.patch<AccountMe>('/account/me', payload)).data,
-  updatePassword: async (payload: { currentPassword: string; newPassword: string }) => (await api.patch<{ success: boolean }>('/account/password', payload)).data,
-  updateWorkspace: async (payload: { name: string; avatarIconId?: string | null }) => (await api.patch<AccountMe>('/account/workspace', payload)).data,
+  me: async () => (await api.get<AccountMe>("/account/me")).data,
+  updateMe: async (payload: {
+    name?: string;
+    email?: string;
+    avatarIconId?: string | null;
+  }) => (await api.patch<AccountMe>("/account/me", payload)).data,
+  updatePassword: async (payload: {
+    currentPassword: string;
+    newPassword: string;
+  }) =>
+    (await api.patch<{ success: boolean }>("/account/password", payload)).data,
+  updateWorkspace: async (payload: {
+    name: string;
+    avatarIconId?: string | null;
+  }) => (await api.patch<AccountMe>("/account/workspace", payload)).data,
 };
 
 export const workspacesApi = {
-  list: async () => (await api.get<WorkspaceInfo[]>('/workspaces')).data,
-  selected: async () => (await api.get<WorkspaceInfo>('/workspaces/selected')).data,
-  create: async (payload: { name: string; avatarIconId?: string | null }) => (await api.post<WorkspaceInfo>('/workspaces', payload)).data,
-  update: async (id: string, payload: { name?: string; avatarIconId?: string | null }) => (await api.patch<WorkspaceInfo>(`/workspaces/${id}`, payload)).data,
-  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/workspaces/${id}`)).data,
+  list: async () => (await api.get<WorkspaceInfo[]>("/workspaces")).data,
+  selected: async () =>
+    (await api.get<WorkspaceInfo>("/workspaces/selected")).data,
+  create: async (payload: { name: string; avatarIconId?: string | null }) =>
+    (await api.post<WorkspaceInfo>("/workspaces", payload)).data,
+  update: async (
+    id: string,
+    payload: { name?: string; avatarIconId?: string | null },
+  ) => (await api.patch<WorkspaceInfo>(`/workspaces/${id}`, payload)).data,
+  remove: async (id: string) =>
+    (await api.delete<{ success: boolean }>(`/workspaces/${id}`)).data,
 };
 
 export const globalSearchApi = {
-  search: async (query: string) => (await api.get<GlobalSearchResult[]>('/global-search', { params: { q: query } })).data,
+  search: async (query: string) =>
+    (
+      await api.get<GlobalSearchResult[]>("/global-search", {
+        params: { q: query },
+      })
+    ).data,
 };
 
 export const iconsApi = {
-  list: async (search?: string) => (await api.get<Icon[]>('/icons', { params: search ? { search } : undefined })).data,
+  list: async (search?: string) =>
+    (
+      await api.get<Icon[]>("/icons", {
+        params: search ? { search } : undefined,
+      })
+    ).data,
   get: async (id: string) => (await api.get<Icon>(`/icons/${id}`)).data,
   upload: async (file: File) => {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
     return (
-      await api.post<{ imageUrl: string }>('/icons/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      await api.post<{ imageUrl: string }>("/icons/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
         skipGlobalMutationFeedback: true,
       } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
     ).data;
   },
-  createCustom: async (payload: { name: string; imageUrl: string }) => (await api.post<Icon>('/icons/custom', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
-  createTemporaryImage: async (payload: { imageUrl: string; fileName?: string }) => (await api.post<Icon>('/icons/temporary-image', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
-  createEmoji: async (payload: { name: string; emoji: string }) => (await api.post<Icon>('/icons/emoji', payload, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
-  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/icons/${id}`, { skipGlobalMutationFeedback: true } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })).data,
+  createCustom: async (payload: { name: string; imageUrl: string }) =>
+    (
+      await api.post<Icon>("/icons/custom", payload, {
+        skipGlobalMutationFeedback: true,
+      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+    ).data,
+  createTemporaryImage: async (payload: {
+    imageUrl: string;
+    fileName?: string;
+  }) =>
+    (
+      await api.post<Icon>("/icons/temporary-image", payload, {
+        skipGlobalMutationFeedback: true,
+      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+    ).data,
+  createEmoji: async (payload: { name: string; emoji: string }) =>
+    (
+      await api.post<Icon>("/icons/emoji", payload, {
+        skipGlobalMutationFeedback: true,
+      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+    ).data,
+  remove: async (id: string) =>
+    (
+      await api.delete<{ success: boolean }>(`/icons/${id}`, {
+        skipGlobalMutationFeedback: true,
+      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+    ).data,
 };
 
 const crud = <T>(path: string) => ({
   list: async () => (await api.get<T[]>(path)).data,
   get: async (id: string) => (await api.get<T>(`${path}/${id}`)).data,
-  create: async (payload: Record<string, unknown>) => (await api.post<T>(path, payload)).data,
-  update: async (id: string, payload: Record<string, unknown>) => (await api.patch<T>(`${path}/${id}`, payload)).data,
+  create: async (payload: Record<string, unknown>) =>
+    (await api.post<T>(path, payload)).data,
+  update: async (id: string, payload: Record<string, unknown>) =>
+    (await api.patch<T>(`${path}/${id}`, payload)).data,
   remove: async (id: string) => (await api.delete<T>(`${path}/${id}`)).data,
 });
 
 export const workspaceMembersApi = {
-  ...crud<WorkspaceMember>('/workspace-members'),
-  investments: async (memberId: string) => (await api.get<Transaction[]>(`/workspace-members/${memberId}/investments`)).data,
-  investmentsSummary: async () => (await api.get('/workspace-members/investments/summary')).data,
+  ...crud<WorkspaceMember>("/workspace-members"),
+  investments: async (memberId: string) =>
+    (await api.get<Transaction[]>(`/workspace-members/${memberId}/investments`))
+      .data,
+  investmentsSummary: async () =>
+    (await api.get("/workspace-members/investments/summary")).data,
 };
-export const accountsApi = crud<Account>('/accounts');
+export const accountsApi = crud<Account>("/accounts");
 export type TransactionQuery = {
   assignedMemberId?: string;
   dateFrom?: string;
   dateTo?: string;
   categoryId?: string;
-  type?: TransactionType | 'all';
+  type?: TransactionType | "all";
   accountId?: string;
-  sort?: 'date_desc' | 'date_asc';
+  sort?: "date_desc" | "date_asc";
   search?: string;
 };
 export const transactionsApi = {
-  ...crud<Transaction>('/transactions'),
-  list: async (params?: TransactionQuery) => (await api.get<Transaction[]>('/transactions', { params })).data,
+  ...crud<Transaction>("/transactions"),
+  list: async (params?: TransactionQuery) =>
+    (await api.get<Transaction[]>("/transactions", { params })).data,
 };
 export const transactionCategoriesApi = {
-  list: async (type: TransactionType) => (await api.get<TransactionCategory[]>('/finance/categories', { params: { type } })).data,
-  create: async (payload: { name: string; type: TransactionType; iconId?: string | null }) => (await api.post<TransactionCategory>('/finance/categories', payload)).data,
-  update: async (id: string, payload: { name?: string; iconId?: string | null }) => (await api.patch<TransactionCategory>(`/finance/categories/${id}`, payload)).data,
-  remove: async (id: string) => (await api.delete(`/finance/categories/${id}`)).data,
+  list: async (type: TransactionType) =>
+    (
+      await api.get<TransactionCategory[]>("/finance/categories", {
+        params: { type },
+      })
+    ).data,
+  create: async (payload: {
+    name: string;
+    type: TransactionType;
+    iconId?: string | null;
+  }) =>
+    (await api.post<TransactionCategory>("/finance/categories", payload)).data,
+  update: async (
+    id: string,
+    payload: { name?: string; iconId?: string | null },
+  ) =>
+    (await api.patch<TransactionCategory>(`/finance/categories/${id}`, payload))
+      .data,
+  remove: async (id: string) =>
+    (await api.delete(`/finance/categories/${id}`)).data,
 };
 export type TransferQuery = {
   assignedMemberId?: string;
   dateFrom?: string;
   dateTo?: string;
   accountId?: string;
-  sort?: 'date_desc' | 'date_asc';
+  sort?: "date_desc" | "date_asc";
 };
 export const transfersApi = {
-  ...crud<Transfer>('/transfers'),
-  list: async (params?: TransferQuery) => (await api.get<Transfer[]>('/transfers', { params })).data,
+  ...crud<Transfer>("/transfers"),
+  list: async (params?: TransferQuery) =>
+    (await api.get<Transfer[]>("/transfers", { params })).data,
 };
 export const telegramChannelsApi = {
-  ...crud<TelegramChannel>('/telegram-channels'),
-  import: async (input: string) => (await api.post<ImportedTelegramSource>('/telegram-channels/import', { input })).data,
-  export: async (id: string) => (await api.get<Blob>(`/telegram-channels/${id}/export`, { responseType: 'blob' })).data,
-  sources: async (id: string) => (await api.get<TelegramChannelSourceAccess[]>(`/telegram-channels/${id}/sources`)).data,
-  analyticsSources: async (id: string) => (await api.get<TelegramAnalyticsSources>(`/telegram-channels/${id}/analytics-sources`)).data,
-  audience: async (id: string) => (await api.get<TelegramChannelAudience>(`/telegram-channels/${id}/audience`)).data,
-  createAudienceSnapshot: async (id: string) => (await api.post<TelegramChannelAudienceSnapshot>(`/telegram-channels/${id}/audience-snapshot`)).data,
-  audienceSnapshots: async (id: string, limit?: number) => (await api.get<TelegramChannelAudienceSnapshot[]>(`/telegram-channels/${id}/audience-snapshots`, { params: limit ? { limit } : undefined })).data,
-  financialSummary: async (id: string) => (await api.get<TelegramChannelFinancialSummary>(`/telegram-channels/${id}/financial-summary`)).data,
-  managedPosts: async (channelId: string) => (await api.get<TelegramManagedPost[]>(`/telegram-channels/${channelId}/managed-posts`)).data,
-  createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[]; assignedMemberId?: string; icon?: string | null }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
-  updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[]; assignedMemberId?: string; icon?: string | null }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
-  moveManagedPost: async (channelId: string, postId: string, targetTelegramChannelId: string) => (await api.post<BulkActionResult & { post: TelegramManagedPost }>(`/telegram-channels/${channelId}/managed-posts/${postId}/move-channel`, { targetTelegramChannelId })).data,
-  postGroups: async (params?: { telegramChannelId?: string; search?: string }) => (await api.get<PostGroup[]>('/telegram-channels/post-groups', { params })).data,
-  postGroup: async (groupId: string) => (await api.get<PostGroup>(`/telegram-channels/post-groups/${groupId}`)).data,
-  createPostGroup: async (payload: { telegramChannelId: string; title: string; description?: string | null; icon?: string | null; postIds?: string[] }) => (await api.post<PostGroup>('/telegram-channels/post-groups', payload)).data,
-  updatePostGroup: async (groupId: string, payload: { title?: string; description?: string | null; icon?: string | null }) => (await api.patch<PostGroup>(`/telegram-channels/post-groups/${groupId}`, payload)).data,
-  deletePostGroup: async (groupId: string) => (await api.delete<PostGroup>(`/telegram-channels/post-groups/${groupId}`)).data,
-  addPostsToGroup: async (groupId: string, postIds: string[]) => (await api.post<PostGroup>(`/telegram-channels/post-groups/${groupId}/posts`, { postIds })).data,
-  removePostFromGroup: async (groupId: string, postId: string) => (await api.delete<PostGroup>(`/telegram-channels/post-groups/${groupId}/posts/${postId}`)).data,
-  reorderPostGroup: async (groupId: string, orderedPostIds: string[]) => (await api.post<PostGroup>(`/telegram-channels/post-groups/${groupId}/reorder`, { orderedPostIds })).data,
-  movePostGroup: async (groupId: string, targetTelegramChannelId: string) => (await api.post<BulkActionResult & { group: PostGroup }>(`/telegram-channels/post-groups/${groupId}/move-channel`, { targetTelegramChannelId })).data,
-  publishPostGroup: async (groupId: string, payload: { includeScheduled?: boolean; includeFailed?: boolean; republishPublished?: boolean } = {}) => (await api.post<BulkActionResult>(`/telegram-channels/post-groups/${groupId}/publish-all`, payload)).data,
-  schedulePostGroupSequence: async (groupId: string, payload: { startDate: string; time: string; intervalDays: number; timezone?: string; includeDraftsOnly?: boolean; overwriteExistingScheduled?: boolean; includeFailed?: boolean }) => (await api.post<BulkActionResult>(`/telegram-channels/post-groups/${groupId}/schedule-sequence`, payload)).data,
-  publishManagedPost: async (channelId: string, postId: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/publish`, { longTextMode })).data,
-  scheduleManagedPost: async (channelId: string, postId: string, scheduledAt: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/schedule`, { scheduledAt, longTextMode })).data,
-  deleteManagedPost: async (channelId: string, postId: string) => (await api.delete<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`)).data,
-  adAnalyses: async (channelId: string) => (await api.get<TelegramChannelAdAnalysis[]>(`/telegram-channels/${channelId}/ad-analyses`)).data,
-  createAdAnalysis: async (channelId: string, payload: TelegramChannelAdAnalysisPayload) => (await api.post<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses`, payload)).data,
-  updateAdAnalysis: async (channelId: string, analysisId: string, payload: Partial<TelegramChannelAdAnalysisPayload>) => (await api.patch<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses/${analysisId}`, payload)).data,
-  deleteAdAnalysis: async (channelId: string, analysisId: string) => (await api.delete<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses/${analysisId}`)).data,
-  updatePostManualMetrics: async (channelId: string, postId: string, payload: { manualOwnViews?: number; manualOwnReactions?: number; excludeFromAnalytics?: boolean }) => (await api.patch<TelegramPost>(`/telegram-channels/${channelId}/posts/${postId}/manual-metrics`, payload)).data,
+  ...crud<TelegramChannel>("/telegram-channels"),
+  import: async (input: string) =>
+    (
+      await api.post<ImportedTelegramSource>("/telegram-channels/import", {
+        input,
+      })
+    ).data,
+  export: async (id: string) =>
+    (
+      await api.get<Blob>(`/telegram-channels/${id}/export`, {
+        responseType: "blob",
+      })
+    ).data,
+  sources: async (id: string) =>
+    (
+      await api.get<TelegramChannelSourceAccess[]>(
+        `/telegram-channels/${id}/sources`,
+      )
+    ).data,
+  analyticsSources: async (id: string) =>
+    (
+      await api.get<TelegramAnalyticsSources>(
+        `/telegram-channels/${id}/analytics-sources`,
+      )
+    ).data,
+  audience: async (id: string) =>
+    (
+      await api.get<TelegramChannelAudience>(
+        `/telegram-channels/${id}/audience`,
+      )
+    ).data,
+  createAudienceSnapshot: async (id: string) =>
+    (
+      await api.post<TelegramChannelAudienceSnapshot>(
+        `/telegram-channels/${id}/audience-snapshot`,
+      )
+    ).data,
+  audienceSnapshots: async (id: string, limit?: number) =>
+    (
+      await api.get<TelegramChannelAudienceSnapshot[]>(
+        `/telegram-channels/${id}/audience-snapshots`,
+        { params: limit ? { limit } : undefined },
+      )
+    ).data,
+  financialSummary: async (id: string) =>
+    (
+      await api.get<TelegramChannelFinancialSummary>(
+        `/telegram-channels/${id}/financial-summary`,
+      )
+    ).data,
+  managedPosts: async (channelId: string) =>
+    (
+      await api.get<TelegramManagedPost[]>(
+        `/telegram-channels/${channelId}/managed-posts`,
+      )
+    ).data,
+  reorderManagedPostSidebar: async (
+    channelId: string,
+    orderedItems: string[],
+    background = false,
+  ) =>
+    (
+      await api.post<{ success: true }>(
+        `/telegram-channels/${channelId}/managed-posts/reorder-sidebar`,
+        { orderedItems },
+        background
+          ? ({
+              skipGlobalMutationFeedback: true,
+            } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  createManagedPost: async (
+    channelId: string,
+    payload: {
+      title: string;
+      text?: string;
+      imageUrls?: string[];
+      assignedMemberId?: string;
+      icon?: string | null;
+    },
+    background = false,
+  ) =>
+    (
+      await api.post<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts`,
+        payload,
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  updateManagedPost: async (
+    channelId: string,
+    postId: string,
+    payload: {
+      title?: string;
+      text?: string | null;
+      imageUrls?: string[];
+      assignedMemberId?: string;
+      icon?: string | null;
+    },
+    background = false,
+  ) =>
+    (
+      await api.patch<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}`,
+        payload,
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  moveManagedPost: async (
+    channelId: string,
+    postId: string,
+    targetTelegramChannelId: string,
+  ) =>
+    (
+      await api.post<BulkActionResult & { post: TelegramManagedPost }>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/move-channel`,
+        { targetTelegramChannelId },
+      )
+    ).data,
+  postGroups: async (params?: {
+    telegramChannelId?: string;
+    search?: string;
+  }) =>
+    (await api.get<PostGroup[]>("/telegram-channels/post-groups", { params }))
+      .data,
+  postGroup: async (groupId: string) =>
+    (await api.get<PostGroup>(`/telegram-channels/post-groups/${groupId}`))
+      .data,
+  createPostGroup: async (payload: {
+    telegramChannelId: string;
+    title: string;
+    description?: string | null;
+    icon?: string | null;
+    postIds?: string[];
+  }) =>
+    (await api.post<PostGroup>("/telegram-channels/post-groups", payload)).data,
+  updatePostGroup: async (
+    groupId: string,
+    payload: {
+      title?: string;
+      description?: string | null;
+      icon?: string | null;
+    },
+  ) =>
+    (
+      await api.patch<PostGroup>(
+        `/telegram-channels/post-groups/${groupId}`,
+        payload,
+      )
+    ).data,
+  deletePostGroup: async (groupId: string) =>
+    (await api.delete<PostGroup>(`/telegram-channels/post-groups/${groupId}`))
+      .data,
+  addPostsToGroup: async (
+    groupId: string,
+    postIds: string[],
+    background = false,
+  ) =>
+    (
+      await api.post<PostGroup>(
+        `/telegram-channels/post-groups/${groupId}/posts`,
+        { postIds },
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  removePostFromGroup: async (
+    groupId: string,
+    postId: string,
+    background = false,
+  ) =>
+    (
+      await api.delete<PostGroup>(
+        `/telegram-channels/post-groups/${groupId}/posts/${postId}`,
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  reorderPostGroup: async (
+    groupId: string,
+    orderedPostIds: string[],
+    background = false,
+  ) =>
+    (
+      await api.post<PostGroup>(
+        `/telegram-channels/post-groups/${groupId}/reorder`,
+        { orderedPostIds },
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  movePostGroup: async (
+    groupId: string,
+    targetTelegramChannelId: string,
+    background = false,
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/post-groups/${groupId}/move-channel-stream`,
+          { targetTelegramChannelId },
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult & { group: PostGroup }>(
+            `/telegram-channels/post-groups/${groupId}/move-channel`,
+            { targetTelegramChannelId },
+            background
+              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+                  skipGlobalMutationFeedback: boolean;
+                })
+              : undefined,
+          )
+        ).data,
+  publishPostGroup: async (
+    groupId: string,
+    payload: {
+      includeScheduled?: boolean;
+      includeFailed?: boolean;
+      republishPublished?: boolean;
+    } = {},
+    background = false,
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/post-groups/${groupId}/publish-all-stream`,
+          payload,
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult>(
+            `/telegram-channels/post-groups/${groupId}/publish-all`,
+            payload,
+            background
+              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+                  skipGlobalMutationFeedback: boolean;
+                })
+              : undefined,
+          )
+        ).data,
+  resetPostGroupToDrafts: async (
+    groupId: string,
+    background = false,
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/post-groups/${groupId}/reset-drafts-stream`,
+          {},
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult>(
+            `/telegram-channels/post-groups/${groupId}/reset-drafts`,
+            {},
+            background
+              ? ({
+                  skipGlobalMutationFeedback: true,
+                } as AxiosRequestConfig & {
+                  skipGlobalMutationFeedback: boolean;
+                })
+              : undefined,
+          )
+        ).data,
+  schedulePostGroupSequence: async (
+    groupId: string,
+    payload: {
+      startDate: string;
+      time: string;
+      intervalDays: number;
+      timezone?: string;
+      includeDraftsOnly?: boolean;
+      overwriteExistingScheduled?: boolean;
+      includeFailed?: boolean;
+    },
+    background = false,
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/post-groups/${groupId}/schedule-sequence-stream`,
+          payload,
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult>(
+            `/telegram-channels/post-groups/${groupId}/schedule-sequence`,
+            payload,
+            background
+              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+                  skipGlobalMutationFeedback: boolean;
+                })
+              : undefined,
+          )
+        ).data,
+  publishManagedPost: async (
+    channelId: string,
+    postId: string,
+    longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT",
+    background = false,
+  ) =>
+    (
+      await api.post<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/publish`,
+        { longTextMode },
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  scheduleManagedPost: async (
+    channelId: string,
+    postId: string,
+    scheduledAt: string,
+    longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT",
+    background = false,
+  ) =>
+    (
+      await api.post<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/schedule`,
+        { scheduledAt, longTextMode },
+        background
+          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
+              skipGlobalMutationFeedback: boolean;
+            })
+          : undefined,
+      )
+    ).data,
+  deleteManagedPost: async (channelId: string, postId: string) =>
+    (
+      await api.delete<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}`,
+      )
+    ).data,
+  adAnalyses: async (channelId: string) =>
+    (
+      await api.get<TelegramChannelAdAnalysis[]>(
+        `/telegram-channels/${channelId}/ad-analyses`,
+      )
+    ).data,
+  createAdAnalysis: async (
+    channelId: string,
+    payload: TelegramChannelAdAnalysisPayload,
+  ) =>
+    (
+      await api.post<TelegramChannelAdAnalysis>(
+        `/telegram-channels/${channelId}/ad-analyses`,
+        payload,
+      )
+    ).data,
+  updateAdAnalysis: async (
+    channelId: string,
+    analysisId: string,
+    payload: Partial<TelegramChannelAdAnalysisPayload>,
+  ) =>
+    (
+      await api.patch<TelegramChannelAdAnalysis>(
+        `/telegram-channels/${channelId}/ad-analyses/${analysisId}`,
+        payload,
+      )
+    ).data,
+  deleteAdAnalysis: async (channelId: string, analysisId: string) =>
+    (
+      await api.delete<TelegramChannelAdAnalysis>(
+        `/telegram-channels/${channelId}/ad-analyses/${analysisId}`,
+      )
+    ).data,
+  updatePostManualMetrics: async (
+    channelId: string,
+    postId: string,
+    payload: {
+      manualOwnViews?: number;
+      manualOwnReactions?: number;
+      excludeFromAnalytics?: boolean;
+    },
+  ) =>
+    (
+      await api.patch<TelegramPost>(
+        `/telegram-channels/${channelId}/posts/${postId}/manual-metrics`,
+        payload,
+      )
+    ).data,
 };
 export const telegramChannelNetworksApi = {
-  list: async () => (await api.get<TelegramChannelNetwork[]>('/telegram-channel-networks')).data,
-  get: async (id: string) => (await api.get<TelegramChannelNetworkDetail>(`/telegram-channel-networks/${id}`)).data,
-  create: async (payload: CreateTelegramChannelNetworkPayload) => (await api.post<TelegramChannelNetworkDetail>('/telegram-channel-networks', payload)).data,
-  update: async (id: string, payload: UpdateTelegramChannelNetworkPayload) => (await api.patch<TelegramChannelNetworkDetail>(`/telegram-channel-networks/${id}`, payload)).data,
-  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/telegram-channel-networks/${id}`)).data,
-  summary: async (id: string) => (await api.get<TelegramChannelNetworkSummary>(`/telegram-channel-networks/${id}/summary`)).data,
+  list: async () =>
+    (await api.get<TelegramChannelNetwork[]>("/telegram-channel-networks"))
+      .data,
+  get: async (id: string) =>
+    (
+      await api.get<TelegramChannelNetworkDetail>(
+        `/telegram-channel-networks/${id}`,
+      )
+    ).data,
+  create: async (payload: CreateTelegramChannelNetworkPayload) =>
+    (
+      await api.post<TelegramChannelNetworkDetail>(
+        "/telegram-channel-networks",
+        payload,
+      )
+    ).data,
+  update: async (id: string, payload: UpdateTelegramChannelNetworkPayload) =>
+    (
+      await api.patch<TelegramChannelNetworkDetail>(
+        `/telegram-channel-networks/${id}`,
+        payload,
+      )
+    ).data,
+  remove: async (id: string) =>
+    (await api.delete<{ success: boolean }>(`/telegram-channel-networks/${id}`))
+      .data,
+  summary: async (id: string) =>
+    (
+      await api.get<TelegramChannelNetworkSummary>(
+        `/telegram-channel-networks/${id}/summary`,
+      )
+    ).data,
 };
 export const telegramUserAccountsApi = {
-  ...crud<TelegramUserAccount>('/telegram-user-accounts'),
-  startLogin: async (id: string, phone?: string) => (await api.post(`/telegram-user-accounts/${id}/login/start`, { phone })).data,
-  confirmCode: async (id: string, code: string) => (await api.post(`/telegram-user-accounts/${id}/login/code`, { code })).data,
-  confirmPassword: async (id: string, password: string) => (await api.post(`/telegram-user-accounts/${id}/login/password`, { password })).data,
-  check: async (id: string) => (await api.post(`/telegram-user-accounts/${id}/check`)).data,
-  syncDialogs: async (id: string) => (await api.post<TelegramUserAccountSyncDialogsResponse>(`/telegram-user-accounts/${id}/sync-dialogs`)).data,
-  importChannels: async (id: string, channelIds: string[]) => (await api.post<TelegramUserAccountSyncDialogsResponse>(`/telegram-user-accounts/${id}/channels/import`, { channelIds })).data,
-  channels: async (id: string) => (await api.get<TelegramSourceChannelAccess[]>(`/telegram-user-accounts/${id}/channels`)).data,
+  ...crud<TelegramUserAccount>("/telegram-user-accounts"),
+  startLogin: async (id: string, phone?: string) =>
+    (await api.post(`/telegram-user-accounts/${id}/login/start`, { phone }))
+      .data,
+  confirmCode: async (id: string, code: string) =>
+    (await api.post(`/telegram-user-accounts/${id}/login/code`, { code })).data,
+  confirmPassword: async (id: string, password: string) =>
+    (
+      await api.post(`/telegram-user-accounts/${id}/login/password`, {
+        password,
+      })
+    ).data,
+  check: async (id: string) =>
+    (await api.post(`/telegram-user-accounts/${id}/check`)).data,
+  syncDialogs: async (id: string) =>
+    (
+      await api.post<TelegramUserAccountSyncDialogsResponse>(
+        `/telegram-user-accounts/${id}/sync-dialogs`,
+      )
+    ).data,
+  importChannels: async (id: string, channelIds: string[]) =>
+    (
+      await api.post<TelegramUserAccountSyncDialogsResponse>(
+        `/telegram-user-accounts/${id}/channels/import`,
+        { channelIds },
+      )
+    ).data,
+  channels: async (id: string) =>
+    (
+      await api.get<TelegramSourceChannelAccess[]>(
+        `/telegram-user-accounts/${id}/channels`,
+      )
+    ).data,
 };
 export const telegramBotsApi = {
-  ...crud<TelegramBot>('/telegram-bots'),
-  check: async (id: string) => (await api.post<TelegramBot>(`/telegram-bots/${id}/check`)).data,
-  channels: async (id: string) => (await api.get<TelegramSourceChannelAccess[]>(`/telegram-bots/${id}/channels`)).data,
+  ...crud<TelegramBot>("/telegram-bots"),
+  check: async (id: string) =>
+    (await api.post<TelegramBot>(`/telegram-bots/${id}/check`)).data,
+  channels: async (id: string) =>
+    (
+      await api.get<TelegramSourceChannelAccess[]>(
+        `/telegram-bots/${id}/channels`,
+      )
+    ).data,
 };
 export const promosApi = {
-  ...crud<Promo>('/promos'),
-  list: async (params?: { telegramChannelId?: string }) => (await api.get<Promo[]>('/promos', { params })).data,
+  ...crud<Promo>("/promos"),
+  list: async (params?: { telegramChannelId?: string }) =>
+    (await api.get<Promo[]>("/promos", { params })).data,
   uploadImage: async (file: File) => {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
     return (
-      await api.post<{ imageUrl: string }>('/promos/upload-image', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      await api.post<{ imageUrl: string }>("/promos/upload-image", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       })
     ).data;
   },
 };
-export const advertisingChannelsApi = crud<AdvertisingChannel>('/advertising-channels');
+export const advertisingChannelsApi = crud<AdvertisingChannel>(
+  "/advertising-channels",
+);
 export const adCampaignsApi = {
-  ...crud<AdCampaign>('/ad-campaigns'),
-  list: async (params?: { telegramChannelId?: string }) => (await api.get<AdCampaign[]>('/ad-campaigns', { params })).data,
-  updateAnalyticsInput: async (id: string, payload: AdCampaignAnalyticsInput) => (await api.patch<AdCampaign>(`/ad-campaigns/${id}/analytics-input`, payload)).data,
-  recalculateAnalytics: async (id: string) => (await api.post<AdCampaign>(`/ad-campaigns/${id}/recalculate-analytics`)).data,
-  analyticsSummary: async (id: string) => (await api.get<AdCampaignAnalyticsSummary>(`/ad-campaigns/${id}/analytics-summary`)).data,
-  performanceSummary: async (params?: { channelId?: string; hypothesisId?: string; dateFrom?: string; dateTo?: string }) => (await api.get<AdCampaignPerformanceSummary>('/ad-campaigns/performance-summary', { params })).data,
+  ...crud<AdCampaign>("/ad-campaigns"),
+  list: async (params?: { telegramChannelId?: string }) =>
+    (await api.get<AdCampaign[]>("/ad-campaigns", { params })).data,
+  updateAnalyticsInput: async (id: string, payload: AdCampaignAnalyticsInput) =>
+    (
+      await api.patch<AdCampaign>(
+        `/ad-campaigns/${id}/analytics-input`,
+        payload,
+      )
+    ).data,
+  recalculateAnalytics: async (id: string) =>
+    (await api.post<AdCampaign>(`/ad-campaigns/${id}/recalculate-analytics`))
+      .data,
+  analyticsSummary: async (id: string) =>
+    (
+      await api.get<AdCampaignAnalyticsSummary>(
+        `/ad-campaigns/${id}/analytics-summary`,
+      )
+    ).data,
+  performanceSummary: async (params?: {
+    channelId?: string;
+    hypothesisId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }) =>
+    (
+      await api.get<AdCampaignPerformanceSummary>(
+        "/ad-campaigns/performance-summary",
+        { params },
+      )
+    ).data,
 };
 export const telegramSyncApi = {
-  runDailyAnalytics: async () => (await api.post<DailyAnalyticsSyncRun>('/telegram-sync/daily-analytics/run')).data,
-  lastDailyAnalyticsRun: async () => (await api.get<DailyAnalyticsSyncRun | null>('/telegram-sync/daily-analytics/last-run')).data,
-  dailyAnalyticsRuns: async (limit = 20) => (await api.get<DailyAnalyticsSyncRun[]>('/telegram-sync/daily-analytics/runs', { params: { limit } })).data,
+  runDailyAnalytics: async () =>
+    (
+      await api.post<DailyAnalyticsSyncRun>(
+        "/telegram-sync/daily-analytics/run",
+      )
+    ).data,
+  lastDailyAnalyticsRun: async () =>
+    (
+      await api.get<DailyAnalyticsSyncRun | null>(
+        "/telegram-sync/daily-analytics/last-run",
+      )
+    ).data,
+  dailyAnalyticsRuns: async (limit = 20) =>
+    (
+      await api.get<DailyAnalyticsSyncRun[]>(
+        "/telegram-sync/daily-analytics/runs",
+        { params: { limit } },
+      )
+    ).data,
 };
 export const adHypothesesApi = {
-  list: async () => (await api.get<AdHypothesis[]>('/ad-hypotheses')).data,
-  get: async (id: string) => (await api.get<AdHypothesisDetail>(`/ad-hypotheses/${id}`)).data,
-  create: async (payload: CreateAdHypothesisPayload) => (await api.post<AdHypothesisDetail>('/ad-hypotheses', payload)).data,
-  update: async (id: string, payload: UpdateAdHypothesisPayload) => (await api.patch<AdHypothesisDetail>(`/ad-hypotheses/${id}`, payload)).data,
-  remove: async (id: string) => (await api.delete<{ success: boolean }>(`/ad-hypotheses/${id}`)).data,
-  summary: async (id: string) => (await api.get<AdHypothesisSummary>(`/ad-hypotheses/${id}/summary`)).data,
+  list: async () => (await api.get<AdHypothesis[]>("/ad-hypotheses")).data,
+  get: async (id: string) =>
+    (await api.get<AdHypothesisDetail>(`/ad-hypotheses/${id}`)).data,
+  create: async (payload: CreateAdHypothesisPayload) =>
+    (await api.post<AdHypothesisDetail>("/ad-hypotheses", payload)).data,
+  update: async (id: string, payload: UpdateAdHypothesisPayload) =>
+    (await api.patch<AdHypothesisDetail>(`/ad-hypotheses/${id}`, payload)).data,
+  remove: async (id: string) =>
+    (await api.delete<{ success: boolean }>(`/ad-hypotheses/${id}`)).data,
+  summary: async (id: string) =>
+    (await api.get<AdHypothesisSummary>(`/ad-hypotheses/${id}/summary`)).data,
 };
-export const exchangeRatesApi = crud('/exchange-rates');
+export const exchangeRatesApi = crud("/exchange-rates");
 
 export async function syncTelegramChannelNow(channelId: string) {
   return (await api.post(`/telegram-channels/${channelId}/sync-now`)).data;
 }
 
-export async function syncTelegramChannelHistorical(channelId: string, payload: Record<string, unknown>) {
-  return (await api.post(`/telegram-channels/${channelId}/sync/historical`, payload)).data;
+export async function syncTelegramChannelHistorical(
+  channelId: string,
+  payload: Record<string, unknown>,
+) {
+  return (
+    await api.post(`/telegram-channels/${channelId}/sync/historical`, payload)
+  ).data;
 }
 
-export async function syncTelegramChannelDeep(channelId: string, payload: Record<string, unknown>) {
-  return (await api.post(`/telegram-channels/${channelId}/sync/deep`, payload)).data;
+export async function syncTelegramChannelDeep(
+  channelId: string,
+  payload: Record<string, unknown>,
+) {
+  return (await api.post(`/telegram-channels/${channelId}/sync/deep`, payload))
+    .data;
 }
 
-export async function syncTelegramChannelPostMetrics(channelId: string, payload: { telegramUserAccountId?: string; postLimit?: number }) {
-  return (await api.post(`/telegram-channels/${channelId}/sync-posts-metrics`, payload)).data;
+export async function syncTelegramChannelPostMetrics(
+  channelId: string,
+  payload: { telegramUserAccountId?: string; postLimit?: number },
+) {
+  return (
+    await api.post(
+      `/telegram-channels/${channelId}/sync-posts-metrics`,
+      payload,
+    )
+  ).data;
 }
 
-export async function getTelegramChannelAnalytics(channelId: string, from?: string, to?: string) {
-  return (await api.get(`/telegram-channels/${channelId}/analytics`, { params: { from, to } })).data;
+export async function getTelegramChannelAnalytics(
+  channelId: string,
+  from?: string,
+  to?: string,
+) {
+  return (
+    await api.get(`/telegram-channels/${channelId}/analytics`, {
+      params: { from, to },
+    })
+  ).data;
 }
 
-export async function getTelegramChannelPosts(channelId: string, limit = 50, offset = 0) {
-  return (await api.get<{ items: TelegramPostAnalyticsItem[]; total: number; limit: number; offset: number }>(`/telegram-channels/${channelId}/posts`, { params: { limit, offset } })).data;
+export async function getTelegramChannelPosts(
+  channelId: string,
+  limit = 50,
+  offset = 0,
+) {
+  return (
+    await api.get<{
+      items: TelegramPostAnalyticsItem[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/telegram-channels/${channelId}/posts`, { params: { limit, offset } })
+  ).data;
 }
 
 export async function getTelegramChannelInviteLinks(channelId: string) {
-  return (await api.get<TelegramInviteLink[]>(`/telegram-channels/${channelId}/invite-links`)).data;
+  return (
+    await api.get<TelegramInviteLink[]>(
+      `/telegram-channels/${channelId}/invite-links`,
+    )
+  ).data;
 }
 
 export async function getTelegramChannelPromos(channelId: string) {
-  return (await api.get<Promo[]>(`/telegram-channels/${channelId}/promos`)).data;
+  return (await api.get<Promo[]>(`/telegram-channels/${channelId}/promos`))
+    .data;
 }
 
-export type CurrencySettings = { primaryCurrency: Currency; secondaryCurrency: Currency; currencyDisplayMode: CurrencyDisplayMode; supportedCurrencies: Currency[] };
-export type ExchangeRate = { id: string; baseCurrency: Currency; targetCurrency: Currency; rate: number; date: string; source?: string };
-
-export const currenciesApi = {
-  getSettings: async () => (await api.get<CurrencySettings>('/currencies/settings')).data,
-  updateSettings: async (payload: { primaryCurrency: Currency; secondaryCurrency: Currency; currencyDisplayMode?: CurrencyDisplayMode }) => (await api.patch<CurrencySettings>('/currencies/settings', payload)).data,
-  listRates: async () => (await api.get<ExchangeRate[]>('/currencies/rates')).data,
-  createRate: async (payload: Record<string, unknown>) => (await api.post<ExchangeRate>('/currencies/rates', payload)).data,
-  updateRate: async (id: string, payload: Record<string, unknown>) => (await api.patch<ExchangeRate>(`/currencies/rates/${id}`, payload)).data,
-  removeRate: async (id: string) => (await api.delete(`/currencies/rates/${id}`)).data,
-  syncRates: async () => (await api.post<{ success: boolean; updated: number }>('/currencies/sync-rates')).data,
+export type CurrencySettings = {
+  primaryCurrency: Currency;
+  secondaryCurrency: Currency;
+  currencyDisplayMode: CurrencyDisplayMode;
+  supportedCurrencies: Currency[];
+};
+export type ExchangeRate = {
+  id: string;
+  baseCurrency: Currency;
+  targetCurrency: Currency;
+  rate: number;
+  date: string;
+  source?: string;
 };
 
-export async function getDashboardSummary(params?: { dateFrom?: string; dateTo?: string }) {
-  return (await api.get<DashboardSummary>('/dashboard/summary', { params })).data;
+export const currenciesApi = {
+  getSettings: async () =>
+    (await api.get<CurrencySettings>("/currencies/settings")).data,
+  updateSettings: async (payload: {
+    primaryCurrency: Currency;
+    secondaryCurrency: Currency;
+    currencyDisplayMode?: CurrencyDisplayMode;
+  }) =>
+    (await api.patch<CurrencySettings>("/currencies/settings", payload)).data,
+  listRates: async () =>
+    (await api.get<ExchangeRate[]>("/currencies/rates")).data,
+  createRate: async (payload: Record<string, unknown>) =>
+    (await api.post<ExchangeRate>("/currencies/rates", payload)).data,
+  updateRate: async (id: string, payload: Record<string, unknown>) =>
+    (await api.patch<ExchangeRate>(`/currencies/rates/${id}`, payload)).data,
+  removeRate: async (id: string) =>
+    (await api.delete(`/currencies/rates/${id}`)).data,
+  syncRates: async () =>
+    (
+      await api.post<{ success: boolean; updated: number }>(
+        "/currencies/sync-rates",
+      )
+    ).data,
+};
+
+export async function getDashboardSummary(params?: {
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  return (await api.get<DashboardSummary>("/dashboard/summary", { params }))
+    .data;
 }

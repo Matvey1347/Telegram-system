@@ -29,18 +29,40 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @IsString() telegramChatId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @Type(() => Number) @IsInt() currentSubscribersCount?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) seedSubscribersCount?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) activeSubscribersWindow?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  seedSubscribersCount?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  activeSubscribersWindow?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownViewsPerPost?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) ownReactionsPerPost?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  ownReactionsPerPost?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) targetCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) targetCpa?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpaFrom?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  acceptableCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) acceptableCpa?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpaFrom?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) stopCpa?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) knownFakeSubscribersCount?: number;
-  @IsOptional() @IsIn(['normal', 'suspicious', 'polluted', 'invalid']) subscriberBaseQuality?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  knownFakeSubscribersCount?: number;
+  @IsOptional()
+  @IsIn(['normal', 'suspicious', 'polluted', 'invalid'])
+  subscriberBaseQuality?: string;
   @IsOptional() @IsString() dataQualityNotes?: string | null;
 }
 
@@ -75,7 +97,11 @@ export class AttachCampaignDto {
 
 export class UpdateTelegramPostManualMetricsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) manualOwnViews?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) manualOwnReactions?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  manualOwnReactions?: number;
   @IsOptional() @IsBoolean() excludeFromAnalytics?: boolean;
 }
 
@@ -120,6 +146,10 @@ export class PostIdsDto {
 
 export class ReorderPostGroupDto {
   @IsArray() @IsString({ each: true }) orderedPostIds!: string[];
+}
+
+export class ReorderManagedPostSidebarDto {
+  @IsArray() @IsString({ each: true }) orderedItems!: string[];
 }
 
 export class MovePostChannelDto {

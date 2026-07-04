@@ -1028,6 +1028,7 @@ model TelegramManagedPost {
   icon               String?
   groupId            String?
   groupPosition      Int?
+  sidebarPosition    Int?
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
@@ -1041,6 +1042,7 @@ model TelegramManagedPost {
   @@index([workspaceId, assignedMemberId])
   @@index([groupId])
   @@index([groupId, groupPosition])
+  @@index([telegramChannelId, sidebarPosition])
   @@index([status, scheduledAt])
 }
 
@@ -1052,6 +1054,7 @@ model PostGroup {
   description       String?
   icon              String?
   createdByMemberId String
+  sidebarPosition   Int?
 
   workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel       @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
@@ -1064,6 +1067,7 @@ model PostGroup {
   @@index([workspaceId])
   @@index([telegramChannelId])
   @@index([createdByMemberId])
+  @@index([telegramChannelId, sidebarPosition])
 }
 
 model TelegramPostMetricSnapshot {

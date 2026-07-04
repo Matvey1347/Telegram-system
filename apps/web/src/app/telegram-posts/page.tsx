@@ -7,6 +7,8 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock3,
   FileText,
   FolderPlus,
@@ -17,6 +19,7 @@ import {
   LoaderCircle,
   MoveRight,
   Plus,
+  RotateCcw,
   Rocket,
   Trash2,
   X,
@@ -33,6 +36,7 @@ import {
   telegramChannelsApi,
   workspaceMembersApi,
   type BulkActionResult,
+  type BulkActionResultItem,
   type PostGroup,
   type TelegramChannel,
   type TelegramManagedPost,
@@ -45,7 +49,6 @@ import {
   DateInput,
   EmptyState,
   FormField,
-  IconButton,
   Input,
   LoadingState,
   Modal,
@@ -57,6 +60,18 @@ import { useAppToast } from "@/providers/toast-provider";
 type PublishingMode = "draft" | "publish" | "schedule";
 type LongTextMode = "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 type PostStatusTab = "PUBLISHED" | "SCHEDULED" | "DRAFT";
+type PendingPostSave = {
+  id: string;
+  title: string;
+  icon?: string | null;
+  groupId?: string | null;
+  mode: PublishingMode;
+};
+type PostSidebarSection = {
+  key: string;
+  group: PostGroup | null;
+  posts: TelegramManagedPost[];
+};
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
 export default function TelegramPostsPage() {
@@ -177,17 +192,27 @@ function TelegramPostWorkspace({
   const [text, setText] = useState("");
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [icon, setIcon] = useState<string | null>(null);
+  const [iconPickerGeneration, setIconPickerGeneration] = useState(0);
+  const [iconPending, setIconPending] = useState(false);
   const [postGroupId, setPostGroupId] = useState<string | null>(null);
   const [mode, setMode] = useState<PublishingMode>("draft");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [longTextMode, setLongTextMode] =
     useState<LongTextMode>("IMAGES_THEN_TEXT");
-  const [statusTab, setStatusTab] = useState<PostStatusTab>("PUBLISHED");
+  const [statusTab, setStatusTab] = useState<PostStatusTab>("DRAFT");
   const [busy, setBusy] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [error, setError] = useState("");
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
+  const [draggedSidebarKey, setDraggedSidebarKey] = useState<string | null>(
+    null,
+  );
+  const [sidebarOrderKeys, setSidebarOrderKeys] = useState<string[]>([]);
+  const sidebarReorderTimerRef = useRef<number | null>(null);
+  const sidebarReorderVersionRef = useRef(0);
+  const sidebarReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
     null,
@@ -195,6 +220,10 @@ function TelegramPostWorkspace({
   const [movingPost, setMovingPost] = useState<TelegramManagedPost | null>(
     null,
   );
+  const [pendingPostSaves, setPendingPostSaves] = useState<PendingPostSave[]>(
+    [],
+  );
+  const [savingPostIds, setSavingPostIds] = useState<string[]>([]);
   const posts = useQuery({
     queryKey: ["telegram-managed-posts", channelId],
     queryFn: () => telegramChannelsApi.managedPosts(channelId),
@@ -205,14 +234,13 @@ function TelegramPostWorkspace({
       telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
   });
   const groupIconIds = useMemo(
-    () =>
-      [
-        ...new Set(
-          (postGroups.data || [])
-            .map((group) => group.icon)
-            .filter((iconId): iconId is string => Boolean(iconId)),
-        ),
-      ],
+    () => [
+      ...new Set(
+        (postGroups.data || [])
+          .map((group) => group.icon)
+          .filter((iconId): iconId is string => Boolean(iconId)),
+      ),
+    ],
     [postGroups.data],
   );
   const groupIconQueries = useQueries({
@@ -242,6 +270,9 @@ function TelegramPostWorkspace({
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
   const isPublished = editing?.status === "PUBLISHED";
+  const editingIsSaving = Boolean(
+    editing && savingPostIds.includes(editing.id),
+  );
   const hasLongImageText = imageUrls.length > 0 && text.length > 1024;
   const publishedLongImageTextMode =
     isPublished && hasLongImageText
@@ -253,20 +284,121 @@ function TelegramPostWorkspace({
     imageUrls.length === 0 && text.length > TELEGRAM_TEXT_MESSAGE_LIMIT;
   const publishDisabledReason = busy
     ? "Saving or publishing is already in progress."
-    : uploadingImages
-      ? "Wait until image upload finishes."
-      : !title.trim()
-        ? "Internal title is required."
-        : mode !== "draft" && !text.trim() && !imageUrls.length
-          ? "Add Telegram text or at least one image before publishing."
-          : mode === "schedule" && (!scheduleDate || !scheduleTime)
-            ? "Publish date and time are required."
-            : "";
-  const visiblePosts = (posts.data || []).filter((post) =>
-    statusTab === "DRAFT"
-      ? ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status)
-      : post.status === statusTab,
+    : iconPending
+      ? "Wait until the selected icon is ready."
+      : uploadingImages
+        ? "Wait until image upload finishes."
+        : !title.trim()
+          ? "Internal title is required."
+          : mode !== "draft" && !text.trim() && !imageUrls.length
+            ? "Add Telegram text or at least one image before publishing."
+            : mode === "schedule" && (!scheduleDate || !scheduleTime)
+              ? "Publish date and time are required."
+              : "";
+  const visiblePosts = (posts.data || []).filter(
+    (post) =>
+      savingPostIds.includes(post.id) ||
+      (statusTab === "DRAFT"
+        ? ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status)
+        : post.status === statusTab),
   );
+  const groupedVisiblePosts = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { group: PostGroup; posts: TelegramManagedPost[] }
+    >();
+    const ungrouped: TelegramManagedPost[] = [];
+
+    visiblePosts.forEach((post) => {
+      if (!post.groupId || !post.group) {
+        ungrouped.push(post);
+        return;
+      }
+      const section = grouped.get(post.groupId);
+      if (section) section.posts.push(post);
+      else grouped.set(post.groupId, { group: post.group, posts: [post] });
+    });
+
+    return {
+      groups: [...grouped.values()].map((section) => ({
+        ...section,
+        posts: [...section.posts].sort((left, right) => {
+          const leftPosition = left.groupPosition ?? Number.MAX_SAFE_INTEGER;
+          const rightPosition = right.groupPosition ?? Number.MAX_SAFE_INTEGER;
+          if (leftPosition !== rightPosition) {
+            return leftPosition - rightPosition;
+          }
+          return (
+            new Date(left.createdAt).getTime() -
+            new Date(right.createdAt).getTime()
+          );
+        }),
+      })),
+      ungrouped,
+    };
+  }, [visiblePosts]);
+  const canonicalSidebarKeys = useMemo(
+    () =>
+      [
+        ...(postGroups.data || []).map((group, index) => ({
+          key: `group:${group.id}`,
+          position: group.sidebarPosition,
+          fallback: index,
+        })),
+        ...(posts.data || [])
+          .filter((post) => !post.groupId)
+          .map((post, index) => ({
+            key: `post:${post.id}`,
+            position: post.sidebarPosition,
+            fallback: (postGroups.data?.length || 0) + index,
+          })),
+      ]
+        .sort(
+          (left, right) =>
+            (left.position ?? Number.MAX_SAFE_INTEGER) -
+              (right.position ?? Number.MAX_SAFE_INTEGER) ||
+            left.fallback - right.fallback,
+        )
+        .map((item) => item.key),
+    [postGroups.data, posts.data],
+  );
+  const sidebarSections = useMemo<PostSidebarSection[]>(() => {
+    const sections: PostSidebarSection[] = [
+      ...groupedVisiblePosts.groups.map((section) => ({
+        key: `group:${section.group.id}`,
+        ...section,
+      })),
+      ...groupedVisiblePosts.ungrouped.map((post) => ({
+        key: `post:${post.id}`,
+        group: null,
+        posts: [post],
+      })),
+    ];
+    const canonicalIndex = new Map(
+      canonicalSidebarKeys.map((key, index) => [key, index]),
+    );
+    return sections.sort(
+      (left, right) =>
+        (canonicalIndex.get(left.key) ?? Number.MAX_SAFE_INTEGER) -
+        (canonicalIndex.get(right.key) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [canonicalSidebarKeys, groupedVisiblePosts]);
+  const orderedSidebarSections = useMemo(() => {
+    if (
+      sidebarOrderKeys.length !== sidebarSections.length ||
+      sidebarOrderKeys.some(
+        (key) => !sidebarSections.some((section) => section.key === key),
+      )
+    ) {
+      return sidebarSections;
+    }
+    const byKey = new Map(
+      sidebarSections.map((section) => [section.key, section]),
+    );
+    return sidebarOrderKeys
+      .map((key) => byKey.get(key))
+      .filter((section): section is PostSidebarSection => Boolean(section));
+  }, [sidebarOrderKeys, sidebarSections]);
   const visiblePostIds = visiblePosts.map((post) => post.id);
   const selectedPosts = selectedPostIds
     .map((id) => posts.data?.find((post) => post.id === id))
@@ -274,6 +406,93 @@ function TelegramPostWorkspace({
   const allVisibleSelected =
     visiblePostIds.length > 0 &&
     visiblePostIds.every((id) => selectedPostIds.includes(id));
+
+  const changeStatusTab = (next: PostStatusTab) => {
+    setStatusTab(next);
+    window.localStorage.setItem(`telegram-posts-status:${channelId}`, next);
+  };
+
+  const toggleGroupCollapsed = (groupId: string) => {
+    setCollapsedGroupIds((current) => {
+      const next = current.includes(groupId)
+        ? current.filter((id) => id !== groupId)
+        : [...current, groupId];
+      window.localStorage.setItem(
+        `telegram-posts-collapsed-groups:${channelId}`,
+        JSON.stringify(next),
+      );
+      return next;
+    });
+  };
+
+  const scheduleSidebarOrderSave = (visibleOrder: string[]) => {
+    const visibleKeys = new Set(visibleOrder);
+    let visibleIndex = 0;
+    const completeOrder = canonicalSidebarKeys.map((key) =>
+      visibleKeys.has(key) ? visibleOrder[visibleIndex++] : key,
+    );
+    sidebarReorderVersionRef.current += 1;
+    const version = sidebarReorderVersionRef.current;
+    if (sidebarReorderTimerRef.current) {
+      window.clearTimeout(sidebarReorderTimerRef.current);
+    }
+    sidebarReorderTimerRef.current = window.setTimeout(() => {
+      sidebarReorderQueueRef.current = sidebarReorderQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            await telegramChannelsApi.reorderManagedPostSidebar(
+              channelId,
+              completeOrder,
+              true,
+            );
+            if (version !== sidebarReorderVersionRef.current) return;
+            await Promise.all([posts.refetch(), postGroups.refetch()]);
+            setSidebarOrderKeys([]);
+            pushToast("New sidebar order saved.", "success", 3000);
+          } catch (reorderError) {
+            if (version !== sidebarReorderVersionRef.current) return;
+            setSidebarOrderKeys([]);
+            pushToast(
+              apiErrorMessage(reorderError, "Could not save the sidebar order"),
+              "error",
+            );
+          }
+        });
+    }, 700);
+  };
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(
+      `telegram-posts-status:${channelId}`,
+    );
+    if (saved === "DRAFT" || saved === "SCHEDULED" || saved === "PUBLISHED") {
+      // Restore the last tab independently for every Telegram channel.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStatusTab(saved);
+    } else {
+      setStatusTab("DRAFT");
+    }
+  }, [channelId]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(
+        window.localStorage.getItem(
+          `telegram-posts-collapsed-groups:${channelId}`,
+        ) || "[]",
+      );
+      // Restore the collapsed groups independently for every channel.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCollapsedGroupIds(
+        Array.isArray(saved)
+          ? saved.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+    } catch {
+      setCollapsedGroupIds([]);
+    }
+  }, [channelId]);
 
   const reset = () => {
     setWorkspaceView("posts");
@@ -285,6 +504,8 @@ function TelegramPostWorkspace({
     setText("");
     setImageUrls([]);
     setIcon(null);
+    setIconPending(false);
+    setIconPickerGeneration((current) => current + 1);
     setPostGroupId(null);
     setMode("draft");
     setScheduleDate("");
@@ -340,14 +561,6 @@ function TelegramPostWorkspace({
     setError("");
   };
 
-  const toggleSelectedPost = (postId: string) => {
-    setSelectedPostIds((current) =>
-      current.includes(postId)
-        ? current.filter((id) => id !== postId)
-        : [...current, postId],
-    );
-  };
-
   const toggleAllVisiblePosts = () => {
     setSelectedPostIds((current) => {
       if (allVisibleSelected) {
@@ -389,7 +602,16 @@ function TelegramPostWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPostId, posts.data]);
 
-  const persist = async () => {
+  const run = () => {
+    const editingPost = editing;
+    const saveMode = mode;
+    const saveTitle = title.trim();
+    const saveGroupId = postGroupId;
+    const saveLongTextMode = longTextMode;
+    const saveScheduledAt =
+      saveMode === "schedule"
+        ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
+        : null;
     const payload: {
       title: string;
       text: string;
@@ -397,99 +619,138 @@ function TelegramPostWorkspace({
       assignedMemberId?: string;
       icon?: string | null;
     } = {
-      title: title.trim(),
+      title: saveTitle,
       text,
-      imageUrls,
+      imageUrls: [...imageUrls],
       icon,
     };
     const selectedMemberId =
       assignedMemberId ??
-      (!editing && !memberSelectionTouched ? currentMemberId : null);
+      (!editingPost && !memberSelectionTouched ? currentMemberId : null);
     if (selectedMemberId) payload.assignedMemberId = selectedMemberId;
-    const saved = editing
-      ? telegramChannelsApi.updateManagedPost(channelId, editing.id, payload)
-      : telegramChannelsApi.createManagedPost(channelId, payload);
-    const post = await saved;
-    if (!editing && postGroupId) {
-      await telegramChannelsApi.addPostsToGroup(postGroupId, [post.id]);
-      const refreshed = await telegramChannelsApi.managedPosts(channelId);
-      return refreshed.find((item) => item.id === post.id) || post;
+    const pendingId =
+      editingPost?.id ||
+      `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    if (editingPost) {
+      setSavingPostIds((current) => [...new Set([...current, pendingId])]);
+    } else {
+      setPendingPostSaves((current) => [
+        {
+          id: pendingId,
+          title: saveTitle,
+          icon,
+          groupId: saveGroupId,
+          mode: saveMode,
+        },
+        ...current,
+      ]);
     }
-    return post;
+    changeStatusTab(
+      saveMode === "schedule"
+        ? "SCHEDULED"
+        : saveMode === "publish"
+          ? "PUBLISHED"
+          : "DRAFT",
+    );
+    if (!editingPost) {
+      reset();
+      onPostSelect(null);
+    }
+
+    void (async () => {
+      try {
+        const post = editingPost
+          ? await telegramChannelsApi.updateManagedPost(
+              channelId,
+              editingPost.id,
+              payload,
+              true,
+            )
+          : await telegramChannelsApi.createManagedPost(
+              channelId,
+              payload,
+              true,
+            );
+        if (saveGroupId && saveGroupId !== (editingPost?.groupId ?? null)) {
+          await telegramChannelsApi.addPostsToGroup(
+            saveGroupId,
+            [post.id],
+            true,
+          );
+        } else if (editingPost?.groupId && !saveGroupId) {
+          await telegramChannelsApi.removePostFromGroup(
+            editingPost.groupId,
+            post.id,
+            true,
+          );
+        }
+        if (saveMode === "publish") {
+          await telegramChannelsApi.publishManagedPost(
+            channelId,
+            post.id,
+            saveLongTextMode,
+            true,
+          );
+        } else if (saveMode === "schedule" && saveScheduledAt) {
+          await telegramChannelsApi.scheduleManagedPost(
+            channelId,
+            post.id,
+            saveScheduledAt,
+            saveLongTextMode,
+            true,
+          );
+        }
+        const savedIcon = payload.icon
+          ? await iconsApi.get(payload.icon).catch(() => null)
+          : null;
+        pushToast(
+          saveMode === "publish"
+            ? `"${saveTitle}" published.`
+            : saveMode === "schedule"
+              ? `"${saveTitle}" scheduled.`
+              : `"${saveTitle}" saved.`,
+          "success",
+          3500,
+          savedIcon ?? undefined,
+        );
+      } catch (runError) {
+        pushToast(
+          apiErrorMessage(runError, `Could not save "${saveTitle}"`),
+          "error",
+          7000,
+        );
+      } finally {
+        const [postsResult] = await Promise.allSettled([
+          posts.refetch(),
+          postGroups.refetch(),
+        ]);
+        if (editingPost && postsResult.status === "fulfilled") {
+          const refreshedPost = postsResult.value.data?.find(
+            (item) => item.id === editingPost.id,
+          );
+          if (refreshedPost) {
+            setEditing((current) =>
+              current?.id === editingPost.id ? refreshedPost : current,
+            );
+          }
+        }
+        setPendingPostSaves((current) =>
+          current.filter((item) => item.id !== pendingId),
+        );
+        setSavingPostIds((current) => current.filter((id) => id !== pendingId));
+      }
+    })();
   };
 
-  const changePostGroup = async (nextGroupId: string) => {
+  const changePostGroup = (nextGroupId: string) => {
     const normalized = nextGroupId || null;
     setPostGroupId(normalized);
-    if (!editing || normalized === (editing.groupId ?? null)) return;
-    try {
-      if (normalized) {
-        const group = await telegramChannelsApi.addPostsToGroup(normalized, [
-          editing.id,
-        ]);
-        const updated =
-          group.posts?.find((post) => post.id === editing.id) || null;
-        if (updated) setEditing(updated);
-      } else if (editing.groupId) {
-        await telegramChannelsApi.removePostFromGroup(
-          editing.groupId,
-          editing.id,
-        );
-        setEditing({ ...editing, groupId: null, group: null, groupPosition: null });
-      }
-      await Promise.all([posts.refetch(), postGroups.refetch()]);
-    } catch (changeError) {
-      setPostGroupId(editing.groupId ?? null);
-      pushToast(
-        apiErrorMessage(changeError, "Could not change post group"),
-        "error",
-      );
-    }
-  };
-
-  const run = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const post = await persist();
-      if (mode === "publish") {
-        await telegramChannelsApi.publishManagedPost(
-          channelId,
-          post.id,
-          longTextMode,
-        );
-      }
-      if (mode === "schedule") {
-        await telegramChannelsApi.scheduleManagedPost(
-          channelId,
-          post.id,
-          new Date(`${scheduleDate}T${scheduleTime}`).toISOString(),
-          longTextMode,
-        );
-      }
-      await posts.refetch();
-      if (mode === "draft") {
-        setStatusTab("DRAFT");
-        setEditing(post);
-        restoredPostIdRef.current = post.id;
-        onPostSelect(post.id);
-      } else {
-        setStatusTab(mode === "schedule" ? "SCHEDULED" : "PUBLISHED");
-        reset();
-        onPostSelect(null);
-      }
-    } catch (runError) {
-      const apiError = runError as {
-        response?: { data?: { message?: string } };
-        message?: string;
-      };
-      setError(
-        apiError.response?.data?.message ||
-          apiError.message ||
-          "Could not save post",
-      );
-    } finally {
-      setBusy(false);
+    const nextGroup = normalized
+      ? postGroups.data?.find((group) => group.id === normalized)
+      : null;
+    if (nextGroup?.icon) {
+      setIcon(nextGroup.icon);
     }
   };
 
@@ -532,364 +793,557 @@ function TelegramPostWorkspace({
           }}
         />
       ) : (
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(270px,0.7fr)_minmax(420px,1.25fr)_minmax(280px,0.72fr)]">
-        <TelegramPostPreview
-          channelTitle={channelTitle}
-          channelPhotoUrl={channelPhotoUrl}
-          text={text}
-          imageUrls={imageUrls}
-          longTextMode={longTextMode}
-        />
-        <Card className="min-w-0 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <IconPicker
-                  iconId={icon}
-                  onChange={setIcon}
-                  buttonLabel="Add icon"
-                  compact
-                  className="!h-8 !w-8"
-                />
-                <h2 className="text-lg font-semibold text-white">
-                  {isPublished
-                    ? "Published post"
-                    : editing
-                      ? "Edit post"
-                      : "New post"}
-                </h2>
-              </div>
-              {isPublished ? (
-                <div className="mt-0.5 space-y-0.5 text-xs">
-                  <p className="flex items-center gap-1.5 text-emerald-300">
-                    <CheckCircle2 size={13} />
-                    Published posts are read-only
-                  </p>
-                  <p className="text-neutral-400">
-                    {publishModeLabel(
-                      editing?.publishMode,
-                      editing?.imageUrls.length || 0,
-                      editing?.text?.length || 0,
-                    )}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-            <div className="w-full sm:w-56">
-              <CustomSelect
-                value={postGroupId || ""}
-                onChange={changePostGroup}
-                placeholder="No group"
-                options={[
-                  { value: "", label: "No group", iconEmoji: "📂" },
-                  ...(postGroups.data || []).map((group) => {
-                    const groupIcon = group.icon
-                      ? iconsById.get(group.icon)
-                      : null;
-                    return {
-                      value: group.id,
-                      label: group.title,
-                      iconEmoji: groupIcon?.emoji || undefined,
-                      iconUrl: groupIcon?.imageUrl || undefined,
-                      iconFallback: group.title,
-                    };
-                  }),
-                ]}
-              />
-            </div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.75fr)]">
-            <FormField label="Internal title" required>
-              <Input
-                value={title}
-                disabled={busy || isPublished}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </FormField>
-            <FormField label="Member">
-              <MemberSelect
-                value={assignedMemberId}
-                onChange={(value) => {
-                  setMemberSelectionTouched(true);
-                  setAssignedMemberId(value || null);
-                }}
-                defaultToCurrent={!editing}
-                disabled={busy || isPublished}
-              />
-            </FormField>
-          </div>
-          <FormField label="Telegram text">
-            <TelegramTextEditor
-              value={text}
-              onChange={setText}
-              disabled={busy || isPublished}
-              rows={7}
-            />
-          </FormField>
-          <MultiImageUpload
-            value={imageUrls}
-            onChange={setImageUrls}
-            disabled={busy || isPublished}
-            readOnly={isPublished}
-            onUploadingChange={setUploadingImages}
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(270px,0.7fr)_minmax(420px,1.25fr)_minmax(280px,0.72fr)]">
+          <TelegramPostPreview
+            channelTitle={channelTitle}
+            channelPhotoUrl={channelPhotoUrl}
+            text={text}
+            imageUrls={imageUrls}
+            longTextMode={longTextMode}
           />
-          {publishedLongImageTextMode ? (
-            <LongImageTextModePanel
-              mode={publishedLongImageTextMode}
-              readOnly
-              textLength={text.length}
-            />
-          ) : null}
-          {!isPublished && hasLongImageText ? (
-            <LongImageTextModePanel
-              mode={longTextMode}
-              onChange={setLongTextMode}
-              textLength={text.length}
-            />
-          ) : null}
-          {!isPublished && hasLongTextOnly ? (
-            <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 p-3">
-              <p className="text-sm text-blue-200">
-                Telegram text messages are limited to 4096 characters after
-                formatting. Current length: {text.length}. This post will be
-                published as{" "}
-                {Math.ceil(text.length / TELEGRAM_TEXT_MESSAGE_LIMIT)} separate
-                messages.
-              </p>
+          <Card className="relative min-w-0 space-y-3 overflow-hidden">
+            {editingIsSaving ? (
+              <div className="absolute inset-0 z-40 flex items-center justify-center rounded-lg bg-black/55 backdrop-blur-[2px]">
+                <div className="flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-4 text-sm font-medium text-white shadow-2xl">
+                  <LoaderCircle
+                    size={21}
+                    className="animate-spin text-blue-400"
+                  />
+                  Saving “{editing?.title}”…
+                </div>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <IconPicker
+                    key={iconPickerGeneration}
+                    iconId={icon}
+                    onChange={setIcon}
+                    onPendingChange={setIconPending}
+                    buttonLabel="Add icon"
+                    compact
+                    className="!h-8 !w-8"
+                  />
+                  <h2 className="text-lg font-semibold text-white">
+                    {isPublished
+                      ? "Published post"
+                      : editing
+                        ? "Edit post"
+                        : "New post"}
+                  </h2>
+                </div>
+                {isPublished ? (
+                  <div className="mt-0.5 space-y-0.5 text-xs">
+                    <p className="flex items-center gap-1.5 text-emerald-300">
+                      <CheckCircle2 size={13} />
+                      Published posts are read-only
+                    </p>
+                    <p className="text-neutral-400">
+                      {publishModeLabel(
+                        editing?.publishMode,
+                        editing?.imageUrls.length || 0,
+                        editing?.text?.length || 0,
+                      )}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              <div className="w-full sm:w-56">
+                <CustomSelect
+                  value={postGroupId || ""}
+                  onChange={changePostGroup}
+                  placeholder="No group"
+                  options={[
+                    { value: "", label: "No group", iconEmoji: "📂" },
+                    ...(postGroups.data || []).map((group) => {
+                      const groupIcon = group.icon
+                        ? iconsById.get(group.icon)
+                        : null;
+                      return {
+                        value: group.id,
+                        label: group.title,
+                        iconEmoji: groupIcon?.emoji || undefined,
+                        iconUrl: groupIcon?.imageUrl || undefined,
+                        iconFallback: group.title,
+                      };
+                    }),
+                  ]}
+                />
+              </div>
             </div>
-          ) : null}
-          {!isPublished ? (
-            <FormField label="Publishing mode">
-              <CustomSelect
-                value={mode}
-                dropdownDirection="up"
-                searchable={false}
-                onChange={(value) => setMode(value as PublishingMode)}
-                options={[
-                  { value: "draft", label: "Save as draft", iconEmoji: "📝" },
-                  { value: "publish", label: "Publish now", iconEmoji: "🚀" },
-                  {
-                    value: "schedule",
-                    label: "Schedule in Telegram",
-                    iconEmoji: "🕒",
-                  },
-                ]}
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.75fr)]">
+              <FormField label="Internal title" required>
+                <Input
+                  value={title}
+                  disabled={busy || isPublished}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
+              </FormField>
+              <FormField label="Member">
+                <MemberSelect
+                  value={assignedMemberId}
+                  onChange={(value) => {
+                    setMemberSelectionTouched(true);
+                    setAssignedMemberId(value || null);
+                  }}
+                  defaultToCurrent={!editing}
+                  disabled={busy || isPublished}
+                />
+              </FormField>
+            </div>
+            <FormField label="Telegram text">
+              <TelegramTextEditor
+                value={text}
+                onChange={setText}
+                disabled={busy || isPublished}
+                rows={7}
               />
             </FormField>
-          ) : null}
-          {!isPublished && mode === "schedule" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="Publish date" required>
-                <DateInput
-                  value={scheduleDate}
-                  onChange={(event) => setScheduleDate(event.target.value)}
-                  placeholder="Select date"
+            <MultiImageUpload
+              value={imageUrls}
+              onChange={setImageUrls}
+              disabled={busy || isPublished}
+              readOnly={isPublished}
+              onUploadingChange={setUploadingImages}
+            />
+            {publishedLongImageTextMode ? (
+              <LongImageTextModePanel
+                mode={publishedLongImageTextMode}
+                readOnly
+                textLength={text.length}
+              />
+            ) : null}
+            {!isPublished && hasLongImageText ? (
+              <LongImageTextModePanel
+                mode={longTextMode}
+                onChange={setLongTextMode}
+                textLength={text.length}
+              />
+            ) : null}
+            {!isPublished && hasLongTextOnly ? (
+              <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 p-3">
+                <p className="text-sm text-blue-200">
+                  Telegram text messages are limited to 4096 characters after
+                  formatting. Current length: {text.length}. This post will be
+                  published as{" "}
+                  {Math.ceil(text.length / TELEGRAM_TEXT_MESSAGE_LIMIT)}{" "}
+                  separate messages.
+                </p>
+              </div>
+            ) : null}
+            {!isPublished ? (
+              <FormField label="Publishing mode">
+                <CustomSelect
+                  value={mode}
+                  dropdownDirection="up"
+                  searchable={false}
+                  onChange={(value) => setMode(value as PublishingMode)}
+                  options={[
+                    { value: "draft", label: "Save as draft", iconEmoji: "📝" },
+                    { value: "publish", label: "Publish now", iconEmoji: "🚀" },
+                    {
+                      value: "schedule",
+                      label: "Schedule in Telegram",
+                      iconEmoji: "🕒",
+                    },
+                  ]}
                 />
               </FormField>
-              <FormField label="Publish time" required>
-                <Input
-                  type="time"
-                  value={scheduleTime}
-                  onChange={(event) => setScheduleTime(event.target.value)}
-                />
-              </FormField>
-            </div>
-          ) : null}
-          {error ? <p className="text-sm text-red-300">{error}</p> : null}
-          {!isPublished ? (
-            <div className="flex justify-end">
-              <Button onClick={run} disabled={!!publishDisabledReason}>
-                {mode === "draft"
-                  ? "Save draft"
-                  : mode === "publish"
-                    ? "Publish now"
-                    : editing?.status === "SCHEDULED"
-                      ? "Update scheduled post"
-                      : "Schedule post"}
-              </Button>
-            </div>
-          ) : null}
-          {!isPublished && publishDisabledReason ? (
-            <p className="text-right text-xs text-neutral-500">
-              {publishDisabledReason}
-            </p>
-          ) : null}
-        </Card>
+            ) : null}
+            {!isPublished && mode === "schedule" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FormField label="Publish date" required>
+                  <DateInput
+                    value={scheduleDate}
+                    onChange={(event) => setScheduleDate(event.target.value)}
+                    placeholder="Select date"
+                  />
+                </FormField>
+                <FormField label="Publish time" required>
+                  <Input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(event) => setScheduleTime(event.target.value)}
+                  />
+                </FormField>
+              </div>
+            ) : null}
+            {error ? <p className="text-sm text-red-300">{error}</p> : null}
+            {pendingPostSaves.length + savingPostIds.length > 0 ? (
+              <div className="flex items-center gap-2 rounded-lg border border-blue-800/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
+                <LoaderCircle size={14} className="animate-spin" />
+                {pendingPostSaves.length + savingPostIds.length} post
+                {pendingPostSaves.length + savingPostIds.length === 1
+                  ? ""
+                  : "s"}{" "}
+                saving in background. You can continue working.
+              </div>
+            ) : null}
+            {!isPublished ? (
+              <div className="flex justify-end">
+                <Button onClick={run} disabled={!!publishDisabledReason}>
+                  {mode === "draft"
+                    ? "Save draft"
+                    : mode === "publish"
+                      ? "Publish now"
+                      : editing?.status === "SCHEDULED"
+                        ? "Update scheduled post"
+                        : "Schedule post"}
+                </Button>
+              </div>
+            ) : null}
+            {!isPublished && publishDisabledReason ? (
+              <p className="text-right text-xs text-neutral-500">
+                {publishDisabledReason}
+              </p>
+            ) : null}
+          </Card>
 
-        <Card className="min-w-0">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-white">Posts</h2>
-            <span className="text-xs text-neutral-500">
-              {posts.data?.length || 0} total
-            </span>
-          </div>
-          <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
-            {(
-              [
-                {
-                  value: "DRAFT",
-                  label: "Drafts",
-                  icon: FileText,
-                  count: (posts.data || []).filter((post) =>
-                    ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status),
-                  ).length,
-                },
-                {
-                  value: "SCHEDULED",
-                  label: "Scheduled",
-                  icon: Clock3,
-                  count: (posts.data || []).filter(
-                    (post) => post.status === "SCHEDULED",
-                  ).length,
-                },
-                {
-                  value: "PUBLISHED",
-                  label: "Published",
-                  icon: CheckCircle2,
-                  count: (posts.data || []).filter(
-                    (post) => post.status === "PUBLISHED",
-                  ).length,
-                },
-              ] as const
-            ).map(({ value, label, icon: StatusIcon, count }) => (
-              <button
-                key={value}
-                type="button"
-                title={label}
-                aria-label={label}
-                onClick={() => setStatusTab(value)}
-                className={`relative flex h-9 items-center justify-center rounded-md transition ${
-                  statusTab === value
-                    ? "bg-blue-600 text-white"
-                    : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                }`}
-              >
-                <StatusIcon size={17} />
-                {count ? (
-                  <span className="absolute right-1.5 top-1 rounded-full bg-neutral-950/70 px-1 text-[9px] leading-4">
-                    {count}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-          {posts.isLoading ? <LoadingState /> : null}
-          {visiblePosts.length ? (
-            <>
-              <div className="max-h-[calc(100vh-15rem)] space-y-2 overflow-y-auto pr-1">
-                {visiblePosts.map((post) => {
-                  const member = effectivePostMember(post);
-                  return (
-                    <div
-                      key={post.id}
-                      className={`flex items-center gap-2 rounded-lg border p-1 ${
-                        editing?.id === post.id
-                          ? "border-blue-500 bg-blue-950/20"
-                          : "border-neutral-800 hover:bg-neutral-900"
-                      }`}
-                    >
-                      <label
-                        aria-label={`Select ${post.title}`}
-                        className="flex h-10 w-8 shrink-0 items-center justify-center rounded-md hover:bg-neutral-800"
+          <Card className="min-w-0">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold text-white">Posts</h2>
+              <span className="text-xs text-neutral-500">
+                {(posts.data?.length || 0) + pendingPostSaves.length} total
+              </span>
+            </div>
+            <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+              {(
+                [
+                  {
+                    value: "DRAFT",
+                    label: "Drafts",
+                    icon: FileText,
+                    count: (posts.data || []).filter((post) =>
+                      ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status),
+                    ).length,
+                  },
+                  {
+                    value: "SCHEDULED",
+                    label: "Scheduled",
+                    icon: Clock3,
+                    count: (posts.data || []).filter(
+                      (post) => post.status === "SCHEDULED",
+                    ).length,
+                  },
+                  {
+                    value: "PUBLISHED",
+                    label: "Published",
+                    icon: CheckCircle2,
+                    count: (posts.data || []).filter(
+                      (post) => post.status === "PUBLISHED",
+                    ).length,
+                  },
+                ] as const
+              ).map(({ value, label, icon: StatusIcon, count }) => (
+                <button
+                  key={value}
+                  type="button"
+                  title={label}
+                  aria-label={label}
+                  onClick={() => changeStatusTab(value)}
+                  className={`relative flex h-9 items-center justify-center rounded-md transition ${
+                    statusTab === value
+                      ? "bg-blue-600 text-white"
+                      : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                  }`}
+                >
+                  <StatusIcon size={17} />
+                  {count ? (
+                    <span className="absolute right-1.5 top-1 rounded-full bg-neutral-950/70 px-1 text-[9px] leading-4">
+                      {count}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+            {posts.isLoading ? <LoadingState /> : null}
+            {visiblePosts.length || pendingPostSaves.length ? (
+              <>
+                <div className="max-h-[calc(100vh-15rem)] space-y-2 overflow-y-auto pr-1">
+                  {pendingPostSaves.map((pending) => {
+                    const group = (postGroups.data || []).find(
+                      (item) => item.id === pending.groupId,
+                    );
+                    return (
+                      <div
+                        key={pending.id}
+                        className="flex items-center gap-2 rounded-lg border border-blue-700/70 bg-blue-950/15 px-3 py-2"
                       >
-                        <input
-                          type="checkbox"
-                          checked={selectedPostIds.includes(post.id)}
-                          onChange={() => toggleSelectedPost(post.id)}
-                          className="h-4 w-4"
+                        <LoaderCircle
+                          size={16}
+                          className="shrink-0 animate-spin text-blue-400"
                         />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          selectPost(post);
-                          onPostSelect(post.id);
-                        }}
-                        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
-                      >
-                        {!post.icon ? (
-                          <PostStatusIcon status={post.status} />
-                        ) : null}
+                        <PostIcon
+                          iconId={pending.icon}
+                          label={pending.title}
+                          bare
+                        />
                         <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 items-center gap-1.5 text-sm">
-                            <PostIcon
-                              iconId={post.icon}
-                              label={post.title}
-                              bare
-                            />
-                            <span className="truncate">{post.title}</span>
+                          <span className="block truncate text-sm text-white">
+                            {pending.title}
                           </span>
-                          {post.status !== "DRAFT" ? (
-                            <span className="block truncate text-[11px] text-neutral-500">
-                              {post.status === "SCHEDULED" && post.scheduledAt
-                                ? new Date(post.scheduledAt).toLocaleString()
-                                : post.status === "PUBLISHED" &&
-                                    post.publishedAt
-                                  ? new Date(
-                                      post.publishedAt,
-                                    ).toLocaleString()
-                                  : post.status.toLowerCase()}
-                            </span>
-                          ) : null}
-                          {post.group ? (
-                            <span className="mt-1 block truncate text-[11px] text-blue-300">
-                              Group: {post.group.title}
-                            </span>
-                          ) : null}
-                          {member ? (
-                            <span className="mt-1 flex min-w-0">
-                              <MemberBadge member={member} />
+                          {group ? (
+                            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-blue-300">
+                              <PostIcon
+                                iconId={group.icon}
+                                label={group.title}
+                                bare
+                              />
+                              <span className="truncate">{group.title}</span>
                             </span>
                           ) : null}
                         </span>
-                      </button>
-                      <button
-                        type="button"
-                        title="Move to another channel"
-                        aria-label={`Move ${post.title}`}
-                        onClick={() => setMovingPost(post)}
-                        className="cursor-pointer rounded-lg border border-neutral-700 p-2 text-neutral-200 hover:bg-neutral-800"
+                        <span className="text-[11px] text-blue-300">
+                          Saving…
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {orderedSidebarSections.map((section) => {
+                    const collapsed =
+                      section.group &&
+                      collapsedGroupIds.includes(section.group.id);
+                    const sectionPostIds = section.posts.map((post) => post.id);
+                    const allSectionSelected = sectionPostIds.every((id) =>
+                      selectedPostIds.includes(id),
+                    );
+                    return (
+                      <div
+                        key={section.key}
+                        draggable
+                        onDragStart={() => setDraggedSidebarKey(section.key)}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          if (
+                            !draggedSidebarKey ||
+                            draggedSidebarKey === section.key
+                          ) {
+                            return;
+                          }
+                          setSidebarOrderKeys((currentKeys) => {
+                            const current = currentKeys.length
+                              ? currentKeys
+                              : orderedSidebarSections.map((item) => item.key);
+                            const from = current.indexOf(draggedSidebarKey);
+                            const to = current.indexOf(section.key);
+                            if (from < 0 || to < 0) return current;
+                            const next = [...current];
+                            const [moved] = next.splice(from, 1);
+                            next.splice(to, 0, moved);
+                            return next;
+                          });
+                        }}
+                        onDragEnd={() => {
+                          setDraggedSidebarKey(null);
+                          scheduleSidebarOrderSave(
+                            orderedSidebarSections.map((item) => item.key),
+                          );
+                        }}
+                        className={`${
+                          section.group
+                            ? "overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950/40"
+                            : "space-y-2"
+                        } ${
+                          draggedSidebarKey === section.key
+                            ? "border-blue-500 opacity-60"
+                            : ""
+                        }`}
                       >
-                        <MoveRight size={15} />
-                      </button>
-                      <IconButton
-                        type="button"
-                        kind="delete"
-                        aria-label={`Delete ${post.title}`}
-                        onClick={() => setDeletingPost(post)}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2 py-2">
-                <label className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    onChange={toggleAllVisiblePosts}
-                    className="h-4 w-4"
-                  />
-                  {allVisibleSelected ? "Clear visible" : "Select visible"}
-                </label>
-                <Button
-                  type="button"
-                  variant="danger"
-                  disabled={!selectedPosts.length || busy}
-                  onClick={() => setBulkDeleteOpen(true)}
-                  className="flex items-center gap-2 px-3 py-1.5"
-                >
-                  <Trash2 size={15} />
-                  Delete selected
-                  {selectedPosts.length ? ` (${selectedPosts.length})` : ""}
-                </Button>
-              </div>
-            </>
-          ) : !posts.isLoading ? (
-            <EmptyState text={`No ${statusTab.toLowerCase()} posts`} />
-          ) : null}
-        </Card>
-      </div>
+                        {section.group ? (
+                          <div className="flex items-center gap-2 border-b border-neutral-800 px-2 py-2">
+                            <GripVertical
+                              size={15}
+                              className="shrink-0 cursor-grab text-neutral-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                toggleGroupCollapsed(section.group!.id)
+                              }
+                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            >
+                              {collapsed ? (
+                                <ChevronRight
+                                  size={15}
+                                  className="shrink-0 text-neutral-400"
+                                />
+                              ) : (
+                                <ChevronDown
+                                  size={15}
+                                  className="shrink-0 text-neutral-400"
+                                />
+                              )}
+                              <PostIcon
+                                iconId={section.group.icon}
+                                label={section.group.title}
+                                bare
+                              />
+                              <span className="truncate text-sm font-medium text-white">
+                                {section.group.title}
+                              </span>
+                              <span className="text-xs text-neutral-500">
+                                {section.posts.length}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedPostIds((current) =>
+                                  allSectionSelected
+                                    ? current.filter(
+                                        (id) => !sectionPostIds.includes(id),
+                                      )
+                                    : [
+                                        ...new Set([
+                                          ...current,
+                                          ...sectionPostIds,
+                                        ]),
+                                      ],
+                                )
+                              }
+                              className="shrink-0 rounded-md px-2 py-1 text-[11px] text-blue-300 hover:bg-blue-950/60"
+                            >
+                              {allSectionSelected ? "Clear" : "Select all"}
+                            </button>
+                          </div>
+                        ) : null}
+                        {!collapsed ? (
+                          <div
+                            className={
+                              section.group ? "space-y-2 p-2" : "space-y-2"
+                            }
+                          >
+                            {section.posts.map((post) => {
+                              const isSaving = savingPostIds.includes(post.id);
+                              const isSelected = selectedPostIds.includes(
+                                post.id,
+                              );
+                              return (
+                                <div
+                                  key={post.id}
+                                  onClick={() =>
+                                    setSelectedPostIds((current) =>
+                                      current.includes(post.id)
+                                        ? current.filter((id) => id !== post.id)
+                                        : [...current, post.id],
+                                    )
+                                  }
+                                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
+                                    editing?.id === post.id || isSelected
+                                      ? "border-blue-500 bg-blue-950/20"
+                                      : "border-neutral-800 hover:bg-neutral-900"
+                                  }`}
+                                >
+                                  {!section.group ? (
+                                    <GripVertical
+                                      size={15}
+                                      className="shrink-0 cursor-grab text-neutral-500"
+                                    />
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      selectPost(post);
+                                      onPostSelect(post.id);
+                                    }}
+                                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                  >
+                                    {isSaving ? (
+                                      <LoaderCircle
+                                        size={16}
+                                        className="shrink-0 animate-spin text-blue-400"
+                                      />
+                                    ) : !post.icon ? (
+                                      <PostStatusIcon status={post.status} />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">
+                                      <span className="flex min-w-0 items-center gap-1.5 text-sm">
+                                        <PostIcon
+                                          iconId={post.icon}
+                                          label={post.title}
+                                          bare
+                                        />
+                                        <span className="truncate">
+                                          {post.title}
+                                        </span>
+                                      </span>
+                                      {post.status !== "DRAFT" ? (
+                                        <span className="block truncate text-[11px] text-neutral-500">
+                                          {post.status === "SCHEDULED" &&
+                                          post.scheduledAt
+                                            ? new Date(
+                                                post.scheduledAt,
+                                              ).toLocaleString()
+                                            : post.status === "PUBLISHED" &&
+                                                post.publishedAt
+                                              ? new Date(
+                                                  post.publishedAt,
+                                                ).toLocaleString()
+                                              : post.status.toLowerCase()}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Move to another channel"
+                                    aria-label={`Move ${post.title}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setMovingPost(post);
+                                    }}
+                                    className="cursor-pointer rounded-md border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800"
+                                  >
+                                    <MoveRight size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label={`Delete ${post.title}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setDeletingPost(post);
+                                    }}
+                                    className="cursor-pointer rounded-md border border-red-800 p-1.5 text-red-300 hover:bg-red-950"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2 py-2">
+                  <button
+                    type="button"
+                    onClick={toggleAllVisiblePosts}
+                    className="rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                  >
+                    {allVisibleSelected ? "Clear visible" : "Select visible"}
+                  </button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    disabled={!selectedPosts.length || busy}
+                    onClick={() => setBulkDeleteOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1.5"
+                  >
+                    <Trash2 size={15} />
+                    Delete selected
+                    {selectedPosts.length ? ` (${selectedPosts.length})` : ""}
+                  </Button>
+                </div>
+              </>
+            ) : !posts.isLoading ? (
+              <EmptyState text={`No ${statusTab.toLowerCase()} posts`} />
+            ) : null}
+          </Card>
+        </div>
       )}
 
       <ConfirmDeleteModal
@@ -1130,7 +1584,7 @@ function PostGroupsWorkspace({
   channels: TelegramChannel[];
   onOpenPost: (post: TelegramManagedPost) => void;
 }) {
-  const { pushToast } = useAppToast();
+  const { pushToast, setProgress } = useAppToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState<PostGroup | "new" | null>(null);
   const [addPostsOpen, setAddPostsOpen] = useState(false);
@@ -1139,9 +1593,12 @@ function PostGroupsWorkspace({
     useState<TelegramManagedPost | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [resetDraftsOpen, setResetDraftsOpen] = useState(false);
   const [deletingGroup, setDeletingGroup] = useState<PostGroup | null>(null);
-  const [progress, setProgress] = useState<ProgressState | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const reorderTimerRef = useRef<number | null>(null);
+  const reorderVersionRef = useRef(0);
+  const reorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const groups = useQuery({
     queryKey: ["post-groups", channelId],
     queryFn: () =>
@@ -1174,40 +1631,75 @@ function PostGroupsWorkspace({
   const refresh = async () => {
     await Promise.all([groups.refetch(), detail.refetch(), posts.refetch()]);
   };
-  const playResult = async (title: string, result: BulkActionResult) => {
-    for (let index = 0; index < result.results.length; index += 1) {
-      setProgress({
-        title,
-        current: index + 1,
-        total: result.total,
-        item: result.results[index],
-      });
-      await new Promise((resolve) => window.setTimeout(resolve, 180));
+  const scheduleReorderSave = (
+    groupId: string,
+    orderedPostIdsToSave: string[],
+  ) => {
+    reorderVersionRef.current += 1;
+    const version = reorderVersionRef.current;
+    if (reorderTimerRef.current) {
+      window.clearTimeout(reorderTimerRef.current);
     }
-    setProgress({
-      title,
-      current: result.total,
-      total: result.total,
-      item: result.results.at(-1),
-      result,
-    });
-    window.setTimeout(() => setProgress(null), 2800);
+    reorderTimerRef.current = window.setTimeout(() => {
+      reorderQueueRef.current = reorderQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            await telegramChannelsApi.reorderPostGroup(
+              groupId,
+              orderedPostIdsToSave,
+              true,
+            );
+            if (version !== reorderVersionRef.current) return;
+            await Promise.all([detail.refetch(), posts.refetch()]);
+            setOrderedPostIds([]);
+            pushToast("New post order saved.", "success", 3000);
+          } catch (error) {
+            if (version !== reorderVersionRef.current) return;
+            await detail.refetch();
+            setOrderedPostIds([]);
+            pushToast(
+              apiErrorMessage(error, "Could not reorder posts"),
+              "error",
+            );
+          }
+        });
+    }, 700);
   };
+
   const runBulk = async (
     title: string,
-    request: () => Promise<BulkActionResult>,
+    request: (
+      onProgress: (
+        item: BulkActionResultItem,
+        current: number,
+        total: number,
+      ) => void,
+    ) => Promise<BulkActionResult>,
   ) => {
     const total = detail.data?.posts?.length || 0;
     setProgress({ title, current: 0, total });
     try {
-      const result = await request();
-      await playResult(title, result);
+      const result = await request((item, current, progressTotal) => {
+        setProgress({
+          title,
+          current,
+          total: progressTotal,
+          message: item.message,
+        });
+      });
+      setProgress({
+        title,
+        current: result.total,
+        total: result.total,
+        message: result.results.at(-1)?.message,
+        completed: true,
+        successCount: result.successCount,
+        failedCount: result.failedCount,
+        skippedCount: result.skippedCount,
+      });
+      window.setTimeout(() => setProgress(null), 2800);
       await refresh();
-      pushToast(
-        `${title}: ${result.successCount} success, ${result.failedCount} failed, ${result.skippedCount} skipped`,
-        result.failedCount ? "error" : "success",
-        7000,
-      );
       return result;
     } catch (error) {
       setProgress(null);
@@ -1237,6 +1729,14 @@ function PostGroupsWorkspace({
               <Button onClick={() => setPublishOpen(true)}>
                 <span className="inline-flex items-center gap-2">
                   <Rocket size={15} /> Publish all
+                </span>
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setResetDraftsOpen(true)}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RotateCcw size={15} /> Make drafts
                 </span>
               </Button>
               <Button variant="secondary" onClick={() => setMoveOpen(true)}>
@@ -1314,23 +1814,12 @@ function PostGroupsWorkspace({
                           return next;
                         });
                       }}
-                      onDragEnd={async () => {
+                      onDragEnd={() => {
                         setDraggedId(null);
-                        try {
-                          await telegramChannelsApi.reorderPostGroup(
-                            group.id,
-                            orderedPosts.map((item) => item.id),
-                          );
-                          await detail.refetch();
-                          setOrderedPostIds([]);
-                        } catch (error) {
-                          await detail.refetch();
-                          setOrderedPostIds([]);
-                          pushToast(
-                            apiErrorMessage(error, "Could not reorder posts"),
-                            "error",
-                          );
-                        }
+                        scheduleReorderSave(
+                          group.id,
+                          orderedPosts.map((item) => item.id),
+                        );
                       }}
                       className={`flex items-center gap-3 rounded-lg border p-3 ${
                         draggedId === post.id
@@ -1342,15 +1831,22 @@ function PostGroupsWorkspace({
                         size={18}
                         className="cursor-grab text-neutral-500"
                       />
-                      <PostIcon iconId={post.icon} label={post.title} />
-                      <PostStatusIcon status={post.status} />
                       <button
                         type="button"
                         onClick={() => onOpenPost(post)}
                         className="min-w-0 flex-1 text-left"
                       >
-                        <span className="block truncate text-sm text-white">
-                          {post.title}
+                        <span className="flex min-w-0 items-center gap-1.5 text-sm text-white">
+                          {post.icon ? (
+                            <PostIcon
+                              iconId={post.icon}
+                              label={post.title}
+                              bare
+                            />
+                          ) : (
+                            <PostStatusIcon status={post.status} />
+                          )}
+                          <span className="truncate">{post.title}</span>
                         </span>
                         <span className="block text-xs text-neutral-500">
                           {post.scheduledAt
@@ -1419,10 +1915,12 @@ function PostGroupsWorkspace({
             onClose={() => setMoveOpen(false)}
             onSubmit={async (targetId) => {
               setMoveOpen(false);
-              await runBulk("Moving group", async () => {
+              await runBulk("Moving group", async (onProgress) => {
                 const response = await telegramChannelsApi.movePostGroup(
                   group!.id,
                   targetId,
+                  true,
+                  onProgress,
                 );
                 return response;
               });
@@ -1455,8 +1953,13 @@ function PostGroupsWorkspace({
           onClose={() => setPublishOpen(false)}
           onSubmit={async (options) => {
             setPublishOpen(false);
-            await runBulk("Publishing posts", () =>
-              telegramChannelsApi.publishPostGroup(group!.id, options),
+            await runBulk("Publishing posts", (onProgress) =>
+              telegramChannelsApi.publishPostGroup(
+                group!.id,
+                options,
+                true,
+                onProgress,
+              ),
             );
           }}
         />
@@ -1466,11 +1969,48 @@ function PostGroupsWorkspace({
           onClose={() => setScheduleOpen(false)}
           onSubmit={async (payload) => {
             setScheduleOpen(false);
-            await runBulk("Scheduling posts", () =>
-              telegramChannelsApi.schedulePostGroupSequence(group!.id, payload),
+            await runBulk("Scheduling posts", (onProgress) =>
+              telegramChannelsApi.schedulePostGroupSequence(
+                group!.id,
+                payload,
+                true,
+                onProgress,
+              ),
             );
           }}
         />
+        <Modal
+          open={resetDraftsOpen}
+          onClose={() => setResetDraftsOpen(false)}
+          title="Make all posts drafts?"
+        >
+          <p className="text-sm text-neutral-300">
+            Scheduled Telegram posts will be cancelled. Already published
+            Telegram messages will remain in the channel.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setResetDraftsOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setResetDraftsOpen(false);
+                void runBulk("Converting posts to drafts", (onProgress) =>
+                  telegramChannelsApi.resetPostGroupToDrafts(
+                    group!.id,
+                    true,
+                    onProgress,
+                  ),
+                ).catch(() => undefined);
+              }}
+            >
+              Make all drafts
+            </Button>
+          </div>
+        </Modal>
         <ConfirmDeleteModal
           open={!!deletingGroup}
           onClose={() => setDeletingGroup(null)}
@@ -1485,7 +2025,6 @@ function PostGroupsWorkspace({
             await groups.refetch();
           }}
         />
-        <BulkProgressOverlay progress={progress} />
       </>
     );
   }
@@ -1525,10 +2064,9 @@ function PostGroupsWorkspace({
                     <MemberBadge member={group.createdByMember} />
                   </div>
                 </div>
-                <GroupStatusBadge status={group.statusSummary.computedStatus} />
               </div>
               <div className="mt-4">
-                <GroupSummary summary={group.statusSummary} compact />
+                <GroupSummary summary={group.statusSummary} />
               </div>
             </button>
           ))}
@@ -1550,46 +2088,11 @@ function PostGroupsWorkspace({
           }}
         />
       ) : null}
-      <BulkProgressOverlay progress={progress} />
     </>
   );
 }
 
-function GroupStatusBadge({
-  status,
-}: {
-  status: PostGroup["statusSummary"]["computedStatus"];
-}) {
-  const labels = {
-    EMPTY: "Empty",
-    HAS_ERRORS: "Has errors",
-    ALL_DRAFT: "All drafts",
-    ALL_SCHEDULED: "All scheduled",
-    ALL_PUBLISHED: "All published",
-    MIXED: "Mixed",
-  };
-  const colors = {
-    EMPTY: "border-neutral-700 text-neutral-400",
-    HAS_ERRORS: "border-red-700 text-red-300",
-    ALL_DRAFT: "border-blue-700 text-blue-300",
-    ALL_SCHEDULED: "border-amber-700 text-amber-300",
-    ALL_PUBLISHED: "border-emerald-700 text-emerald-300",
-    MIXED: "border-violet-700 text-violet-300",
-  };
-  return (
-    <span className={`rounded-full border px-2 py-1 text-[10px] ${colors[status]}`}>
-      {labels[status]}
-    </span>
-  );
-}
-
-function GroupSummary({
-  summary,
-  compact = false,
-}: {
-  summary: PostGroup["statusSummary"];
-  compact?: boolean;
-}) {
+function GroupSummary({ summary }: { summary: PostGroup["statusSummary"] }) {
   const visibleStatuses = [
     {
       label: "Draft",
@@ -1618,7 +2121,6 @@ function GroupSummary({
   ].filter((item) => item.count > 0);
   return (
     <div className="space-y-2">
-      {!compact ? <GroupStatusBadge status={summary.computedStatus} /> : null}
       {visibleStatuses.length ? (
         <div className="flex flex-wrap gap-1.5 text-[11px]">
           {visibleStatuses.map((item) => (
@@ -1670,7 +2172,10 @@ function GroupFormModal({
     >
       <div className="space-y-3">
         <FormField label="Title" required>
-          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+          <Input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
         </FormField>
         <FormField label="Icon">
           <IconPicker iconId={icon} onChange={setIcon} buttonLabel="Add icon" />
@@ -1728,7 +2233,9 @@ function GroupFormModal({
           </div>
         ) : null}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             disabled={!title.trim() || busy}
             onClick={async () => {
@@ -1796,7 +2303,9 @@ function AddPostsModal({
                 }
               />
               <PostIcon iconId={post.icon} label={post.title} />
-              <span className="min-w-0 flex-1 truncate text-sm">{post.title}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {post.title}
+              </span>
               <PostStatusIcon status={post.status} />
             </label>
           ))
@@ -1804,7 +2313,9 @@ function AddPostsModal({
           <EmptyState text="No posts available to add." />
         )}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             disabled={!group || !selected.length || busy}
             onClick={async () => {
@@ -1859,7 +2370,9 @@ function MoveGroupModal({
           />
         </FormField>
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button disabled={!targetId} onClick={() => onSubmit(targetId)}>
             Move group
           </Button>
@@ -1901,7 +2414,10 @@ function PublishGroupModal({
             setRepublishPublished,
           ],
         ].map(([label, checked, setter]) => (
-          <label key={String(label)} className="flex items-center gap-2 text-sm">
+          <label
+            key={String(label)}
+            className="flex items-center gap-2 text-sm"
+          >
             <input
               type="checkbox"
               checked={checked as boolean}
@@ -1913,7 +2429,9 @@ function PublishGroupModal({
           </label>
         ))}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             onClick={() =>
               onSubmit({
@@ -1974,9 +2492,9 @@ function ScheduleGroupModal({
           return false;
         })
         .map((post, index) => {
-        const date = new Date(`${startDate}T${time}:00`);
-        date.setDate(date.getDate() + index * intervalDays);
-        return { post, date };
+          const date = new Date(`${startDate}T${time}:00`);
+          date.setDate(date.getDate() + index * intervalDays);
+          return { post, date };
         }),
     [
       group?.posts,
@@ -2062,7 +2580,9 @@ function ScheduleGroupModal({
           </div>
         ) : null}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button
             disabled={!startDate || !time || intervalDays < 1}
             onClick={() =>
