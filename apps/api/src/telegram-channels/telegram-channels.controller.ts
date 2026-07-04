@@ -24,6 +24,7 @@ import {
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
   ScheduleTelegramManagedPostDto,
+  PublishTelegramManagedPostDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
@@ -74,8 +75,9 @@ export class TelegramChannelsController {
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
     @Param('postId') postId: string,
+    @Body() dto: PublishTelegramManagedPostDto,
   ) {
-    return this.service.publishManagedPostNow(user.sub, id, postId);
+    return this.service.publishManagedPostNow(user.sub, id, postId, dto);
   }
   @Post(':id/managed-posts/:postId/schedule')
   scheduleManagedPost(

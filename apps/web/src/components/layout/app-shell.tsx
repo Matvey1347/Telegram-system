@@ -23,6 +23,7 @@ import {
   Plus,
   Search,
   MessageCircle,
+  Send,
   RadioTower,
   ReceiptText,
   Settings,
@@ -51,6 +52,7 @@ const groups = [
     icon: MessageCircle,
     children: [
       { label: 'Telegram', href: '/telegram-channels', icon: RadioTower },
+      { label: 'Posts', href: '/telegram-posts', icon: Send },
       { label: 'Ads', href: '/ad-campaigns', icon: Target },
     ],
   },

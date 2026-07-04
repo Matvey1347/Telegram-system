@@ -420,9 +420,9 @@ export default function AdCampaignsPage() {
       }}
     />
     <SyncDetailsModal open={syncDetailsOpen} onClose={() => setSyncDetailsOpen(false)} performance={performance} syncRuns={syncRuns || []} hasCampaigns={campaigns.length > 0} />
-    <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
-    <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis && deleteHypothesisMutation.mutate(deletingHypothesis.id)} label="Delete" />
-    <ConfirmDeleteModal open={!!deletingPromo} entityName={deletingPromo?.title ?? 'promo'} onClose={() => setDeletingPromo(null)} onConfirm={() => deletingPromo && deletePromoMutation.mutate(deletingPromo.id)} label="Delete" />
+    <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} label="Archive" />
+    <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis ? deleteHypothesisMutation.mutateAsync(deletingHypothesis.id) : undefined} label="Delete" />
+    <ConfirmDeleteModal open={!!deletingPromo} entityName={deletingPromo?.title ?? 'promo'} onClose={() => setDeletingPromo(null)} onConfirm={() => deletingPromo ? deletePromoMutation.mutateAsync(deletingPromo.id) : undefined} label="Delete" />
   </AppShell>;
 }
 

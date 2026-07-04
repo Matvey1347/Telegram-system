@@ -275,7 +275,7 @@ export function MtprotoAccountsPanel({
         entityName={deleting?.label || ""}
         description="This will remove Telegram user session for this workspace."
         onClose={() => setDeleting(null)}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined}
         label="Delete"
       />
       <SyncChannelsReviewModal
@@ -402,7 +402,7 @@ export function BotAccountsPanel({
         entityName={deleting?.label || ""}
         description="This removes the bot token from this workspace."
         onClose={() => setDeleting(null)}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined}
         label="Delete"
       />
       <ToastStack

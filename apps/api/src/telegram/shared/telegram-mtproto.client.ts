@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Api, TelegramClient } from 'telegram';
 import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
+import { HTMLParser } from 'telegram/extensions/html';
+import { CustomFile } from 'telegram/client/uploads';
 import { StringSession } from 'telegram/sessions';
 
 type ApiCredentials = { apiId: string; apiHash: string };
@@ -20,6 +22,7 @@ type BroadcastStatsGraphField =
 export class TelegramMtprotoClient {
   private readonly maxPostBackfillLimit = 10_000;
   private readonly defaultTelegramPaletteSize = 7;
+  private readonly maxPublishImageBytes = 10 * 1024 * 1024;
   private readonly broadcastStatsGraphFields: Array<{
     normalized: BroadcastStatsGraphField;
     raw: string[];
@@ -807,6 +810,8 @@ export class TelegramMtprotoClient {
     session: string;
     channelRef: string;
     html: string;
+    captionHtml?: string;
+    followupHtml?: string;
     imageUrls: string[];
     scheduleAt?: Date | null;
   }) {
@@ -816,12 +821,17 @@ export class TelegramMtprotoClient {
       const schedule = params.scheduleAt
         ? Math.floor(params.scheduleAt.getTime() / 1000)
         : undefined;
+      const [plainText, formattingEntities] = HTMLParser.parse(params.html);
       const messageIds: string[] = [];
       if (params.imageUrls.length) {
-        const caption = params.html.length <= 1024 ? params.html : '';
+        const files = await Promise.all(
+          params.imageUrls.map((url, index) =>
+            this.downloadPublishImage(url, index),
+          ),
+        );
         const result = await client.sendFile(entity, {
-          file: params.imageUrls,
-          caption,
+          file: files,
+          caption: params.captionHtml ?? params.html,
           parseMode: 'html',
           scheduleDate: schedule,
         });
@@ -829,18 +839,21 @@ export class TelegramMtprotoClient {
         for (const message of messages) {
           if (message?.id != null) messageIds.push(String(message.id));
         }
-        if (params.html && !caption) {
+        if (params.followupHtml) {
+          const [followupText, followupEntities] = HTMLParser.parse(
+            params.followupHtml,
+          );
           const textMessage = await client.sendMessage(entity, {
-            message: params.html,
-            parseMode: 'html',
+            message: followupText,
+            formattingEntities: followupEntities,
             schedule,
           });
           if (textMessage?.id != null) messageIds.push(String(textMessage.id));
         }
       } else {
         const message = await client.sendMessage(entity, {
-          message: params.html,
-          parseMode: 'html',
+          message: plainText,
+          formattingEntities,
           schedule,
         });
         if (message?.id != null) messageIds.push(String(message.id));
@@ -849,6 +862,67 @@ export class TelegramMtprotoClient {
     } finally {
       await this.closeClient(client);
     }
+  }
+
+  private async downloadPublishImage(url: string, index: number) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Image ${index + 1} has an invalid URL`);
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw new Error(`Image ${index + 1} must use an HTTP or HTTPS URL`);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(parsedUrl, {
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      throw new Error(
+        `Could not download image ${index + 1} before publishing`,
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Could not download image ${index + 1} (HTTP ${response.status})`,
+      );
+    }
+
+    const contentType = (response.headers.get('content-type') || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+    if (!contentType.startsWith('image/')) {
+      throw new Error(`File ${index + 1} is not a valid image`);
+    }
+    const declaredSize = Number(response.headers.get('content-length') || 0);
+    if (declaredSize > this.maxPublishImageBytes) {
+      throw new Error(`Image ${index + 1} is larger than 10 MB`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) throw new Error(`Image ${index + 1} is empty`);
+    if (buffer.length > this.maxPublishImageBytes) {
+      throw new Error(`Image ${index + 1} is larger than 10 MB`);
+    }
+
+    const extensionByType: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'image/gif': 'gif',
+      'image/bmp': 'bmp',
+    };
+    const extension = extensionByType[contentType] || 'jpg';
+    return new CustomFile(
+      `telegram-post-${index + 1}.${extension}`,
+      buffer.length,
+      '',
+      buffer,
+    );
   }
 
   async deleteScheduledPost(params: {

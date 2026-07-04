@@ -12,6 +12,7 @@ import {
   TelegramUserAccountStatus,
 } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import { HTMLParser } from 'telegram/extensions/html';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -26,6 +27,7 @@ import {
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   ScheduleTelegramManagedPostDto,
+  PublishTelegramManagedPostDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
@@ -778,6 +780,7 @@ export class TelegramChannelsService {
     channelId: string,
     postId: string,
     scheduleAt?: Date,
+    longTextMode: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT' = 'IMAGES_THEN_TEXT',
   ) {
     const [post, channel, sources] = await Promise.all([
       this.prisma.telegramManagedPost.findFirst({
@@ -823,6 +826,21 @@ export class TelegramChannelsService {
     if (!channelRef) throw new BadRequestException('Channel has no Telegram reference');
     try {
       const html = telegramMarkupToHtml(post.text || '');
+      const [plainText] = HTMLParser.parse(html);
+      let captionHtml = html;
+      let followupHtml = '';
+      let publishMode = post.imageUrls.length
+        ? 'IMAGE_WITH_CAPTION'
+        : 'TEXT_ONLY';
+      if (post.imageUrls.length && plainText.length > 1024) {
+        publishMode = longTextMode;
+        if (longTextMode === 'CAPTION_THEN_TEXT') {
+          [captionHtml, followupHtml] = this.splitCaptionHtml(post.text || '');
+        } else {
+          captionHtml = '';
+          followupHtml = html;
+        }
+      }
       let ids: string[];
       if (source.sourceType === TelegramSourceType.MTPROTO) {
         const account = await this.connectedAccount(
@@ -845,6 +863,8 @@ export class TelegramChannelsService {
           ...this.accountCredentials(account),
           channelRef,
           html,
+          captionHtml,
+          followupHtml,
           imageUrls: post.imageUrls,
           scheduleAt,
         });
@@ -871,31 +891,35 @@ export class TelegramChannelsService {
           return payload.result;
         };
         if (post.imageUrls.length > 1) {
-          const caption = html.length <= 1024 ? html : '';
           const result = await call('sendMediaGroup', {
             media: post.imageUrls.map((media, index) => ({
               type: 'photo',
               media,
-              ...(index === 0 && caption
-                ? { caption, parse_mode: 'HTML' }
+              ...(index === 0 && captionHtml
+                ? { caption: captionHtml, parse_mode: 'HTML' }
                 : {}),
             })),
           }) as Array<{ message_id: number }>;
           ids = result.map((message) => String(message.message_id));
-          if (html && !caption) {
-            const textResult = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
+          if (followupHtml) {
+            const textResult = await call('sendMessage', {
+              text: followupHtml,
+              parse_mode: 'HTML',
+            }) as { message_id: number };
             ids.push(String(textResult.message_id));
           }
         } else if (post.imageUrls.length === 1) {
-          const caption = html.length <= 1024 ? html : '';
           const result = await call('sendPhoto', {
             photo: post.imageUrls[0],
-            caption,
+            caption: captionHtml,
             parse_mode: 'HTML',
           }) as { message_id: number };
           ids = [String(result.message_id)];
-          if (html && !caption) {
-            const textResult = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
+          if (followupHtml) {
+            const textResult = await call('sendMessage', {
+              text: followupHtml,
+              parse_mode: 'HTML',
+            }) as { message_id: number };
             ids.push(String(textResult.message_id));
           }
         } else {
@@ -912,26 +936,43 @@ export class TelegramChannelsService {
           telegramMessageIds: ids,
           sourceType: source.sourceType,
           sourceId: source.sourceId,
+          publishMode,
           lastError: null,
         },
       });
     } catch (error) {
+      const rawMessage =
+        error instanceof Error ? error.message : 'Telegram publish failed';
+      const publicMessage = /MEDIA_INVALID/i.test(rawMessage)
+        ? 'Telegram rejected one of the images. Remove it, upload it again, and retry.'
+        : /AUTH_KEY|SESSION|AUTH_KEY_UNREGISTERED/i.test(rawMessage)
+          ? 'The connected Telegram account session is no longer valid. Reconnect the account and retry.'
+          : rawMessage;
       await this.prisma.telegramManagedPost.update({
         where: { id: post.id },
         data: {
           status: 'FAILED',
-          lastError: error instanceof Error ? error.message : 'Publish failed',
+          lastError: publicMessage,
         },
       });
-      throw error;
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(publicMessage);
     }
   }
 
-  async publishManagedPostNow(userId: string, channelId: string, postId: string) {
+  async publishManagedPostNow(
+    userId: string,
+    channelId: string,
+    postId: string,
+    dto: PublishTelegramManagedPostDto,
+  ) {
     return this.publishManagedPost(
       await this.workspace(userId),
       channelId,
       postId,
+      undefined,
+      (dto.longTextMode as 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') ||
+        'IMAGES_THEN_TEXT',
     );
   }
 
@@ -949,7 +990,57 @@ export class TelegramChannelsService {
       channelId,
       postId,
       scheduledAt,
+      (dto.longTextMode as 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') ||
+        'IMAGES_THEN_TEXT',
     );
+  }
+
+  private splitCaptionHtml(rawText: string): [string, string] {
+    const boundaries = new Set<number>();
+    for (const match of rawText.matchAll(/\n\s*\n/g)) {
+      boundaries.add((match.index || 0) + match[0].length);
+    }
+    for (const match of rawText.matchAll(/[.!?…](?:["'»”)]*)\s+/g)) {
+      boundaries.add((match.index || 0) + match[0].length);
+    }
+    for (const match of rawText.matchAll(/\n/g)) {
+      boundaries.add((match.index || 0) + 1);
+    }
+    for (const match of rawText.matchAll(/\s+/g)) {
+      boundaries.add((match.index || 0) + match[0].length);
+    }
+    const splitAt = [...boundaries]
+      .sort((a, b) => b - a)
+      .find((position) => {
+        const candidate = rawText.slice(0, position).trimEnd();
+        if (!candidate || !this.hasBalancedTelegramMarkup(candidate)) {
+          return false;
+        }
+        const [plain] = HTMLParser.parse(telegramMarkupToHtml(candidate));
+        return plain.length <= 1024;
+      });
+    if (!splitAt) return ['', telegramMarkupToHtml(rawText)];
+    const captionRaw = rawText.slice(0, splitAt).trimEnd();
+    const remainderRaw = rawText.slice(splitAt).trimStart();
+    return [
+      telegramMarkupToHtml(captionRaw),
+      telegramMarkupToHtml(remainderRaw),
+    ];
+  }
+
+  private hasBalancedTelegramMarkup(value: string) {
+    if ((value.match(/```/g) || []).length % 2 !== 0) return false;
+    const withoutFenced = value.replace(/```[\s\S]*?```/g, '');
+    if ((withoutFenced.match(/`/g) || []).length % 2 !== 0) return false;
+    return ['**', '__', '++', '~~', '||'].every((marker) => {
+      let count = 0;
+      let cursor = 0;
+      while ((cursor = withoutFenced.indexOf(marker, cursor)) !== -1) {
+        count += 1;
+        cursor += marker.length;
+      }
+      return count % 2 === 0;
+    });
   }
 
   async deleteManagedPost(userId: string, channelId: string, postId: string) {

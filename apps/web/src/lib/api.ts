@@ -15,6 +15,53 @@ function resolveApiBaseUrl() {
 
 export const api = axios.create({ baseURL: resolveApiBaseUrl(), withCredentials: true });
 
+export const API_MUTATION_EVENT = 'telegram-system:api-mutation';
+
+type ApiMutationEventDetail = {
+  id: string;
+  phase: 'start' | 'success' | 'error';
+  message?: string;
+  scope?: 'page' | 'modal';
+};
+
+function emitMutationEvent(detail: ApiMutationEventDetail) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<ApiMutationEventDetail>(API_MUTATION_EVENT, { detail }),
+  );
+}
+
+function isMutationMethod(method?: string) {
+  return ['post', 'put', 'patch', 'delete'].includes(
+    String(method || '').toLowerCase(),
+  );
+}
+
+function successMessage(method?: string) {
+  if (String(method).toLowerCase() === 'delete') return 'Deleted successfully.';
+  if (String(method).toLowerCase() === 'post') return 'Created successfully.';
+  return 'Saved successfully.';
+}
+
+function errorMessage(error: unknown) {
+  if (!axios.isAxiosError(error)) {
+    return 'Something went wrong. Please try again.';
+  }
+  if (!error.response) {
+    return 'Could not connect to the server. Check your connection and try again.';
+  }
+  const raw = error.response.data?.message;
+  const message = Array.isArray(raw) ? raw.join('\n') : String(raw || '').trim();
+  if (
+    !message ||
+    /internal server error/i.test(message) ||
+    /^error$/i.test(message)
+  ) {
+    return 'The server could not complete this action. Please try again.';
+  }
+  return message;
+}
+
 export function isApiNetworkError(error: unknown) {
   return (
     axios.isAxiosError(error) &&
@@ -35,12 +82,79 @@ api.interceptors.request.use((config) => {
   if (config.baseURL?.includes('.ngrok-free.app')) {
     config.headers['ngrok-skip-browser-warning'] = 'true';
   }
+  if (isMutationMethod(config.method)) {
+    if (
+      (
+        config as typeof config & {
+          skipGlobalMutationFeedback?: boolean;
+        }
+      ).skipGlobalMutationFeedback
+    ) {
+      return config;
+    }
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const scope =
+      typeof document !== 'undefined' &&
+      document.querySelector('[data-app-modal="true"]')
+        ? 'modal'
+        : 'page';
+    (
+      config as typeof config & {
+        mutationRequestId?: string;
+        mutationScope?: 'page' | 'modal';
+      }
+    ).mutationRequestId = requestId;
+    (
+      config as typeof config & {
+        mutationScope?: 'page' | 'modal';
+      }
+    ).mutationScope = scope;
+    emitMutationEvent({ id: requestId, phase: 'start', scope });
+  }
   return config;
 });
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const requestId = (
+      response.config as typeof response.config & {
+        mutationRequestId?: string;
+      }
+    ).mutationRequestId;
+    const scope = (
+      response.config as typeof response.config & {
+        mutationScope?: 'page' | 'modal';
+      }
+    ).mutationScope;
+    if (requestId) {
+      emitMutationEvent({
+        id: requestId,
+        phase: 'success',
+        message: successMessage(response.config.method),
+        scope,
+      });
+    }
+    return response;
+  },
   (error) => {
+    const requestId = (
+      error?.config as
+        | { mutationRequestId?: string }
+        | undefined
+    )?.mutationRequestId;
+    const scope = (
+      error?.config as
+        | { mutationScope?: 'page' | 'modal' }
+        | undefined
+    )?.mutationScope;
+    if (requestId) {
+      emitMutationEvent({
+        id: requestId,
+        phase: 'error',
+        message: errorMessage(error),
+        scope,
+      });
+    }
     if (
       axios.isAxiosError(error) &&
       error.response?.status === 401 &&
@@ -185,6 +299,7 @@ export type TelegramManagedPost = {
   scheduledAt?: string | null;
   publishedAt?: string | null;
   telegramMessageIds: string[];
+  publishMode?: string | null;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -625,7 +740,12 @@ export const iconsApi = {
   upload: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return (await api.post<{ imageUrl: string }>('/icons/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
+    return (
+      await api.post<{ imageUrl: string }>('/icons/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        skipGlobalMutationFeedback: true,
+      } as any)
+    ).data;
   },
   createCustom: async (payload: { name: string; imageUrl: string }) => (await api.post<Icon>('/icons/custom', payload)).data,
   createTemporaryImage: async (payload: { imageUrl: string; fileName?: string }) => (await api.post<Icon>('/icons/temporary-image', payload)).data,
@@ -691,8 +811,8 @@ export const telegramChannelsApi = {
   managedPosts: async (channelId: string) => (await api.get<TelegramManagedPost[]>(`/telegram-channels/${channelId}/managed-posts`)).data,
   createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[] }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
   updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[] }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
-  publishManagedPost: async (channelId: string, postId: string) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/publish`)).data,
-  scheduleManagedPost: async (channelId: string, postId: string, scheduledAt: string) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/schedule`, { scheduledAt })).data,
+  publishManagedPost: async (channelId: string, postId: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/publish`, { longTextMode })).data,
+  scheduleManagedPost: async (channelId: string, postId: string, scheduledAt: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/schedule`, { scheduledAt, longTextMode })).data,
   deleteManagedPost: async (channelId: string, postId: string) => (await api.delete<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`)).data,
   adAnalyses: async (channelId: string) => (await api.get<TelegramChannelAdAnalysis[]>(`/telegram-channels/${channelId}/ad-analyses`)).data,
   createAdAnalysis: async (channelId: string, payload: TelegramChannelAdAnalysisPayload) => (await api.post<TelegramChannelAdAnalysis>(`/telegram-channels/${channelId}/ad-analyses`, payload)).data,

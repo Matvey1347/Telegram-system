@@ -5,6 +5,41 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+function convertBlockquotes(value: string) {
+  const lines = value.split('\n');
+  const output: string[] = [];
+  let quoteType: 'regular' | 'expandable' | null = null;
+  let quoteLines: string[] = [];
+
+  const flush = () => {
+    if (!quoteType) return;
+    const attribute = quoteType === 'expandable' ? ' expandable' : '';
+    output.push(`<blockquote${attribute}>${quoteLines.join('\n')}</blockquote>`);
+    quoteType = null;
+    quoteLines = [];
+  };
+
+  for (const line of lines) {
+    const expandable = line.match(/^&gt;&gt;\s?(.*)$/);
+    const regular = line.match(/^&gt;\s?(.*)$/);
+    const nextType = expandable
+      ? 'expandable'
+      : regular
+        ? 'regular'
+        : null;
+    if (!nextType) {
+      flush();
+      output.push(line);
+      continue;
+    }
+    if (quoteType && quoteType !== nextType) flush();
+    quoteType = nextType;
+    quoteLines.push((expandable || regular)?.[1] || '');
+  }
+  flush();
+  return output.join('\n');
+}
+
 export function telegramMarkupToHtml(raw: string) {
   const tokens: string[] = [];
   const token = (html: string) => {
@@ -24,13 +59,34 @@ export function telegramMarkupToHtml(raw: string) {
   value = value.replace(/`([^`\n]+)`/g, (_match, code: string) =>
     token(`<code>${escapeHtml(code)}</code>`),
   );
+  value = value.replace(
+    /\[([^\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)/gi,
+    (_match, label: string, href: string) => {
+      try {
+        const url = new URL(href);
+        if (
+          (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+          !url.hostname.includes('.')
+        ) {
+          return _match;
+        }
+        return token(
+          `<a href="${escapeHtml(url.toString())}">${escapeHtml(label)}</a>`,
+        );
+      } catch {
+        return _match;
+      }
+    },
+  );
   value = escapeHtml(value)
-    .replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>')
-    .replace(/__([\s\S]+?)__/g, '<i>$1</i>')
-    .replace(/~~([\s\S]+?)~~/g, '<s>$1</s>')
-    .replace(/\|\|([\s\S]+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
+    .replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>')
+    .replace(/__([^\n]+?)__/g, '<i>$1</i>')
+    .replace(/\+\+([^\n]+?)\+\+/g, '<u>$1</u>')
+    .replace(/~~([^\n]+?)~~/g, '<s>$1</s>')
+    .replace(/\|\|([^\n]+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
 
-  return value.replace(/\u0000(\d+)\u0000/g, (_match, index: string) =>
-    tokens[Number(index)] ?? '',
+  return convertBlockquotes(value).replace(
+    /\u0000(\d+)\u0000/g,
+    (_match, index: string) => tokens[Number(index)] ?? '',
   );
 }

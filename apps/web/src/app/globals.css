@@ -90,3 +90,197 @@ button:disabled,
     padding-inline: 0.25rem;
   }
 }
+/* Telegram post composer preview */
+.telegram-preview-wallpaper {
+  background-color: #0e1621;
+  background-image:
+    radial-gradient(circle at 18% 24%, rgb(52 73 91 / 12%) 0 2px, transparent 3px),
+    radial-gradient(circle at 78% 62%, rgb(52 73 91 / 10%) 0 2px, transparent 3px);
+  background-size: 48px 48px, 64px 64px;
+}
+
+.telegram-message-bubble {
+  position: relative;
+}
+
+.telegram-message-bubble::before {
+  position: absolute;
+  bottom: 0;
+  left: -7px;
+  width: 12px;
+  height: 14px;
+  content: "";
+  background: #182533;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.telegram-preview-text a {
+  color: #6ab3e8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.telegram-preview-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.telegram-preview-text > code {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+}
+
+.telegram-preview-text .tg-code-block {
+  position: relative;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-left: 3px solid #6ab2e7;
+  border-radius: 5px;
+  background: #10243a;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+.telegram-preview-text .tg-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 4px 8px 4px 10px;
+  background: #537093;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.telegram-preview-text .tg-code-header button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.telegram-preview-text .tg-code-header button:hover {
+  background: rgb(255 255 255 / 12%);
+}
+
+.telegram-preview-text .tg-copy-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.6;
+}
+
+.telegram-preview-text .tg-code-header button.copied .tg-copy-icon {
+  display: none;
+}
+
+.telegram-preview-text .tg-code-header button.copied::after {
+  content: "✓";
+  font-size: 14px;
+}
+
+.telegram-preview-text .tg-code-block > code {
+  display: block;
+  padding: 8px 10px;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.telegram-preview-text blockquote {
+  position: relative;
+  margin: 7px 0;
+  border-left: 3px solid #4fae4e;
+  border-radius: 4px;
+  background: rgb(79 174 78 / 9%);
+  padding: 3px 28px 3px 9px;
+}
+
+.telegram-preview-text blockquote:not(.expandable)::after {
+  position: absolute;
+  top: -3px;
+  right: 7px;
+  color: #4fae4e;
+  content: "❞";
+  font-family: Georgia, serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.telegram-preview-text blockquote.expandable::after {
+  display: inline-block;
+  margin-left: 5px;
+  color: #8fa3b6;
+  content: "•••";
+}
+
+.telegram-preview-text .tg-spoiler {
+  position: relative;
+  display: inline-block;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  text-shadow: none;
+  vertical-align: -0.08em;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.telegram-preview-text .tg-spoiler::after {
+  position: absolute;
+  inset: -2px -4px;
+  content: "";
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 12% 24%, rgb(238 246 252 / 95%) 0 0.7px, transparent 1.2px),
+    radial-gradient(circle at 71% 18%, rgb(176 204 225 / 85%) 0 0.8px, transparent 1.35px),
+    radial-gradient(circle at 39% 76%, rgb(242 248 252 / 90%) 0 0.65px, transparent 1.15px),
+    radial-gradient(circle at 88% 68%, rgb(116 151 180 / 90%) 0 0.9px, transparent 1.45px),
+    radial-gradient(circle at 23% 57%, rgb(210 227 240 / 88%) 0 0.7px, transparent 1.25px),
+    radial-gradient(circle at 58% 46%, rgb(83 119 149 / 82%) 0 0.85px, transparent 1.4px);
+  background-position: 1px 0, 4px 2px, 2px 5px, 7px 1px, 5px 7px, 9px 4px;
+  background-size: 11px 9px, 13px 11px, 9px 13px, 15px 12px, 12px 15px, 17px 14px;
+  -webkit-mask-image: radial-gradient(
+    ellipse at center,
+    #000 58%,
+    rgb(0 0 0 / 86%) 76%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse at center,
+    #000 58%,
+    rgb(0 0 0 / 86%) 76%,
+    transparent 100%
+  );
+  animation: telegram-spoiler-noise 720ms steps(2, end) infinite;
+}
+
+.telegram-preview-text .tg-spoiler.revealed {
+  background: transparent;
+  color: inherit;
+}
+
+.telegram-preview-text .tg-spoiler.revealed::after {
+  opacity: 0;
+}
+
+@keyframes telegram-spoiler-noise {
+  0% {
+    background-position: 1px 0, 4px 2px, 2px 5px, 7px 1px, 5px 7px, 9px 4px;
+  }
+  50% {
+    background-position: 3px 2px, 1px 5px, 6px 1px, 4px 7px, 8px 3px, 2px 9px;
+  }
+  100% {
+    background-position: 6px 4px, 8px 1px, 3px 9px, 10px 5px, 1px 11px, 7px 2px;
+  }
+}

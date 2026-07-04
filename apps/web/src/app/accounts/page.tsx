@@ -46,7 +46,7 @@ export default function AccountsPage() {
 
     <AccountModal open={createOpen} title="Create Account" currencies={settings?.supportedCurrencies ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v) => createMutation.mutate({ ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance), isActive: true })} />
     <AccountModal open={!!editing} title="Edit Account" currencies={settings?.supportedCurrencies ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance) } })} />
-    <ConfirmDeleteModal open={!!deleting} entityName={deleting?.name ?? ''} onClose={() => setDeleting(null)} onConfirm={() => deleting && deleteMutation.mutate(deleting.id)} label="Archive" />
+    <ConfirmDeleteModal open={!!deleting} entityName={deleting?.name ?? ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} label="Archive" />
   </AppShell>;
 }
 

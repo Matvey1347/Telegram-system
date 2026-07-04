@@ -93,7 +93,7 @@ export default function SettingsPage() {
         onClose={() => setWorkspaceDeleteOpen(false)}
         onConfirm={() => {
           if (!me.data?.workspace.id) return;
-          deleteWorkspaceMutation.mutate(me.data.workspace.id);
+          return deleteWorkspaceMutation.mutateAsync(me.data.workspace.id);
         }}
         entityName={me.data?.workspace.name ?? 'workspace'}
         label="Delete workspace"

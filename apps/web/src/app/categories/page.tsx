@@ -181,7 +181,7 @@ export default function CategoriesPage() {
       entityName={deleting?.name ?? ''}
       description={deleting?.isSystem ? 'System category cannot be deleted.' : undefined}
       onClose={() => setDeleting(null)}
-      onConfirm={() => deleting && !deleting.isSystem && deleteMutation.mutate(deleting.id)}
+      onConfirm={() => deleting && !deleting.isSystem ? deleteMutation.mutateAsync(deleting.id) : undefined}
       label="Delete"
     />
   </AppShell>;

@@ -1251,8 +1251,6 @@ export default function TelegramChannelsPage() {
     channel: TelegramChannel;
     analysis?: TelegramChannelAdAnalysis;
   } | null>(null);
-  const [postComposerChannel, setPostComposerChannel] =
-    useState<TelegramChannel | null>(null);
   const [deletingAnalysis, setDeletingAnalysis] = useState<{
     channel: TelegramChannel;
     analysis: TelegramChannelAdAnalysis;
@@ -1666,14 +1664,13 @@ export default function TelegramChannelsPage() {
                         ) : null}
                         {hasAdminLink ? (
                           channel.preview?.canPostMessages ? (
-                            <Button
+                            <Link
+                              href={`/telegram-posts?channelId=${channel.id}`}
                               className="inline-flex h-11 min-w-36 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
-                              variant="primary"
-                              onClick={() => setPostComposerChannel(channel)}
                             >
                               <Send size={16} />
                               Posts
-                            </Button>
+                            </Link>
                           ) : null
                         ) : null}
                         {hasAdminLink ? (
@@ -1808,7 +1805,7 @@ export default function TelegramChannelsPage() {
         entityName={deleting?.title ?? ""}
         description="This deletes the channel and related campaigns, promos, invite links, and stats."
         onClose={() => setDeleting(null)}
-        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined}
         label="Delete"
       />
       <ConfirmDeleteModal
@@ -1817,7 +1814,7 @@ export default function TelegramChannelsPage() {
         description="This deletes the person from advertising sources."
         onClose={() => setDeletingPerson(null)}
         onConfirm={() =>
-          deletingPerson && deletePersonMutation.mutate(deletingPerson.id)
+          deletingPerson ? deletePersonMutation.mutateAsync(deletingPerson.id) : undefined
         }
         label="Delete"
       />
@@ -1846,7 +1843,7 @@ export default function TelegramChannelsPage() {
         description="This deletes only the network. Telegram channels remain untouched."
         onClose={() => setDeletingNetwork(null)}
         onConfirm={() =>
-          deletingNetwork && deleteNetworkMutation.mutate(deletingNetwork.id)
+          deletingNetwork ? deleteNetworkMutation.mutateAsync(deletingNetwork.id) : undefined
         }
         label="Delete"
       />
@@ -1866,14 +1863,6 @@ export default function TelegramChannelsPage() {
           });
         }}
       />
-      <TelegramPostComposerModal
-        channel={postComposerChannel}
-        onClose={() => setPostComposerChannel(null)}
-        onChanged={() => {
-          queryClient.invalidateQueries({ queryKey: ["telegram-managed-posts"] });
-          pushToast("Post saved.", "success");
-        }}
-      />
       <ConfirmDeleteModal
         open={!!deletingAnalysis}
         entityName={deletingAnalysis?.channel.title ?? ""}
@@ -1881,7 +1870,7 @@ export default function TelegramChannelsPage() {
         onClose={() => setDeletingAnalysis(null)}
         onConfirm={() => {
           if (!deletingAnalysis) return;
-          deleteAnalysisMutation.mutate({
+          return deleteAnalysisMutation.mutateAsync({
             channelId: deletingAnalysis.channel.id,
             analysisId: deletingAnalysis.analysis.id,
           });

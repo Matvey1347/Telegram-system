@@ -92,6 +92,15 @@ export class UpdateTelegramManagedPostDto {
 
 export class ScheduleTelegramManagedPostDto {
   @IsDateString() scheduledAt!: string;
+  @IsOptional()
+  @IsIn(['IMAGES_THEN_TEXT', 'CAPTION_THEN_TEXT'])
+  longTextMode?: string;
+}
+
+export class PublishTelegramManagedPostDto {
+  @IsOptional()
+  @IsIn(['IMAGES_THEN_TEXT', 'CAPTION_THEN_TEXT'])
+  longTextMode?: string;
 }
 
 export class CreateTelegramChannelAdAnalysisDto {
