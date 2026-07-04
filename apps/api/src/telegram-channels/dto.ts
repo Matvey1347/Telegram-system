@@ -82,12 +82,14 @@ export class CreateTelegramManagedPostDto {
   @IsString() title!: string;
   @IsOptional() @IsString() text?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
+  @IsOptional() @IsString() assignedMemberId?: string | null;
 }
 
 export class UpdateTelegramManagedPostDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() text?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
+  @IsOptional() @IsString() assignedMemberId?: string | null;
 }
 
 export class ScheduleTelegramManagedPostDto {

@@ -311,6 +311,7 @@ model WorkspaceMember {
   assignedAdHypotheses              AdHypothesis[]                   @relation("AdHypothesisAssignedMember")
   assignedTelegramChannelNetworks   TelegramChannelNetwork[]         @relation("TelegramChannelNetworkAssignedMember")
   assignedTelegramChannelAdAnalyses TelegramChannelAdAnalysis[]      @relation("TelegramChannelAdAnalysisAssignedMember")
+  assignedTelegramManagedPosts      TelegramManagedPost[]            @relation("TelegramManagedPostAssignedMember")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1020,16 +1021,19 @@ model TelegramManagedPost {
   sourceId           String?
   publishMode        String?
   lastError          String?
+  assignedMemberId   String?
   createdByUserId    String?
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  assignedMember  WorkspaceMember? @relation("TelegramManagedPostAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser   User?           @relation("TelegramManagedPostCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, telegramChannelId, createdAt])
+  @@index([workspaceId, assignedMemberId])
   @@index([status, scheduledAt])
 }
 

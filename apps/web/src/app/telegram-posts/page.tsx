@@ -11,14 +11,18 @@ import {
   ImagePlus,
   LoaderCircle,
   Plus,
+  Trash2,
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { TelegramTextEditor } from "@/components/telegram/telegram-text-editor";
 import { TelegramPostPreview } from "@/components/telegram/telegram-post-preview";
+import { MemberBadge } from "@/components/workspace/member-badge";
+import { MemberSelect } from "@/components/workspace/member-select";
 import {
   iconsApi,
   telegramChannelsApi,
+  workspaceMembersApi,
   type TelegramManagedPost,
 } from "@/lib/api";
 import {
@@ -38,6 +42,7 @@ import {
 type PublishingMode = "draft" | "publish" | "schedule";
 type LongTextMode = "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 type PostStatusTab = "PUBLISHED" | "SCHEDULED" | "DRAFT";
+const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
 export default function TelegramPostsPage() {
   const router = useRouter();
@@ -145,6 +150,8 @@ function TelegramPostWorkspace({
   const restoredPostIdRef = useRef("");
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
+  const [assignedMemberId, setAssignedMemberId] = useState<string | null>(null);
+  const [memberSelectionTouched, setMemberSelectionTouched] = useState(false);
   const [text, setText] = useState("");
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [mode, setMode] = useState<PublishingMode>("draft");
@@ -156,30 +163,73 @@ function TelegramPostWorkspace({
   const [busy, setBusy] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [error, setError] = useState("");
-  const [deletingPost, setDeletingPost] =
-    useState<TelegramManagedPost | null>(null);
+  const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
+    null,
+  );
   const posts = useQuery({
     queryKey: ["telegram-managed-posts", channelId],
     queryFn: () => telegramChannelsApi.managedPosts(channelId),
   });
+  const members = useQuery({
+    queryKey: ["workspace-members"],
+    queryFn: workspaceMembersApi.list,
+  });
+  const currentMemberId =
+    members.data?.find((member) => member.isCurrentUser)?.id ?? null;
+  const effectivePostMember = (post: TelegramManagedPost) =>
+    post.assignedMember ?? null;
+  const effectivePostMemberId = (post: TelegramManagedPost) =>
+    effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
   const isPublished = editing?.status === "PUBLISHED";
   const hasLongImageText = imageUrls.length > 0 && text.length > 1024;
+  const publishedLongImageTextMode =
+    isPublished && hasLongImageText
+      ? editing?.publishMode === "CAPTION_THEN_TEXT"
+        ? "CAPTION_THEN_TEXT"
+        : "IMAGES_THEN_TEXT"
+      : null;
+  const hasLongTextOnly =
+    imageUrls.length === 0 && text.length > TELEGRAM_TEXT_MESSAGE_LIMIT;
+  const publishDisabledReason = busy
+    ? "Saving or publishing is already in progress."
+    : uploadingImages
+      ? "Wait until image upload finishes."
+      : !title.trim()
+        ? "Internal title is required."
+        : mode !== "draft" && !text.trim() && !imageUrls.length
+          ? "Add Telegram text or at least one image before publishing."
+          : mode === "schedule" && (!scheduleDate || !scheduleTime)
+            ? "Publish date and time are required."
+            : "";
   const visiblePosts = (posts.data || []).filter((post) =>
     statusTab === "DRAFT"
       ? ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status)
       : post.status === statusTab,
   );
+  const visiblePostIds = visiblePosts.map((post) => post.id);
+  const selectedPosts = selectedPostIds
+    .map((id) => posts.data?.find((post) => post.id === id))
+    .filter((post): post is TelegramManagedPost => Boolean(post));
+  const allVisibleSelected =
+    visiblePostIds.length > 0 &&
+    visiblePostIds.every((id) => selectedPostIds.includes(id));
 
   const reset = () => {
     restoredPostIdRef.current = "";
     setEditing(null);
     setTitle("");
+    setAssignedMemberId(null);
+    setMemberSelectionTouched(false);
     setText("");
     setImageUrls([]);
     setMode("draft");
     setScheduleDate("");
     setScheduleTime("09:00");
     setLongTextMode("IMAGES_THEN_TEXT");
+    setUploadingImages(false);
+    setSelectedPostIds([]);
     setError("");
   };
 
@@ -189,15 +239,30 @@ function TelegramPostWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newPostToken]);
 
+  useEffect(() => {
+    if (
+      editing ||
+      memberSelectionTouched ||
+      assignedMemberId ||
+      !currentMemberId
+    ) {
+      return;
+    }
+    setAssignedMemberId(currentMemberId);
+  }, [assignedMemberId, currentMemberId, editing, memberSelectionTouched]);
+
   const selectPost = (post: TelegramManagedPost) => {
     restoredPostIdRef.current = post.id;
     setEditing(post);
     setTitle(post.title);
+    setAssignedMemberId(effectivePostMemberId(post));
+    setMemberSelectionTouched(false);
     setText(post.text || "");
     setImageUrls(post.imageUrls);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
     setScheduleDate(post.scheduledAt?.slice(0, 10) || "");
     setScheduleTime(post.scheduledAt?.slice(11, 16) || "09:00");
+    setUploadingImages(false);
     if (
       post.publishMode === "IMAGES_THEN_TEXT" ||
       post.publishMode === "CAPTION_THEN_TEXT"
@@ -207,6 +272,44 @@ function TelegramPostWorkspace({
       setLongTextMode("IMAGES_THEN_TEXT");
     }
     setError("");
+  };
+
+  const toggleSelectedPost = (postId: string) => {
+    setSelectedPostIds((current) =>
+      current.includes(postId)
+        ? current.filter((id) => id !== postId)
+        : [...current, postId],
+    );
+  };
+
+  const toggleAllVisiblePosts = () => {
+    setSelectedPostIds((current) => {
+      if (allVisibleSelected) {
+        return current.filter((id) => !visiblePostIds.includes(id));
+      }
+      return [...new Set([...current, ...visiblePostIds])];
+    });
+  };
+
+  const deletePosts = async (targetPosts: TelegramManagedPost[]) => {
+    setBusy(true);
+    try {
+      for (const post of targetPosts) {
+        await telegramChannelsApi.deleteManagedPost(channelId, post.id);
+      }
+      if (targetPosts.some((post) => post.id === editing?.id)) {
+        reset();
+        onPostSelect(null);
+      }
+      setSelectedPostIds((current) =>
+        current.filter((id) => !targetPosts.some((post) => post.id === id)),
+      );
+      await posts.refetch();
+      setDeletingPost(null);
+      setBulkDeleteOpen(false);
+    } finally {
+      setBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -219,7 +322,19 @@ function TelegramPostWorkspace({
   }, [initialPostId, posts.data]);
 
   const persist = async () => {
-    const payload = { title: title.trim(), text, imageUrls };
+    const payload: {
+      title: string;
+      text: string;
+      imageUrls: string[];
+      assignedMemberId?: string | null;
+    } = {
+      title: title.trim(),
+      text,
+      imageUrls,
+    };
+    payload.assignedMemberId =
+      assignedMemberId ??
+      (!editing && !memberSelectionTouched ? currentMemberId : null);
     return editing
       ? telegramChannelsApi.updateManagedPost(channelId, editing.id, payload)
       : telegramChannelsApi.createManagedPost(channelId, payload);
@@ -308,13 +423,26 @@ function TelegramPostWorkspace({
               ) : null}
             </div>
           </div>
-          <FormField label="Internal title" required>
-            <Input
-              value={title}
-              disabled={busy || isPublished}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </FormField>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.75fr)]">
+            <FormField label="Internal title" required>
+              <Input
+                value={title}
+                disabled={busy || isPublished}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </FormField>
+            <FormField label="Member">
+              <MemberSelect
+                value={assignedMemberId}
+                onChange={(value) => {
+                  setMemberSelectionTouched(true);
+                  setAssignedMemberId(value || null);
+                }}
+                defaultToCurrent={!editing}
+                disabled={busy || isPublished}
+              />
+            </FormField>
+          </div>
           <FormField label="Telegram text">
             <TelegramTextEditor
               value={text}
@@ -330,53 +458,29 @@ function TelegramPostWorkspace({
             readOnly={isPublished}
             onUploadingChange={setUploadingImages}
           />
+          {publishedLongImageTextMode ? (
+            <LongImageTextModePanel
+              mode={publishedLongImageTextMode}
+              readOnly
+              textLength={text.length}
+            />
+          ) : null}
           {!isPublished && hasLongImageText ? (
-            <div className="space-y-2 rounded-lg border border-amber-700/60 bg-amber-950/20 p-3">
-              <p className="text-sm text-amber-200">
-                Text with images must be 1024 characters or fewer to stay in
-                one Telegram message. Current length: {text.length}. Choose how
-                to publish the remaining text:
+            <LongImageTextModePanel
+              mode={longTextMode}
+              onChange={setLongTextMode}
+              textLength={text.length}
+            />
+          ) : null}
+          {!isPublished && hasLongTextOnly ? (
+            <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 p-3">
+              <p className="text-sm text-blue-200">
+                Telegram text messages are limited to 4096 characters after
+                formatting. Current length: {text.length}. This post will be
+                published as{" "}
+                {Math.ceil(text.length / TELEGRAM_TEXT_MESSAGE_LIMIT)} separate
+                messages.
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setLongTextMode("IMAGES_THEN_TEXT")}
-                  className={`flex min-h-16 items-start gap-2 rounded-lg border p-3 text-left transition ${
-                    longTextMode === "IMAGES_THEN_TEXT"
-                      ? "border-blue-500 bg-blue-950/40 text-white"
-                      : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500"
-                  }`}
-                >
-                  <span className="text-lg">🖼️</span>
-                  <span>
-                    <span className="block text-sm font-medium">
-                      Publish images first, then text as separate message
-                    </span>
-                    <span className="mt-1 block text-xs text-neutral-400">
-                      Images have no caption; the complete text follows.
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLongTextMode("CAPTION_THEN_TEXT")}
-                  className={`flex min-h-16 items-start gap-2 rounded-lg border p-3 text-left transition ${
-                    longTextMode === "CAPTION_THEN_TEXT"
-                      ? "border-blue-500 bg-blue-950/40 text-white"
-                      : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500"
-                  }`}
-                >
-                  <span className="text-lg">✂️</span>
-                  <span>
-                    <span className="block text-sm font-medium">
-                      Publish as image with short caption
-                    </span>
-                    <span className="mt-1 block text-xs text-neutral-400">
-                      Use the maximum caption, then send the remaining text.
-                    </span>
-                  </span>
-                </button>
-              </div>
             </div>
           ) : null}
           {!isPublished ? (
@@ -419,16 +523,7 @@ function TelegramPostWorkspace({
           {error ? <p className="text-sm text-red-300">{error}</p> : null}
           {!isPublished ? (
             <div className="flex justify-end">
-              <Button
-                onClick={run}
-                disabled={
-                  busy ||
-                  uploadingImages ||
-                  !title.trim() ||
-                  (mode !== "draft" && !text.trim() && !imageUrls.length) ||
-                  (mode === "schedule" && (!scheduleDate || !scheduleTime))
-                }
-              >
+              <Button onClick={run} disabled={!!publishDisabledReason}>
                 {mode === "draft"
                   ? "Save draft"
                   : mode === "publish"
@@ -438,6 +533,11 @@ function TelegramPostWorkspace({
                       : "Schedule post"}
               </Button>
             </div>
+          ) : null}
+          {!isPublished && publishDisabledReason ? (
+            <p className="text-right text-xs text-neutral-500">
+              {publishDisabledReason}
+            </p>
           ) : null}
         </Card>
 
@@ -500,45 +600,90 @@ function TelegramPostWorkspace({
           </div>
           {posts.isLoading ? <LoadingState /> : null}
           {visiblePosts.length ? (
-            <div className="max-h-[calc(100vh-15rem)] space-y-2 overflow-y-auto pr-1">
-              {visiblePosts.map((post) => (
-                <div
-                  key={post.id}
-                  className={`flex items-center gap-2 rounded-lg border p-1 ${
-                    editing?.id === post.id
-                      ? "border-blue-500 bg-blue-950/20"
-                      : "border-neutral-800 hover:bg-neutral-900"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectPost(post);
-                      onPostSelect(post.id);
-                    }}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
-                  >
-                    <PostStatusIcon status={post.status} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{post.title}</span>
-                      <span className="block truncate text-[11px] text-neutral-500">
-                        {post.status === "SCHEDULED" && post.scheduledAt
-                          ? new Date(post.scheduledAt).toLocaleString()
-                          : post.status === "PUBLISHED" && post.publishedAt
-                            ? new Date(post.publishedAt).toLocaleString()
-                            : post.status.toLowerCase()}
-                      </span>
-                    </span>
-                  </button>
-                  <IconButton
-                    type="button"
-                    kind="delete"
-                    aria-label={`Delete ${post.title}`}
-                    onClick={() => setDeletingPost(post)}
+            <>
+              <div className="max-h-[calc(100vh-15rem)] space-y-2 overflow-y-auto pr-1">
+                {visiblePosts.map((post) => {
+                  const member = effectivePostMember(post);
+                  return (
+                    <div
+                      key={post.id}
+                      className={`flex items-center gap-2 rounded-lg border p-1 ${
+                        editing?.id === post.id
+                          ? "border-blue-500 bg-blue-950/20"
+                          : "border-neutral-800 hover:bg-neutral-900"
+                      }`}
+                    >
+                      <label
+                        aria-label={`Select ${post.title}`}
+                        className="flex h-10 w-8 shrink-0 items-center justify-center rounded-md hover:bg-neutral-800"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPostIds.includes(post.id)}
+                          onChange={() => toggleSelectedPost(post.id)}
+                          className="h-4 w-4"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectPost(post);
+                          onPostSelect(post.id);
+                        }}
+                        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
+                      >
+                        <PostStatusIcon status={post.status} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm">
+                            {post.title}
+                          </span>
+                          <span className="block truncate text-[11px] text-neutral-500">
+                            {post.status === "SCHEDULED" && post.scheduledAt
+                              ? new Date(post.scheduledAt).toLocaleString()
+                              : post.status === "PUBLISHED" && post.publishedAt
+                                ? new Date(post.publishedAt).toLocaleString()
+                                : post.status.toLowerCase()}
+                          </span>
+                          {member ? (
+                            <span className="mt-1 flex min-w-0">
+                              <MemberBadge member={member} />
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                      <IconButton
+                        type="button"
+                        kind="delete"
+                        aria-label={`Delete ${post.title}`}
+                        onClick={() => setDeletingPost(post)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2 py-2">
+                <label className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisiblePosts}
+                    className="h-4 w-4"
                   />
-                </div>
-              ))}
-            </div>
+                  {allVisibleSelected ? "Clear visible" : "Select visible"}
+                </label>
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={!selectedPosts.length || busy}
+                  onClick={() => setBulkDeleteOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5"
+                >
+                  <Trash2 size={15} />
+                  Delete selected
+                  {selectedPosts.length ? ` (${selectedPosts.length})` : ""}
+                </Button>
+              </div>
+            </>
           ) : !posts.isLoading ? (
             <EmptyState text={`No ${statusTab.toLowerCase()} posts`} />
           ) : null}
@@ -557,24 +702,104 @@ function TelegramPostWorkspace({
         }
         onConfirm={async () => {
           if (!deletingPost) return;
-          setBusy(true);
-          try {
-            await telegramChannelsApi.deleteManagedPost(
-              channelId,
-              deletingPost.id,
-            );
-            if (editing?.id === deletingPost.id) {
-              reset();
-              onPostSelect(null);
-            }
-            await posts.refetch();
-            setDeletingPost(null);
-          } finally {
-            setBusy(false);
-          }
+          await deletePosts([deletingPost]);
+        }}
+      />
+      <ConfirmDeleteModal
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        entityName={`${selectedPosts.length} selected posts`}
+        label="Delete selected posts"
+        description={
+          selectedPosts.some((post) => post.status === "SCHEDULED")
+            ? "This will cancel selected scheduled messages in Telegram and delete the selected records from this system. Published Telegram messages remain untouched."
+            : "This deletes the selected records only from this system. Published Telegram messages remain untouched."
+        }
+        onConfirm={async () => {
+          await deletePosts(selectedPosts);
         }}
       />
     </>
+  );
+}
+
+function LongImageTextModePanel({
+  mode,
+  onChange,
+  readOnly = false,
+  textLength,
+}: {
+  mode: LongTextMode;
+  onChange?: (mode: LongTextMode) => void;
+  readOnly?: boolean;
+  textLength: number;
+}) {
+  return (
+    <div
+      className={`space-y-2 rounded-lg border p-3 ${
+        readOnly
+          ? "border-blue-700/60 bg-blue-950/20"
+          : "border-amber-700/60 bg-amber-950/20"
+      }`}
+    >
+      <p className={`text-sm ${readOnly ? "text-blue-200" : "text-amber-200"}`}>
+        {readOnly
+          ? `Publishing choice used for this post. Text length: ${textLength}.`
+          : `Text with images must be 1024 characters or fewer to stay in one Telegram message. Current length: ${textLength}. Choose how to publish the remaining text:`}
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(
+          [
+            {
+              value: "IMAGES_THEN_TEXT",
+              icon: "🖼️",
+              label: "Publish images first, then text as separate message",
+              description: "Images have no caption; the complete text follows.",
+            },
+            {
+              value: "CAPTION_THEN_TEXT",
+              icon: "✂️",
+              label: "Publish as image with short caption",
+              description:
+                "Use the maximum caption, then send the remaining text.",
+            },
+          ] as const
+        ).map((option) => {
+          const selected = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                if (!readOnly) onChange?.(option.value);
+              }}
+              aria-pressed={selected}
+              aria-disabled={readOnly}
+              className={`flex min-h-16 items-start gap-2 rounded-lg border p-3 text-left transition ${
+                selected
+                  ? "border-blue-500 bg-blue-950/40 text-white"
+                  : "border-neutral-700 bg-neutral-900 text-neutral-300"
+              } ${readOnly ? "" : "hover:border-neutral-500"}`}
+            >
+              <span className="text-lg">{option.icon}</span>
+              <span>
+                <span className="block text-sm font-medium">
+                  {option.label}
+                </span>
+                <span className="mt-1 block text-xs text-neutral-400">
+                  {option.description}
+                </span>
+                {readOnly && selected ? (
+                  <span className="mt-2 block text-xs font-medium text-blue-300">
+                    Selected when published
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -594,43 +819,48 @@ function MultiImageUpload({
   onUploadingChange: (uploading: boolean) => void;
 }) {
   const [uploadingPreviews, setUploadingPreviews] = useState<string[]>([]);
+
+  useEffect(() => {
+    return () => onUploadingChange(false);
+  }, [onUploadingChange]);
+
   return (
     <FormField label="Images">
-      {!readOnly ? <label
-        className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-700 bg-neutral-950/50 px-4 text-sm text-neutral-300 hover:border-blue-600 hover:text-white ${
-          compact ? "h-[38px] py-2" : "py-5"
-        } ${
-          disabled ? "pointer-events-none opacity-50" : ""
-        }`}
-      >
-        <ImagePlus size={18} />
-        Upload images
-        <input
-          className="sr-only"
-          type="file"
-          accept="image/*"
-          multiple
-          disabled={disabled || uploadingPreviews.length > 0}
-          onChange={async (event) => {
-            const files = Array.from(event.target.files || []);
-            event.target.value = "";
-            if (!files.length) return;
-            const previews = files.map((file) => URL.createObjectURL(file));
-            setUploadingPreviews(previews);
-            onUploadingChange(true);
-            try {
-              const uploaded = await Promise.all(
-                files.map((file) => iconsApi.upload(file)),
-              );
-              onChange([...value, ...uploaded.map((item) => item.imageUrl)]);
-            } finally {
-              previews.forEach((preview) => URL.revokeObjectURL(preview));
-              setUploadingPreviews([]);
-              onUploadingChange(false);
-            }
-          }}
-        />
-      </label> : null}
+      {!readOnly ? (
+        <label
+          className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-700 bg-neutral-950/50 px-4 text-sm text-neutral-300 hover:border-blue-600 hover:text-white ${
+            compact ? "h-[38px] py-2" : "py-5"
+          } ${disabled ? "pointer-events-none opacity-50" : ""}`}
+        >
+          <ImagePlus size={18} />
+          Upload images
+          <input
+            className="sr-only"
+            type="file"
+            accept="image/*"
+            multiple
+            disabled={disabled || uploadingPreviews.length > 0}
+            onChange={async (event) => {
+              const files = Array.from(event.target.files || []);
+              event.target.value = "";
+              if (!files.length) return;
+              const previews = files.map((file) => URL.createObjectURL(file));
+              setUploadingPreviews(previews);
+              onUploadingChange(true);
+              try {
+                const uploaded = await Promise.all(
+                  files.map((file) => iconsApi.upload(file)),
+                );
+                onChange([...value, ...uploaded.map((item) => item.imageUrl)]);
+              } finally {
+                previews.forEach((preview) => URL.revokeObjectURL(preview));
+                setUploadingPreviews([]);
+                onUploadingChange(false);
+              }
+            }}
+          />
+        </label>
+      ) : null}
       {value.length || uploadingPreviews.length ? (
         <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
           {value.map((url, index) => (
@@ -640,18 +870,20 @@ function MultiImageUpload({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={url} alt="" className="h-full w-full object-cover" />
-              {!readOnly ? <button
-                type="button"
-                onClick={() =>
-                  onChange(
-                    value.filter((_, itemIndex) => itemIndex !== index),
-                  )
-                }
-                className="absolute right-1 top-1 rounded-md bg-black/75 p-1 text-white opacity-0 transition group-hover:opacity-100"
-                aria-label="Remove image"
-              >
-                <X size={14} />
-              </button> : null}
+              {!readOnly ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange(
+                      value.filter((_, itemIndex) => itemIndex !== index),
+                    )
+                  }
+                  className="absolute right-1 top-1 rounded-md bg-black/75 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                  aria-label="Remove image"
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
             </div>
           ))}
           {uploadingPreviews.map((url, index) => (
@@ -677,11 +909,7 @@ function MultiImageUpload({
   );
 }
 
-function PostStatusIcon({
-  status,
-}: {
-  status: TelegramManagedPost["status"];
-}) {
+function PostStatusIcon({ status }: { status: TelegramManagedPost["status"] }) {
   if (status === "PUBLISHED") {
     return (
       <CheckCircle2
@@ -740,6 +968,9 @@ function publishModeLabel(
   }
   if (mode === "IMAGE_WITH_CAPTION") {
     return "Published as image with caption";
+  }
+  if (mode === "TEXT_PARTS") {
+    return "Published as multiple text messages";
   }
   if (imageCount && textLength > 1024) {
     return "Published as images, then full text";

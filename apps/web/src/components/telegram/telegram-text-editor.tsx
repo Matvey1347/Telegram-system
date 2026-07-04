@@ -33,6 +33,12 @@ type WrapAction = {
   placeholder: string;
 };
 
+type EditorSnapshot = {
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+};
+
 const actions: WrapAction[] = [
   { label: "Bold", icon: Bold, before: "**", after: "**", placeholder: "bold text" },
   { label: "Italic", icon: Italic, before: "__", after: "__", placeholder: "italic text" },
@@ -50,9 +56,69 @@ export function TelegramTextEditor({
 }: TelegramTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const linkSelectionRef = useRef({ start: 0, end: 0 });
+  const undoStackRef = useRef<EditorSnapshot[]>([]);
+  const redoStackRef = useRef<EditorSnapshot[]>([]);
+  const lastKnownValueRef = useRef(value);
   const [linkEditorOpen, setLinkEditorOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("https://");
   const [linkError, setLinkError] = useState("");
+
+  if (lastKnownValueRef.current !== value) {
+    lastKnownValueRef.current = value;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+  }
+
+  const currentSnapshot = (): EditorSnapshot => {
+    const textarea = textareaRef.current;
+    return {
+      value,
+      selectionStart: textarea?.selectionStart ?? value.length,
+      selectionEnd: textarea?.selectionEnd ?? value.length,
+    };
+  };
+
+  const restoreSelection = (start: number, end = start) => {
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+    });
+  };
+
+  const commitValue = (
+    nextValue: string,
+    nextSelectionStart?: number,
+    nextSelectionEnd = nextSelectionStart,
+  ) => {
+    if (nextValue === value) return;
+    undoStackRef.current.push(currentSnapshot());
+    redoStackRef.current = [];
+    lastKnownValueRef.current = nextValue;
+    onChange(nextValue);
+    if (nextSelectionStart !== undefined) {
+      restoreSelection(nextSelectionStart, nextSelectionEnd);
+    }
+  };
+
+  const undo = () => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current.push(currentSnapshot());
+    lastKnownValueRef.current = previous.value;
+    onChange(previous.value);
+    restoreSelection(previous.selectionStart, previous.selectionEnd);
+  };
+
+  const redo = () => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push(currentSnapshot());
+    lastKnownValueRef.current = next.value;
+    onChange(next.value);
+    restoreSelection(next.selectionStart, next.selectionEnd);
+  };
 
   const replaceSelection = (
     before: string,
@@ -70,27 +136,18 @@ export function TelegramTextEditor({
       value.slice(start - before.length, start) === before &&
       value.slice(end, end + after.length) === after;
     if (isWrapped) {
-      onChange(
-        `${value.slice(0, start - before.length)}${content}${value.slice(end + after.length)}`,
+      const nextValue = `${value.slice(0, start - before.length)}${content}${value.slice(end + after.length)}`;
+      const selectionStart = start - before.length;
+      commitValue(
+        nextValue,
+        selectionStart,
+        selectionStart + content.length,
       );
-      requestAnimationFrame(() => {
-        textarea.focus();
-        const selectionStart = start - before.length;
-        textarea.setSelectionRange(
-          selectionStart,
-          selectionStart + content.length,
-        );
-      });
       return;
     }
-    onChange(
-      `${value.slice(0, start)}${before}${content}${after}${value.slice(end)}`,
-    );
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const selectionStart = start + before.length;
-      textarea.setSelectionRange(selectionStart, selectionStart + content.length);
-    });
+    const nextValue = `${value.slice(0, start)}${before}${content}${after}${value.slice(end)}`;
+    const selectionStart = start + before.length;
+    commitValue(nextValue, selectionStart, selectionStart + content.length);
   };
 
   const prefixLines = (prefix: string) => {
@@ -106,11 +163,11 @@ export function TelegramTextEditor({
       .split("\n")
       .map((line) => `${prefix}${line}`)
       .join("\n");
-    onChange(`${value.slice(0, lineStart)}${replacement}${value.slice(lineEnd)}`);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(lineStart, lineStart + replacement.length);
-    });
+    commitValue(
+      `${value.slice(0, lineStart)}${replacement}${value.slice(lineEnd)}`,
+      lineStart,
+      lineStart + replacement.length,
+    );
   };
 
   const insertLink = () => {
@@ -145,19 +202,26 @@ export function TelegramTextEditor({
       return;
     }
     const markup = `[${selected}](${normalizedHref})`;
-    onChange(`${value.slice(0, start)}${markup}${value.slice(end)}`);
+    commitValue(
+      `${value.slice(0, start)}${markup}${value.slice(end)}`,
+      start,
+      start + markup.length,
+    );
     setLinkEditorOpen(false);
     setLinkError("");
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start, start + markup.length);
-    });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!(event.ctrlKey || event.metaKey)) return;
     const key = event.key.toLowerCase();
-    if (key === "b") {
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    } else if (key === "y") {
+      event.preventDefault();
+      redo();
+    } else if (key === "b") {
       event.preventDefault();
       replaceSelection("**", "**", "bold text");
     } else if (key === "i") {
@@ -251,13 +315,13 @@ export function TelegramTextEditor({
         rows={rows}
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => commitValue(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Write your Telegram post…"
         className="block w-full resize-y bg-transparent px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-neutral-500 disabled:opacity-50"
       />
-      <div className="flex items-center justify-between border-t border-neutral-800 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>⌘/Ctrl+B bold · ⌘/Ctrl+I italic · ⌘/Ctrl+K link</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-800 px-3 py-1.5 text-[11px] text-neutral-500">
+        <span>⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z or Ctrl+Y redo · ⌘/Ctrl+B bold · ⌘/Ctrl+I italic · ⌘/Ctrl+K link</span>
         <span>{value.length} characters</span>
       </div>
     </div>

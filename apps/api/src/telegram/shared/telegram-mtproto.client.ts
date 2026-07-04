@@ -4,6 +4,7 @@ import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { HTMLParser } from 'telegram/extensions/html';
 import { CustomFile } from 'telegram/client/uploads';
 import { StringSession } from 'telegram/sessions';
+import { telegramHtmlToMtprotoHtml } from './telegram-markup';
 
 type ApiCredentials = { apiId: string; apiHash: string };
 type SessionParams = ApiCredentials & { session?: string };
@@ -118,6 +119,37 @@ export class TelegramMtprotoClient {
         // Best-effort cleanup for short-lived MTProto clients.
       }
     }
+  }
+
+  private parseMtprotoHtml(html: string) {
+    const [text, entities] = HTMLParser.parse(telegramHtmlToMtprotoHtml(html));
+    return { text, entities };
+  }
+
+  private async sendTextMessageWithEntities(
+    client: TelegramClient,
+    entity: unknown,
+    html: string,
+    schedule?: number,
+  ) {
+    const { text, entities } = this.parseMtprotoHtml(html);
+    if (!text) return null;
+    const peer = await client.getInputEntity(entity as never);
+    const request = new Api.messages.SendMessage({
+      peer,
+      message: text,
+      entities,
+      noWebpage: true,
+      scheduleDate: schedule,
+    });
+    const result = await client.invoke(request);
+    return (client as unknown as {
+      _getResponseMessage: (
+        request: Api.messages.SendMessage,
+        result: unknown,
+        inputChat: unknown,
+      ) => Api.Message | undefined;
+    })._getResponseMessage(request, result, peer);
   }
 
   private toJsonSafe(value: unknown): unknown {
@@ -810,8 +842,9 @@ export class TelegramMtprotoClient {
     session: string;
     channelRef: string;
     html: string;
+    textHtmlParts?: string[];
     captionHtml?: string;
-    followupHtml?: string;
+    followupHtmlParts?: string[];
     imageUrls: string[];
     scheduleAt?: Date | null;
   }) {
@@ -821,9 +854,11 @@ export class TelegramMtprotoClient {
       const schedule = params.scheduleAt
         ? Math.floor(params.scheduleAt.getTime() / 1000)
         : undefined;
-      const [plainText, formattingEntities] = HTMLParser.parse(params.html);
       const messageIds: string[] = [];
       if (params.imageUrls.length) {
+        const caption = this.parseMtprotoHtml(
+          params.captionHtml ?? params.html,
+        );
         const files = await Promise.all(
           params.imageUrls.map((url, index) =>
             this.downloadPublishImage(url, index),
@@ -831,32 +866,34 @@ export class TelegramMtprotoClient {
         );
         const result = await client.sendFile(entity, {
           file: files,
-          caption: params.captionHtml ?? params.html,
-          parseMode: 'html',
+          caption: caption.text,
+          formattingEntities: caption.entities,
+          parseMode: false,
           scheduleDate: schedule,
         });
         const messages = Array.isArray(result) ? result : [result];
         for (const message of messages) {
           if (message?.id != null) messageIds.push(String(message.id));
         }
-        if (params.followupHtml) {
-          const [followupText, followupEntities] = HTMLParser.parse(
-            params.followupHtml,
-          );
-          const textMessage = await client.sendMessage(entity, {
-            message: followupText,
-            formattingEntities: followupEntities,
+        for (const followupHtml of params.followupHtmlParts ?? []) {
+          const textMessage = await this.sendTextMessageWithEntities(
+            client,
+            entity,
+            followupHtml,
             schedule,
-          });
+          );
           if (textMessage?.id != null) messageIds.push(String(textMessage.id));
         }
       } else {
-        const message = await client.sendMessage(entity, {
-          message: plainText,
-          formattingEntities,
-          schedule,
-        });
-        if (message?.id != null) messageIds.push(String(message.id));
+        for (const textHtml of params.textHtmlParts ?? [params.html]) {
+          const message = await this.sendTextMessageWithEntities(
+            client,
+            entity,
+            textHtml,
+            schedule,
+          );
+          if (message?.id != null) messageIds.push(String(message.id));
+        }
       }
       return messageIds;
     } finally {

@@ -90,3 +90,9 @@ export function telegramMarkupToHtml(raw: string) {
     (_match, index: string) => tokens[Number(index)] ?? '',
   );
 }
+
+export function telegramHtmlToMtprotoHtml(html: string) {
+  return html.replace(/<\/?tg-spoiler>/g, (tag) =>
+    tag.startsWith('</') ? '</spoiler>' : '<spoiler>',
+  );
+}

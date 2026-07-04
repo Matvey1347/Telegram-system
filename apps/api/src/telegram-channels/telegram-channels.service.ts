@@ -34,7 +34,22 @@ import {
   UpdateTelegramManagedPostDto,
 } from './dto';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
-import { telegramMarkupToHtml } from '../telegram/shared/telegram-markup';
+import {
+  telegramHtmlToMtprotoHtml,
+  telegramMarkupToHtml,
+} from '../telegram/shared/telegram-markup';
+
+const TELEGRAM_CAPTION_LIMIT = 1024;
+const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
+
+type BotMessageEntity = {
+  type: string;
+  offset: number;
+  length: number;
+  url?: string;
+  language?: string;
+  custom_emoji_id?: string;
+};
 
 @Injectable()
 export class TelegramChannelsService {
@@ -42,6 +57,10 @@ export class TelegramChannelsService {
   private readonly defaultPostSyncLimit = 100;
   private readonly initialPostBackfillLimit = 10_000;
   private readonly olderPostBackfillMaxPages = 5;
+  private readonly managedPostInclude = {
+    assignedMember: WorkspaceService.assignedMemberInclude,
+    createdByUser: WorkspaceService.createdByUserInclude,
+  } as const;
 
   constructor(
     private prisma: PrismaService,
@@ -56,7 +75,10 @@ export class TelegramChannelsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
-  private async createAudienceSnapshotSafely(channelId: string, source = 'sync') {
+  private async createAudienceSnapshotSafely(
+    channelId: string,
+    source = 'sync',
+  ) {
     try {
       return await this.analyticsService.createAudienceSnapshot(
         channelId,
@@ -513,9 +535,11 @@ export class TelegramChannelsService {
       } = channel;
       const snapshot = audienceSnapshots[0];
       const audience = {
-        subscribersCount: snapshot?.subscribersCount ?? channel.currentSubscribersCount ?? null,
+        subscribersCount:
+          snapshot?.subscribersCount ?? channel.currentSubscribersCount ?? null,
         activeSubscribersEstimate: snapshot?.activeSubscribersEstimate ?? null,
-        paidActiveSubscribersEstimate: snapshot?.activeSubscribersEstimate ?? null,
+        paidActiveSubscribersEstimate:
+          snapshot?.activeSubscribersEstimate ?? null,
         viewRate: snapshot?.viewRate ?? null,
         dataQuality: snapshot?.dataQuality ?? null,
         dataQualityReason: snapshot?.dataQualityReason ?? null,
@@ -523,56 +547,94 @@ export class TelegramChannelsService {
         rawViewRate: null,
         subscriberBaseQuality: null,
         hasExternalTrafficAnomaly: snapshot?.hasExternalTrafficAnomaly ?? false,
-        hasSubscriberBasePollution: snapshot?.hasSubscriberBasePollution ?? false,
+        hasSubscriberBasePollution:
+          snapshot?.hasSubscriberBasePollution ?? false,
         postsWindow: snapshot?.postsWindow ?? channel.activeSubscribersWindow,
       };
       const channelCampaigns = campaignsByChannel.get(channel.id) ?? [];
       const channelInviteLinks = inviteLinksByChannel.get(channel.id) ?? [];
       const selectedInviteLinks = new Map(
-        channelInviteLinks.map((link) => [link.id, Number(link.joinedCount || 0)]),
+        channelInviteLinks.map((link) => [
+          link.id,
+          Number(link.joinedCount || 0),
+        ]),
       );
       const totalAdSpend = channelCampaigns.reduce(
         (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
         0,
       );
-      const totalJoinedSubscribers = channelCampaigns.reduce((sum, campaign) => {
-        const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
-        if (selectedLinkId && selectedInviteLinks.has(selectedLinkId)) {
-          return sum + Number(selectedInviteLinks.get(selectedLinkId) || 0);
-        }
-        const campaignJoined = Number(campaign.joinedCount || 0);
-        const linkedJoined = campaign.inviteLinks.reduce(
-          (linkSum, link) => linkSum + Number(link.joinedCount || 0),
-          0,
-        );
-        return sum + Math.max(campaignJoined, linkedJoined, Number(campaign.newSubscribers || 0));
-      }, 0);
+      const totalJoinedSubscribers = channelCampaigns.reduce(
+        (sum, campaign) => {
+          const selectedLinkId = String(
+            campaign.telegramInviteLinkId || '',
+          ).trim();
+          if (selectedLinkId && selectedInviteLinks.has(selectedLinkId)) {
+            return sum + Number(selectedInviteLinks.get(selectedLinkId) || 0);
+          }
+          const campaignJoined = Number(campaign.joinedCount || 0);
+          const linkedJoined = campaign.inviteLinks.reduce(
+            (linkSum, link) => linkSum + Number(link.joinedCount || 0),
+            0,
+          );
+          return (
+            sum +
+            Math.max(
+              campaignJoined,
+              linkedJoined,
+              Number(campaign.newSubscribers || 0),
+            )
+          );
+        },
+        0,
+      );
       const paidFromCampaigns = channelCampaigns.reduce(
         (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
         0,
       );
-      const paidActiveSubscribersEstimate = paidFromCampaigns || audience.paidActiveSubscribersEstimate || 0;
+      const paidActiveSubscribersEstimate =
+        paidFromCampaigns || audience.paidActiveSubscribersEstimate || 0;
       const average = (values: Array<number | null>) => {
-        const present = values.filter((value): value is number => value != null && Number.isFinite(value));
-        return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
+        const present = values.filter(
+          (value): value is number => value != null && Number.isFinite(value),
+        );
+        return present.length
+          ? present.reduce((sum, value) => sum + value, 0) / present.length
+          : null;
       };
-      const avgCpa = totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
-      const targetFrom = channel.targetCpaFrom == null ? null : Number(channel.targetCpaFrom);
-      const targetTo = channel.targetCpa == null ? null : Number(channel.targetCpa);
-      const acceptableFrom = channel.acceptableCpaFrom == null ? null : Number(channel.acceptableCpaFrom);
-      const acceptableTo = channel.acceptableCpa == null ? null : Number(channel.acceptableCpa);
-      const stopFrom = channel.stopCpaFrom == null ? (channel.stopCpa == null ? null : Number(channel.stopCpa)) : Number(channel.stopCpaFrom);
+      const avgCpa =
+        totalJoinedSubscribers > 0
+          ? totalAdSpend / totalJoinedSubscribers
+          : null;
+      const targetFrom =
+        channel.targetCpaFrom == null ? null : Number(channel.targetCpaFrom);
+      const targetTo =
+        channel.targetCpa == null ? null : Number(channel.targetCpa);
+      const acceptableFrom =
+        channel.acceptableCpaFrom == null
+          ? null
+          : Number(channel.acceptableCpaFrom);
+      const acceptableTo =
+        channel.acceptableCpa == null ? null : Number(channel.acceptableCpa);
+      const stopFrom =
+        channel.stopCpaFrom == null
+          ? channel.stopCpa == null
+            ? null
+            : Number(channel.stopCpa)
+          : Number(channel.stopCpaFrom);
       const inRange = (value: number, from: number | null, to: number | null) =>
-        (from != null || to != null) && (from == null || value >= from) && (to == null || value <= to);
-      const kpiStatus = avgCpa == null
-        ? 'unknown'
-        : inRange(avgCpa, targetFrom, targetTo)
-          ? 'good'
-          : inRange(avgCpa, acceptableFrom, acceptableTo)
-            ? 'acceptable'
-            : inRange(avgCpa, stopFrom, null)
-              ? 'bad'
-              : 'unknown';
+        (from != null || to != null) &&
+        (from == null || value >= from) &&
+        (to == null || value <= to);
+      const kpiStatus =
+        avgCpa == null
+          ? 'unknown'
+          : inRange(avgCpa, targetFrom, targetTo)
+            ? 'good'
+            : inRange(avgCpa, acceptableFrom, acceptableTo)
+              ? 'acceptable'
+              : inRange(avgCpa, stopFrom, null)
+                ? 'bad'
+                : 'unknown';
 
       return {
         ...channelData,
@@ -602,16 +664,30 @@ export class TelegramChannelsService {
             avgCpa,
             activeSubscribersEstimate: audience.activeSubscribersEstimate,
             paidActiveSubscribersEstimate,
-            activeCpa: paidActiveSubscribersEstimate > 0 ? totalAdSpend / paidActiveSubscribersEstimate : null,
-            avgActiveRate: average(channelCampaigns.map((campaign) => campaign.activeRate)),
-            avgRetention7d: average(channelCampaigns.map((campaign) => campaign.retention7d)),
+            activeCpa:
+              paidActiveSubscribersEstimate > 0
+                ? totalAdSpend / paidActiveSubscribersEstimate
+                : null,
+            avgActiveRate: average(
+              channelCampaigns.map((campaign) => campaign.activeRate),
+            ),
+            avgRetention7d: average(
+              channelCampaigns.map((campaign) => campaign.retention7d),
+            ),
             dataQuality: audience.dataQuality,
             dataQualityReason: audience.dataQualityReason,
             dataQualityWarning: null,
             hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
             hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
             kpiStatus,
-            kpiLabel: kpiStatus === 'good' ? 'Good' : kpiStatus === 'acceptable' ? 'Acceptable' : kpiStatus === 'bad' ? 'Stop' : '-',
+            kpiLabel:
+              kpiStatus === 'good'
+                ? 'Good'
+                : kpiStatus === 'acceptable'
+                  ? 'Acceptable'
+                  : kpiStatus === 'bad'
+                    ? 'Stop'
+                    : '-',
           },
         },
       };
@@ -645,7 +721,11 @@ export class TelegramChannelsService {
   }
 
   async create(userId: string, dto: CreateTelegramChannelDto) {
-    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
     return this.prisma.telegramChannel.create({
       data: {
         workspaceId,
@@ -654,13 +734,24 @@ export class TelegramChannelsService {
         assignedMemberId,
         createdByUserId: userId,
       },
-      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
+      },
     });
   }
 
   async update(userId: string, id: string, dto: UpdateTelegramChannelDto) {
     await this.findOne(userId, id);
-    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)).assignedMemberId;
+    const assignedMemberId =
+      dto.assignedMemberId === undefined
+        ? undefined
+        : (
+            await this.workspaceService.resolveAssignedMemberId(
+              userId,
+              dto.assignedMemberId,
+            )
+          ).assignedMemberId;
     return this.prisma.telegramChannel.update({
       where: { id },
       data: {
@@ -675,7 +766,10 @@ export class TelegramChannelsService {
             : String(dto.dataQualityNotes || '').trim() || null,
         assignedMemberId,
       },
-      include: { assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
+      include: {
+        assignedMember: WorkspaceService.assignedMemberInclude,
+        createdByUser: WorkspaceService.createdByUserInclude,
+      },
     });
   }
 
@@ -713,9 +807,10 @@ export class TelegramChannelsService {
       avgViews,
       avgReactions,
       avgForwards,
-      cpm: price != null && avgViews != null && avgViews > 0
-        ? (price / avgViews) * 1000
-        : null,
+      cpm:
+        price != null && avgViews != null && avgViews > 0
+          ? (price / avgViews) * 1000
+          : null,
     };
   }
 
@@ -725,6 +820,7 @@ export class TelegramChannelsService {
     return this.prisma.telegramManagedPost.findMany({
       where: { workspaceId, telegramChannelId: channelId },
       orderBy: { createdAt: 'desc' },
+      include: this.managedPostInclude,
     });
   }
 
@@ -733,7 +829,11 @@ export class TelegramChannelsService {
     channelId: string,
     dto: CreateTelegramManagedPostDto,
   ) {
-    const workspaceId = await this.workspace(userId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
     await this.findOne(userId, channelId);
     const title = dto.title.trim();
     if (!title) throw new BadRequestException('Title is required');
@@ -744,8 +844,10 @@ export class TelegramChannelsService {
         title,
         text: dto.text ?? null,
         imageUrls: dto.imageUrls ?? [],
+        assignedMemberId,
         createdByUserId: userId,
       },
+      include: this.managedPostInclude,
     });
   }
 
@@ -764,14 +866,25 @@ export class TelegramChannelsService {
       throw new BadRequestException('Published posts cannot be edited');
     if (dto.title !== undefined && !dto.title.trim())
       throw new BadRequestException('Title is required');
+    const assignedMemberId =
+      dto.assignedMemberId === undefined
+        ? undefined
+        : (
+            await this.workspaceService.resolveAssignedMemberId(
+              userId,
+              dto.assignedMemberId,
+            )
+          ).assignedMemberId;
     return this.prisma.telegramManagedPost.update({
       where: { id: postId },
       data: {
         title: dto.title?.trim(),
         text: dto.text,
         imageUrls: dto.imageUrls,
+        assignedMemberId,
         lastError: null,
       },
+      include: this.managedPostInclude,
     });
   }
 
@@ -791,7 +904,8 @@ export class TelegramChannelsService {
       }),
       this.sourceAccessService.sourcesForChannel(workspaceId, channelId),
     ]);
-    if (!post || !channel) throw new NotFoundException('Post or channel not found');
+    if (!post || !channel)
+      throw new NotFoundException('Post or channel not found');
     if (!post.text?.trim() && !post.imageUrls.length)
       throw new BadRequestException('Text or at least one image is required');
     const existingScheduledSource =
@@ -803,16 +917,20 @@ export class TelegramChannelsService {
               item.permissions.canPostMessages,
           )
         : undefined;
-    const mtprotoSource = existingScheduledSource ?? sources.find(
-      (item) =>
-        item.sourceType === TelegramSourceType.MTPROTO &&
-        item.permissions.canPostMessages,
-    );
-    const source = mtprotoSource ?? sources.find(
-      (item) =>
-        item.sourceType === TelegramSourceType.BOT &&
-        item.permissions.canPostMessages,
-    );
+    const mtprotoSource =
+      existingScheduledSource ??
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.MTPROTO &&
+          item.permissions.canPostMessages,
+      );
+    const source =
+      mtprotoSource ??
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.BOT &&
+          item.permissions.canPostMessages,
+      );
     if (!source) {
       throw new BadRequestException(
         'No connected source has posting permission',
@@ -823,23 +941,45 @@ export class TelegramChannelsService {
         'Scheduling requires a connected MTProto source with posting permission',
       );
     const channelRef = this.channelRef(channel);
-    if (!channelRef) throw new BadRequestException('Channel has no Telegram reference');
+    if (!channelRef)
+      throw new BadRequestException('Channel has no Telegram reference');
     try {
       const html = telegramMarkupToHtml(post.text || '');
       const [plainText] = HTMLParser.parse(html);
       let captionHtml = html;
-      let followupHtml = '';
+      let followupHtmlParts: string[] = [];
+      let textHtmlParts = [html];
       let publishMode = post.imageUrls.length
         ? 'IMAGE_WITH_CAPTION'
         : 'TEXT_ONLY';
-      if (post.imageUrls.length && plainText.length > 1024) {
+      if (post.imageUrls.length && plainText.length > TELEGRAM_CAPTION_LIMIT) {
         publishMode = longTextMode;
         if (longTextMode === 'CAPTION_THEN_TEXT') {
-          [captionHtml, followupHtml] = this.splitCaptionHtml(post.text || '');
+          const [caption, remainder] = this.splitTelegramMarkupOnce(
+            post.text || '',
+            TELEGRAM_CAPTION_LIMIT,
+          );
+          captionHtml = telegramMarkupToHtml(caption);
+          followupHtmlParts = this.splitTelegramMarkup(
+            remainder,
+            TELEGRAM_TEXT_MESSAGE_LIMIT,
+          ).map((part) => telegramMarkupToHtml(part));
         } else {
           captionHtml = '';
-          followupHtml = html;
+          followupHtmlParts = this.splitTelegramMarkup(
+            post.text || '',
+            TELEGRAM_TEXT_MESSAGE_LIMIT,
+          ).map((part) => telegramMarkupToHtml(part));
         }
+      } else if (
+        !post.imageUrls.length &&
+        plainText.length > TELEGRAM_TEXT_MESSAGE_LIMIT
+      ) {
+        publishMode = 'TEXT_PARTS';
+        textHtmlParts = this.splitTelegramMarkup(
+          post.text || '',
+          TELEGRAM_TEXT_MESSAGE_LIMIT,
+        ).map((part) => telegramMarkupToHtml(part));
       }
       let ids: string[];
       if (source.sourceType === TelegramSourceType.MTPROTO) {
@@ -863,8 +1003,9 @@ export class TelegramChannelsService {
           ...this.accountCredentials(account),
           channelRef,
           html,
+          textHtmlParts,
           captionHtml,
-          followupHtml,
+          followupHtmlParts,
           imageUrls: post.imageUrls,
           scheduleAt,
         });
@@ -872,59 +1013,96 @@ export class TelegramChannelsService {
         const bot = await this.prisma.telegramBotIntegration.findFirst({
           where: { id: source.sourceId, workspaceId, isActive: true },
         });
-        if (!bot) throw new BadRequestException('Telegram bot is not connected');
+        if (!bot)
+          throw new BadRequestException('Telegram bot is not connected');
         const token = this.encryptionService.decrypt({
           encrypted: bot.botTokenEncrypted,
           iv: bot.botTokenIv,
           authTag: bot.botTokenAuthTag,
         });
-        const chatId = channel.username ? `@${channel.username}` : channel.telegramChatId;
+        const chatId = channel.username
+          ? `@${channel.username}`
+          : channel.telegramChatId;
         const call = async (method: string, body: Record<string, unknown>) => {
-          const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, ...body }),
-          });
-          const payload = await response.json() as { ok?: boolean; description?: string; result?: any };
+          const response = await fetch(
+            `https://api.telegram.org/bot${token}/${method}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, ...body }),
+            },
+          );
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            description?: string;
+            result?: any;
+          };
           if (!response.ok || !payload.ok)
-            throw new BadRequestException(payload.description || 'Telegram Bot API publish failed');
+            throw new BadRequestException(
+              payload.description || 'Telegram Bot API publish failed',
+            );
           return payload.result;
         };
+        const toBotFormattedText = (html: string) => {
+          const [text, entities] = HTMLParser.parse(
+            telegramHtmlToMtprotoHtml(html),
+          );
+          return {
+            text,
+            entities: entities
+              .map((entity) => this.toBotMessageEntity(entity))
+              .filter((entity): entity is BotMessageEntity => Boolean(entity)),
+          };
+        };
         if (post.imageUrls.length > 1) {
-          const result = await call('sendMediaGroup', {
+          const caption = toBotFormattedText(captionHtml);
+          const result = (await call('sendMediaGroup', {
             media: post.imageUrls.map((media, index) => ({
               type: 'photo',
               media,
               ...(index === 0 && captionHtml
-                ? { caption: captionHtml, parse_mode: 'HTML' }
+                ? {
+                    caption: caption.text,
+                    caption_entities: caption.entities,
+                  }
                 : {}),
             })),
-          }) as Array<{ message_id: number }>;
+          })) as Array<{ message_id: number }>;
           ids = result.map((message) => String(message.message_id));
-          if (followupHtml) {
-            const textResult = await call('sendMessage', {
-              text: followupHtml,
-              parse_mode: 'HTML',
-            }) as { message_id: number };
+          for (const followupHtml of followupHtmlParts) {
+            const followup = toBotFormattedText(followupHtml);
+            const textResult = (await call('sendMessage', {
+              text: followup.text,
+              entities: followup.entities,
+            })) as { message_id: number };
             ids.push(String(textResult.message_id));
           }
         } else if (post.imageUrls.length === 1) {
-          const result = await call('sendPhoto', {
+          const caption = toBotFormattedText(captionHtml);
+          const result = (await call('sendPhoto', {
             photo: post.imageUrls[0],
-            caption: captionHtml,
-            parse_mode: 'HTML',
-          }) as { message_id: number };
+            caption: caption.text,
+            caption_entities: caption.entities,
+          })) as { message_id: number };
           ids = [String(result.message_id)];
-          if (followupHtml) {
-            const textResult = await call('sendMessage', {
-              text: followupHtml,
-              parse_mode: 'HTML',
-            }) as { message_id: number };
+          for (const followupHtml of followupHtmlParts) {
+            const followup = toBotFormattedText(followupHtml);
+            const textResult = (await call('sendMessage', {
+              text: followup.text,
+              entities: followup.entities,
+            })) as { message_id: number };
             ids.push(String(textResult.message_id));
           }
         } else {
-          const result = await call('sendMessage', { text: html, parse_mode: 'HTML' }) as { message_id: number };
-          ids = [String(result.message_id)];
+          ids = [];
+          for (const textHtml of textHtmlParts) {
+            const message = toBotFormattedText(textHtml);
+            const result = (await call('sendMessage', {
+              text: message.text,
+              entities: message.entities,
+            })) as { message_id: number };
+            ids.push(String(result.message_id));
+          }
         }
       }
       return this.prisma.telegramManagedPost.update({
@@ -939,6 +1117,7 @@ export class TelegramChannelsService {
           publishMode,
           lastError: null,
         },
+        include: this.managedPostInclude,
       });
     } catch (error) {
       const rawMessage =
@@ -966,8 +1145,9 @@ export class TelegramChannelsService {
     postId: string,
     dto: PublishTelegramManagedPostDto,
   ) {
+    const workspaceId = await this.workspace(userId);
     return this.publishManagedPost(
-      await this.workspace(userId),
+      workspaceId,
       channelId,
       postId,
       undefined,
@@ -985,8 +1165,9 @@ export class TelegramChannelsService {
     const scheduledAt = new Date(dto.scheduledAt);
     if (scheduledAt.getTime() <= Date.now())
       throw new BadRequestException('Schedule date must be in the future');
+    const workspaceId = await this.workspace(userId);
     return this.publishManagedPost(
-      await this.workspace(userId),
+      workspaceId,
       channelId,
       postId,
       scheduledAt,
@@ -995,7 +1176,28 @@ export class TelegramChannelsService {
     );
   }
 
-  private splitCaptionHtml(rawText: string): [string, string] {
+  private splitTelegramMarkup(rawText: string, maxPlainLength: number) {
+    const parts: string[] = [];
+    let remaining = rawText.trim();
+    while (remaining) {
+      const [current, next] = this.splitTelegramMarkupOnce(
+        remaining,
+        maxPlainLength,
+      );
+      parts.push(current);
+      if (!next) break;
+      remaining = next;
+    }
+    return parts;
+  }
+
+  private splitTelegramMarkupOnce(
+    rawText: string,
+    maxPlainLength: number,
+  ): [string, string] {
+    const html = telegramMarkupToHtml(rawText);
+    const [plain] = HTMLParser.parse(html);
+    if (plain.length <= maxPlainLength) return [rawText.trim(), ''];
     const boundaries = new Set<number>();
     for (const match of rawText.matchAll(/\n\s*\n/g)) {
       boundaries.add((match.index || 0) + match[0].length);
@@ -1017,15 +1219,77 @@ export class TelegramChannelsService {
           return false;
         }
         const [plain] = HTMLParser.parse(telegramMarkupToHtml(candidate));
-        return plain.length <= 1024;
+        return plain.length <= maxPlainLength;
       });
-    if (!splitAt) return ['', telegramMarkupToHtml(rawText)];
-    const captionRaw = rawText.slice(0, splitAt).trimEnd();
-    const remainderRaw = rawText.slice(splitAt).trimStart();
-    return [
-      telegramMarkupToHtml(captionRaw),
-      telegramMarkupToHtml(remainderRaw),
-    ];
+    const fallbackAt =
+      splitAt ?? this.findHardTelegramMarkupSplit(rawText, maxPlainLength);
+    if (!fallbackAt) return [rawText.trim(), ''];
+    const currentRaw = rawText.slice(0, fallbackAt).trimEnd();
+    const remainderRaw = rawText.slice(fallbackAt).trimStart();
+    return [currentRaw, remainderRaw];
+  }
+
+  private findHardTelegramMarkupSplit(rawText: string, maxPlainLength: number) {
+    for (
+      let position = Math.min(rawText.length, maxPlainLength);
+      position > 0;
+      position -= 1
+    ) {
+      const candidate = rawText.slice(0, position).trimEnd();
+      if (!candidate || !this.hasBalancedTelegramMarkup(candidate)) continue;
+      const [plain] = HTMLParser.parse(telegramMarkupToHtml(candidate));
+      if (plain.length <= maxPlainLength) return position;
+    }
+    return 0;
+  }
+
+  private toBotMessageEntity(entity: {
+    className?: string;
+    offset?: number;
+    length?: number;
+    url?: string;
+    language?: string;
+    documentId?: unknown;
+  }): BotMessageEntity | null {
+    const offset = entity.offset ?? 0;
+    const length = entity.length ?? 0;
+    const base = { offset, length };
+    switch (entity.className) {
+      case 'MessageEntityBold':
+        return { ...base, type: 'bold' };
+      case 'MessageEntityItalic':
+        return { ...base, type: 'italic' };
+      case 'MessageEntityUnderline':
+        return { ...base, type: 'underline' };
+      case 'MessageEntityStrike':
+        return { ...base, type: 'strikethrough' };
+      case 'MessageEntitySpoiler':
+        return { ...base, type: 'spoiler' };
+      case 'MessageEntityCode':
+        return { ...base, type: 'code' };
+      case 'MessageEntityPre':
+        return {
+          ...base,
+          type: 'pre',
+          ...(entity.language ? { language: entity.language } : {}),
+        };
+      case 'MessageEntityTextUrl':
+        return entity.url
+          ? { ...base, type: 'text_link', url: entity.url }
+          : null;
+      case 'MessageEntityBlockquote':
+        return { ...base, type: 'blockquote' };
+      case 'MessageEntityCustomEmoji':
+        return entity.documentId
+          ? {
+              ...base,
+              type: 'custom_emoji',
+              custom_emoji_id: String(entity.documentId),
+            }
+          : null;
+      default:
+        return null;
+    }
   }
 
   private hasBalancedTelegramMarkup(value: string) {
@@ -1051,10 +1315,7 @@ export class TelegramChannelsService {
     });
     if (!post) throw new NotFoundException('Post draft not found');
     if (post.status === 'SCHEDULED' && post.telegramMessageIds.length) {
-      if (
-        post.sourceType !== TelegramSourceType.MTPROTO ||
-        !post.sourceId
-      ) {
+      if (post.sourceType !== TelegramSourceType.MTPROTO || !post.sourceId) {
         throw new BadRequestException(
           'Scheduled post has no MTProto source and cannot be cancelled safely',
         );
@@ -1121,9 +1382,10 @@ export class TelegramChannelsService {
           postLimit: dto.postLimit ?? 20,
         });
       } catch (error) {
-        warning = error instanceof Error
-          ? error.message
-          : 'Telegram post metrics sync failed';
+        warning =
+          error instanceof Error
+            ? error.message
+            : 'Telegram post metrics sync failed';
         this.logger.warn(
           `Ad analysis continues without fresh sync for channel=${channelId}: ${warning}`,
         );
@@ -1149,9 +1411,7 @@ export class TelegramChannelsService {
         reasonTags: dto.reasonTags ?? [],
         reasonSummary: dto.reasonSummary?.trim() || null,
         notes: dto.notes?.trim() || null,
-        nextReviewAt: dto.nextReviewAt
-          ? new Date(dto.nextReviewAt)
-          : null,
+        nextReviewAt: dto.nextReviewAt ? new Date(dto.nextReviewAt) : null,
         ...metrics,
       },
       include: {
@@ -1181,9 +1441,12 @@ export class TelegramChannelsService {
               dto.assignedMemberId,
             )
           ).assignedMemberId;
-    const price = dto.price === undefined
-      ? (existing.price == null ? null : Number(existing.price))
-      : dto.price;
+    const price =
+      dto.price === undefined
+        ? existing.price == null
+          ? null
+          : Number(existing.price)
+        : dto.price;
     const metrics = await this.calculateAdAnalysisMetrics(
       workspaceId,
       channelId,
@@ -1196,17 +1459,20 @@ export class TelegramChannelsService {
         assignedMemberId,
         analyzedAt: dto.analyzedAt ? new Date(dto.analyzedAt) : undefined,
         status: dto.status,
-        verdict: dto.verdict === undefined ? undefined : dto.verdict.trim() || null,
+        verdict:
+          dto.verdict === undefined ? undefined : dto.verdict.trim() || null,
         price: dto.price,
         currency: dto.currency?.trim().toUpperCase(),
         reasonTags: dto.reasonTags,
-        reasonSummary: dto.reasonSummary === undefined
-          ? undefined
-          : dto.reasonSummary.trim() || null,
+        reasonSummary:
+          dto.reasonSummary === undefined
+            ? undefined
+            : dto.reasonSummary.trim() || null,
         notes: dto.notes === undefined ? undefined : dto.notes.trim() || null,
-        nextReviewAt: dto.nextReviewAt === undefined
-          ? undefined
-          : new Date(dto.nextReviewAt),
+        nextReviewAt:
+          dto.nextReviewAt === undefined
+            ? undefined
+            : new Date(dto.nextReviewAt),
         ...metrics,
       },
       include: {
@@ -1741,7 +2007,11 @@ export class TelegramChannelsService {
         channelId,
         'sync',
       );
-      return { source: 'mtproto', syncedPosts: metrics.length, audienceSnapshot };
+      return {
+        source: 'mtproto',
+        syncedPosts: metrics.length,
+        audienceSnapshot,
+      };
     } catch (error) {
       this.logger.error(
         `MTProto post metrics sync failed for channel=${channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -1916,7 +2186,8 @@ export class TelegramChannelsService {
       const imageData = String(promo.imageData || '');
       const match = imageData.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
       if (!match) return;
-      const extension = match[1] === 'jpg' ? 'jpeg' : (match[1] as 'png' | 'jpeg');
+      const extension =
+        match[1] === 'jpg' ? 'jpeg' : (match[1] as 'png' | 'jpeg');
       try {
         const imageId = workbook.addImage({ base64: imageData, extension });
         const row = index + 2;
@@ -2083,7 +2354,10 @@ export class TelegramChannelsService {
       ['System period to', new Date()],
       ['Telegram data period from', tgFrom],
       ['Telegram data period to', tgTo],
-      ['Period note', `Channel is in system from ${this.dateOnly(channel.createdAt) || '-'}; Telegram data in this export from ${this.dateOnly(tgFrom) || '-'} to ${this.dateOnly(tgTo) || '-'}.`],
+      [
+        'Period note',
+        `Channel is in system from ${this.dateOnly(channel.createdAt) || '-'}; Telegram data in this export from ${this.dateOnly(tgFrom) || '-'} to ${this.dateOnly(tgTo) || '-'}.`,
+      ],
       ['Exported at', new Date()],
       ['Posts exported', posts.length],
       ['Promos exported', promos.length],
@@ -2120,8 +2394,12 @@ export class TelegramChannelsService {
     ]);
 
     this.addKeyValueSheet(workbook, 'Calculated Metrics', [
-      ...Object.entries(audience).map(([key, value]) => [`audience.${key}`, value] as [string, unknown]),
-      ...Object.entries(financialSummary).map(([key, value]) => [`finance.${key}`, value] as [string, unknown]),
+      ...Object.entries(audience).map(
+        ([key, value]) => [`audience.${key}`, value] as [string, unknown],
+      ),
+      ...Object.entries(financialSummary).map(
+        ([key, value]) => [`finance.${key}`, value] as [string, unknown],
+      ),
     ]);
 
     this.addTableSheet(
@@ -2138,7 +2416,10 @@ export class TelegramChannelsService {
         { header: 'Channel own views per post', key: 'channelOwnViews' },
         { header: 'Manual own views', key: 'manualOwnViews' },
         { header: 'Adjusted views', key: 'adjustedViews' },
-        { header: 'Channel own reactions per post', key: 'channelOwnReactions' },
+        {
+          header: 'Channel own reactions per post',
+          key: 'channelOwnReactions',
+        },
         { header: 'Manual own reactions', key: 'manualOwnReactions' },
         { header: 'Adjusted reactions', key: 'adjustedReactions' },
         { header: 'Exclude from analytics', key: 'excludeFromAnalytics' },
@@ -2236,7 +2517,10 @@ export class TelegramChannelsService {
         { header: 'Subscribers', key: 'subscribersCount' },
         { header: 'Effective subscribers', key: 'effectiveSubscribersCount' },
         { header: 'Active subscribers', key: 'activeSubscribersEstimate' },
-        { header: 'Capped active subscribers', key: 'cappedActiveSubscribersEstimate' },
+        {
+          header: 'Capped active subscribers',
+          key: 'cappedActiveSubscribersEstimate',
+        },
         { header: 'View rate', key: 'viewRate' },
         { header: 'Raw view rate', key: 'rawViewRate' },
         { header: 'Capped view rate', key: 'cappedViewRate' },
@@ -2246,8 +2530,14 @@ export class TelegramChannelsService {
         { header: 'Avg reactions adjusted', key: 'avgReactionsAdjusted' },
         { header: 'Data quality', key: 'dataQuality' },
         { header: 'Data quality reason', key: 'dataQualityReason' },
-        { header: 'External traffic anomaly', key: 'hasExternalTrafficAnomaly' },
-        { header: 'Subscriber base pollution', key: 'hasSubscriberBasePollution' },
+        {
+          header: 'External traffic anomaly',
+          key: 'hasExternalTrafficAnomaly',
+        },
+        {
+          header: 'Subscriber base pollution',
+          key: 'hasSubscriberBasePollution',
+        },
         { header: 'Posts window', key: 'postsWindow' },
         { header: 'Source', key: 'source' },
       ],
@@ -2312,10 +2602,16 @@ export class TelegramChannelsService {
         { header: 'Net growth', key: 'netGrowthCount' },
         { header: 'CPA', key: 'cpa' },
         { header: 'CPM', key: 'cpm' },
-        { header: 'Active subscribers from ad', key: 'activeSubscribersFromAd' },
+        {
+          header: 'Active subscribers from ad',
+          key: 'activeSubscribersFromAd',
+        },
         { header: 'Active CPA', key: 'activeCpa' },
         { header: 'Active rate', key: 'activeRate' },
-        { header: 'Capped active subscribers', key: 'cappedActiveSubscribersFromAd' },
+        {
+          header: 'Capped active subscribers',
+          key: 'cappedActiveSubscribersFromAd',
+        },
         { header: 'Capped active CPA', key: 'cappedActiveCpa' },
         { header: 'Retention 7d', key: 'retention7d' },
         { header: 'CPA status', key: 'cpaStatus' },
@@ -2324,7 +2620,10 @@ export class TelegramChannelsService {
         { header: 'Data quality', key: 'adDataQuality' },
         { header: 'Data quality reason', key: 'adDataQualityReason' },
         { header: 'View anomaly', key: 'hasViewAnomaly' },
-        { header: 'Subscriber base pollution', key: 'hasSubscriberBasePollution' },
+        {
+          header: 'Subscriber base pollution',
+          key: 'hasSubscriberBasePollution',
+        },
         { header: 'Source post URL', key: 'sourcePostUrl', width: 44 },
         { header: 'Source post views', key: 'sourcePostViews' },
         { header: 'Notes', key: 'notes', width: 60 },
@@ -2364,7 +2663,10 @@ export class TelegramChannelsService {
         { header: 'Type', key: 'type' },
         { header: 'Amount', key: 'amount' },
         { header: 'Currency', key: 'currency' },
-        { header: 'Amount in primary currency', key: 'amountInPrimaryCurrency' },
+        {
+          header: 'Amount in primary currency',
+          key: 'amountInPrimaryCurrency',
+        },
         { header: 'Exchange rate to primary', key: 'exchangeRateToPrimary' },
         { header: 'Account', key: 'accountName' },
         { header: 'Category', key: 'categoryName' },

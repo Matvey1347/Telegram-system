@@ -1,4 +1,9 @@
-import { telegramMarkupToHtml } from './telegram-markup';
+import { Api } from 'telegram';
+import { HTMLParser } from 'telegram/extensions/html';
+import {
+  telegramHtmlToMtprotoHtml,
+  telegramMarkupToHtml,
+} from './telegram-markup';
 
 describe('telegramMarkupToHtml', () => {
   it('converts supported formatting and escapes user html', () => {
@@ -44,11 +49,7 @@ describe('telegramMarkupToHtml', () => {
   });
 
   it('supports underline and nested formatting', () => {
-    expect(
-      telegramMarkupToHtml(
-        '**__++~~||formatted||~~++__**',
-      ),
-    ).toBe(
+    expect(telegramMarkupToHtml('**__++~~||formatted||~~++__**')).toBe(
       '<b><i><u><s><tg-spoiler>formatted</tg-spoiler></s></u></i></b>',
     );
   });
@@ -61,5 +62,23 @@ describe('telegramMarkupToHtml', () => {
     ).toBe(
       '<blockquote>First line\n<b>Second line</b></blockquote>\n\n<blockquote expandable>Hidden first\nHidden second</blockquote>',
     );
+  });
+
+  it('normalizes spoiler tags for GramJS MTProto HTML parsing', () => {
+    expect(
+      telegramHtmlToMtprotoHtml(
+        '<b>visible</b> <tg-spoiler>secret</tg-spoiler>',
+      ),
+    ).toBe('<b>visible</b> <spoiler>secret</spoiler>');
+  });
+
+  it('lets GramJS parse spoilers as MTProto spoiler entities', () => {
+    const [text, entities] = HTMLParser.parse(
+      telegramHtmlToMtprotoHtml('<tg-spoiler>hidden text</tg-spoiler>'),
+    );
+
+    expect(text).toBe('hidden text');
+    expect(entities).toHaveLength(1);
+    expect(entities[0]).toBeInstanceOf(Api.MessageEntitySpoiler);
   });
 });

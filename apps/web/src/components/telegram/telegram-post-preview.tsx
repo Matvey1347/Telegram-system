@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Eye, MessageCircle, Send } from "lucide-react";
+import { ChevronRight, Eye, MessageCircle } from "lucide-react";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 
 type TelegramPostPreviewProps = {
@@ -10,6 +10,9 @@ type TelegramPostPreviewProps = {
   imageUrls: string[];
   longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 };
+
+const TELEGRAM_CAPTION_LIMIT = 1024;
+const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
 const escapeHtml = (value: string) =>
   value
@@ -117,20 +120,34 @@ export function TelegramPostPreview({
     hour12: false,
   }).format(new Date());
   const messages =
-    imageUrls.length && text.length > 1024
+    imageUrls.length && text.length > TELEGRAM_CAPTION_LIMIT
       ? longTextMode === "CAPTION_THEN_TEXT"
         ? (() => {
-            const [caption, remainder] = splitPreviewText(text);
+            const [caption, remainderText] = splitPreviewTextOnce(
+              text,
+              TELEGRAM_CAPTION_LIMIT,
+            );
+            const remainder = splitPreviewText(
+              remainderText,
+              TELEGRAM_TEXT_MESSAGE_LIMIT,
+            );
             return [
               { text: caption, imageUrls },
-              ...(remainder ? [{ text: remainder, imageUrls: [] }] : []),
+              ...remainder.map((part) => ({ text: part, imageUrls: [] })),
             ];
           })()
         : [
             { text: "", imageUrls },
-            { text, imageUrls: [] },
+            ...splitPreviewText(text, TELEGRAM_TEXT_MESSAGE_LIMIT).map(
+              (part) => ({ text: part, imageUrls: [] }),
+            ),
           ]
-      : [{ text, imageUrls }];
+      : imageUrls.length
+        ? [{ text, imageUrls }]
+        : splitPreviewText(text, TELEGRAM_TEXT_MESSAGE_LIMIT).map((part) => ({
+            text: part,
+            imageUrls: [],
+          }));
 
   return (
     <aside className="min-w-0">
@@ -151,11 +168,8 @@ export function TelegramPostPreview({
         </div>
 
         <div className="telegram-preview-wallpaper min-h-[460px] px-3 py-5">
-          <div className="mx-auto mb-4 w-fit rounded-full bg-[#182533]/90 px-3 py-1 text-[11px] font-medium text-white shadow">
-            Today
-          </div>
           {hasContent ? (
-            <div className="relative max-w-[94%] space-y-2">
+            <div className="max-w-[94%] space-y-2">
               {messages.map((message, index) => (
                 <TelegramMessageBubble
                   key={`${index}-${message.text.length}-${message.imageUrls.length}`}
@@ -164,10 +178,6 @@ export function TelegramPostPreview({
                   time={time}
                 />
               ))}
-              <Send
-                size={22}
-                className="absolute -right-8 bottom-2 fill-[#40a7e3] text-[#40a7e3]"
-              />
             </div>
           ) : (
             <div className="flex min-h-[400px] items-center justify-center px-8 text-center text-sm text-[#708499]">
@@ -250,7 +260,20 @@ function handlePreviewContentClick(event: React.MouseEvent<HTMLDivElement>) {
   }
 }
 
-function splitPreviewText(rawText: string): [string, string] {
+function splitPreviewText(rawText: string, maxLength: number): string[] {
+  const parts: string[] = [];
+  let remaining = rawText.trim();
+  while (remaining) {
+    const [current, next] = splitPreviewTextOnce(remaining, maxLength);
+    parts.push(current);
+    if (!next) break;
+    remaining = next;
+  }
+  return parts.length ? parts : [rawText];
+}
+
+function splitPreviewTextOnce(rawText: string, maxLength: number): [string, string] {
+  if (rawText.length <= maxLength) return [rawText, ""];
   const boundaries = new Set<number>();
   for (const match of rawText.matchAll(/\n\s*\n/g)) {
     boundaries.add((match.index || 0) + match[0].length);
@@ -266,15 +289,28 @@ function splitPreviewText(rawText: string): [string, string] {
     .find((position) => {
       const candidate = rawText.slice(0, position).trimEnd();
       return (
-        candidate.length <= 1024 &&
+        candidate.length <= maxLength &&
         hasBalancedPreviewMarkup(candidate)
       );
     });
-  if (!splitAt) return ["", rawText];
+  const fallbackAt = splitAt ?? findHardPreviewSplit(rawText, maxLength);
+  if (!fallbackAt) return [rawText, ""];
   return [
-    rawText.slice(0, splitAt).trimEnd(),
-    rawText.slice(splitAt).trimStart(),
+    rawText.slice(0, fallbackAt).trimEnd(),
+    rawText.slice(fallbackAt).trimStart(),
   ];
+}
+
+function findHardPreviewSplit(rawText: string, maxLength: number) {
+  for (
+    let position = Math.min(rawText.length, maxLength);
+    position > 0;
+    position -= 1
+  ) {
+    const candidate = rawText.slice(0, position).trimEnd();
+    if (candidate && hasBalancedPreviewMarkup(candidate)) return position;
+  }
+  return 0;
 }
 
 function hasBalancedPreviewMarkup(value: string) {
