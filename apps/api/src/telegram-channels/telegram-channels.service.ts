@@ -59,7 +59,6 @@ export class TelegramChannelsService {
   private readonly olderPostBackfillMaxPages = 5;
   private readonly managedPostInclude = {
     assignedMember: WorkspaceService.assignedMemberInclude,
-    createdByUser: WorkspaceService.createdByUserInclude,
   } as const;
 
   constructor(
@@ -829,11 +828,17 @@ export class TelegramChannelsService {
     channelId: string,
     dto: CreateTelegramManagedPostDto,
   ) {
+    if (dto.assignedMemberId === null) {
+      throw new BadRequestException('Assigned member is required');
+    }
     const { workspaceId, assignedMemberId } =
       await this.workspaceService.resolveAssignedMemberId(
         userId,
         dto.assignedMemberId,
       );
+    if (!assignedMemberId) {
+      throw new BadRequestException('Assigned member is required');
+    }
     await this.findOne(userId, channelId);
     const title = dto.title.trim();
     if (!title) throw new BadRequestException('Title is required');
@@ -845,7 +850,6 @@ export class TelegramChannelsService {
         text: dto.text ?? null,
         imageUrls: dto.imageUrls ?? [],
         assignedMemberId,
-        createdByUserId: userId,
       },
       include: this.managedPostInclude,
     });
@@ -866,15 +870,19 @@ export class TelegramChannelsService {
       throw new BadRequestException('Published posts cannot be edited');
     if (dto.title !== undefined && !dto.title.trim())
       throw new BadRequestException('Title is required');
-    const assignedMemberId =
-      dto.assignedMemberId === undefined
-        ? undefined
-        : (
-            await this.workspaceService.resolveAssignedMemberId(
-              userId,
-              dto.assignedMemberId,
-            )
-          ).assignedMemberId;
+    if (dto.assignedMemberId === null)
+      throw new BadRequestException('Assigned member is required');
+    let assignedMemberId: string | undefined;
+    if (dto.assignedMemberId !== undefined) {
+      const resolved = await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
+      if (!resolved.assignedMemberId) {
+        throw new BadRequestException('Assigned member is required');
+      }
+      assignedMemberId = resolved.assignedMemberId;
+    }
     return this.prisma.telegramManagedPost.update({
       where: { id: postId },
       data: {

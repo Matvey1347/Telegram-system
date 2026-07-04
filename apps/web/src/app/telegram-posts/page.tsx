@@ -326,15 +326,16 @@ function TelegramPostWorkspace({
       title: string;
       text: string;
       imageUrls: string[];
-      assignedMemberId?: string | null;
+      assignedMemberId?: string;
     } = {
       title: title.trim(),
       text,
       imageUrls,
     };
-    payload.assignedMemberId =
+    const selectedMemberId =
       assignedMemberId ??
       (!editing && !memberSelectionTouched ? currentMemberId : null);
+    if (selectedMemberId) payload.assignedMemberId = selectedMemberId;
     return editing
       ? telegramChannelsApi.updateManagedPost(channelId, editing.id, payload)
       : telegramChannelsApi.createManagedPost(channelId, payload);

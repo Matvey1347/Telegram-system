@@ -188,6 +188,8 @@ export type MeResponse = { user: User; workspace: WorkspaceInfo };
 export type AccountMe = { id: string; email: string; name: string; createdAt: string; avatarIconId?: string | null; avatarIcon?: Icon | null; workspace: WorkspaceInfo };
 export type WorkspaceMember = {
   id: string;
+  workspaceId: string;
+  userId: string;
   role: WorkspaceRole;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
@@ -289,9 +291,11 @@ export type TelegramManagedPostStatus =
   | 'PUBLISHING'
   | 'PUBLISHED'
   | 'FAILED';
-export type TelegramManagedPost = EntityAssignment & {
+export type TelegramManagedPost = {
   id: string;
   telegramChannelId: string;
+  assignedMemberId: string;
+  assignedMember: WorkspaceMember;
   title: string;
   text?: string | null;
   imageUrls: string[];
@@ -809,8 +813,8 @@ export const telegramChannelsApi = {
   audienceSnapshots: async (id: string, limit?: number) => (await api.get<TelegramChannelAudienceSnapshot[]>(`/telegram-channels/${id}/audience-snapshots`, { params: limit ? { limit } : undefined })).data,
   financialSummary: async (id: string) => (await api.get<TelegramChannelFinancialSummary>(`/telegram-channels/${id}/financial-summary`)).data,
   managedPosts: async (channelId: string) => (await api.get<TelegramManagedPost[]>(`/telegram-channels/${channelId}/managed-posts`)).data,
-  createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[]; assignedMemberId?: string | null }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
-  updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[]; assignedMemberId?: string | null }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
+  createManagedPost: async (channelId: string, payload: { title: string; text?: string; imageUrls?: string[]; assignedMemberId?: string }) => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts`, payload)).data,
+  updateManagedPost: async (channelId: string, postId: string, payload: { title?: string; text?: string | null; imageUrls?: string[]; assignedMemberId?: string }) => (await api.patch<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`, payload)).data,
   publishManagedPost: async (channelId: string, postId: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/publish`, { longTextMode })).data,
   scheduleManagedPost: async (channelId: string, postId: string, scheduledAt: string, longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT') => (await api.post<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}/schedule`, { scheduledAt, longTextMode })).data,
   deleteManagedPost: async (channelId: string, postId: string) => (await api.delete<TelegramManagedPost>(`/telegram-channels/${channelId}/managed-posts/${postId}`)).data,

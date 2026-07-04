@@ -126,7 +126,6 @@ model User {
   createdAdCampaigns             AdCampaign[]                     @relation("AdCampaignCreatedBy")
   createdAdHypotheses            AdHypothesis[]                   @relation("AdHypothesisCreatedBy")
   createdTelegramChannelNetworks TelegramChannelNetwork[]         @relation("TelegramChannelNetworkCreatedBy")
-  createdTelegramManagedPosts    TelegramManagedPost[]            @relation("TelegramManagedPostCreatedBy")
   createdAt                      DateTime                         @default(now())
   updatedAt                      DateTime                         @updatedAt
 }
@@ -317,6 +316,7 @@ model WorkspaceMember {
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, userId])
+  @@unique([id, workspaceId])
 }
 
 model Account {
@@ -1021,13 +1021,11 @@ model TelegramManagedPost {
   sourceId           String?
   publishMode        String?
   lastError          String?
-  assignedMemberId   String?
-  createdByUserId    String?
+  assignedMemberId   String
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
-  assignedMember  WorkspaceMember? @relation("TelegramManagedPostAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
-  createdByUser   User?           @relation("TelegramManagedPostCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  assignedMember  WorkspaceMember @relation("TelegramManagedPostAssignedMember", fields: [assignedMemberId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
