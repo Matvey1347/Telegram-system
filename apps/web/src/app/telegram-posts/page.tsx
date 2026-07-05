@@ -887,9 +887,32 @@ function TelegramPostWorkspace({
 
   const downloadSelectedPostsText = () => {
     if (!selectedPosts.length) return;
-    const content = selectedPosts
-      .map((post) => [post.title, post.text || ""].join("\n"))
-      .join("\n\n\n");
+    const instructions = [
+      "ИНСТРУКЦИЯ ПО ВНУТРЕННИМ ССЫЛКАМ",
+      "",
+      "Каждый пост ниже начинается со стабильного идентификатора tg-post:<id>.",
+      "Этот идентификатор нужен, чтобы связать один managed post с другим.",
+      "",
+      "Формат ссылки внутри текста:",
+      "[видимый текст](tg-post:<id>)",
+      "",
+      "Пример:",
+      "[перейти к первому посту](tg-post:cmr6qalme00tol4rii5pj5v3e)",
+      "",
+      "Не заменяйте tg-post:<id> заголовком: заголовок может измениться, а id остаётся стабильным.",
+      "",
+      "============================================================",
+    ].join("\n");
+    const postsContent = selectedPosts
+      .map((post) =>
+        [
+          `tg-post:${post.id} — ${post.title}`,
+          "",
+          post.text || "[Пост без текста]",
+        ].join("\n"),
+      )
+      .join("\n\n------------------------------------------------------------\n\n");
+    const content = `${instructions}\n\n${postsContent}\n`;
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
