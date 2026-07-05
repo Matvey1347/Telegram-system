@@ -832,7 +832,7 @@ function ChannelFinanceMiniSummary({
         ) : null}
 
         {actions ? (
-          <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] items-center gap-2 pt-1 [&>*]:w-full">
+          <div className="grid w-full grid-cols-2 items-center gap-2 pt-1 [&>*]:w-full">
             {actions}
           </div>
         ) : null}
@@ -1739,7 +1739,7 @@ export default function TelegramChannelsPage() {
                       <>
                         {hasAdminLink ? (
                           <Button
-                            className="inline-flex h-11 min-w-36 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                            className="inline-flex h-11 min-w-0 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             variant="primary"
                             onClick={() => syncNowMutation.mutate(channel.id)}
                           >
@@ -1763,7 +1763,7 @@ export default function TelegramChannelsPage() {
                           channel.preview?.canPostMessages ? (
                             <Link
                               href={`/telegram-posts?channelId=${channel.id}`}
-                              className="inline-flex h-11 min-w-36 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+                              className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-blue-500/40 bg-blue-600/95 text-center text-sm font-medium text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             >
                               <Send size={16} />
                               Posts
