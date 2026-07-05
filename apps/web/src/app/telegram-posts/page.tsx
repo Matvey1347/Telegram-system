@@ -77,6 +77,9 @@ type PostSidebarSection = {
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 const POST_OPEN_CLICK_DELAY_MS = 180;
 
+const postGroupPreferenceKey = (channelId: string) =>
+  `telegram-posts-new-post-group:${channelId}`;
+
 export default function TelegramPostsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -199,6 +202,12 @@ function TelegramPostWorkspace({
   const iconRef = useRef<string | null>(null);
   const [iconPickerGeneration, setIconPickerGeneration] = useState(0);
   const [iconPending, setIconPending] = useState(false);
+  const [rememberedPostGroupId, setRememberedPostGroupId] = useState<
+    string | null
+  >(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(postGroupPreferenceKey(channelId));
+  });
   const [postGroupId, setPostGroupId] = useState<string | null>(null);
   const [mode, setMode] = useState<PublishingMode>("draft");
   const [scheduleDate, setScheduleDate] = useState("");
@@ -278,6 +287,15 @@ function TelegramPostWorkspace({
     },
     [],
   );
+
+  const rememberPostGroup = (nextGroupId: string | null) => {
+    setRememberedPostGroupId(nextGroupId);
+    if (nextGroupId) {
+      window.localStorage.setItem(postGroupPreferenceKey(channelId), nextGroupId);
+    } else {
+      window.localStorage.removeItem(postGroupPreferenceKey(channelId));
+    }
+  };
 
   const currentMemberId =
     members.data?.find((member) => member.isCurrentUser)?.id ?? null;
@@ -597,6 +615,29 @@ function TelegramPostWorkspace({
     }
   }, [channelId]);
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem(postGroupPreferenceKey(channelId));
+    // Restore the preferred new-post group independently for every channel.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRememberedPostGroupId(saved);
+    setPostGroupId((current) => current ?? saved);
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!rememberedPostGroupId || !postGroups.data) return;
+    if (postGroups.data.some((group) => group.id === rememberedPostGroupId)) {
+      return;
+    }
+    // Drop stale preferred group ids when a group was deleted or moved away.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    rememberPostGroup(null);
+    setPostGroupId((current) =>
+      current === rememberedPostGroupId ? null : current,
+    );
+    // rememberPostGroup intentionally updates local state and localStorage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rememberedPostGroupId, postGroups.data]);
+
   const reset = () => {
     setWorkspaceView("posts");
     restoredPostIdRef.current = "";
@@ -610,7 +651,7 @@ function TelegramPostWorkspace({
     iconRef.current = null;
     setIconPending(false);
     setIconPickerGeneration((current) => current + 1);
-    setPostGroupId(null);
+    setPostGroupId(rememberedPostGroupId);
     setMode("draft");
     setScheduleDate("");
     setScheduleTime("09:00");
@@ -624,6 +665,8 @@ function TelegramPostWorkspace({
     // Header action intentionally resets the editor state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (newPostToken > 0) reset();
+    // reset intentionally captures the latest remembered group only when the action fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newPostToken]);
 
   useEffect(() => {
@@ -652,6 +695,7 @@ function TelegramPostWorkspace({
     iconRef.current = post.icon ?? null;
     setIconPending(false);
     setPostGroupId(post.groupId ?? null);
+    rememberPostGroup(post.groupId ?? null);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
     setScheduleDate(post.scheduledAt?.slice(0, 10) || "");
     setScheduleTime(post.scheduledAt?.slice(11, 16) || "09:00");
@@ -913,6 +957,7 @@ function TelegramPostWorkspace({
   const changePostGroup = (nextGroupId: string) => {
     const normalized = nextGroupId || null;
     setPostGroupId(normalized);
+    rememberPostGroup(normalized);
   };
 
   return (
