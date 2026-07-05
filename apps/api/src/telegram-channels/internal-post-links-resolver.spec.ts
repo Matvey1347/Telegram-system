@@ -36,6 +36,8 @@ describe('TelegramChannelsService internal post link resolver', () => {
         id: 'draft',
         title: 'Draft target',
         status: TelegramManagedPostStatus.DRAFT,
+        telegramRemoteStatus: 'NONE',
+        lastError: null,
         scheduledAt: null,
         telegramMessageIds: [],
         telegramMessageUrls: [],
@@ -57,6 +59,8 @@ describe('TelegramChannelsService internal post link resolver', () => {
         id: 'published',
         title: 'Published target',
         status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
         scheduledAt: null,
         telegramMessageIds: ['42', '43'],
         telegramMessageUrls: [
@@ -75,12 +79,37 @@ describe('TelegramChannelsService internal post link resolver', () => {
     ).resolves.toBe('[Published](https://t.me/example/42)');
   });
 
+  it('rejects a published target with a broken Telegram link', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'broken',
+        title: 'Broken target',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'BROKEN',
+        lastError: 'Telegram post link is broken.',
+        scheduledAt: null,
+        telegramMessageIds: ['42'],
+        telegramMessageUrls: ['https://t.me/example/42'],
+        telegramChannel: { username: 'example', telegramChatId: null },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Broken](tg-post:broken)',
+      ),
+    ).rejects.toThrow('broken Telegram link');
+  });
+
   it('resolves an earlier scheduled target while scheduling a later post', async () => {
     const service = serviceWithTargets([
       {
         id: 'scheduled',
         title: 'Earlier scheduled target',
         status: TelegramManagedPostStatus.SCHEDULED,
+        telegramRemoteStatus: 'SCHEDULED',
+        lastError: null,
         scheduledAt: new Date('2026-07-05T11:16:00.000Z'),
         telegramMessageIds: ['42'],
         telegramMessageUrls: [],
@@ -103,6 +132,8 @@ describe('TelegramChannelsService internal post link resolver', () => {
         id: 'scheduled',
         title: 'Later target',
         status: TelegramManagedPostStatus.SCHEDULED,
+        telegramRemoteStatus: 'SCHEDULED',
+        lastError: null,
         scheduledAt: new Date('2026-07-07T11:16:00.000Z'),
         telegramMessageIds: ['42'],
         telegramMessageUrls: [],

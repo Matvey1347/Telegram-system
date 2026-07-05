@@ -529,6 +529,13 @@ export type TelegramManagedPostStatus =
   | "PUBLISHING"
   | "PUBLISHED"
   | "FAILED";
+export type TelegramManagedPostRemoteStatus =
+  | "NONE"
+  | "SCHEDULED"
+  | "PUBLISHED"
+  | "BROKEN"
+  | "MISSING"
+  | "UNKNOWN";
 export type TelegramManagedPost = {
   id: string;
   workspaceId: string;
@@ -548,6 +555,9 @@ export type TelegramManagedPost = {
   publishedAt?: string | null;
   telegramMessageIds: string[];
   telegramMessageUrls: string[];
+  telegramRemoteStatus: TelegramManagedPostRemoteStatus;
+  lastTelegramSyncedAt?: string | null;
+  lastTelegramSyncNote?: string | null;
   publishMode?: string | null;
   lastError?: string | null;
   createdAt: string;
@@ -558,6 +568,7 @@ export type TelegramManagedPostLinkTarget = {
   title: string;
   icon?: string | null;
   status: TelegramManagedPostStatus;
+  telegramRemoteStatus: TelegramManagedPostRemoteStatus;
   groupId?: string | null;
   groupTitle?: string | null;
   telegramChannelId: string;
@@ -1441,7 +1452,14 @@ export const telegramChannelsApi = {
     ).data,
   syncManagedPosts: async (channelId: string) =>
     (
-      await api.post<{ checked: number; updated: number; missing: number }>(
+      await api.post<{
+        checked: number;
+        updated: number;
+        publishedEarly: number;
+        movedToDraft: number;
+        broken: number;
+        missing: number;
+      }>(
         `/telegram-channels/${channelId}/managed-posts/sync`,
       )
     ).data,
@@ -1462,6 +1480,8 @@ export const telegramChannelsApi = {
       search?: string;
       groupId?: string;
       excludePostId?: string;
+      usage?: "publishNow" | "schedule";
+      scheduledAt?: string;
       limit?: number;
     },
   ) =>

@@ -1,5 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
-import { TelegramManagedPostStatus } from '@prisma/client';
+import {
+  TelegramManagedPostRemoteStatus,
+  TelegramManagedPostStatus,
+} from '@prisma/client';
 import type { BulkActionResultItem } from '@telegram-system/shared';
 
 export type PostGroupStatusSummary = {
@@ -112,6 +115,7 @@ export function movedPostDatabaseState(
       status === TelegramManagedPostStatus.SCHEDULED ? scheduledAt : null,
     telegramMessageIds: [] as string[],
     telegramMessageUrls: [] as string[],
+    telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
     sourceType: null,
     sourceId: null,
     lastError: cancellationError,

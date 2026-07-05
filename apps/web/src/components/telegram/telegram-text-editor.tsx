@@ -29,6 +29,8 @@ type TelegramTextEditorProps = {
   channelId?: string;
   currentPostId?: string | null;
   enableInternalPostLinks?: boolean;
+  internalLinkUsage?: "publishNow" | "schedule";
+  internalLinkScheduledAt?: string;
 };
 
 type WrapAction = {
@@ -98,6 +100,8 @@ export function TelegramTextEditor({
   channelId,
   currentPostId,
   enableInternalPostLinks = false,
+  internalLinkUsage = "publishNow",
+  internalLinkScheduledAt,
 }: TelegramTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const linkSelectionRef = useRef({ start: 0, end: 0 });
@@ -118,11 +122,15 @@ export function TelegramTextEditor({
       channelId,
       internalSearch,
       currentPostId,
+      internalLinkUsage,
+      internalLinkScheduledAt,
     ],
     queryFn: () =>
       telegramChannelsApi.managedPostLinkTargets(channelId!, {
         search: internalSearch.trim() || undefined,
         excludePostId: currentPostId || undefined,
+        usage: internalLinkUsage,
+        scheduledAt: internalLinkScheduledAt,
         limit: 30,
       }),
     enabled: linkEditorOpen && linkMode === "internal" && internalLinksEnabled,

@@ -127,6 +127,8 @@ export class ManagedPostLinkTargetsQueryDto {
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() groupId?: string;
   @IsOptional() @IsString() excludePostId?: string;
+  @IsOptional() @IsIn(['publishNow', 'schedule']) usage?: string;
+  @IsOptional() @IsDateString() scheduledAt?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
 }
 

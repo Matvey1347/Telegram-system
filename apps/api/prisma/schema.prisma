@@ -106,6 +106,15 @@ enum TelegramManagedPostStatus {
   FAILED
 }
 
+enum TelegramManagedPostRemoteStatus {
+  NONE
+  SCHEDULED
+  PUBLISHED
+  BROKEN
+  MISSING
+  UNKNOWN
+}
+
 model User {
   id                             String                           @id @default(cuid())
   email                          String                           @unique
@@ -1010,26 +1019,29 @@ model TelegramPost {
 }
 
 model TelegramManagedPost {
-  id                  String                    @id @default(cuid())
-  workspaceId         String
-  telegramChannelId   String
-  title               String
-  text                String?
-  imageUrls           String[]                  @default([])
-  status              TelegramManagedPostStatus @default(DRAFT)
-  scheduledAt         DateTime?
-  publishedAt         DateTime?
-  telegramMessageIds  String[]                  @default([])
-  telegramMessageUrls String[]                  @default([])
-  sourceType          TelegramSourceType?
-  sourceId            String?
-  publishMode         String?
-  lastError           String?
-  assignedMemberId    String
-  icon                String?
-  groupId             String?
-  groupPosition       Int?
-  sidebarPosition     Int?
+  id                   String                          @id @default(cuid())
+  workspaceId          String
+  telegramChannelId    String
+  title                String
+  text                 String?
+  imageUrls            String[]                        @default([])
+  status               TelegramManagedPostStatus       @default(DRAFT)
+  scheduledAt          DateTime?
+  publishedAt          DateTime?
+  telegramMessageIds   String[]                        @default([])
+  telegramMessageUrls  String[]                        @default([])
+  telegramRemoteStatus TelegramManagedPostRemoteStatus @default(NONE)
+  lastTelegramSyncedAt DateTime?
+  lastTelegramSyncNote String?
+  sourceType           TelegramSourceType?
+  sourceId             String?
+  publishMode          String?
+  lastError            String?
+  assignedMemberId     String
+  icon                 String?
+  groupId              String?
+  groupPosition        Int?
+  sidebarPosition      Int?
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)

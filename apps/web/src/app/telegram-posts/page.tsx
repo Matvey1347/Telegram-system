@@ -120,10 +120,8 @@ export default function TelegramPostsPage() {
         }),
       ]);
       pushToast(
-        `Telegram sync: ${result.updated} updated${
-          result.missing ? `, ${result.missing} not found` : ""
-        }.`,
-        result.missing ? "error" : "success",
+        `Telegram sync: ${result.checked} checked, ${result.updated} updated, ${result.publishedEarly} published early, ${result.movedToDraft} moved to draft, ${result.broken} broken links.`,
+        result.broken || result.missing ? "error" : "success",
       );
     },
   });
@@ -385,6 +383,10 @@ function TelegramPostWorkspace({
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
   const displayedError = error || editing?.lastError || "";
+  const internalLinkScheduledAt =
+    mode === "schedule" && scheduleDate && scheduleTime
+      ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
+      : undefined;
   const editingIsSaving = Boolean(
     editing && savingPostIds.includes(editing.id),
   );
@@ -816,9 +818,17 @@ function TelegramPostWorkspace({
       );
       setEditing(post);
       setManualTelegramUrl(post.telegramMessageUrls[0] || "");
-      await queryClient.invalidateQueries({
-        queryKey: ["telegram-managed-posts", channelId],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["post-groups", channelId],
+        }),
+      ]);
       pushToast("Telegram post link saved.", "success");
     } catch (saveError) {
       setError(apiErrorMessage(saveError, "Could not save Telegram post link"));
@@ -1193,6 +1203,14 @@ function TelegramPostWorkspace({
                       Open in Telegram
                     </a>
                   ) : null}
+                  {editing &&
+                  ["BROKEN", "MISSING"].includes(
+                    editing.telegramRemoteStatus,
+                  ) ? (
+                    <span className="rounded bg-red-950 px-2 py-1 text-[11px] font-medium text-red-300">
+                      Telegram link {editing.telegramRemoteStatus.toLowerCase()}
+                    </span>
+                  ) : null}
                 </div>
                 {isPublished ? (
                   <div className="mt-0.5 space-y-0.5 text-xs">
@@ -1262,15 +1280,21 @@ function TelegramPostWorkspace({
                 channelId={channelId}
                 currentPostId={editing?.id}
                 enableInternalPostLinks
+                internalLinkUsage={
+                  mode === "schedule" ? "schedule" : "publishNow"
+                }
+                internalLinkScheduledAt={internalLinkScheduledAt}
               />
             </FormField>
-            <MultiImageUpload
-              value={imageUrls}
-              onChange={setImageUrls}
-              disabled={busy || isPublished}
-              readOnly={isPublished}
-              onUploadingChange={setUploadingImages}
-            />
+            {!isPublished || imageUrls.length ? (
+              <MultiImageUpload
+                value={imageUrls}
+                onChange={setImageUrls}
+                disabled={busy || isPublished}
+                readOnly={isPublished}
+                onUploadingChange={setUploadingImages}
+              />
+            ) : null}
             {publishedLongImageTextMode ? (
               <LongImageTextModePanel
                 mode={publishedLongImageTextMode}
@@ -1345,9 +1369,12 @@ function TelegramPostWorkspace({
                 </div>
                 </div>
                 {editing &&
-                /link is broken|enter its Telegram link manually/i.test(
-                  displayedError,
-                ) ? (
+                (["BROKEN", "MISSING"].includes(
+                  editing.telegramRemoteStatus,
+                ) ||
+                  /link is broken|Telegram link manually/i.test(
+                    displayedError,
+                  )) ? (
                   <div className="mt-3 flex gap-2">
                     <Input
                       type="url"
@@ -1643,6 +1670,15 @@ function TelegramPostWorkspace({
                                         <span className="truncate">
                                           {post.title}
                                         </span>
+                                        {["BROKEN", "MISSING"].includes(
+                                          post.telegramRemoteStatus,
+                                        ) ? (
+                                          <AlertTriangle
+                                            size={13}
+                                            className="shrink-0 text-red-400"
+                                            aria-label={`Telegram ${post.telegramRemoteStatus.toLowerCase()}`}
+                                          />
+                                        ) : null}
                                       </span>
                                       {post.status !== "DRAFT" ? (
                                         <span className="block truncate text-[11px] text-neutral-500">

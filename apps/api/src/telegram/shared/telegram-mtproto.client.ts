@@ -1027,16 +1027,21 @@ export class TelegramMtprotoClient {
         ),
         date: this.toTelegramDate(message.date)?.toISOString() ?? null,
         isScheduled,
+        hasMedia: Boolean(message.media),
+        mediaKind: message.media?.className
+          ? String(message.media.className)
+          : null,
+        groupedId: message.groupedId != null ? String(message.groupedId) : null,
       });
       return {
         published: (published as any[])
-          .filter((message) => message?.id)
+          .filter((message) => message?.id && message?.date)
           .map((message) => serialize(message, false)),
         recentPublished: (recentPublished as any[])
           .filter((message) => message?.id && message?.date)
           .map((message) => serialize(message, false)),
         scheduled: (scheduled as any[])
-          .filter((message) => message?.id)
+          .filter((message) => message?.id && message?.date)
           .map((message) => serialize(message, true)),
       };
     } finally {

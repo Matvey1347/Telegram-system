@@ -10,6 +10,7 @@ import {
   TelegramChannelDataType,
   TelegramDataSourceStatus,
   TelegramManagedPostStatus,
+  TelegramManagedPostRemoteStatus,
   TelegramSourceType,
   TelegramUserAccountStatus,
 } from '@prisma/client';
@@ -58,6 +59,7 @@ import {
   extractInternalPostLinkIds,
   replaceInternalPostLinks,
 } from '../telegram/shared/internal-post-links';
+import { parseTelegramPostUrl } from '../telegram/shared/telegram-post-url';
 import {
   bulkActionCounts,
   movedPostDatabaseState,
@@ -1187,17 +1189,46 @@ export class TelegramChannelsService {
       where: {
         workspaceId,
         telegramChannelId: channelId,
-        status: { in: ['SCHEDULED', 'PUBLISHED'] },
-        telegramMessageIds: { isEmpty: false },
+        OR: [
+          {
+            status: {
+              in: [
+                TelegramManagedPostStatus.SCHEDULED,
+                TelegramManagedPostStatus.PUBLISHED,
+                TelegramManagedPostStatus.FAILED,
+              ],
+            },
+            telegramMessageIds: { isEmpty: false },
+          },
+          { telegramMessageUrls: { isEmpty: false } },
+          { status: TelegramManagedPostStatus.SCHEDULED },
+        ],
       },
     });
-    if (!posts.length) return { checked: 0, updated: 0, missing: 0 };
+    const emptyResult = {
+      checked: 0,
+      updated: 0,
+      publishedEarly: 0,
+      movedToDraft: 0,
+      broken: 0,
+      missing: 0,
+    };
+    if (!posts.length) return emptyResult;
     const account = await this.connectedAccount(workspaceId, channelId);
     const channelRef = this.channelRef(channel);
     if (!channelRef)
       throw new BadRequestException('Channel has no Telegram reference');
+    const idsFromUrls = posts.flatMap((post) =>
+      post.telegramMessageUrls.flatMap((url) => {
+        const parsed = parseTelegramPostUrl(url);
+        return parsed ? [parsed.messageId] : [];
+      }),
+    );
     const publishedMessageIds = [
-      ...new Set(posts.flatMap((post) => post.telegramMessageIds)),
+      ...new Set([
+        ...posts.flatMap((post) => post.telegramMessageIds),
+        ...idsFromUrls,
+      ]),
     ];
     const scheduledMessageIds = [
       ...new Set(
@@ -1218,6 +1249,28 @@ export class TelegramChannelsService {
     const scheduledById = new Map(
       remote.scheduled.map((message) => [message.id, message]),
     );
+    const validLinkTargets =
+      await this.prisma.telegramManagedPost.findMany({
+        where: {
+          workspaceId,
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          telegramMessageUrls: { isEmpty: false },
+        },
+        select: { id: true, telegramMessageUrls: true },
+      });
+    const internalIdByUrl = new Map(
+      validLinkTargets.flatMap((post) =>
+        post.telegramMessageUrls.map((url) => [url, post.id] as const),
+      ),
+    );
+    const restoreInternalLinks = (markup: string) => {
+      let restored = markup;
+      for (const [url, postId] of internalIdByUrl) {
+        restored = restored.replaceAll(`](${url})`, `](tg-post:${postId})`);
+      }
+      return restored;
+    };
     const claimedRecentMessageIds = new Set<string>();
     const normalizedPlainText = (value: string) => {
       const withoutInternalTargets = (value || '').replace(
@@ -1229,15 +1282,23 @@ export class TelegramChannelsService {
       );
       return plain.replace(/\s+/g, ' ').trim().toLowerCase();
     };
-    let updated = 0;
-    let missing = 0;
+    const result = { ...emptyResult, checked: posts.length };
     for (const post of posts) {
-      const scheduledMessages = post.telegramMessageIds
+      const postIds = [
+        ...new Set([
+          ...post.telegramMessageIds,
+          ...post.telegramMessageUrls.flatMap((url) => {
+            const parsed = parseTelegramPostUrl(url);
+            return parsed ? [parsed.messageId] : [];
+          }),
+        ]),
+      ];
+      const scheduledMessages = postIds
         .map((id) => scheduledById.get(id))
         .filter((message): message is NonNullable<typeof message> =>
           Boolean(message),
         );
-      let publishedMessages = post.telegramMessageIds
+      let publishedMessages = postIds
         .map((id) => publishedById.get(id))
         .filter((message): message is NonNullable<typeof message> =>
           Boolean(message),
@@ -1285,72 +1346,98 @@ export class TelegramChannelsService {
         : publishedMessages;
       if (!messages.length) {
         if (post.status === 'SCHEDULED') {
-          missing += 1;
-          const expectedUrls = post.telegramMessageIds.flatMap((id) => {
-            const url = this.telegramMessageUrl(channel, id);
-            return url ? [url] : [];
-          });
+          result.missing += 1;
+          result.movedToDraft += 1;
+          result.updated += 1;
           await this.prisma.telegramManagedPost.update({
             where: { id: post.id },
             data: {
-              status: 'PUBLISHED',
-              publishedAt:
-                post.scheduledAt && post.scheduledAt.getTime() <= Date.now()
-                  ? post.scheduledAt
-                  : new Date(),
+              status: TelegramManagedPostStatus.DRAFT,
+              telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
+              publishedAt: null,
               scheduledAt: null,
-              telegramMessageUrls: expectedUrls,
+              telegramMessageIds: [],
+              telegramMessageUrls: [],
+              sourceType: null,
+              sourceId: null,
               lastError:
-                'Telegram post link is broken or the published message could not be found. Recreate the post or enter its Telegram link manually.',
+                'This post was scheduled in Telegram, but the scheduled message was not found. It may have been deleted in Telegram. Publish it again or enter a valid Telegram post link manually.',
+              lastTelegramSyncedAt: new Date(),
+              lastTelegramSyncNote:
+                'Scheduled Telegram message was not found during sync.',
             },
           });
-          updated += 1;
         } else if (post.status === 'PUBLISHED') {
-          missing += 1;
+          result.broken += 1;
+          result.updated += 1;
           await this.prisma.telegramManagedPost.update({
             where: { id: post.id },
             data: {
+              telegramRemoteStatus: TelegramManagedPostRemoteStatus.BROKEN,
               lastError:
-                'Telegram post link is broken or the message could not be found. Recreate the post or enter its Telegram link manually.',
+                'Telegram post link is broken. The message could not be found in Telegram. Enter a valid Telegram link manually or publish the post again.',
+              lastTelegramSyncedAt: new Date(),
+              lastTelegramSyncNote:
+                'Published Telegram message was not found during sync.',
             },
           });
         }
         continue;
       }
-      const remoteText = messages
+      const remoteText = restoreInternalLinks(
+        messages
         .map((message) => this.telegramHtmlToManagedMarkup(message.html))
         .filter(Boolean)
-        .join('\n\n');
+          .join('\n\n'),
+      );
       const becamePublished =
-        post.status === 'SCHEDULED' && !scheduledMessages.length;
+        post.status !== TelegramManagedPostStatus.PUBLISHED &&
+        !scheduledMessages.length &&
+        publishedMessages.length > 0;
       const actualMessageIds =
-        becamePublished && publishedMessages.length
+        publishedMessages.length
           ? publishedMessages.map((message) => message.id)
-          : post.telegramMessageIds;
+          : postIds;
+      const isScheduledRemote = scheduledMessages.length > 0;
+      const remoteUrls = isScheduledRemote
+        ? []
+        : actualMessageIds.flatMap((id) => {
+            const url = this.telegramMessageUrl(channel, id);
+            return url ? [url] : [];
+          });
+      const hasRemoteMedia = messages.some((message) => message.hasMedia);
+      const mediaNote =
+        hasRemoteMedia && !post.imageUrls.length
+          ? 'Telegram media changed, but media download is not implemented.'
+          : null;
       await this.prisma.telegramManagedPost.update({
         where: { id: post.id },
         data: {
-          ...(post.text?.includes('tg-post:') || !remoteText
-            ? {}
-            : { text: remoteText }),
+          ...(remoteText ? { text: remoteText } : {}),
+          ...(!hasRemoteMedia && post.imageUrls.length ? { imageUrls: [] } : {}),
           status: becamePublished ? 'PUBLISHED' : post.status,
+          telegramRemoteStatus: isScheduledRemote
+            ? TelegramManagedPostRemoteStatus.SCHEDULED
+            : TelegramManagedPostRemoteStatus.PUBLISHED,
           publishedAt: becamePublished
             ? new Date(messages[0].date || Date.now())
             : post.publishedAt,
-          scheduledAt: becamePublished ? null : post.scheduledAt,
+          scheduledAt: isScheduledRemote
+            ? new Date(messages[0].date || post.scheduledAt || Date.now())
+            : null,
           telegramMessageIds: actualMessageIds,
-          telegramMessageUrls: becamePublished
-            ? actualMessageIds.flatMap((id) => {
-                const url = this.telegramMessageUrl(channel, id);
-                return url ? [url] : [];
-              })
-            : post.telegramMessageUrls,
+          telegramMessageUrls: remoteUrls,
           lastError: null,
+          lastTelegramSyncedAt: new Date(),
+          lastTelegramSyncNote: becamePublished
+            ? 'Post was published in Telegram before the scheduled time.'
+            : mediaNote,
         },
       });
-      updated += 1;
+      result.updated += 1;
+      if (becamePublished) result.publishedEarly += 1;
     }
-    return { checked: posts.length, updated, missing };
+    return result;
   }
 
   async setManagedPostTelegramUrl(
@@ -1360,18 +1447,62 @@ export class TelegramChannelsService {
     telegramUrl: string,
   ) {
     const workspaceId = await this.workspace(userId);
-    const post = await this.prisma.telegramManagedPost.findFirst({
+    const [post, channel] = await Promise.all([
+      this.prisma.telegramManagedPost.findFirst({
       where: { id: postId, workspaceId, telegramChannelId: channelId },
       select: { id: true },
-    });
-    if (!post) throw new NotFoundException('Managed post not found');
-    const url = new URL(telegramUrl);
-    if (url.protocol !== 'https:' || url.hostname !== 't.me') {
+      }),
+      this.prisma.telegramChannel.findFirst({
+        where: { id: channelId, workspaceId },
+      }),
+    ]);
+    if (!post || !channel) throw new NotFoundException('Managed post not found');
+    const parsed = parseTelegramPostUrl(telegramUrl);
+    if (!parsed) {
       throw new BadRequestException('Enter a valid https://t.me/... post URL');
     }
+    const channelUsername = this.normalizeUsername(channel.username);
+    const channelChatId = this.normalizeChatId(channel.telegramChatId);
+    if (
+      (parsed.kind === 'public' && parsed.username !== channelUsername) ||
+      (parsed.kind === 'private' && parsed.chatId !== channelChatId)
+    ) {
+      throw new BadRequestException('Telegram link belongs to another channel');
+    }
+    const account = await this.connectedAccount(workspaceId, channelId);
+    const channelRef = this.channelRef(channel);
+    if (!channelRef)
+      throw new BadRequestException('Channel has no Telegram reference');
+    const remote = await this.mtprotoClient.getManagedPostMessages({
+      ...this.accountCredentials(account),
+      channelRef,
+      publishedMessageIds: [parsed.messageId],
+      scheduledMessageIds: [],
+    });
+    const message = remote.published.find(
+      (item) => item.id === parsed.messageId,
+    );
+    if (!message) {
+      throw new BadRequestException(
+        'Telegram message was not found. Enter a valid post link.',
+      );
+    }
+    const text = this.telegramHtmlToManagedMarkup(message.html);
     return this.prisma.telegramManagedPost.update({
       where: { id: postId },
-      data: { telegramMessageUrls: [url.toString()], lastError: null },
+      data: {
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+        telegramMessageIds: [parsed.messageId],
+        telegramMessageUrls: [telegramUrl],
+        publishedAt: message.date ? new Date(message.date) : new Date(),
+        scheduledAt: null,
+        ...(text ? { text } : {}),
+        lastError: null,
+        lastTelegramSyncedAt: new Date(),
+        lastTelegramSyncNote:
+          'Telegram link was manually attached and verified.',
+      },
       include: this.managedPostInclude,
     });
   }
@@ -1384,10 +1515,33 @@ export class TelegramChannelsService {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
     const search = query.search?.trim();
+    const scheduledBefore =
+      query.usage === 'schedule' && query.scheduledAt
+        ? new Date(query.scheduledAt)
+        : null;
     const posts = await this.prisma.telegramManagedPost.findMany({
       where: {
         workspaceId,
         telegramChannelId: channelId,
+        lastError: null,
+        OR: [
+          {
+            status: TelegramManagedPostStatus.PUBLISHED,
+            telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+            telegramMessageUrls: { isEmpty: false },
+          },
+          ...(scheduledBefore
+            ? [
+                {
+                  status: TelegramManagedPostStatus.SCHEDULED,
+                  telegramRemoteStatus:
+                    TelegramManagedPostRemoteStatus.SCHEDULED,
+                  scheduledAt: { lt: scheduledBefore },
+                  telegramMessageIds: { isEmpty: false },
+                },
+              ]
+            : []),
+        ],
         ...(query.groupId ? { groupId: query.groupId } : {}),
         ...(query.excludePostId ? { id: { not: query.excludePostId } } : {}),
         ...(search
@@ -1399,6 +1553,7 @@ export class TelegramChannelsService {
         title: true,
         icon: true,
         status: true,
+        telegramRemoteStatus: true,
         groupId: true,
         publishedAt: true,
         telegramMessageUrls: true,
@@ -1414,6 +1569,7 @@ export class TelegramChannelsService {
       title: post.title,
       icon: post.icon,
       status: post.status,
+      telegramRemoteStatus: post.telegramRemoteStatus,
       groupId: post.groupId,
       groupTitle: post.group?.title ?? null,
       telegramChannelId: post.telegramChannelId,
@@ -1442,6 +1598,8 @@ export class TelegramChannelsService {
         id: true,
         title: true,
         status: true,
+        telegramRemoteStatus: true,
+        lastError: true,
         scheduledAt: true,
         telegramMessageIds: true,
         telegramMessageUrls: true,
@@ -1456,7 +1614,10 @@ export class TelegramChannelsService {
       if (!target) return [`${targetId}: post was not found`];
       if (
         currentScheduleAt &&
-        target.status === TelegramManagedPostStatus.SCHEDULED
+        target.status === TelegramManagedPostStatus.SCHEDULED &&
+        target.telegramRemoteStatus ===
+          TelegramManagedPostRemoteStatus.SCHEDULED &&
+        !target.lastError
       ) {
         if (
           !target.scheduledAt ||
@@ -1481,12 +1642,17 @@ export class TelegramChannelsService {
       }
       if (target.status !== TelegramManagedPostStatus.PUBLISHED) {
         return [
-          `"${target.title}" (${target.id}) is ${target.status.toLowerCase()}, not published`,
+          `"${target.title}" (${target.id}) is not published or has a broken Telegram link`,
         ];
       }
-      if (!target.telegramMessageUrls[0]) {
+      if (
+        target.telegramRemoteStatus !==
+          TelegramManagedPostRemoteStatus.PUBLISHED ||
+        target.lastError ||
+        !target.telegramMessageUrls[0]
+      ) {
         return [
-          `"${target.title}" (${target.id}) has no published Telegram URL`,
+          `"${target.title}" (${target.id}) is not published or has a broken Telegram link`,
         ];
       }
       return [];
@@ -1864,6 +2030,9 @@ export class TelegramChannelsService {
         where: { id: post.id },
         data: {
           status: scheduleAt ? 'SCHEDULED' : 'PUBLISHED',
+          telegramRemoteStatus: scheduleAt
+            ? TelegramManagedPostRemoteStatus.SCHEDULED
+            : TelegramManagedPostRemoteStatus.PUBLISHED,
           scheduledAt: scheduleAt ?? null,
           publishedAt: scheduleAt ? null : new Date(),
           telegramMessageIds: ids,
@@ -1877,6 +2046,8 @@ export class TelegramChannelsService {
           sourceId: source.sourceId,
           publishMode,
           lastError: null,
+          lastTelegramSyncedAt: new Date(),
+          lastTelegramSyncNote: null,
         },
         include: this.managedPostInclude,
       });
@@ -1892,6 +2063,9 @@ export class TelegramChannelsService {
         where: { id: post.id },
         data: {
           status: 'FAILED',
+          telegramRemoteStatus: previousScheduledMessageCancelled
+            ? TelegramManagedPostRemoteStatus.MISSING
+            : TelegramManagedPostRemoteStatus.UNKNOWN,
           lastError: publicMessage,
           telegramMessageIds: previousScheduledMessageCancelled
             ? []
@@ -2065,6 +2239,7 @@ export class TelegramChannelsService {
             where: { id: post.id },
             data: {
               status: TelegramManagedPostStatus.DRAFT,
+              telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
               scheduledAt: null,
               telegramMessageIds: [],
               telegramMessageUrls: [],
@@ -2176,6 +2351,7 @@ export class TelegramChannelsService {
           where: { id: post.id },
           data: {
             status: TelegramManagedPostStatus.DRAFT,
+            telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
             scheduledAt: null,
             publishedAt: null,
             telegramMessageIds: [],
