@@ -315,6 +315,7 @@ function TelegramPostWorkspace({
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
   const isPublished = editing?.status === "PUBLISHED";
+  const displayedError = error || editing?.lastError || "";
   const editingIsSaving = Boolean(
     editing && savingPostIds.includes(editing.id),
   );
@@ -1222,7 +1223,17 @@ function TelegramPostWorkspace({
                 </FormField>
               </div>
             ) : null}
-            {error ? <p className="text-sm text-red-300">{error}</p> : null}
+            {displayedError ? (
+              <div className="flex items-start gap-2 rounded-lg border border-red-800/70 bg-red-950/25 px-3 py-2.5 text-sm text-red-200">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-medium">Last publish error</p>
+                  <p className="mt-0.5 break-words text-red-300">
+                    {displayedError}
+                  </p>
+                </div>
+              </div>
+            ) : null}
             {pendingPostSaves.length + savingPostIds.length > 0 ? (
               <div className="flex items-center gap-2 rounded-lg border border-blue-800/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
                 <LoaderCircle size={14} className="animate-spin" />

@@ -556,6 +556,7 @@ export type TelegramManagedPost = {
 export type TelegramManagedPostLinkTarget = {
   id: string;
   title: string;
+  icon?: string | null;
   status: TelegramManagedPostStatus;
   groupId?: string | null;
   groupTitle?: string | null;

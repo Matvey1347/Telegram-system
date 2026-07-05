@@ -36,7 +36,10 @@ describe('TelegramChannelsService internal post link resolver', () => {
         id: 'draft',
         title: 'Draft target',
         status: TelegramManagedPostStatus.DRAFT,
+        scheduledAt: null,
+        telegramMessageIds: [],
         telegramMessageUrls: [],
+        telegramChannel: { username: 'example', telegramChatId: null },
       },
     ]);
     await expect(
@@ -54,10 +57,13 @@ describe('TelegramChannelsService internal post link resolver', () => {
         id: 'published',
         title: 'Published target',
         status: TelegramManagedPostStatus.PUBLISHED,
+        scheduledAt: null,
+        telegramMessageIds: ['42', '43'],
         telegramMessageUrls: [
           'https://t.me/example/42',
           'https://t.me/example/43',
         ],
+        telegramChannel: { username: 'example', telegramChatId: null },
       },
     ]);
     await expect(
@@ -67,5 +73,49 @@ describe('TelegramChannelsService internal post link resolver', () => {
         '[Published](tg-post:published)',
       ),
     ).resolves.toBe('[Published](https://t.me/example/42)');
+  });
+
+  it('resolves an earlier scheduled target while scheduling a later post', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'scheduled',
+        title: 'Earlier scheduled target',
+        status: TelegramManagedPostStatus.SCHEDULED,
+        scheduledAt: new Date('2026-07-05T11:16:00.000Z'),
+        telegramMessageIds: ['42'],
+        telegramMessageUrls: [],
+        telegramChannel: { username: '@example', telegramChatId: null },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Scheduled](tg-post:scheduled)',
+        new Date('2026-07-06T11:16:00.000Z'),
+      ),
+    ).resolves.toBe('[Scheduled](https://t.me/example/42)');
+  });
+
+  it('rejects a scheduled target that is not earlier', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'scheduled',
+        title: 'Later target',
+        status: TelegramManagedPostStatus.SCHEDULED,
+        scheduledAt: new Date('2026-07-07T11:16:00.000Z'),
+        telegramMessageIds: ['42'],
+        telegramMessageUrls: [],
+        telegramChannel: { username: 'example', telegramChatId: null },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Scheduled](tg-post:scheduled)',
+        new Date('2026-07-06T11:16:00.000Z'),
+      ),
+    ).rejects.toThrow('must be scheduled before');
   });
 });

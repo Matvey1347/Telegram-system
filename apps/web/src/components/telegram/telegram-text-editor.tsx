@@ -13,11 +13,13 @@ import {
   X,
 } from "lucide-react";
 import { type KeyboardEvent, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
+  iconsApi,
   telegramChannelsApi,
   type TelegramManagedPostLinkTarget,
 } from "@/lib/api";
+import { IconAvatar } from "@/components/icons/icon-avatar";
 
 type TelegramTextEditorProps = {
   value: string;
@@ -105,7 +107,9 @@ export function TelegramTextEditor({
   const [linkEditorOpen, setLinkEditorOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("https://");
   const [linkError, setLinkError] = useState("");
-  const [linkMode, setLinkMode] = useState<"external" | "internal">("external");
+  const [linkMode, setLinkMode] = useState<"external" | "internal">(
+    enableInternalPostLinks && channelId ? "internal" : "external",
+  );
   const [internalSearch, setInternalSearch] = useState("");
   const internalLinksEnabled = enableInternalPostLinks && Boolean(channelId);
   const linkTargets = useQuery({
@@ -123,6 +127,26 @@ export function TelegramTextEditor({
       }),
     enabled: linkEditorOpen && linkMode === "internal" && internalLinksEnabled,
   });
+  const targetIconIds = [
+    ...new Set(
+      (linkTargets.data || [])
+        .map((target) => target.icon)
+        .filter((iconId): iconId is string => Boolean(iconId)),
+    ),
+  ];
+  const targetIconQueries = useQueries({
+    queries: targetIconIds.map((iconId) => ({
+      queryKey: ["icon", iconId],
+      queryFn: () => iconsApi.get(iconId),
+      enabled: linkEditorOpen,
+    })),
+  });
+  const targetIcons = new Map(
+    targetIconQueries
+      .map((query) => query.data)
+      .filter((icon) => Boolean(icon))
+      .map((icon) => [icon!.id, icon!]),
+  );
 
   /* eslint-disable react-hooks/refs -- reset editor history when a parent hydrates a different value */
   if (lastKnownValueRef.current !== value) {
@@ -237,7 +261,7 @@ export function TelegramTextEditor({
       end: textarea.selectionEnd,
     };
     setLinkUrl("https://");
-    setLinkMode("external");
+    setLinkMode(internalLinksEnabled ? "internal" : "external");
     setInternalSearch("");
     setLinkError("");
     setLinkEditorOpen(true);
@@ -440,15 +464,30 @@ export function TelegramTextEditor({
                     key={target.id}
                     type="button"
                     onClick={() => applyInternalLink(target)}
-                    className="flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-neutral-800"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-neutral-800"
                   >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm text-white">
-                        {target.title}
+                    {target.icon && targetIcons.get(target.icon) ? (
+                      <IconAvatar
+                        icon={targetIcons.get(target.icon)}
+                        label={target.title}
+                        size="xs"
+                      />
+                    ) : (
+                      <span
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-xs"
+                        aria-hidden="true"
+                      >
+                        {target.status === "PUBLISHED"
+                          ? "✅"
+                          : target.status === "SCHEDULED"
+                            ? "🕒"
+                            : target.status === "FAILED"
+                              ? "⚠️"
+                              : "📝"}
                       </span>
-                      <span className="block truncate text-xs text-neutral-500">
-                        {target.groupTitle || "No group"}
-                      </span>
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-sm text-white">
+                      {target.title}
                     </span>
                     <span
                       className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
@@ -472,10 +511,6 @@ export function TelegramTextEditor({
                   </p>
                 ) : null}
               </div>
-              <p className="mt-2 text-[11px] text-neutral-500">
-                Draft and scheduled targets can be linked, but this post cannot
-                be published until the target is published.
-              </p>
             </div>
           )}
         </div>

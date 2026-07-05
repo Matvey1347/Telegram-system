@@ -1176,6 +1176,7 @@ export class TelegramChannelsService {
       select: {
         id: true,
         title: true,
+        icon: true,
         status: true,
         groupId: true,
         publishedAt: true,
@@ -1190,6 +1191,7 @@ export class TelegramChannelsService {
     return posts.map((post) => ({
       id: post.id,
       title: post.title,
+      icon: post.icon,
       status: post.status,
       groupId: post.groupId,
       groupTitle: post.group?.title ?? null,
@@ -1204,6 +1206,7 @@ export class TelegramChannelsService {
     workspaceId: string,
     currentPostId: string,
     text: string,
+    currentScheduleAt?: Date,
   ) {
     const targetIds = extractInternalPostLinkIds(text);
     if (!targetIds.length) return text;
@@ -1218,13 +1221,43 @@ export class TelegramChannelsService {
         id: true,
         title: true,
         status: true,
+        scheduledAt: true,
+        telegramMessageIds: true,
         telegramMessageUrls: true,
+        telegramChannel: {
+          select: { username: true, telegramChatId: true },
+        },
       },
     });
     const targetsById = new Map(targets.map((target) => [target.id, target]));
     const unresolved = targetIds.flatMap((targetId) => {
       const target = targetsById.get(targetId);
       if (!target) return [`${targetId}: post was not found`];
+      if (
+        currentScheduleAt &&
+        target.status === TelegramManagedPostStatus.SCHEDULED
+      ) {
+        if (
+          !target.scheduledAt ||
+          target.scheduledAt.getTime() >= currentScheduleAt.getTime()
+        ) {
+          return [
+            `"${target.title}" (${target.id}) must be scheduled before the post that links to it`,
+          ];
+        }
+        if (
+          !target.telegramMessageIds[0] ||
+          !this.telegramMessageUrl(
+            target.telegramChannel,
+            target.telegramMessageIds[0],
+          )
+        ) {
+          return [
+            `"${target.title}" (${target.id}) has no usable scheduled Telegram message URL`,
+          ];
+        }
+        return [];
+      }
       if (target.status !== TelegramManagedPostStatus.PUBLISHED) {
         return [
           `"${target.title}" (${target.id}) is ${target.status.toLowerCase()}, not published`,
@@ -1242,12 +1275,21 @@ export class TelegramChannelsService {
         `Cannot publish post because some internal post links are unresolved: ${unresolved.join('; ')}.`,
       );
     }
-    return replaceInternalPostLinks(
-      text,
-      new Map(
-        targets.map((target) => [target.id, target.telegramMessageUrls[0]]),
-      ),
-    );
+    const urlsByPostId = new Map<string, string>();
+    for (const target of targets) {
+      const url =
+        target.telegramMessageUrls[0] ??
+        (currentScheduleAt &&
+        target.status === TelegramManagedPostStatus.SCHEDULED &&
+        target.telegramMessageIds[0]
+          ? this.telegramMessageUrl(
+              target.telegramChannel,
+              target.telegramMessageIds[0],
+            )
+          : null);
+      if (url) urlsByPostId.set(target.id, url);
+    }
+    return replaceInternalPostLinks(text, urlsByPostId);
   }
 
   async reorderManagedPostSidebar(
@@ -1433,6 +1475,7 @@ export class TelegramChannelsService {
         workspaceId,
         post.id,
         post.text || '',
+        scheduleAt,
       );
       const html = telegramMarkupToHtml(resolvedText);
       const [plainText] = HTMLParser.parse(html);
