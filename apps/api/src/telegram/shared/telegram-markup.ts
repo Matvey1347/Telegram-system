@@ -1,4 +1,4 @@
-import { parseTelegramSpoilers } from '@telegram-system/shared/telegram-spoilers';
+import { parseTelegramSpoilers } from './telegram-spoilers';
 
 const escapeHtml = (value: string) =>
   value

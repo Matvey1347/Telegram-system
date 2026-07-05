@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { authApi } from '@/lib/api';
-import { setAccessToken } from '@/lib/auth';
+import { consumeAuthReturnTo, getAuthRedirectParam, setAccessToken } from '@/lib/auth';
+import { clearPersistedQueryCache } from '@/providers/query-provider';
 import { Button, FormError, Input } from '@/components/ui/primitives';
 
 type RegisterValues = { email: string; password: string; name: string; workspaceName?: string };
@@ -19,10 +20,13 @@ export default function RegisterPage() {
     setError('');
     try {
       const result = await authApi.register(values);
+      clearPersistedQueryCache();
       setAccessToken(result.accessToken);
-      router.replace('/');
-    } catch (e: any) {
-      setError(e?.response?.data?.message || 'Failed to register');
+      router.replace(consumeAuthReturnTo(getAuthRedirectParam()));
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: unknown } } })
+        ?.response?.data?.message;
+      setError(typeof message === 'string' ? message : 'Failed to register');
     }
   });
 

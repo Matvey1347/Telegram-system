@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
 import { authApi, isApiNetworkError } from '@/lib/api';
-import { setAccessToken } from '@/lib/auth';
+import { consumeAuthReturnTo, getAuthRedirectParam, setAccessToken } from '@/lib/auth';
+import { clearPersistedQueryCache } from '@/providers/query-provider';
 import { Button, FormError, Input } from '@/components/ui/primitives';
 
 type LoginValues = { email: string; password: string };
@@ -20,8 +21,9 @@ export default function LoginPage() {
     setError('');
     try {
       const result = await authApi.login(values.email, values.password);
+      clearPersistedQueryCache();
       setAccessToken(result.accessToken);
-      router.replace('/');
+      router.replace(consumeAuthReturnTo(getAuthRedirectParam()));
     } catch (error) {
       if (isApiNetworkError(error)) {
         setError('Unable to connect to the server. Please try again later.');

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -184,6 +184,7 @@ function TelegramPostWorkspace({
   onPostSelect: (postId: string | null) => void;
 }) {
   const restoredPostIdRef = useRef("");
+  const queryClient = useQueryClient();
   const { pushToast } = useAppToast();
   const [workspaceView, setWorkspaceView] = useState<"posts" | "groups">(
     "posts",
@@ -404,22 +405,21 @@ function TelegramPostWorkspace({
         ...groupedPendingPostSaves.grouped.keys(),
       ]),
     ];
+    const groupSections: PostSidebarSection[] = groupIds.flatMap((groupId) => {
+      const visibleGroup = visibleGroupsById.get(groupId);
+      const group = visibleGroup?.group ?? groupsById.get(groupId);
+      if (!group) return [];
+      return [
+        {
+          key: `group:${group.id}`,
+          group,
+          posts: visibleGroup?.posts ?? [],
+          pendingPosts: groupedPendingPostSaves.grouped.get(group.id) ?? [],
+        },
+      ];
+    });
     const sections: PostSidebarSection[] = [
-      ...groupIds
-        .map((groupId) => {
-          const visibleGroup = visibleGroupsById.get(groupId);
-          const group = visibleGroup?.group ?? groupsById.get(groupId);
-          if (!group) return null;
-          return {
-            key: `group:${group.id}`,
-            group,
-            posts: visibleGroup?.posts ?? [],
-            pendingPosts: groupedPendingPostSaves.grouped.get(group.id) ?? [],
-          };
-        })
-        .filter(
-          (section): section is PostSidebarSection => Boolean(section),
-        ),
+      ...groupSections,
       ...groupedVisiblePosts.ungrouped.map((post) => ({
         key: `post:${post.id}`,
         group: null,
@@ -498,6 +498,41 @@ function TelegramPostWorkspace({
       sidebarReorderQueueRef.current = sidebarReorderQueueRef.current
         .catch(() => undefined)
         .then(async () => {
+          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>([
+            "telegram-managed-posts",
+            channelId,
+          ]);
+          const previousGroups = queryClient.getQueryData<PostGroup[]>([
+            "post-groups",
+            channelId,
+          ]);
+          const orderIndex = new Map(
+            completeOrder.map((key, index) => [key, index]),
+          );
+          queryClient.setQueryData<TelegramManagedPost[]>(
+            ["telegram-managed-posts", channelId],
+            (current) =>
+              current?.map((post) =>
+                post.groupId
+                  ? post
+                  : {
+                      ...post,
+                      sidebarPosition:
+                        orderIndex.get(`post:${post.id}`) ??
+                        post.sidebarPosition,
+                    },
+              ),
+          );
+          queryClient.setQueryData<PostGroup[]>(
+            ["post-groups", channelId],
+            (current) =>
+              current?.map((group) => ({
+                ...group,
+                sidebarPosition:
+                  orderIndex.get(`group:${group.id}`) ??
+                  group.sidebarPosition,
+              })),
+          );
           try {
             await telegramChannelsApi.reorderManagedPostSidebar(
               channelId,
@@ -505,11 +540,21 @@ function TelegramPostWorkspace({
               true,
             );
             if (version !== sidebarReorderVersionRef.current) return;
-            await Promise.all([posts.refetch(), postGroups.refetch()]);
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ["telegram-managed-posts", channelId],
+              }),
+              queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+            ]);
             setSidebarOrderKeys([]);
             pushToast("New sidebar order saved.", "success", 3000);
           } catch (reorderError) {
             if (version !== sidebarReorderVersionRef.current) return;
+            queryClient.setQueryData(
+              ["telegram-managed-posts", channelId],
+              previousPosts,
+            );
+            queryClient.setQueryData(["post-groups", channelId], previousGroups);
             setSidebarOrderKeys([]);
             pushToast(
               apiErrorMessage(reorderError, "Could not save the sidebar order"),
@@ -695,7 +740,12 @@ function TelegramPostWorkspace({
       setSelectedPostIds((current) =>
         current.filter((id) => !targetPosts.some((post) => post.id === id)),
       );
-      await posts.refetch();
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channelId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+      ]);
       setDeletingPost(null);
       setBulkDeleteOpen(false);
     } finally {
@@ -835,13 +885,17 @@ function TelegramPostWorkspace({
         );
       } finally {
         const [postsResult] = await Promise.allSettled([
-          posts.refetch(),
-          postGroups.refetch(),
+          queryClient.invalidateQueries({
+            queryKey: ["telegram-managed-posts", channelId],
+          }),
+          queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+        ]);
+        const refreshedPosts = queryClient.getQueryData<TelegramManagedPost[]>([
+          "telegram-managed-posts",
+          channelId,
         ]);
         if (editingPost && postsResult.status === "fulfilled") {
-          const refreshedPost = postsResult.value.data?.find(
-            (item) => item.id === editingPost.id,
-          );
+          const refreshedPost = refreshedPosts?.find((item) => item.id === editingPost.id);
           if (refreshedPost) {
             setEditing((current) =>
               current?.id === editingPost.id ? refreshedPost : current,
@@ -1482,10 +1536,17 @@ function TelegramPostWorkspace({
           channels={channels}
           sourceChannelId={channelId}
           onClose={() => setMovingPost(null)}
-          onMoved={async (result) => {
-            setMovingPost(null);
-            await posts.refetch();
-            pushToast(
+            onMoved={async (result) => {
+              setMovingPost(null);
+              await Promise.all([
+                queryClient.invalidateQueries({
+                  queryKey: ["telegram-managed-posts", channelId],
+                }),
+                queryClient.invalidateQueries({
+                  queryKey: ["post-groups", channelId],
+                }),
+              ]);
+              pushToast(
               result.results
                 .map((item) => item.message)
                 .filter(Boolean)
@@ -1717,6 +1778,7 @@ function PostGroupsWorkspace({
   channels: TelegramChannel[];
   onOpenPost: (post: TelegramManagedPost) => void;
 }) {
+  const queryClient = useQueryClient();
   const { pushToast, setProgress } = useAppToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState<PostGroup | "new" | null>(null);
@@ -1762,7 +1824,15 @@ function PostGroupsWorkspace({
   }, [detail.data?.posts, orderedPostIds]);
 
   const refresh = async () => {
-    await Promise.all([groups.refetch(), detail.refetch(), posts.refetch()]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+      selectedGroupId
+        ? queryClient.invalidateQueries({ queryKey: ["post-group", selectedGroupId] })
+        : Promise.resolve(),
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-managed-posts", channelId],
+      }),
+    ]);
   };
   const scheduleReorderSave = (
     groupId: string,
@@ -1777,6 +1847,47 @@ function PostGroupsWorkspace({
       reorderQueueRef.current = reorderQueueRef.current
         .catch(() => undefined)
         .then(async () => {
+          const previousDetail = queryClient.getQueryData<PostGroup>([
+            "post-group",
+            groupId,
+          ]);
+          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>([
+            "telegram-managed-posts",
+            channelId,
+          ]);
+          const orderIndex = new Map(
+            orderedPostIdsToSave.map((id, index) => [id, index]),
+          );
+          queryClient.setQueryData<PostGroup>(["post-group", groupId], (current) =>
+            current
+              ? {
+                  ...current,
+                  posts: [...(current.posts ?? [])]
+                    .map((post) => ({
+                      ...post,
+                      groupPosition:
+                        orderIndex.get(post.id) ?? post.groupPosition,
+                    }))
+                    .sort(
+                      (left, right) =>
+                        (left.groupPosition ?? Number.MAX_SAFE_INTEGER) -
+                        (right.groupPosition ?? Number.MAX_SAFE_INTEGER),
+                    ),
+                }
+              : current,
+          );
+          queryClient.setQueryData<TelegramManagedPost[]>(
+            ["telegram-managed-posts", channelId],
+            (current) =>
+              current?.map((post) =>
+                orderIndex.has(post.id)
+                  ? {
+                      ...post,
+                      groupPosition: orderIndex.get(post.id) ?? post.groupPosition,
+                    }
+                  : post,
+              ),
+          );
           try {
             await telegramChannelsApi.reorderPostGroup(
               groupId,
@@ -1784,12 +1895,21 @@ function PostGroupsWorkspace({
               true,
             );
             if (version !== reorderVersionRef.current) return;
-            await Promise.all([detail.refetch(), posts.refetch()]);
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ["post-group", groupId] }),
+              queryClient.invalidateQueries({
+                queryKey: ["telegram-managed-posts", channelId],
+              }),
+            ]);
             setOrderedPostIds([]);
             pushToast("New post order saved.", "success", 3000);
           } catch (error) {
             if (version !== reorderVersionRef.current) return;
-            await detail.refetch();
+            queryClient.setQueryData(["post-group", groupId], previousDetail);
+            queryClient.setQueryData(
+              ["telegram-managed-posts", channelId],
+              previousPosts,
+            );
             setOrderedPostIds([]);
             pushToast(
               apiErrorMessage(error, "Could not reorder posts"),

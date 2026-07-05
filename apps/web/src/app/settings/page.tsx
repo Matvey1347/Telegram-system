@@ -10,7 +10,7 @@ import { WorkspaceMembersSection } from '@/components/workspace/workspace-member
 
 export default function SettingsPage() {
   const qc = useQueryClient();
-  const me = useQuery({ queryKey: ['me-settings'], queryFn: authApi.me });
+  const me = useQuery({ queryKey: ['auth', 'me'], queryFn: authApi.me });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function SettingsPage() {
       setWorkspaceDeleteOpen(false);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['workspaces'] }),
-        qc.invalidateQueries({ queryKey: ['me-settings'] }),
+        qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
       ]);
       if (!remainingWorkspaceId && typeof window !== 'undefined') {
         window.location.reload();
@@ -42,6 +42,8 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!me.data?.workspace) return;
+    // Query data hydrates editable workspace form fields.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setWorkspaceName(me.data.workspace.name);
     setWorkspaceIconId(me.data.workspace.avatarIcon?.id ?? null);
   }, [me.data]);

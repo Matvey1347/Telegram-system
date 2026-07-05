@@ -25,31 +25,87 @@ export class ResponseCacheInterceptor implements NestInterceptor {
     const userId = request.user?.sub;
     const method = request.method?.toUpperCase();
     const url = request.originalUrl ?? '';
+    const workspaceId = this.workspaceId(request);
 
-    // Auth and health routes must always reflect the live request state.
-    if (!userId || url.includes('/auth/') || url.includes('/health')) return next.handle();
+    if (
+      !userId ||
+      !method ||
+      url.includes('/health') ||
+      this.isAuthMutation(url)
+    )
+      return next.handle();
 
-    const cachePrefix = `api:${userId}:`;
     if (method !== 'GET') {
-      this.cache.clear();
+      this.invalidateScope(userId, workspaceId);
       return next.handle();
     }
 
-    if (this.isLiveEndpoint(url)) return next.handle();
+    if (!this.isCacheableGet(url)) return next.handle();
 
-    const workspaceHeader = request.headers['x-workspace-id'];
-    const workspaceId = Array.isArray(workspaceHeader) ? workspaceHeader[0] : workspaceHeader ?? '';
-    const key = `${cachePrefix}${workspaceId}:${url}`;
-    return from(this.cache.getOrSet(key, this.ttl(url), () => firstValueFrom(next.handle())));
+    const key = `${this.scopePrefix(userId, workspaceId)}:${method}:${url}`;
+    return from(
+      this.cache.getOrSet(key, this.ttl(url), () =>
+        firstValueFrom(next.handle()),
+      ),
+    );
   }
 
   private ttl(url: string) {
-    if (url.includes('/dashboard/')) return 15_000;
-    if (url.includes('/global-search')) return 5_000;
-    return 10_000;
+    if (url.includes('/global-search')) return 7_000;
+    if (url.includes('/dashboard/')) return 45_000;
+    if (url === '/auth/me' || url.startsWith('/auth/me?')) return 5 * 60_000;
+    if (url === '/account/me' || url.startsWith('/account/me?'))
+      return 5 * 60_000;
+    if (url.startsWith('/workspaces')) return 5 * 60_000;
+    if (url.startsWith('/icons')) return 10 * 60_000;
+    if (url.startsWith('/telegram-channels/post-groups')) return 90_000;
+    if (/^\/telegram-channels\/[^/]+\/managed-posts(?:\?|$)/.test(url))
+      return 90_000;
+    if (url.startsWith('/telegram-channels')) return 90_000;
+    if (
+      url.startsWith('/workspace-members') ||
+      url.startsWith('/currencies') ||
+      url.startsWith('/finance/categories')
+    ) {
+      return 5 * 60_000;
+    }
+    return 60_000;
   }
 
-  private isLiveEndpoint(url: string) {
-    return /\/(sync|export|check|last-run|runs)(?:\?|\/|$)/.test(url);
+  private workspaceId(request: RequestWithUser) {
+    const workspaceHeader = request.headers['x-workspace-id'];
+    return Array.isArray(workspaceHeader)
+      ? (workspaceHeader[0] ?? '')
+      : (workspaceHeader ?? '');
+  }
+
+  private scopePrefix(userId: string, workspaceId: string) {
+    return `api:${userId}:${workspaceId || 'no-workspace'}`;
+  }
+
+  private invalidateScope(userId: string, workspaceId: string) {
+    if (workspaceId)
+      this.cache.clearByPrefix(this.scopePrefix(userId, workspaceId));
+    this.cache.clearByPrefix(this.scopePrefix(userId, ''));
+  }
+
+  private isCacheableGet(url: string) {
+    if (this.isNeverCached(url)) return false;
+    if (url.startsWith('/auth/') && !url.startsWith('/auth/me')) return false;
+    return true;
+  }
+
+  private isNeverCached(url: string) {
+    if (url.includes('/health')) return true;
+    if (this.isAuthMutation(url)) return true;
+    if (/\/(sync|export|check|last-run|runs|stream)(?:\?|\/|$)/.test(url))
+      return true;
+    if (/\/sync(?:[/-]|\?|$)/.test(url)) return true;
+    if (/(?:^|[-/])stream(?:\?|\/|$)/.test(url)) return true;
+    return false;
+  }
+
+  private isAuthMutation(url: string) {
+    return /\/(login|register|logout)(?:\?|\/|$)/.test(url);
   }
 }

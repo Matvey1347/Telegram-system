@@ -1,6 +1,6 @@
 import { Api } from 'telegram';
 import { HTMLParser } from 'telegram/extensions/html';
-import { parseTelegramSpoilers } from '@telegram-system/shared/telegram-spoilers';
+import { parseTelegramSpoilers } from './telegram-spoilers';
 import {
   telegramHtmlToMtprotoHtml,
   telegramMarkupToHtml,

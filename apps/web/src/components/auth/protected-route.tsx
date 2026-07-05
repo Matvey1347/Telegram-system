@@ -4,13 +4,26 @@ import { PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { isApiNetworkError } from '@/lib/api';
+import {
+  consumeAuthReturnTo,
+  getAuthRedirectParam,
+  getAuthRedirectPath,
+  rememberAuthReturnTo,
+} from '@/lib/auth';
 import { useAppToast } from '@/providers/toast-provider';
 import { Skeleton } from '@/components/ui/primitives';
 
 export function ProtectedRoute({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const router = useRouter();
-  const { token, isLoading, isAuthenticated, error } = useAuth();
+  const {
+    token,
+    isTokenReady,
+    isAuthResolved,
+    isLoading,
+    isAuthenticated,
+    error,
+  } = useAuth();
   const { pushToast } = useAppToast();
   const isAuthPage = pathname === '/login' || pathname === '/register';
   const [mounted, setMounted] = useState(false);
@@ -18,11 +31,12 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   const hasConnectionIssue = Boolean(token && isApiNetworkError(error));
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !isTokenReady) return;
 
     if (hasConnectionIssue) {
       if (!hasShownConnectionAlertRef.current) {
@@ -33,7 +47,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
     }
 
     hasShownConnectionAlertRef.current = false;
-  }, [mounted, hasConnectionIssue, pushToast]);
+  }, [mounted, isTokenReady, hasConnectionIssue, pushToast]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -45,13 +59,16 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
 
     if (pathname === '/login') {
       if (!isLoading && token && isAuthenticated) {
-        router.replace('/');
+        router.replace(consumeAuthReturnTo(getAuthRedirectParam()));
       }
       return;
     }
 
+    if (!isAuthResolved) return;
+
     if (!token) {
-      router.replace('/login');
+      rememberAuthReturnTo();
+      router.replace(getAuthRedirectPath());
       return;
     }
 
@@ -60,11 +77,12 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
     }
 
     if (!isLoading && token && !isAuthenticated) {
-      router.replace('/login');
+      rememberAuthReturnTo();
+      router.replace(getAuthRedirectPath());
     }
-  }, [mounted, token, isLoading, isAuthenticated, isAuthPage, router, pathname, hasConnectionIssue]);
+  }, [mounted, isTokenReady, isAuthResolved, token, isLoading, isAuthenticated, isAuthPage, router, pathname, hasConnectionIssue]);
 
-  if (!mounted) {
+  if (!mounted || !isTokenReady) {
     return <FullScreenLoader />;
   }
 

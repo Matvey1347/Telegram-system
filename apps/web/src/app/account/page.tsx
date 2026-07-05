@@ -11,6 +11,14 @@ import { Button, Card, FormError, FormField, Input, LoadingState, PageHeader } f
 type ProfileValues = { name: string; email: string };
 type PasswordValues = { currentPassword: string; newPassword: string; confirmNewPassword: string };
 
+function errorMessage(error: unknown, fallback: string) {
+  const response = (error as { response?: { data?: { message?: unknown } } })
+    ?.response;
+  return typeof response?.data?.message === 'string'
+    ? response.data.message
+    : fallback;
+}
+
 export default function AccountPage() {
   const qc = useQueryClient();
   const [profileError, setProfileError] = useState('');
@@ -23,6 +31,8 @@ export default function AccountPage() {
 
   useEffect(() => {
     if (!data) return;
+    // Query data hydrates this independent icon picker state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAvatarIconId(data.avatarIconId ?? data.avatarIcon?.id ?? null);
   }, [data]);
 
@@ -31,9 +41,9 @@ export default function AccountPage() {
     onSuccess: () => {
       setProfileError('');
       qc.invalidateQueries({ queryKey: ['account-me'] });
-      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
     },
-    onError: (e: any) => setProfileError(e?.response?.data?.message || 'Failed to update profile'),
+    onError: (error: unknown) => setProfileError(errorMessage(error, 'Failed to update profile')),
   });
 
   const updatePassword = useMutation({
@@ -42,7 +52,7 @@ export default function AccountPage() {
       setPasswordError('');
       passwordForm.reset();
     },
-    onError: (e: any) => setPasswordError(e?.response?.data?.message || 'Failed to update password'),
+    onError: (error: unknown) => setPasswordError(errorMessage(error, 'Failed to update password')),
   });
 
   return <AppShell>

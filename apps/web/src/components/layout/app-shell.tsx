@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { logout } from '@/lib/auth';
 import { accountApi, globalSearchApi, iconsApi, workspacesApi, type GlobalSearchResult } from '@/lib/api';
+import { clearPersistedQueryCache, isWorkspaceScopedQuery } from '@/providers/query-provider';
 import { CustomSelect } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { IconAvatar } from '@/components/icons/icon-avatar';
@@ -115,7 +116,10 @@ export function AppShell({ children }: PropsWithChildren) {
       setWorkspaceName('');
       setWorkspaceIconId(null);
       setCreatingWorkspace(false);
-      qc.invalidateQueries();
+      clearPersistedQueryCache();
+      qc.removeQueries({ predicate: (query) => isWorkspaceScopedQuery(query.queryKey) });
+      qc.invalidateQueries({ queryKey: ['workspaces'] });
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
     },
   });
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -157,13 +161,24 @@ export function AppShell({ children }: PropsWithChildren) {
     if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
     const nextWorkspaceId = workspaces[0].id;
     localStorage.setItem('selected-workspace-id', nextWorkspaceId);
+    // Workspace list supplies the initial selected workspace fallback.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedWorkspaceId(nextWorkspaceId);
   }, [selectedWorkspaceId, workspaces]);
 
   const switchWorkspace = (workspaceId: string) => {
     localStorage.setItem('selected-workspace-id', workspaceId);
     setSelectedWorkspaceId(workspaceId);
-    qc.invalidateQueries();
+    clearPersistedQueryCache();
+    qc.removeQueries({ predicate: (query) => isWorkspaceScopedQuery(query.queryKey) });
+    qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+    qc.invalidateQueries({ queryKey: ['workspaces'] });
+  };
+
+  const handleLogout = () => {
+    qc.clear();
+    clearPersistedQueryCache();
+    logout();
   };
 
   const toggleGroup = (key: string) => {
@@ -358,7 +373,7 @@ export function AppShell({ children }: PropsWithChildren) {
             </span>
             <ChevronRight size={16} className="shrink-0 text-neutral-500" />
           </Link>
-          <button onClick={logout} className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"><LogOut size={16} /> Logout</button>
+          <button onClick={handleLogout} className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"><LogOut size={16} /> Logout</button>
         </div>
       </aside>
       <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>

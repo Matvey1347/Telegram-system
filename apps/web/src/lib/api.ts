@@ -3,7 +3,12 @@ import type {
   BulkActionResult,
   BulkActionResultItem,
 } from "@telegram-system/shared";
-import { clearAccessToken, getAccessToken } from "./auth";
+import {
+  clearAccessToken,
+  getAccessToken,
+  getAuthRedirectPath,
+  rememberAuthReturnTo,
+} from "./auth";
 
 function resolveApiBaseUrl() {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
@@ -233,8 +238,10 @@ api.interceptors.response.use(
       typeof window !== "undefined"
     ) {
       clearAccessToken();
-      if (!["/login", "/register"].includes(window.location.pathname))
-        window.location.href = "/login";
+      if (!["/login", "/register"].includes(window.location.pathname)) {
+        rememberAuthReturnTo();
+        window.location.href = getAuthRedirectPath();
+      }
     }
     return Promise.reject(error);
   },
