@@ -778,6 +778,10 @@ function TelegramPostWorkspace({
   }, [assignedMemberId, currentMemberId, editing, memberSelectionTouched]);
 
   const selectPost = (post: TelegramManagedPost) => {
+    // A newly created post may still be saving in the background. Once the
+    // user opens another post, its editor must not inherit that save overlay.
+    setCreatingPostId(null);
+    creatingPostIdRef.current = null;
     restoredPostIdRef.current = post.id;
     setEditing(post);
     setTitle(post.title);

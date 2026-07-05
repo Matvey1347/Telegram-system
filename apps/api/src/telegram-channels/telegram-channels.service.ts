@@ -3683,6 +3683,9 @@ export class TelegramChannelsService {
           telegramMessageId: post.telegramMessageId,
           postDate: post.postDate,
           text: post.text,
+          formattedText: post.formattedText,
+          hasMedia: post.hasMedia,
+          mediaKind: post.mediaKind,
           viewsCount: post.viewsCount,
           forwardsCount: post.forwardsCount,
           reactionsCount: post.reactionsCount,
@@ -3693,6 +3696,9 @@ export class TelegramChannelsService {
         update: {
           postDate: post.postDate,
           text: post.text,
+          formattedText: post.formattedText,
+          hasMedia: post.hasMedia,
+          mediaKind: post.mediaKind,
           viewsCount: post.viewsCount,
           forwardsCount: post.forwardsCount,
           reactionsCount: post.reactionsCount,
@@ -3715,6 +3721,36 @@ export class TelegramChannelsService {
     }
     await this.recalculateDailyStatsFromPosts(channelId, [...affectedDays]);
     return { affectedDays: affectedDays.size };
+  }
+
+  async telegramPostMedia(
+    userId: string,
+    channelId: string,
+    postId: string,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const [channel, post] = await Promise.all([
+      this.prisma.telegramChannel.findFirst({
+        where: { id: channelId, workspaceId, isActive: true },
+      }),
+      this.prisma.telegramPost.findFirst({
+        where: { id: postId, telegramChannelId: channelId, workspaceId },
+        select: { telegramMessageId: true, hasMedia: true },
+      }),
+    ]);
+    if (!channel || !post) throw new NotFoundException('Telegram post not found');
+    if (!post.hasMedia) throw new NotFoundException('Post has no media');
+    const account = await this.connectedAccount(workspaceId, channelId);
+    const channelRef = this.channelRef(channel);
+    if (!channelRef)
+      throw new BadRequestException('Channel has no Telegram reference');
+    const media = await this.mtprotoClient.downloadChannelMessageMedia({
+      ...this.accountCredentials(account),
+      channelRef,
+      messageId: post.telegramMessageId,
+    });
+    if (!media) throw new NotFoundException('Telegram post media not found');
+    return media;
   }
 
   private oldestMessageId(metrics: Array<{ telegramMessageId: string }>) {

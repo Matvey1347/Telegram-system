@@ -1103,6 +1103,14 @@ export class TelegramMtprotoClient {
             telegramMessageId: String(message.id),
             postDate,
             text: message.message || null,
+            formattedText: HTMLParser.unparse(
+              String(message.message || ''),
+              message.entities || [],
+            ),
+            hasMedia: Boolean(message.media),
+            mediaKind: message.media?.className
+              ? String(message.media.className)
+              : null,
             viewsCount: this.toFiniteNumber(message.views),
             forwardsCount: this.toFiniteNumber(message.forwards),
             reactionsCount,
@@ -1112,6 +1120,36 @@ export class TelegramMtprotoClient {
           };
         })
         .filter((row): row is NonNullable<typeof row> => !!row);
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
+  async downloadChannelMessageMedia(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    messageId: string;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const entity = await client.getEntity(params.channelRef);
+      const messages = await client.getMessages(entity, {
+        ids: [Number(params.messageId)],
+      });
+      const message = (messages as any[]).find(
+        (item) => item?.id && item?.media,
+      );
+      if (!message) return null;
+      const downloaded = await client.downloadMedia(message, {});
+      if (!Buffer.isBuffer(downloaded)) return null;
+      const className = String(message.media?.className || '');
+      const mimeType = String(
+        message.media?.document?.mimeType ||
+          (className.includes('Photo') ? 'image/jpeg' : 'application/octet-stream'),
+      );
+      return { buffer: downloaded, mimeType };
     } finally {
       await this.closeClient(client);
     }

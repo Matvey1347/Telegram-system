@@ -427,6 +427,18 @@ export class TelegramChannelsController {
   ) {
     return this.service.syncPostsMetrics(user.sub, id, dto);
   }
+  @Get(':id/posts/:postId/media')
+  async telegramPostMedia(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Res() response: Response,
+  ) {
+    const media = await this.service.telegramPostMedia(user.sub, id, postId);
+    response.setHeader('Content-Type', media.mimeType);
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.send(media.buffer);
+  }
   @Post(':id/sync-stats')
   syncStats(
     @CurrentUser() user: JwtUser,

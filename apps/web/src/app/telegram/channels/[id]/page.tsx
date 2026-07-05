@@ -413,7 +413,10 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const visiblePosts = useMemo(
     () =>
-      posts.filter((post: any) => String(post?.text || "").trim().length > 0),
+      posts.filter(
+        (post: any) =>
+          String(post?.text || "").trim().length > 0 || post?.hasMedia,
+      ),
     [posts],
   );
   const inviteLinks = useMemo(
@@ -548,7 +551,7 @@ export default function TelegramChannelAnalyticsPage() {
       show: hasPositiveValue(computed.postsCount),
       title: "Posts Synced",
       value: formatNumber(computed.postsCount),
-      hint: `${computed.visiblePostsCount} with text`,
+      hint: `${computed.visiblePostsCount} with content`,
     },
     {
       key: "views",
@@ -814,6 +817,7 @@ export default function TelegramChannelAnalyticsPage() {
               ) : null}
               {!isPostsLoading && !postsError && visiblePosts.length ? (
                 <PostsTable
+                  channelId={params.id}
                   posts={visiblePosts}
                   subscribers={computed.subscribers}
                   savingPostId={
@@ -2159,11 +2163,13 @@ function TopPostsTable({
 }
 
 function PostsTable({
+  channelId,
   posts,
   subscribers,
   savingPostId,
   onSaveManualMetrics,
 }: {
+  channelId: string;
   posts: any[];
   subscribers: number;
   savingPostId?: string | null;
@@ -2393,7 +2399,7 @@ function PostsTable({
                   {formatLocalDate(post.postDate)}
                 </div>
                 <div className="min-w-0 px-3 py-2">
-                  <PostTextTooltip text={post.text || "-"} />
+                  <PostTextTooltip channelId={channelId} post={post} />
                 </div>
                 <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(views)}
@@ -2435,7 +2441,19 @@ function PostsTable({
   );
 }
 
-function PostTextTooltip({ text }: { text: string }) {
+function PostTextTooltip({
+  channelId,
+  post,
+}: {
+  channelId: string;
+  post: {
+    id: string;
+    text?: string | null;
+    formattedText?: string | null;
+    hasMedia?: boolean;
+    mediaKind?: string | null;
+  };
+}) {
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -2444,6 +2462,23 @@ function PostTextTooltip({ text }: { text: string }) {
     left: 0,
     ready: false,
   });
+  const media = useQuery({
+    queryKey: ["telegram-post-media", channelId, post.id],
+    queryFn: () => telegramChannelsApi.postMedia(channelId, post.id),
+    enabled: open && Boolean(post.hasMedia),
+    staleTime: 5 * 60_000,
+  });
+  const [mediaUrl, setMediaUrl] = useState("");
+  useEffect(() => {
+    if (!media.data) {
+      setMediaUrl("");
+      return;
+    }
+    const url = URL.createObjectURL(media.data);
+    setMediaUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [media.data]);
+  const text = post.text || "";
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !tooltipRef.current) return;
@@ -2466,17 +2501,46 @@ function PostTextTooltip({ text }: { text: string }) {
       Math.max(padding, trigger.left),
     );
     setPosition({ top, left, ready: true });
-  }, [open, text]);
+  }, [open, text, mediaUrl]);
 
   const tooltip =
     open && typeof document !== "undefined"
       ? createPortal(
           <span
             ref={tooltipRef}
-            className={`fixed z-[9999] max-h-[60vh] max-w-md overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-relaxed text-slate-100 shadow-2xl ${position.ready ? "opacity-100" : "opacity-0"}`}
+            className={`fixed z-[9999] max-h-[70vh] w-[min(28rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-700 bg-[#182533] p-3 text-sm leading-relaxed text-slate-100 shadow-2xl ${position.ready ? "opacity-100" : "opacity-0"}`}
             style={{ top: position.top, left: position.left }}
           >
-            {text}
+            {post.hasMedia ? (
+              <span className="mb-3 block overflow-hidden rounded-lg bg-black/30">
+                {mediaUrl && media.data?.type.startsWith("image/") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={mediaUrl}
+                    alt=""
+                    className="max-h-80 w-full object-contain"
+                  />
+                ) : media.isLoading ? (
+                  <span className="flex h-36 items-center justify-center text-slate-400">
+                    Loading image…
+                  </span>
+                ) : (
+                  <span className="flex h-24 items-center justify-center text-slate-400">
+                    Telegram media
+                  </span>
+                )}
+              </span>
+            ) : null}
+            {post.formattedText ? (
+              <span
+                className="telegram-preview-text block whitespace-pre-wrap break-words"
+                dangerouslySetInnerHTML={{ __html: post.formattedText }}
+              />
+            ) : text ? (
+              <span className="block whitespace-pre-wrap break-words">
+                {text}
+              </span>
+            ) : null}
           </span>,
           document.body,
         )
@@ -2498,7 +2562,16 @@ function PostTextTooltip({ text }: { text: string }) {
       onBlur={() => setOpen(false)}
       tabIndex={0}
     >
-      <span className="block truncate">{text}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 truncate">
+          {text || (post.hasMedia ? "Image" : "-")}
+        </span>
+        {post.hasMedia ? (
+          <span className="shrink-0" aria-label="Post contains media">
+            🖼
+          </span>
+        ) : null}
+      </span>
       {tooltip}
     </span>
   );

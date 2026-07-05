@@ -514,6 +514,9 @@ export type TelegramPost = {
   telegramMessageId: string;
   postDate: string;
   text?: string | null;
+  formattedText?: string | null;
+  hasMedia?: boolean;
+  mediaKind?: string | null;
   viewsCount?: number | null;
   forwardsCount?: number | null;
   reactionsCount?: number | null;
@@ -1847,6 +1850,13 @@ export const telegramChannelsApi = {
     (
       await api.delete<TelegramChannelAdAnalysis>(
         `/telegram-channels/${channelId}/ad-analyses/${analysisId}`,
+      )
+    ).data,
+  postMedia: async (channelId: string, postId: string) =>
+    (
+      await api.get<Blob>(
+        `/telegram-channels/${channelId}/posts/${postId}/media`,
+        { responseType: "blob" },
       )
     ).data,
   updatePostManualMetrics: async (

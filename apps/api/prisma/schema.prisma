@@ -1011,6 +1011,9 @@ model TelegramPost {
   telegramChannelId    String
   telegramMessageId    String
   text                 String?
+  formattedText        String?
+  hasMedia             Boolean  @default(false)
+  mediaKind            String?
   postDate             DateTime
   viewsCount           Int?
   forwardsCount        Int?
