@@ -281,6 +281,12 @@ function TelegramPostWorkspace({
     queryFn: workspaceMembersApi.list,
   });
 
+  useEffect(() => {
+    void queryClient.invalidateQueries({
+      queryKey: ["telegram-managed-post-link-targets", channelId],
+    });
+  }, [channelId, postGroups.data, posts.data, queryClient]);
+
   useEffect(
     () => () => {
       if (postOpenTimerRef.current) {
@@ -293,7 +299,10 @@ function TelegramPostWorkspace({
   const rememberPostGroup = (nextGroupId: string | null) => {
     setRememberedPostGroupId(nextGroupId);
     if (nextGroupId) {
-      window.localStorage.setItem(postGroupPreferenceKey(channelId), nextGroupId);
+      window.localStorage.setItem(
+        postGroupPreferenceKey(channelId),
+        nextGroupId,
+      );
     } else {
       window.localStorage.removeItem(postGroupPreferenceKey(channelId));
     }
@@ -323,17 +332,17 @@ function TelegramPostWorkspace({
     ? "Saving or publishing is already in progress."
     : creatingPostId
       ? "This post is being saved."
-    : iconPending
-      ? "Wait until the selected icon is ready."
-      : uploadingImages
-        ? "Wait until image upload finishes."
-        : !title.trim()
-          ? "Internal title is required."
-          : mode !== "draft" && !text.trim() && !imageUrls.length
-            ? "Add Telegram text or at least one image before publishing."
-            : mode === "schedule" && (!scheduleDate || !scheduleTime)
-              ? "Publish date and time are required."
-              : "";
+      : iconPending
+        ? "Wait until the selected icon is ready."
+        : uploadingImages
+          ? "Wait until image upload finishes."
+          : !title.trim()
+            ? "Internal title is required."
+            : mode !== "draft" && !text.trim() && !imageUrls.length
+              ? "Add Telegram text or at least one image before publishing."
+              : mode === "schedule" && (!scheduleDate || !scheduleTime)
+                ? "Publish date and time are required."
+                : "";
   const visiblePosts = (posts.data || []).filter(
     (post) =>
       savingPostIds.includes(post.id) ||
@@ -521,10 +530,9 @@ function TelegramPostWorkspace({
       sidebarReorderQueueRef.current = sidebarReorderQueueRef.current
         .catch(() => undefined)
         .then(async () => {
-          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>([
-            "telegram-managed-posts",
-            channelId,
-          ]);
+          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>(
+            ["telegram-managed-posts", channelId],
+          );
           const previousGroups = queryClient.getQueryData<PostGroup[]>([
             "post-groups",
             channelId,
@@ -552,8 +560,7 @@ function TelegramPostWorkspace({
               current?.map((group) => ({
                 ...group,
                 sidebarPosition:
-                  orderIndex.get(`group:${group.id}`) ??
-                  group.sidebarPosition,
+                  orderIndex.get(`group:${group.id}`) ?? group.sidebarPosition,
               })),
           );
           try {
@@ -567,7 +574,9 @@ function TelegramPostWorkspace({
               queryClient.invalidateQueries({
                 queryKey: ["telegram-managed-posts", channelId],
               }),
-              queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+              queryClient.invalidateQueries({
+                queryKey: ["post-groups", channelId],
+              }),
             ]);
             setSidebarOrderKeys([]);
             pushToast("New sidebar order saved.", "success", 3000);
@@ -577,7 +586,10 @@ function TelegramPostWorkspace({
               ["telegram-managed-posts", channelId],
               previousPosts,
             );
-            queryClient.setQueryData(["post-groups", channelId], previousGroups);
+            queryClient.setQueryData(
+              ["post-groups", channelId],
+              previousGroups,
+            );
             setSidebarOrderKeys([]);
             pushToast(
               apiErrorMessage(reorderError, "Could not save the sidebar order"),
@@ -621,7 +633,9 @@ function TelegramPostWorkspace({
   }, [channelId]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(postGroupPreferenceKey(channelId));
+    const saved = window.localStorage.getItem(
+      postGroupPreferenceKey(channelId),
+    );
     // Restore the preferred new-post group independently for every channel.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRememberedPostGroupId(saved);
@@ -938,14 +952,18 @@ function TelegramPostWorkspace({
           queryClient.invalidateQueries({
             queryKey: ["telegram-managed-posts", channelId],
           }),
-          queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+          queryClient.invalidateQueries({
+            queryKey: ["post-groups", channelId],
+          }),
         ]);
         const refreshedPosts = queryClient.getQueryData<TelegramManagedPost[]>([
           "telegram-managed-posts",
           channelId,
         ]);
         if (editingPost && postsResult.status === "fulfilled") {
-          const refreshedPost = refreshedPosts?.find((item) => item.id === editingPost.id);
+          const refreshedPost = refreshedPosts?.find(
+            (item) => item.id === editingPost.id,
+          );
           if (refreshedPost) {
             setEditing((current) =>
               current?.id === editingPost.id ? refreshedPost : current,
@@ -1130,6 +1148,9 @@ function TelegramPostWorkspace({
                 onChange={setText}
                 disabled={busy || isPublished}
                 rows={7}
+                channelId={channelId}
+                currentPostId={editing?.id}
+                enableInternalPostLinks
               />
             </FormField>
             <MultiImageUpload
@@ -1607,17 +1628,17 @@ function TelegramPostWorkspace({
           channels={channels}
           sourceChannelId={channelId}
           onClose={() => setMovingPost(null)}
-            onMoved={async (result) => {
-              setMovingPost(null);
-              await Promise.all([
-                queryClient.invalidateQueries({
-                  queryKey: ["telegram-managed-posts", channelId],
-                }),
-                queryClient.invalidateQueries({
-                  queryKey: ["post-groups", channelId],
-                }),
-              ]);
-              pushToast(
+          onMoved={async (result) => {
+            setMovingPost(null);
+            await Promise.all([
+              queryClient.invalidateQueries({
+                queryKey: ["telegram-managed-posts", channelId],
+              }),
+              queryClient.invalidateQueries({
+                queryKey: ["post-groups", channelId],
+              }),
+            ]);
+            pushToast(
               result.results
                 .map((item) => item.message)
                 .filter(Boolean)
@@ -1738,10 +1759,7 @@ function PostIcon({
 function PendingPostRow({ pending }: { pending: PendingPostSave }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-blue-700/70 bg-blue-950/15 px-3 py-2">
-      <LoaderCircle
-        size={16}
-        className="shrink-0 animate-spin text-blue-400"
-      />
+      <LoaderCircle size={16} className="shrink-0 animate-spin text-blue-400" />
       <PostIcon iconId={pending.icon} label={pending.title} bare />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-white">
@@ -1898,7 +1916,9 @@ function PostGroupsWorkspace({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
       selectedGroupId
-        ? queryClient.invalidateQueries({ queryKey: ["post-group", selectedGroupId] })
+        ? queryClient.invalidateQueries({
+            queryKey: ["post-group", selectedGroupId],
+          })
         : Promise.resolve(),
       queryClient.invalidateQueries({
         queryKey: ["telegram-managed-posts", channelId],
@@ -1922,30 +1942,31 @@ function PostGroupsWorkspace({
             "post-group",
             groupId,
           ]);
-          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>([
-            "telegram-managed-posts",
-            channelId,
-          ]);
+          const previousPosts = queryClient.getQueryData<TelegramManagedPost[]>(
+            ["telegram-managed-posts", channelId],
+          );
           const orderIndex = new Map(
             orderedPostIdsToSave.map((id, index) => [id, index]),
           );
-          queryClient.setQueryData<PostGroup>(["post-group", groupId], (current) =>
-            current
-              ? {
-                  ...current,
-                  posts: [...(current.posts ?? [])]
-                    .map((post) => ({
-                      ...post,
-                      groupPosition:
-                        orderIndex.get(post.id) ?? post.groupPosition,
-                    }))
-                    .sort(
-                      (left, right) =>
-                        (left.groupPosition ?? Number.MAX_SAFE_INTEGER) -
-                        (right.groupPosition ?? Number.MAX_SAFE_INTEGER),
-                    ),
-                }
-              : current,
+          queryClient.setQueryData<PostGroup>(
+            ["post-group", groupId],
+            (current) =>
+              current
+                ? {
+                    ...current,
+                    posts: [...(current.posts ?? [])]
+                      .map((post) => ({
+                        ...post,
+                        groupPosition:
+                          orderIndex.get(post.id) ?? post.groupPosition,
+                      }))
+                      .sort(
+                        (left, right) =>
+                          (left.groupPosition ?? Number.MAX_SAFE_INTEGER) -
+                          (right.groupPosition ?? Number.MAX_SAFE_INTEGER),
+                      ),
+                  }
+                : current,
           );
           queryClient.setQueryData<TelegramManagedPost[]>(
             ["telegram-managed-posts", channelId],
@@ -1954,7 +1975,8 @@ function PostGroupsWorkspace({
                 orderIndex.has(post.id)
                   ? {
                       ...post,
-                      groupPosition: orderIndex.get(post.id) ?? post.groupPosition,
+                      groupPosition:
+                        orderIndex.get(post.id) ?? post.groupPosition,
                     }
                   : post,
               ),
@@ -1967,7 +1989,9 @@ function PostGroupsWorkspace({
             );
             if (version !== reorderVersionRef.current) return;
             await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ["post-group", groupId] }),
+              queryClient.invalidateQueries({
+                queryKey: ["post-group", groupId],
+              }),
               queryClient.invalidateQueries({
                 queryKey: ["telegram-managed-posts", channelId],
               }),

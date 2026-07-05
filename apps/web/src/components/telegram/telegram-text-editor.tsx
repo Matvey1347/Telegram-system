@@ -12,17 +12,21 @@ import {
   Underline,
   X,
 } from "lucide-react";
+import { type KeyboardEvent, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
-  type KeyboardEvent,
-  useRef,
-  useState,
-} from "react";
+  telegramChannelsApi,
+  type TelegramManagedPostLinkTarget,
+} from "@/lib/api";
 
 type TelegramTextEditorProps = {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   rows?: number;
+  channelId?: string;
+  currentPostId?: string | null;
+  enableInternalPostLinks?: boolean;
 };
 
 type WrapAction = {
@@ -40,12 +44,48 @@ type EditorSnapshot = {
 };
 
 const actions: WrapAction[] = [
-  { label: "Bold", icon: Bold, before: "**", after: "**", placeholder: "bold text" },
-  { label: "Italic", icon: Italic, before: "__", after: "__", placeholder: "italic text" },
-  { label: "Underline", icon: Underline, before: "++", after: "++", placeholder: "underlined text" },
-  { label: "Strikethrough", icon: Strikethrough, before: "~~", after: "~~", placeholder: "strikethrough text" },
-  { label: "Spoiler", icon: EyeOff, before: "||", after: "||", placeholder: "hidden text" },
-  { label: "Inline code", icon: Code, before: "`", after: "`", placeholder: "code" },
+  {
+    label: "Bold",
+    icon: Bold,
+    before: "**",
+    after: "**",
+    placeholder: "bold text",
+  },
+  {
+    label: "Italic",
+    icon: Italic,
+    before: "__",
+    after: "__",
+    placeholder: "italic text",
+  },
+  {
+    label: "Underline",
+    icon: Underline,
+    before: "++",
+    after: "++",
+    placeholder: "underlined text",
+  },
+  {
+    label: "Strikethrough",
+    icon: Strikethrough,
+    before: "~~",
+    after: "~~",
+    placeholder: "strikethrough text",
+  },
+  {
+    label: "Spoiler",
+    icon: EyeOff,
+    before: "||",
+    after: "||",
+    placeholder: "hidden text",
+  },
+  {
+    label: "Inline code",
+    icon: Code,
+    before: "`",
+    after: "`",
+    placeholder: "code",
+  },
 ];
 
 export function TelegramTextEditor({
@@ -53,6 +93,9 @@ export function TelegramTextEditor({
   onChange,
   disabled,
   rows = 12,
+  channelId,
+  currentPostId,
+  enableInternalPostLinks = false,
 }: TelegramTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const linkSelectionRef = useRef({ start: 0, end: 0 });
@@ -62,12 +105,32 @@ export function TelegramTextEditor({
   const [linkEditorOpen, setLinkEditorOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("https://");
   const [linkError, setLinkError] = useState("");
+  const [linkMode, setLinkMode] = useState<"external" | "internal">("external");
+  const [internalSearch, setInternalSearch] = useState("");
+  const internalLinksEnabled = enableInternalPostLinks && Boolean(channelId);
+  const linkTargets = useQuery({
+    queryKey: [
+      "telegram-managed-post-link-targets",
+      channelId,
+      internalSearch,
+      currentPostId,
+    ],
+    queryFn: () =>
+      telegramChannelsApi.managedPostLinkTargets(channelId!, {
+        search: internalSearch.trim() || undefined,
+        excludePostId: currentPostId || undefined,
+        limit: 30,
+      }),
+    enabled: linkEditorOpen && linkMode === "internal" && internalLinksEnabled,
+  });
 
+  /* eslint-disable react-hooks/refs -- reset editor history when a parent hydrates a different value */
   if (lastKnownValueRef.current !== value) {
     lastKnownValueRef.current = value;
     undoStackRef.current = [];
     redoStackRef.current = [];
   }
+  /* eslint-enable react-hooks/refs */
 
   const currentSnapshot = (): EditorSnapshot => {
     const textarea = textareaRef.current;
@@ -138,11 +201,7 @@ export function TelegramTextEditor({
     if (isWrapped) {
       const nextValue = `${value.slice(0, start - before.length)}${content}${value.slice(end + after.length)}`;
       const selectionStart = start - before.length;
-      commitValue(
-        nextValue,
-        selectionStart,
-        selectionStart + content.length,
-      );
+      commitValue(nextValue, selectionStart, selectionStart + content.length);
       return;
     }
     const nextValue = `${value.slice(0, start)}${before}${content}${after}${value.slice(end)}`;
@@ -178,8 +237,23 @@ export function TelegramTextEditor({
       end: textarea.selectionEnd,
     };
     setLinkUrl("https://");
+    setLinkMode("external");
+    setInternalSearch("");
     setLinkError("");
     setLinkEditorOpen(true);
+  };
+
+  const applyInternalLink = (target: TelegramManagedPostLinkTarget) => {
+    const { start, end } = linkSelectionRef.current;
+    const selected = value.slice(start, end) || target.title;
+    const markup = `[${selected}](tg-post:${target.id})`;
+    commitValue(
+      `${value.slice(0, start)}${markup}${value.slice(end)}`,
+      start,
+      start + markup.length,
+    );
+    setLinkEditorOpen(false);
+    setLinkError("");
   };
 
   const applyLink = () => {
@@ -278,36 +352,132 @@ export function TelegramTextEditor({
               <X size={15} />
             </button>
           </div>
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              type="url"
-              value={linkUrl}
-              onChange={(event) => {
-                setLinkUrl(event.target.value);
-                setLinkError("");
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  applyLink();
-                }
-                if (event.key === "Escape") setLinkEditorOpen(false);
-              }}
-              placeholder="https://example.com"
-              className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
-            />
-            <button
-              type="button"
-              onClick={applyLink}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
-            >
-              Add
-            </button>
-          </div>
-          {linkError ? (
-            <p className="mt-2 text-xs text-red-400">{linkError}</p>
+          {internalLinksEnabled ? (
+            <div className="mb-3 flex rounded-md bg-neutral-900 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setLinkMode("external")}
+                className={`flex-1 rounded px-3 py-1.5 ${
+                  linkMode === "external"
+                    ? "bg-blue-600 text-white"
+                    : "text-neutral-400 hover:text-white"
+                }`}
+              >
+                External URL
+              </button>
+              <button
+                type="button"
+                onClick={() => setLinkMode("internal")}
+                className={`flex-1 rounded px-3 py-1.5 ${
+                  linkMode === "internal"
+                    ? "bg-blue-600 text-white"
+                    : "text-neutral-400 hover:text-white"
+                }`}
+              >
+                Internal post
+              </button>
+            </div>
           ) : null}
+          {linkMode === "external" ? (
+            <>
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  type="url"
+                  value={linkUrl}
+                  onChange={(event) => {
+                    setLinkUrl(event.target.value);
+                    setLinkError("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      applyLink();
+                    }
+                    if (event.key === "Escape") setLinkEditorOpen(false);
+                  }}
+                  placeholder="https://example.com"
+                  className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={applyLink}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+                >
+                  Add
+                </button>
+              </div>
+              {linkError ? (
+                <p className="mt-2 text-xs text-red-400">{linkError}</p>
+              ) : null}
+            </>
+          ) : (
+            <div>
+              <input
+                autoFocus
+                type="search"
+                value={internalSearch}
+                onChange={(event) => setInternalSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setLinkEditorOpen(false);
+                }}
+                placeholder="Search managed posts by title…"
+                className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+              />
+              <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+                {linkTargets.isLoading ? (
+                  <p className="px-2 py-3 text-xs text-neutral-400">
+                    Loading posts…
+                  </p>
+                ) : null}
+                {linkTargets.isError ? (
+                  <p className="px-2 py-3 text-xs text-red-400">
+                    Could not load managed posts.
+                  </p>
+                ) : null}
+                {linkTargets.data?.map((target) => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => applyInternalLink(target)}
+                    className="flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-neutral-800"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-white">
+                        {target.title}
+                      </span>
+                      <span className="block truncate text-xs text-neutral-500">
+                        {target.groupTitle || "No group"}
+                      </span>
+                    </span>
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                        target.status === "PUBLISHED"
+                          ? "bg-emerald-950 text-emerald-300"
+                          : "bg-amber-950 text-amber-300"
+                      }`}
+                      title={
+                        target.status === "PUBLISHED"
+                          ? "Ready to link"
+                          : "Publishing this post will fail until the target is published"
+                      }
+                    >
+                      {target.status}
+                    </span>
+                  </button>
+                ))}
+                {!linkTargets.isLoading && !linkTargets.data?.length ? (
+                  <p className="px-2 py-3 text-xs text-neutral-500">
+                    No matching posts.
+                  </p>
+                ) : null}
+              </div>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                Draft and scheduled targets can be linked, but this post cannot
+                be published until the target is published.
+              </p>
+            </div>
+          )}
         </div>
       ) : null}
       <textarea
@@ -321,7 +491,10 @@ export function TelegramTextEditor({
         className="block w-full resize-y bg-transparent px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-neutral-500 disabled:opacity-50"
       />
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-800 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z or Ctrl+Y redo · ⌘/Ctrl+B bold · ⌘/Ctrl+I italic · ⌘/Ctrl+K link</span>
+        <span>
+          ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z or Ctrl+Y redo · ⌘/Ctrl+B bold ·
+          ⌘/Ctrl+I italic · ⌘/Ctrl+K link
+        </span>
         <span>{value.length} characters</span>
       </div>
     </div>

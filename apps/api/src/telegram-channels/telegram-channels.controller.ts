@@ -22,6 +22,7 @@ import {
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
+  ManagedPostLinkTargetsQueryDto,
   MovePostChannelDto,
   PostGroupsQueryDto,
   PostIdsDto,
@@ -220,6 +221,14 @@ export class TelegramChannelsController {
         onProgress,
       ),
     );
+  }
+  @Get(':id/managed-posts/link-targets')
+  managedPostLinkTargets(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query() query: ManagedPostLinkTargetsQueryDto,
+  ) {
+    return this.service.managedPostLinkTargets(user.sub, id, query);
   }
   @Get(':id/managed-posts')
   managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {

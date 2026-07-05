@@ -21,12 +21,18 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-function renderFencedCodeBlock(info: string, code: string, hasInfoLine: boolean) {
+function renderFencedCodeBlock(
+  info: string,
+  code: string,
+  hasInfoLine: boolean,
+) {
   const normalizedInfo = info.replace(/\r/g, "");
   const normalizedCode = code.replace(/\r/g, "");
   const hasLabel = hasInfoLine && normalizedInfo.trim().length > 0;
   const label = hasLabel ? normalizedInfo : "copy";
-  const content = hasInfoLine ? normalizedCode : `${normalizedInfo}${normalizedCode}`;
+  const content = hasInfoLine
+    ? normalizedCode
+    : `${normalizedInfo}${normalizedCode}`;
   return `<pre class="tg-code-block"><span class="tg-code-header"><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button></span><code>${escapeHtml(content)}</code></pre>`;
 }
 
@@ -46,6 +52,13 @@ function previewHtml(raw: string) {
     token(`<code>${escapeHtml(code)}</code>`),
   );
   value = value.replace(
+    /\[([^\]\n]+)\]\(tg-post:([a-zA-Z0-9_-]+)\)/g,
+    (_match, label: string, postId: string) =>
+      token(
+        `<a href="#" data-internal-post-link="${escapeHtml(postId)}" title="Internal post link">${escapeHtml(label)}</a>`,
+      ),
+  );
+  value = value.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)/gi,
     (_match, label: string, href: string) => {
       try {
@@ -59,20 +72,17 @@ function previewHtml(raw: string) {
       }
     },
   );
-  value = value.replace(
-    /https?:\/\/[^\s<>()\u0000]+/gi,
-    (href: string) => {
-      try {
-        const url = new URL(href);
-        if (!url.hostname.includes(".")) return href;
-        return token(
-          `<a href="${escapeHtml(url.toString())}" target="_blank" rel="noreferrer">${escapeHtml(href)}</a>`,
-        );
-      } catch {
-        return href;
-      }
-    },
-  );
+  value = value.replace(/https?:\/\/[^\s<>()\u0000]+/gi, (href: string) => {
+    try {
+      const url = new URL(href);
+      if (!url.hostname.includes(".")) return href;
+      return token(
+        `<a href="${escapeHtml(url.toString())}" target="_blank" rel="noreferrer">${escapeHtml(href)}</a>`,
+      );
+    } catch {
+      return href;
+    }
+  });
   value = escapeHtml(value)
     .replace(/\*\*([^\n]+?)\*\*/g, "<b>$1</b>")
     .replace(/__([^\n]+?)__/g, "<i>$1</i>")
@@ -108,7 +118,10 @@ function previewHtml(raw: string) {
   flush();
   return rendered
     .join("\n")
-    .replace(/\u0000(\d+)\u0000/g, (_match, index: string) => tokens[Number(index)] || "");
+    .replace(
+      /\u0000(\d+)\u0000/g,
+      (_match, index: string) => tokens[Number(index)] || "",
+    );
 }
 
 export function TelegramPostPreview({
@@ -249,8 +262,7 @@ function handlePreviewContentClick(event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     const code = copyButton
       .closest(".tg-code-block")
-      ?.querySelector("code")
-      ?.textContent;
+      ?.querySelector("code")?.textContent;
     if (code) {
       void navigator.clipboard.writeText(code);
       copyButton.classList.add("copied");
@@ -262,6 +274,10 @@ function handlePreviewContentClick(event: React.MouseEvent<HTMLDivElement>) {
   if (spoiler) {
     event.preventDefault();
     spoiler.classList.toggle("revealed");
+    return;
+  }
+  if (target.closest("[data-internal-post-link]")) {
+    event.preventDefault();
   }
 }
 
@@ -277,7 +293,10 @@ function splitPreviewText(rawText: string, maxLength: number): string[] {
   return parts.length ? parts : [rawText];
 }
 
-function splitPreviewTextOnce(rawText: string, maxLength: number): [string, string] {
+function splitPreviewTextOnce(
+  rawText: string,
+  maxLength: number,
+): [string, string] {
   if (rawText.length <= maxLength) return [rawText, ""];
   const boundaries = new Set<number>();
   for (const match of rawText.matchAll(/\n\s*\n/g)) {
@@ -294,8 +313,7 @@ function splitPreviewTextOnce(rawText: string, maxLength: number): [string, stri
     .find((position) => {
       const candidate = rawText.slice(0, position).trimEnd();
       return (
-        candidate.length <= maxLength &&
-        hasBalancedPreviewMarkup(candidate)
+        candidate.length <= maxLength && hasBalancedPreviewMarkup(candidate)
       );
     });
   const fallbackAt = splitAt ?? findHardPreviewSplit(rawText, maxLength);
@@ -338,9 +356,7 @@ function TelegramMediaGrid({ imageUrls }: { imageUrls: string[] }) {
   return (
     <div
       className={`grid gap-0.5 bg-[#0e1621] ${
-        visible.length === 1
-          ? "grid-cols-1"
-          : "grid-cols-2"
+        visible.length === 1 ? "grid-cols-1" : "grid-cols-2"
       }`}
     >
       {visible.map((url, index) => (

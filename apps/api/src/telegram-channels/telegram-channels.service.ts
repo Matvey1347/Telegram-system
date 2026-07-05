@@ -33,6 +33,7 @@ import {
   DeepSyncDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
+  ManagedPostLinkTargetsQueryDto,
   MovePostChannelDto,
   PostGroupsQueryDto,
   PostIdsDto,
@@ -53,6 +54,10 @@ import {
   telegramHtmlToMtprotoHtml,
   telegramMarkupToHtml,
 } from '../telegram/shared/telegram-markup';
+import {
+  extractInternalPostLinkIds,
+  replaceInternalPostLinks,
+} from '../telegram/shared/internal-post-links';
 import {
   bulkActionCounts,
   movedPostDatabaseState,
@@ -157,6 +162,16 @@ export class TelegramChannelsService {
     const digits = String(value || '').trim();
     if (!digits) return null;
     return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+  }
+
+  private telegramMessageUrl(
+    channel: { username: string | null; telegramChatId: string | null },
+    messageId: string,
+  ) {
+    const username = this.normalizeUsername(channel.username);
+    if (username) return `https://t.me/${username}/${messageId}`;
+    const chatId = this.normalizeChatId(channel.telegramChatId);
+    return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   }
 
   private normalizePublicChannelInput(input: string) {
@@ -1140,6 +1155,101 @@ export class TelegramChannelsService {
     });
   }
 
+  async managedPostLinkTargets(
+    userId: string,
+    channelId: string,
+    query: ManagedPostLinkTargetsQueryDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const search = query.search?.trim();
+    const posts = await this.prisma.telegramManagedPost.findMany({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        ...(query.groupId ? { groupId: query.groupId } : {}),
+        ...(query.excludePostId ? { id: { not: query.excludePostId } } : {}),
+        ...(search
+          ? { title: { contains: search, mode: Prisma.QueryMode.insensitive } }
+          : {}),
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        groupId: true,
+        publishedAt: true,
+        telegramMessageUrls: true,
+        telegramChannelId: true,
+        group: { select: { title: true } },
+        telegramChannel: { select: { title: true } },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { title: 'asc' }],
+      take: query.limit ?? 30,
+    });
+    return posts.map((post) => ({
+      id: post.id,
+      title: post.title,
+      status: post.status,
+      groupId: post.groupId,
+      groupTitle: post.group?.title ?? null,
+      telegramChannelId: post.telegramChannelId,
+      telegramChannelTitle: post.telegramChannel.title,
+      publishedAt: post.publishedAt,
+      primaryTelegramMessageUrl: post.telegramMessageUrls[0] ?? null,
+    }));
+  }
+
+  private async resolveInternalPostLinksForPublish(
+    workspaceId: string,
+    currentPostId: string,
+    text: string,
+  ) {
+    const targetIds = extractInternalPostLinkIds(text);
+    if (!targetIds.length) return text;
+    if (targetIds.includes(currentPostId)) {
+      throw new BadRequestException(
+        'Cannot publish post because it contains an internal link to itself.',
+      );
+    }
+    const targets = await this.prisma.telegramManagedPost.findMany({
+      where: { workspaceId, id: { in: targetIds } },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        telegramMessageUrls: true,
+      },
+    });
+    const targetsById = new Map(targets.map((target) => [target.id, target]));
+    const unresolved = targetIds.flatMap((targetId) => {
+      const target = targetsById.get(targetId);
+      if (!target) return [`${targetId}: post was not found`];
+      if (target.status !== TelegramManagedPostStatus.PUBLISHED) {
+        return [
+          `"${target.title}" (${target.id}) is ${target.status.toLowerCase()}, not published`,
+        ];
+      }
+      if (!target.telegramMessageUrls[0]) {
+        return [
+          `"${target.title}" (${target.id}) has no published Telegram URL`,
+        ];
+      }
+      return [];
+    });
+    if (unresolved.length) {
+      throw new BadRequestException(
+        `Cannot publish post because some internal post links are unresolved: ${unresolved.join('; ')}.`,
+      );
+    }
+    return replaceInternalPostLinks(
+      text,
+      new Map(
+        targets.map((target) => [target.id, target.telegramMessageUrls[0]]),
+      ),
+    );
+  }
+
   async reorderManagedPostSidebar(
     userId: string,
     channelId: string,
@@ -1319,7 +1429,12 @@ export class TelegramChannelsService {
       throw new BadRequestException('Channel has no Telegram reference');
     let previousScheduledMessageCancelled = false;
     try {
-      const html = telegramMarkupToHtml(post.text || '');
+      const resolvedText = await this.resolveInternalPostLinksForPublish(
+        workspaceId,
+        post.id,
+        post.text || '',
+      );
+      const html = telegramMarkupToHtml(resolvedText);
       const [plainText] = HTMLParser.parse(html);
       let captionHtml = html;
       let followupHtmlParts: string[] = [];
@@ -1331,7 +1446,7 @@ export class TelegramChannelsService {
         publishMode = longTextMode;
         if (longTextMode === 'CAPTION_THEN_TEXT') {
           const [caption, remainder] = this.splitTelegramMarkupOnce(
-            post.text || '',
+            resolvedText,
             TELEGRAM_CAPTION_LIMIT,
           );
           captionHtml = telegramMarkupToHtml(caption);
@@ -1342,7 +1457,7 @@ export class TelegramChannelsService {
         } else {
           captionHtml = '';
           followupHtmlParts = this.splitTelegramMarkup(
-            post.text || '',
+            resolvedText,
             TELEGRAM_TEXT_MESSAGE_LIMIT,
           ).map((part) => telegramMarkupToHtml(part));
         }
@@ -1352,7 +1467,7 @@ export class TelegramChannelsService {
       ) {
         publishMode = 'TEXT_PARTS';
         textHtmlParts = this.splitTelegramMarkup(
-          post.text || '',
+          resolvedText,
           TELEGRAM_TEXT_MESSAGE_LIMIT,
         ).map((part) => telegramMarkupToHtml(part));
       }
@@ -1488,6 +1603,12 @@ export class TelegramChannelsService {
           scheduledAt: scheduleAt ?? null,
           publishedAt: scheduleAt ? null : new Date(),
           telegramMessageIds: ids,
+          telegramMessageUrls: scheduleAt
+            ? []
+            : ids.flatMap((id) => {
+                const url = this.telegramMessageUrl(channel, id);
+                return url ? [url] : [];
+              }),
           sourceType: source.sourceType,
           sourceId: source.sourceId,
           publishMode,
@@ -1509,6 +1630,9 @@ export class TelegramChannelsService {
           status: 'FAILED',
           lastError: publicMessage,
           telegramMessageIds: previousScheduledMessageCancelled
+            ? []
+            : undefined,
+          telegramMessageUrls: previousScheduledMessageCancelled
             ? []
             : undefined,
           sourceType: previousScheduledMessageCancelled ? null : undefined,
@@ -1679,6 +1803,7 @@ export class TelegramChannelsService {
               status: TelegramManagedPostStatus.DRAFT,
               scheduledAt: null,
               telegramMessageIds: [],
+              telegramMessageUrls: [],
               sourceType: null,
               sourceId: null,
               lastError: null,
@@ -1790,6 +1915,7 @@ export class TelegramChannelsService {
             scheduledAt: null,
             publishedAt: null,
             telegramMessageIds: [],
+            telegramMessageUrls: [],
             sourceType: null,
             sourceId: null,
             publishMode: null,

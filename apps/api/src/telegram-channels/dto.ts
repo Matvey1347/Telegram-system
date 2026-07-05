@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   Min,
 } from 'class-validator';
 
@@ -119,6 +120,13 @@ export class UpdateTelegramManagedPostDto {
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsString() icon?: string | null;
+}
+
+export class ManagedPostLinkTargetsQueryDto {
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsString() groupId?: string;
+  @IsOptional() @IsString() excludePostId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
 }
 
 export class CreatePostGroupDto {

@@ -5,7 +5,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, CircleHelp, Download, ImagePlus, RefreshCw, Send, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  CircleHelp,
+  Download,
+  ImagePlus,
+  RefreshCw,
+  Send,
+  X,
+} from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -15,6 +23,7 @@ import {
 } from "@/components/telegram/telegram-account-panels";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
+import { TelegramTextEditor } from "@/components/telegram/telegram-text-editor";
 import { MoneyStack } from "@/components/ui/money-stack";
 import { MemberBadge } from "@/components/workspace/member-badge";
 import { MemberSelect } from "@/components/workspace/member-select";
@@ -142,14 +151,15 @@ function isOwnChannel(channel: TelegramChannel) {
   return Array.isArray(channel.adminLinks) && channel.adminLinks.length > 0;
 }
 
-const adAnalysisStatusLabels: Record<TelegramChannelAdAnalysisStatus, string> = {
-  NEW: "New",
-  APPROVED: "Approved",
-  REJECTED: "Rejected",
-  WATCH_LATER: "Watch later",
-  BLACKLIST: "Blacklist",
-  TESTED: "Tested",
-};
+const adAnalysisStatusLabels: Record<TelegramChannelAdAnalysisStatus, string> =
+  {
+    NEW: "New",
+    APPROVED: "Approved",
+    REJECTED: "Rejected",
+    WATCH_LATER: "Watch later",
+    BLACKLIST: "Blacklist",
+    TESTED: "Tested",
+  };
 
 function ExternalChannelAdAnalysis({
   channel,
@@ -172,7 +182,8 @@ function ExternalChannelAdAnalysis({
       </div>
     );
   }
-  const chip = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200";
+  const chip =
+    "rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200";
   const hasPrice = latest.price != null;
   const analysisTone =
     latest.status === "APPROVED"
@@ -181,11 +192,18 @@ function ExternalChannelAdAnalysis({
         ? "border-rose-700/80 bg-rose-950/25"
         : "border-slate-800 bg-slate-950/50";
   return (
-    <div className={`mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 ${analysisTone}`}>
+    <div
+      className={`mt-3 flex flex-wrap items-center gap-2 rounded-lg border p-2 ${analysisTone}`}
+    >
       {hasPrice ? (
         <>
-          <span className={chip}>{latest.currency} {formatNumber(latest.price, 2)}</span>
-          <span className={chip}>CPM {latest.currency} {latest.cpm == null ? "-" : formatNumber(latest.cpm, 2)}</span>
+          <span className={chip}>
+            {latest.currency} {formatNumber(latest.price, 2)}
+          </span>
+          <span className={chip}>
+            CPM {latest.currency}{" "}
+            {latest.cpm == null ? "-" : formatNumber(latest.cpm, 2)}
+          </span>
         </>
       ) : null}
       <span
@@ -199,8 +217,12 @@ function ExternalChannelAdAnalysis({
       >
         {adAnalysisStatusLabels[latest.status]}
       </span>
-      {latest.notes ? <span className={`${chip} max-w-full truncate`}>{latest.notes}</span> : null}
-      <span className="text-xs text-slate-500">{formatLocalDate(latest.analyzedAt)}</span>
+      {latest.notes ? (
+        <span className={`${chip} max-w-full truncate`}>{latest.notes}</span>
+      ) : null}
+      <span className="text-xs text-slate-500">
+        {formatLocalDate(latest.analyzedAt)}
+      </span>
       <MemberBadge member={latest.assignedMember} />
       <div className="ml-auto flex items-center gap-2">
         <IconButton
@@ -217,7 +239,11 @@ function ExternalChannelAdAnalysis({
           onClick={() => onDelete(latest)}
         />
       </div>
-      {(summary?.historyCount ?? 0) > 1 ? <span className="text-xs text-slate-500">{summary?.historyCount} analyses</span> : null}
+      {(summary?.historyCount ?? 0) > 1 ? (
+        <span className="text-xs text-slate-500">
+          {summary?.historyCount} analyses
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -439,7 +465,9 @@ function ChannelSourcesModal({
               ))
             ) : (
               <p className="px-3 py-2 text-sm text-slate-400">
-                {isLoading ? "Loading attribution..." : "No attribution data yet."}
+                {isLoading
+                  ? "Loading attribution..."
+                  : "No attribution data yet."}
               </p>
             )}
           </div>
@@ -553,7 +581,8 @@ function ChannelFinanceMiniSummary({
   const primaryCurrency = moneySettings?.primaryCurrency || "USD";
   const hasNumber = (value: unknown) =>
     value != null && Number.isFinite(Number(value));
-  const hasPositiveNumber = (value: unknown) => hasNumber(value) && Number(value) > 0;
+  const hasPositiveNumber = (value: unknown) =>
+    hasNumber(value) && Number(value) > 0;
   const moneyValue = (
     value: unknown,
     className = "font-semibold text-slate-100",
@@ -585,7 +614,9 @@ function ChannelFinanceMiniSummary({
   const joinedSubscribers = hasNumber(summary?.totalJoinedSubscribers)
     ? Number(summary?.totalJoinedSubscribers)
     : null;
-  const paidActiveSubscribers = hasNumber(summary?.paidActiveSubscribersEstimate)
+  const paidActiveSubscribers = hasNumber(
+    summary?.paidActiveSubscribersEstimate,
+  )
     ? Number(summary?.paidActiveSubscribersEstimate)
     : null;
   const inactiveSubscribers =
@@ -653,13 +684,27 @@ function ChannelFinanceMiniSummary({
   const cpaMetrics = visibleMetrics.filter((metric) =>
     metric.label.startsWith("CPA /"),
   );
-  const topMetrics = visibleMetrics.filter((metric) => metric.label === "Finance");
+  const topMetrics = visibleMetrics.filter(
+    (metric) => metric.label === "Finance",
+  );
   const supportingMetrics = visibleMetrics.filter(
     (metric) => !metric.label.startsWith("CPA /") && metric.label !== "Finance",
   );
   const kpiTargets = [
-    formatCompactKpiRange("target", channel.targetCpaFrom, channel.targetCpa, false, "target"),
-    formatCompactKpiRange("ok", channel.acceptableCpaFrom, channel.acceptableCpa, false, "ok"),
+    formatCompactKpiRange(
+      "target",
+      channel.targetCpaFrom,
+      channel.targetCpa,
+      false,
+      "target",
+    ),
+    formatCompactKpiRange(
+      "ok",
+      channel.acceptableCpaFrom,
+      channel.acceptableCpa,
+      false,
+      "ok",
+    ),
     formatCompactKpiRange(
       "stop",
       channel.stopCpaFrom ?? channel.stopCpa,
@@ -672,119 +717,125 @@ function ChannelFinanceMiniSummary({
   return (
     <div className={`mt-2 rounded-md border p-3 ${kpiTone}`}>
       <div className="space-y-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                Performance
-              </p>
-              <p className="flex min-w-0 flex-nowrap items-center gap-x-1 overflow-hidden whitespace-nowrap text-sm font-semibold leading-tight text-slate-100">
-                <span className="inline-flex items-center whitespace-nowrap">
-                  {formatNumber(
-                    audience?.subscribersCount ?? channel.currentSubscribersCount,
-                  )}{" "}
-                  subs
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">
+              Performance
+            </p>
+            <p className="flex min-w-0 flex-nowrap items-center gap-x-1 overflow-hidden whitespace-nowrap text-sm font-semibold leading-tight text-slate-100">
+              <span className="inline-flex items-center whitespace-nowrap">
+                {formatNumber(
+                  audience?.subscribersCount ?? channel.currentSubscribersCount,
+                )}{" "}
+                subs
+              </span>
+              {isOwnChannel &&
+              hasNumber(audience?.activeSubscribersEstimate) ? (
+                <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
+                  · {formatNumber(audience?.activeSubscribersEstimate)} active
                 </span>
-                {isOwnChannel && hasNumber(audience?.activeSubscribersEstimate) ? (
-                  <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
-                    · {formatNumber(audience?.activeSubscribersEstimate)} active
-                  </span>
-                ) : null}
-                {isOwnChannel && inactiveSubscribers != null && inactiveSubscribers > 0 ? (
-                  <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
-                    · {formatNumber(inactiveSubscribers)} inactive
-                  </span>
-                ) : null}
-              </p>
-            </div>
-            {kpiStatus && kpiStatus !== "unknown" ? (
-              <KpiPreviewTooltip
-                summary={summary}
-                targets={kpiTargets}
-                className="shrink-0"
+              ) : null}
+              {isOwnChannel &&
+              inactiveSubscribers != null &&
+              inactiveSubscribers > 0 ? (
+                <span className="inline-flex items-center whitespace-nowrap font-normal text-slate-500">
+                  · {formatNumber(inactiveSubscribers)} inactive
+                </span>
+              ) : null}
+            </p>
+          </div>
+          {kpiStatus && kpiStatus !== "unknown" ? (
+            <KpiPreviewTooltip
+              summary={summary}
+              targets={kpiTargets}
+              className="shrink-0"
+            >
+              <span
+                className={`rounded border px-2 py-0.5 text-[11px] ${kpiBadgeClass(kpiStatus)}`}
               >
-                <span
-                  className={`rounded border px-2 py-0.5 text-[11px] ${kpiBadgeClass(kpiStatus)}`}
-                >
-                  {summary?.kpiLabel || kpiStatus}
+                {summary?.kpiLabel || kpiStatus}
+              </span>
+            </KpiPreviewTooltip>
+          ) : null}
+        </div>
+
+        {metrics.length ? (
+          <div className="space-y-2 text-xs">
+            {topMetrics.length ? (
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+                {topMetrics.map((metric) => (
+                  <PreviewMetric
+                    key={metric.label}
+                    label={metric.label}
+                    value={metric.value}
+                    prominent={false}
+                  />
+                ))}
+              </div>
+            ) : null}
+            {cpaMetrics.length ? (
+              <div className="grid grid-cols-3 gap-2">
+                {cpaMetrics.map((metric) => (
+                  <PreviewMetric
+                    key={metric.label}
+                    label={metric.label}
+                    value={metric.value}
+                    prominent
+                    compact
+                    tip={metric.tip}
+                  />
+                ))}
+              </div>
+            ) : null}
+            {supportingMetrics.length ? (
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+                {supportingMetrics.map((metric) => (
+                  <PreviewMetric
+                    key={metric.label}
+                    label={metric.label}
+                    value={metric.value}
+                    prominent={metric.prominent}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {showQuality || kpiTargets.length ? (
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {showQuality && audience?.dataQuality ? (
+              <DataQualityBadge
+                quality={audience.dataQuality}
+                reason={audience?.dataQualityReason}
+                warning={audience?.dataQualityWarning}
+                rawViewRate={audience?.rawViewRate}
+                subscriberBaseQuality={audience?.subscriberBaseQuality}
+              />
+            ) : null}
+            {kpiTargets.length ? (
+              <KpiPreviewTooltip summary={summary} targets={kpiTargets}>
+                <span className="inline-flex flex-wrap items-center gap-1 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
+                  <span className="font-semibold text-slate-200">KPI $:</span>
+                  {kpiTargets.map((target) => (
+                    <span
+                      key={target.label}
+                      className={`rounded border px-1.5 py-0.5 ${kpiRangeClass(target.kind)}`}
+                    >
+                      {target.label}
+                    </span>
+                  ))}
                 </span>
               </KpiPreviewTooltip>
             ) : null}
           </div>
+        ) : null}
 
-          {metrics.length ? (
-            <div className="space-y-2 text-xs">
-              {topMetrics.length ? (
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
-                  {topMetrics.map((metric) => (
-                    <PreviewMetric
-                      key={metric.label}
-                      label={metric.label}
-                      value={metric.value}
-                      prominent={false}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {cpaMetrics.length ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {cpaMetrics.map((metric) => (
-                    <PreviewMetric
-                      key={metric.label}
-                      label={metric.label}
-                      value={metric.value}
-                      prominent
-                      compact
-                      tip={metric.tip}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {supportingMetrics.length ? (
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
-                  {supportingMetrics.map((metric) => (
-                    <PreviewMetric
-                      key={metric.label}
-                      label={metric.label}
-                      value={metric.value}
-                      prominent={metric.prominent}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {(showQuality || kpiTargets.length) ? (
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              {showQuality && audience?.dataQuality ? (
-                <DataQualityBadge
-                  quality={audience.dataQuality}
-                  reason={audience?.dataQualityReason}
-                  warning={audience?.dataQualityWarning}
-                  rawViewRate={audience?.rawViewRate}
-                  subscriberBaseQuality={audience?.subscriberBaseQuality}
-                />
-              ) : null}
-              {kpiTargets.length ? (
-                <KpiPreviewTooltip summary={summary} targets={kpiTargets}>
-                  <span className="inline-flex flex-wrap items-center gap-1 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
-                    <span className="font-semibold text-slate-200">KPI $:</span>
-                    {kpiTargets.map((target) => (
-                      <span key={target.label} className={`rounded border px-1.5 py-0.5 ${kpiRangeClass(target.kind)}`}>
-                        {target.label}
-                      </span>
-                    ))}
-                  </span>
-                </KpiPreviewTooltip>
-              ) : null}
-            </div>
-          ) : null}
-
-          {actions ? (
-            <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] items-center gap-2 pt-1 [&>*]:w-full">
-              {actions}
-            </div>
-          ) : null}
+        {actions ? (
+          <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] items-center gap-2 pt-1 [&>*]:w-full">
+            {actions}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -815,13 +866,20 @@ function KpiPreviewTooltip({
         <span className="mt-1 block text-slate-300">
           Current CPA / sub:{" "}
           <span className="font-semibold text-white">
-            {currentCpa == null ? "not enough data" : `$ ${formatNumber(currentCpa, 2)}`}
+            {currentCpa == null
+              ? "not enough data"
+              : `$ ${formatNumber(currentCpa, 2)}`}
           </span>
         </span>
         {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (
           <span className="mt-1 block text-slate-300">
             Result:{" "}
-            <span className={kpiBadgeClass(summary.kpiStatus).replace("border-", "text-")}>
+            <span
+              className={kpiBadgeClass(summary.kpiStatus).replace(
+                "border-",
+                "text-",
+              )}
+            >
               {summary.kpiLabel || summary.kpiStatus}
             </span>
           </span>
@@ -853,15 +911,19 @@ function formatCompactKpiRange(
   if (!hasFrom && !hasTo) return null;
   const fromText = hasFrom ? formatNumber(from, 2) : "";
   const toText = hasTo ? formatNumber(to, 2) : "";
-  if (openEnded) return fromText ? { kind, label: `${label} ${fromText}+` } : null;
-  if (fromText && toText) return { kind, label: `${label} ${fromText}-${toText}` };
+  if (openEnded)
+    return fromText ? { kind, label: `${label} ${fromText}+` } : null;
+  if (fromText && toText)
+    return { kind, label: `${label} ${fromText}-${toText}` };
   if (fromText) return { kind, label: `${label} from ${fromText}` };
   return { kind, label: `${label} to ${toText}` };
 }
 
 function kpiRangeClass(kind: KpiRange["kind"]) {
-  if (kind === "target") return "border-emerald-800 bg-emerald-950/40 text-emerald-200";
-  if (kind === "ok") return "border-yellow-800 bg-yellow-950/40 text-yellow-200";
+  if (kind === "target")
+    return "border-emerald-800 bg-emerald-950/40 text-emerald-200";
+  if (kind === "ok")
+    return "border-yellow-800 bg-yellow-950/40 text-yellow-200";
   return "border-rose-800 bg-rose-950/40 text-rose-200";
 }
 
@@ -876,7 +938,11 @@ function tooltipPlacementClass(placement: TooltipPlacement) {
   return `${xClass} ${yClass}`;
 }
 
-function resolveTooltipPlacement(rect: DOMRect, width = 320, height = 220): TooltipPlacement {
+function resolveTooltipPlacement(
+  rect: DOMRect,
+  width = 320,
+  height = 220,
+): TooltipPlacement {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
   return {
@@ -886,17 +952,30 @@ function resolveTooltipPlacement(rect: DOMRect, width = 320, height = 220): Tool
 }
 
 function InfoTooltip({ tip }: { tip: string }) {
-  const [placement, setPlacement] = useState<TooltipPlacement>({ x: "left", y: "bottom" });
+  const [placement, setPlacement] = useState<TooltipPlacement>({
+    x: "left",
+    y: "bottom",
+  });
   return (
     <span
       className="group relative inline-flex align-middle"
-      onMouseEnter={(event) => setPlacement(resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()))}
-      onFocus={(event) => setPlacement(resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()))}
+      onMouseEnter={(event) =>
+        setPlacement(
+          resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()),
+        )
+      }
+      onFocus={(event) =>
+        setPlacement(
+          resolveTooltipPlacement(event.currentTarget.getBoundingClientRect()),
+        )
+      }
     >
       <span className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-600 text-slate-400">
         <CircleHelp size={11} />
       </span>
-      <span className={`pointer-events-none absolute z-50 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPlacementClass(placement)}`}>
+      <span
+        className={`pointer-events-none absolute z-50 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPlacementClass(placement)}`}
+      >
         {tip}
       </span>
     </span>
@@ -926,7 +1005,9 @@ function DataQualityBadge({
   );
   return (
     <span className="group relative mt-1 inline-flex cursor-help">
-      <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${badgeClass}`}>
+      <span
+        className={`inline-flex rounded border px-2 py-0.5 text-xs ${badgeClass}`}
+      >
         {quality}
       </span>
       <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
@@ -937,8 +1018,8 @@ function DataQualityBadge({
           This checks whether subscriber-based metrics look trustworthy.
         </span>
         <span className="mt-2 block text-slate-400">
-          Normal: raw view rate up to 80%. Borderline: 80-120%.
-          Suspicious: 120-200%. Anomalous: above 200% or invalid input.
+          Normal: raw view rate up to 80%. Borderline: 80-120%. Suspicious:
+          120-200%. Anomalous: above 200% or invalid input.
         </span>
         {rawViewRate != null ? (
           <span className="mt-2 block text-slate-300">
@@ -986,7 +1067,13 @@ function dataQualityReasonText(reason?: string | null) {
   return "";
 }
 
-function PreviewMetric({ label, value, prominent, compact, tip }: {
+function PreviewMetric({
+  label,
+  value,
+  prominent,
+  compact,
+  tip,
+}: {
   label: string;
   value: ReactNode;
   prominent?: boolean;
@@ -1421,7 +1508,9 @@ export default function TelegramChannelsPage() {
   const createNetworkMutation = useMutation({
     mutationFn: telegramChannelNetworksApi.create,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-networks"],
+      });
       setNetworkFormOpen(false);
       pushToast("Network created.", "success");
     },
@@ -1444,7 +1533,9 @@ export default function TelegramChannelsPage() {
       };
     }) => telegramChannelNetworksApi.update(id, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-networks"],
+      });
       setEditingNetwork(null);
       setNetworkFormOpen(false);
       pushToast("Network updated.", "success");
@@ -1458,7 +1549,9 @@ export default function TelegramChannelsPage() {
   const deleteNetworkMutation = useMutation({
     mutationFn: (id: string) => telegramChannelNetworksApi.remove(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel-networks"] });
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-channel-networks"],
+      });
       setDeletingNetwork(null);
       pushToast("Network deleted.", "success");
     },
@@ -1566,22 +1659,24 @@ export default function TelegramChannelsPage() {
         action={headerAction}
       />
       <div className="mb-5 inline-flex rounded-lg border border-neutral-700 bg-neutral-900 p-1">
-        {(["channels", "networks", "accounts", "bot"] as TelegramTab[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`rounded-md px-4 py-2 text-sm ${tab === item ? "bg-blue-600 text-white" : "text-neutral-300 hover:bg-neutral-800"}`}
-            onClick={() => updateTabs({ tab: item })}
-          >
-            {item === "channels"
-              ? "Channels"
-              : item === "networks"
-                ? "Networks"
-                : item === "accounts"
-                ? "Accounts"
-                : "Bot"}
-          </button>
-        ))}
+        {(["channels", "networks", "accounts", "bot"] as TelegramTab[]).map(
+          (item) => (
+            <button
+              key={item}
+              type="button"
+              className={`rounded-md px-4 py-2 text-sm ${tab === item ? "bg-blue-600 text-white" : "text-neutral-300 hover:bg-neutral-800"}`}
+              onClick={() => updateTabs({ tab: item })}
+            >
+              {item === "channels"
+                ? "Channels"
+                : item === "networks"
+                  ? "Networks"
+                  : item === "accounts"
+                    ? "Accounts"
+                    : "Bot"}
+            </button>
+          ),
+        )}
       </div>
       {tab === "channels" ? (
         <>
@@ -1656,7 +1751,9 @@ export default function TelegramChannelsPage() {
                           <Button
                             className="inline-flex h-11 min-w-56 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             variant="primary"
-                            onClick={() => importMutation.mutate(`@${username}`)}
+                            onClick={() =>
+                              importMutation.mutate(`@${username}`)
+                            }
                           >
                             <RefreshCw size={16} />
                             Refresh Public
@@ -1699,7 +1796,11 @@ export default function TelegramChannelsPage() {
                   {hasAdminLink ? (
                     <ChannelSourcesSummary
                       channelId={channel.id}
-                      sourcesCount={channel.preview?.sourcesCount ?? channel.adminLinks?.length ?? 0}
+                      sourcesCount={
+                        channel.preview?.sourcesCount ??
+                        channel.adminLinks?.length ??
+                        0
+                      }
                     />
                   ) : null}
                 </EntityCard>
@@ -1805,7 +1906,9 @@ export default function TelegramChannelsPage() {
         entityName={deleting?.title ?? ""}
         description="This deletes the channel and related campaigns, promos, invite links, and stats."
         onClose={() => setDeleting(null)}
-        onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined}
+        onConfirm={() =>
+          deleting ? deleteMutation.mutateAsync(deleting.id) : undefined
+        }
         label="Delete"
       />
       <ConfirmDeleteModal
@@ -1814,7 +1917,9 @@ export default function TelegramChannelsPage() {
         description="This deletes the person from advertising sources."
         onClose={() => setDeletingPerson(null)}
         onConfirm={() =>
-          deletingPerson ? deletePersonMutation.mutateAsync(deletingPerson.id) : undefined
+          deletingPerson
+            ? deletePersonMutation.mutateAsync(deletingPerson.id)
+            : undefined
         }
         label="Delete"
       />
@@ -1843,7 +1948,9 @@ export default function TelegramChannelsPage() {
         description="This deletes only the network. Telegram channels remain untouched."
         onClose={() => setDeletingNetwork(null)}
         onConfirm={() =>
-          deletingNetwork ? deleteNetworkMutation.mutateAsync(deletingNetwork.id) : undefined
+          deletingNetwork
+            ? deleteNetworkMutation.mutateAsync(deletingNetwork.id)
+            : undefined
         }
         label="Delete"
       />
@@ -1909,7 +2016,9 @@ function MultiImageUpload({
 }) {
   return (
     <FormField label="Images">
-      <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-700 bg-neutral-950/50 px-4 py-4 text-sm text-neutral-300 hover:border-blue-600 hover:text-white ${disabled ? "pointer-events-none opacity-50" : ""}`}>
+      <label
+        className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-700 bg-neutral-950/50 px-4 py-4 text-sm text-neutral-300 hover:border-blue-600 hover:text-white ${disabled ? "pointer-events-none opacity-50" : ""}`}
+      >
         <ImagePlus size={18} />
         Upload images
         <input
@@ -1937,11 +2046,16 @@ function MultiImageUpload({
       {value.length ? (
         <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
           {value.map((url, index) => (
-            <div key={`${url}-${index}`} className="group relative aspect-square overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
+            <div
+              key={`${url}-${index}`}
+              className="group relative aspect-square overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950"
+            >
               <img src={url} alt="" className="h-full w-full object-cover" />
               <button
                 type="button"
-                onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
+                onClick={() =>
+                  onChange(value.filter((_, itemIndex) => itemIndex !== index))
+                }
                 className="absolute right-1 top-1 rounded-md bg-black/75 p-1 text-white opacity-0 transition group-hover:opacity-100"
                 aria-label="Remove image"
               >
@@ -1964,6 +2078,7 @@ function TelegramPostComposerModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
@@ -1972,13 +2087,20 @@ function TelegramPostComposerModal({
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [busy, setBusy] = useState(false);
-  const [deletingPost, setDeletingPost] =
-    useState<TelegramManagedPost | null>(null);
+  const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
+    null,
+  );
   const posts = useQuery({
     queryKey: ["telegram-managed-posts", channel?.id],
     queryFn: () => telegramChannelsApi.managedPosts(channel!.id),
     enabled: !!channel,
   });
+  useEffect(() => {
+    if (!channel) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["telegram-managed-post-link-targets", channel.id],
+    });
+  }, [channel, posts.data, queryClient]);
   useEffect(() => {
     if (!channel) return;
     setEditing(null);
@@ -2022,126 +2144,181 @@ function TelegramPostComposerModal({
   };
   return (
     <>
-    <Modal open={!!channel} onClose={onClose} title={`Posts · ${channel?.title || ""}`} size="xl">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
-      <div className="min-w-0 space-y-4">
-        <FormField label="Internal title" required>
-          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
-        </FormField>
-        <FormField label="Telegram text">
-          <Textarea rows={8} value={text} onChange={(event) => setText(event.target.value)} placeholder="**bold**  __italic__  ~~strike~~  ||spoiler||  `code`" />
-        </FormField>
-        <MultiImageUpload
-          value={imageUrls}
-          onChange={setImageUrls}
-          disabled={busy}
-          onUploadingChange={setBusy}
-        />
-        <FormField label="Publishing mode">
-          <CustomSelect
-            value={mode}
-            dropdownDirection="up"
-            searchable={false}
-            onChange={(value) =>
-              setMode(value as "draft" | "publish" | "schedule")
-            }
-            options={[
-              { value: "draft", label: "Save as draft", iconEmoji: "📝" },
-              { value: "publish", label: "Publish now", iconEmoji: "🚀" },
-              { value: "schedule", label: "Schedule in Telegram", iconEmoji: "🕒" },
-            ]}
-          />
-        </FormField>
-        {mode === "schedule" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Publish date" required>
-              <DateInput value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} placeholder="Select date" />
+      <Modal
+        open={!!channel}
+        onClose={onClose}
+        title={`Posts · ${channel?.title || ""}`}
+        size="xl"
+      >
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
+          <div className="min-w-0 space-y-4">
+            <FormField label="Internal title" required>
+              <Input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
             </FormField>
-            <FormField label="Publish time" required>
-              <Input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
+            <FormField label="Telegram text">
+              <TelegramTextEditor
+                rows={8}
+                value={text}
+                onChange={setText}
+                disabled={busy}
+                channelId={channel?.id}
+                currentPostId={editing?.id}
+                enableInternalPostLinks
+              />
             </FormField>
-          </div>
-        ) : null}
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button
-            onClick={() => run(mode)}
-            disabled={
-              busy ||
-              !title.trim() ||
-              (mode !== "draft" && !text.trim() && !imageUrls.length) ||
-              (mode === "schedule" && (!scheduleDate || !scheduleTime))
-            }
-          >
-            {mode === "draft" ? "Save draft" : mode === "publish" ? "Publish now" : editing?.status === "SCHEDULED" ? "Update scheduled post" : "Schedule post"}
-          </Button>
-        </div>
-      </div>
-        <div className="min-w-0 border-t border-neutral-800 pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-          <p className="mb-3 text-sm font-semibold">Drafts and posts</p>
-          {posts.isLoading ? <LoadingState /> : null}
-          {posts.data?.length ? (
-            <div className="max-h-[62vh] space-y-2 overflow-auto pr-1">
-              {posts.data.map((post) => (
-                <div key={post.id} className="flex items-center gap-2 rounded-lg border border-neutral-800 p-1 hover:bg-neutral-900">
-                  <button type="button" onClick={() => {
-                    setEditing(post);
-                    setTitle(post.title);
-                    setText(post.text || "");
-                    setImageUrls(post.imageUrls);
-                    setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
-                    setScheduleDate(post.scheduledAt ? post.scheduledAt.slice(0, 10) : "");
-                    setScheduleTime(post.scheduledAt ? post.scheduledAt.slice(11, 16) : "09:00");
-                  }} className="flex min-w-0 flex-1 items-center justify-between px-2 py-1 text-left">
-                    <span className="truncate">{post.title}</span>
-                    <span className="ml-2 text-xs text-neutral-500">{post.status}</span>
-                  </button>
-                  <IconButton
-                    type="button"
-                    kind="delete"
-                    aria-label={`Delete ${post.title}`}
-                    onClick={() => setDeletingPost(post)}
+            <MultiImageUpload
+              value={imageUrls}
+              onChange={setImageUrls}
+              disabled={busy}
+              onUploadingChange={setBusy}
+            />
+            <FormField label="Publishing mode">
+              <CustomSelect
+                value={mode}
+                dropdownDirection="up"
+                searchable={false}
+                onChange={(value) =>
+                  setMode(value as "draft" | "publish" | "schedule")
+                }
+                options={[
+                  { value: "draft", label: "Save as draft", iconEmoji: "📝" },
+                  { value: "publish", label: "Publish now", iconEmoji: "🚀" },
+                  {
+                    value: "schedule",
+                    label: "Schedule in Telegram",
+                    iconEmoji: "🕒",
+                  },
+                ]}
+              />
+            </FormField>
+            {mode === "schedule" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FormField label="Publish date" required>
+                  <DateInput
+                    value={scheduleDate}
+                    onChange={(event) => setScheduleDate(event.target.value)}
+                    placeholder="Select date"
                   />
-                </div>
-              ))}
+                </FormField>
+                <FormField label="Publish time" required>
+                  <Input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(event) => setScheduleTime(event.target.value)}
+                  />
+                </FormField>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => run(mode)}
+                disabled={
+                  busy ||
+                  !title.trim() ||
+                  (mode !== "draft" && !text.trim() && !imageUrls.length) ||
+                  (mode === "schedule" && (!scheduleDate || !scheduleTime))
+                }
+              >
+                {mode === "draft"
+                  ? "Save draft"
+                  : mode === "publish"
+                    ? "Publish now"
+                    : editing?.status === "SCHEDULED"
+                      ? "Update scheduled post"
+                      : "Schedule post"}
+              </Button>
             </div>
-          ) : !posts.isLoading ? <EmptyState text="No posts yet" /> : null}
+          </div>
+          <div className="min-w-0 border-t border-neutral-800 pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+            <p className="mb-3 text-sm font-semibold">Drafts and posts</p>
+            {posts.isLoading ? <LoadingState /> : null}
+            {posts.data?.length ? (
+              <div className="max-h-[62vh] space-y-2 overflow-auto pr-1">
+                {posts.data.map((post) => (
+                  <div
+                    key={post.id}
+                    className="flex items-center gap-2 rounded-lg border border-neutral-800 p-1 hover:bg-neutral-900"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditing(post);
+                        setTitle(post.title);
+                        setText(post.text || "");
+                        setImageUrls(post.imageUrls);
+                        setMode(
+                          post.status === "SCHEDULED" ? "schedule" : "draft",
+                        );
+                        setScheduleDate(
+                          post.scheduledAt ? post.scheduledAt.slice(0, 10) : "",
+                        );
+                        setScheduleTime(
+                          post.scheduledAt
+                            ? post.scheduledAt.slice(11, 16)
+                            : "09:00",
+                        );
+                      }}
+                      className="flex min-w-0 flex-1 items-center justify-between px-2 py-1 text-left"
+                    >
+                      <span className="truncate">{post.title}</span>
+                      <span className="ml-2 text-xs text-neutral-500">
+                        {post.status}
+                      </span>
+                    </button>
+                    <IconButton
+                      type="button"
+                      kind="delete"
+                      aria-label={`Delete ${post.title}`}
+                      onClick={() => setDeletingPost(post)}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : !posts.isLoading ? (
+              <EmptyState text="No posts yet" />
+            ) : null}
+          </div>
         </div>
-      </div>
-    </Modal>
-    <ConfirmDeleteModal
-      open={!!deletingPost}
-      onClose={() => setDeletingPost(null)}
-      entityName={deletingPost?.title ?? ""}
-      label="Delete post"
-      description={
-        deletingPost?.status === "SCHEDULED"
-          ? "This will cancel the scheduled message in Telegram and delete it from this system."
-          : "This deletes the record only from this system. Published Telegram messages remain untouched."
-      }
-      onConfirm={async () => {
-        if (!channel || !deletingPost) return;
-        setBusy(true);
-        try {
-          await telegramChannelsApi.deleteManagedPost(
-            channel.id,
-            deletingPost.id,
-          );
-          if (editing?.id === deletingPost.id) {
-            setEditing(null);
-            setTitle("");
-            setText("");
-            setImageUrls([]);
-            setMode("draft");
-          }
-          setDeletingPost(null);
-          await posts.refetch();
-          onChanged();
-        } finally {
-          setBusy(false);
+      </Modal>
+      <ConfirmDeleteModal
+        open={!!deletingPost}
+        onClose={() => setDeletingPost(null)}
+        entityName={deletingPost?.title ?? ""}
+        label="Delete post"
+        description={
+          deletingPost?.status === "SCHEDULED"
+            ? "This will cancel the scheduled message in Telegram and delete it from this system."
+            : "This deletes the record only from this system. Published Telegram messages remain untouched."
         }
-      }}
-    />
+        onConfirm={async () => {
+          if (!channel || !deletingPost) return;
+          setBusy(true);
+          try {
+            await telegramChannelsApi.deleteManagedPost(
+              channel.id,
+              deletingPost.id,
+            );
+            if (editing?.id === deletingPost.id) {
+              setEditing(null);
+              setTitle("");
+              setText("");
+              setImageUrls([]);
+              setMode("draft");
+            }
+            setDeletingPost(null);
+            await posts.refetch();
+            onChanged();
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
     </>
   );
 }
@@ -2203,9 +2380,10 @@ function AdAnalysisModal({
         onSubmit={handleSubmit((values) =>
           onSubmit({
             ...values,
-            price: values.price == null || Number.isNaN(values.price)
-              ? undefined
-              : values.price,
+            price:
+              values.price == null || Number.isNaN(values.price)
+                ? undefined
+                : values.price,
             currency: values.currency?.toUpperCase() || undefined,
             postLimit: 20,
           }),
@@ -2213,25 +2391,40 @@ function AdAnalysisModal({
       >
         <div className="grid gap-3 sm:grid-cols-3">
           <FormField label="Price">
-            <Input type="number" min="0" step="0.01" {...register("price", { valueAsNumber: true })} />
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              {...register("price", { valueAsNumber: true })}
+            />
           </FormField>
           <FormField label="Currency">
             <Select {...register("currency")}>
               <option value="">Select currency</option>
               {currencyOptions.map((currency) => (
-                <option key={currency} value={currency}>{currency}</option>
+                <option key={currency} value={currency}>
+                  {currency}
+                </option>
               ))}
             </Select>
           </FormField>
           <FormField label="Status">
             <Select {...register("status")}>
-              <option value="APPROVED" className="text-emerald-300">Approved</option>
-              <option value="REJECTED" className="text-rose-300">Rejected</option>
+              <option value="APPROVED" className="text-emerald-300">
+                Approved
+              </option>
+              <option value="REJECTED" className="text-rose-300">
+                Rejected
+              </option>
             </Select>
           </FormField>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Date" required error={errors.analyzedAt ? "Date is required" : undefined}>
+          <FormField
+            label="Date"
+            required
+            error={errors.analyzedAt ? "Date is required" : undefined}
+          >
             <Controller
               name="analyzedAt"
               control={control}
@@ -2261,11 +2454,16 @@ function AdAnalysisModal({
           <Textarea rows={3} {...register("notes")} />
         </FormField>
         <p className="text-xs text-slate-500">
-          Average views, reactions, forwards and CPM are calculated from the latest 20 Telegram posts.
+          Average views, reactions, forwards and CPM are calculated from the
+          latest 20 Telegram posts.
         </p>
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving..." : "Save analysis"}</Button>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Saving..." : "Save analysis"}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -2411,7 +2609,10 @@ function NetworksTable({
                 <td className="px-3 py-3">
                   <div className="flex justify-end gap-2">
                     <IconButton onClick={() => onEdit(network)} />
-                    <IconButton kind="delete" onClick={() => onDelete(network)} />
+                    <IconButton
+                      kind="delete"
+                      onClick={() => onDelete(network)}
+                    />
                   </div>
                 </td>
               </tr>
@@ -2568,7 +2769,10 @@ function NetworkFormModal({
     >
       <div className="space-y-4">
         <FormField label="Name" required>
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
         </FormField>
         <FormField label="Description">
           <Textarea

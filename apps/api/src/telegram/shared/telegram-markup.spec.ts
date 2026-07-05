@@ -7,6 +7,12 @@ import {
 } from './telegram-markup';
 
 describe('telegramMarkupToHtml', () => {
+  it('does not convert unresolved internal post links', () => {
+    expect(telegramMarkupToHtml('[Post](tg-post:post_1)')).toBe(
+      '[Post](tg-post:post_1)',
+    );
+  });
+
   it('converts supported formatting and escapes user html', () => {
     expect(
       telegramMarkupToHtml(

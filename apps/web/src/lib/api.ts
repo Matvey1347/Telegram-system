@@ -547,10 +547,22 @@ export type TelegramManagedPost = {
   scheduledAt?: string | null;
   publishedAt?: string | null;
   telegramMessageIds: string[];
+  telegramMessageUrls: string[];
   publishMode?: string | null;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+export type TelegramManagedPostLinkTarget = {
+  id: string;
+  title: string;
+  status: TelegramManagedPostStatus;
+  groupId?: string | null;
+  groupTitle?: string | null;
+  telegramChannelId: string;
+  telegramChannelTitle: string;
+  publishedAt?: string | null;
+  primaryTelegramMessageUrl?: string | null;
 };
 export type PostGroupStatusSummary = {
   totalPosts: number;
@@ -1424,6 +1436,21 @@ export const telegramChannelsApi = {
     (
       await api.get<TelegramManagedPost[]>(
         `/telegram-channels/${channelId}/managed-posts`,
+      )
+    ).data,
+  managedPostLinkTargets: async (
+    channelId: string,
+    params?: {
+      search?: string;
+      groupId?: string;
+      excludePostId?: string;
+      limit?: number;
+    },
+  ) =>
+    (
+      await api.get<TelegramManagedPostLinkTarget[]>(
+        `/telegram-channels/${channelId}/managed-posts/link-targets`,
+        { params },
       )
     ).data,
   reorderManagedPostSidebar: async (

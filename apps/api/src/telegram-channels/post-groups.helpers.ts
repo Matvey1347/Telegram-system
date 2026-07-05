@@ -111,6 +111,7 @@ export function movedPostDatabaseState(
     scheduledAt:
       status === TelegramManagedPostStatus.SCHEDULED ? scheduledAt : null,
     telegramMessageIds: [] as string[],
+    telegramMessageUrls: [] as string[],
     sourceType: null,
     sourceId: null,
     lastError: cancellationError,
