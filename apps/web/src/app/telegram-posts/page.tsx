@@ -238,6 +238,8 @@ function TelegramPostWorkspace({
   const [pendingPostSaves, setPendingPostSaves] = useState<PendingPostSave[]>(
     [],
   );
+  const [creatingPostId, setCreatingPostId] = useState<string | null>(null);
+  const creatingPostIdRef = useRef<string | null>(null);
   const [savingPostIds, setSavingPostIds] = useState<string[]>([]);
   const posts = useQuery({
     queryKey: ["telegram-managed-posts", channelId],
@@ -307,6 +309,7 @@ function TelegramPostWorkspace({
   const editingIsSaving = Boolean(
     editing && savingPostIds.includes(editing.id),
   );
+  const editorIsSaving = editingIsSaving || Boolean(creatingPostId);
   const hasLongImageText = imageUrls.length > 0 && text.length > 1024;
   const publishedLongImageTextMode =
     isPublished && hasLongImageText
@@ -318,6 +321,8 @@ function TelegramPostWorkspace({
     imageUrls.length === 0 && text.length > TELEGRAM_TEXT_MESSAGE_LIMIT;
   const publishDisabledReason = busy
     ? "Saving or publishing is already in progress."
+    : creatingPostId
+      ? "This post is being saved."
     : iconPending
       ? "Wait until the selected icon is ready."
       : uploadingImages
@@ -658,6 +663,8 @@ function TelegramPostWorkspace({
     setLongTextMode("IMAGES_THEN_TEXT");
     setUploadingImages(false);
     setSelectedPostIds([]);
+    setCreatingPostId(null);
+    creatingPostIdRef.current = null;
     setError("");
   };
 
@@ -842,6 +849,8 @@ function TelegramPostWorkspace({
     if (editingPost) {
       setSavingPostIds((current) => [...new Set([...current, pendingId])]);
     } else {
+      setCreatingPostId(pendingId);
+      creatingPostIdRef.current = pendingId;
       setPendingPostSaves((current) => [
         {
           id: pendingId,
@@ -860,12 +869,8 @@ function TelegramPostWorkspace({
           ? "PUBLISHED"
           : "DRAFT",
     );
-    if (!editingPost) {
-      reset();
-      onPostSelect(null);
-    }
-
     void (async () => {
+      let savedPostId: string | null = null;
       try {
         const post = editingPost
           ? await telegramChannelsApi.updateManagedPost(
@@ -879,6 +884,7 @@ function TelegramPostWorkspace({
               payload,
               true,
             );
+        savedPostId = post.id;
         if (saveGroupId && saveGroupId !== (editingPost?.groupId ?? null)) {
           await telegramChannelsApi.addPostsToGroup(
             saveGroupId,
@@ -946,9 +952,29 @@ function TelegramPostWorkspace({
             );
           }
         }
+        if (
+          !editingPost &&
+          savedPostId &&
+          postsResult.status === "fulfilled" &&
+          creatingPostIdRef.current === pendingId
+        ) {
+          const refreshedPost = refreshedPosts?.find(
+            (item) => item.id === savedPostId,
+          );
+          if (refreshedPost) {
+            selectPost(refreshedPost);
+            onPostSelect(refreshedPost.id);
+          }
+        }
         setPendingPostSaves((current) =>
           current.filter((item) => item.id !== pendingId),
         );
+        setCreatingPostId((current) =>
+          current === pendingId ? null : current,
+        );
+        if (creatingPostIdRef.current === pendingId) {
+          creatingPostIdRef.current = null;
+        }
         setSavingPostIds((current) => current.filter((id) => id !== pendingId));
       }
     })();
@@ -1008,14 +1034,14 @@ function TelegramPostWorkspace({
             longTextMode={longTextMode}
           />
           <Card className="relative min-w-0 space-y-3 overflow-hidden">
-            {editingIsSaving ? (
+            {editorIsSaving ? (
               <div className="absolute inset-0 z-40 flex items-center justify-center rounded-lg bg-black/55 backdrop-blur-[2px]">
                 <div className="flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-4 text-sm font-medium text-white shadow-2xl">
                   <LoaderCircle
                     size={21}
                     className="animate-spin text-blue-400"
                   />
-                  Saving “{editing?.title}”…
+                  Saving “{editing?.title || title}”…
                 </div>
               </div>
             ) : null}
