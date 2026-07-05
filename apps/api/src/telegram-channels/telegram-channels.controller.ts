@@ -33,6 +33,7 @@ import {
   SyncChannelStatsDto,
   SyncPostsMetricsDto,
   ScheduleTelegramManagedPostDto,
+  SetManagedPostTelegramUrlDto,
   PublishTelegramManagedPostDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
@@ -233,6 +234,24 @@ export class TelegramChannelsController {
   @Get(':id/managed-posts')
   managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.managedPosts(user.sub, id);
+  }
+  @Post(':id/managed-posts/sync')
+  syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.syncManagedPosts(user.sub, id);
+  }
+  @Patch(':id/managed-posts/:postId/telegram-url')
+  setManagedPostTelegramUrl(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Body() dto: SetManagedPostTelegramUrlDto,
+  ) {
+    return this.service.setManagedPostTelegramUrl(
+      user.sub,
+      id,
+      postId,
+      dto.telegramUrl,
+    );
   }
   @Post(':id/managed-posts/reorder-sidebar')
   reorderManagedPostSidebar(

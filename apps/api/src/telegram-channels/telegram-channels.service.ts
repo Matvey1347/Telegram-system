@@ -174,6 +174,31 @@ export class TelegramChannelsService {
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   }
 
+  private telegramHtmlToManagedMarkup(html: string) {
+    return html
+      .replace(/<pre><code(?: class="language-([^"]+)")?>([\s\S]*?)<\/code><\/pre>/gi, (_match, language: string, code: string) => `\`\`\`${language || ''}\n${code}\`\`\``)
+      .replace(/<code>([\s\S]*?)<\/code>/gi, '`$1`')
+      .replace(/<(?:strong|b)>([\s\S]*?)<\/(?:strong|b)>/gi, '**$1**')
+      .replace(/<(?:em|i)>([\s\S]*?)<\/(?:em|i)>/gi, '__$1__')
+      .replace(/<u>([\s\S]*?)<\/u>/gi, '++$1++')
+      .replace(/<(?:s|del|strike)>([\s\S]*?)<\/(?:s|del|strike)>/gi, '~~$1~~')
+      .replace(/<tg-spoiler>([\s\S]*?)<\/tg-spoiler>/gi, '||$1||')
+      .replace(
+        /<a href="([^"]+)">([\s\S]*?)<\/a>/gi,
+        (_match, href: string, label: string) => `[${label}](${href})`,
+      )
+      .replace(/<blockquote(?: expandable)?>([\s\S]*?)<\/blockquote>/gi, (_match, content: string) =>
+        content
+          .split('\n')
+          .map((line: string) => `> ${line}`)
+          .join('\n'),
+      )
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&');
+  }
+
   private normalizePublicChannelInput(input: string) {
     const trimmed = String(input || '').trim();
     if (!trimmed)
@@ -1151,6 +1176,202 @@ export class TelegramChannelsService {
     return this.prisma.telegramManagedPost.findMany({
       where: { workspaceId, telegramChannelId: channelId },
       orderBy: { createdAt: 'desc' },
+      include: this.managedPostInclude,
+    });
+  }
+
+  async syncManagedPosts(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    const channel = await this.findOne(userId, channelId);
+    const posts = await this.prisma.telegramManagedPost.findMany({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        status: { in: ['SCHEDULED', 'PUBLISHED'] },
+        telegramMessageIds: { isEmpty: false },
+      },
+    });
+    if (!posts.length) return { checked: 0, updated: 0, missing: 0 };
+    const account = await this.connectedAccount(workspaceId, channelId);
+    const channelRef = this.channelRef(channel);
+    if (!channelRef)
+      throw new BadRequestException('Channel has no Telegram reference');
+    const publishedMessageIds = [
+      ...new Set(posts.flatMap((post) => post.telegramMessageIds)),
+    ];
+    const scheduledMessageIds = [
+      ...new Set(
+        posts
+          .filter((post) => post.status === 'SCHEDULED')
+          .flatMap((post) => post.telegramMessageIds),
+      ),
+    ];
+    const remote = await this.mtprotoClient.getManagedPostMessages({
+      ...this.accountCredentials(account),
+      channelRef,
+      publishedMessageIds,
+      scheduledMessageIds,
+    });
+    const publishedById = new Map(
+      remote.published.map((message) => [message.id, message]),
+    );
+    const scheduledById = new Map(
+      remote.scheduled.map((message) => [message.id, message]),
+    );
+    const claimedRecentMessageIds = new Set<string>();
+    const normalizedPlainText = (value: string) => {
+      const withoutInternalTargets = (value || '').replace(
+        /\[([^\]\n]+)\]\(tg-post:[a-zA-Z0-9_-]+\)/g,
+        '$1',
+      );
+      const [plain] = HTMLParser.parse(
+        telegramMarkupToHtml(withoutInternalTargets),
+      );
+      return plain.replace(/\s+/g, ' ').trim().toLowerCase();
+    };
+    let updated = 0;
+    let missing = 0;
+    for (const post of posts) {
+      const scheduledMessages = post.telegramMessageIds
+        .map((id) => scheduledById.get(id))
+        .filter((message): message is NonNullable<typeof message> =>
+          Boolean(message),
+        );
+      let publishedMessages = post.telegramMessageIds
+        .map((id) => publishedById.get(id))
+        .filter((message): message is NonNullable<typeof message> =>
+          Boolean(message),
+        );
+      if (
+        post.status === 'SCHEDULED' &&
+        !scheduledMessages.length &&
+        !publishedMessages.length
+      ) {
+        const localText = normalizedPlainText(post.text || '');
+        const candidates = remote.recentPublished
+          .filter(
+            (message) =>
+              message.date && !claimedRecentMessageIds.has(message.id),
+          )
+          .map((message) => ({
+            message,
+            exactText:
+              Boolean(localText) &&
+              normalizedPlainText(
+                this.telegramHtmlToManagedMarkup(message.html),
+              ) === localText,
+            distance: post.scheduledAt
+              ? Math.abs(
+                  new Date(message.date!).getTime() -
+                    post.scheduledAt.getTime(),
+                )
+              : Number.MAX_SAFE_INTEGER,
+          }));
+        const nearest =
+          candidates
+            .filter((candidate) => candidate.exactText)
+            .sort((left, right) => left.distance - right.distance)[0]
+            ?.message ??
+          candidates
+            .filter((candidate) => candidate.distance <= 10 * 60_000)
+            .sort((left, right) => left.distance - right.distance)[0]?.message;
+        if (nearest) {
+          claimedRecentMessageIds.add(nearest.id);
+          publishedMessages = [nearest];
+        }
+      }
+      const messages = scheduledMessages.length
+        ? scheduledMessages
+        : publishedMessages;
+      if (!messages.length) {
+        if (post.status === 'SCHEDULED') {
+          missing += 1;
+          const expectedUrls = post.telegramMessageIds.flatMap((id) => {
+            const url = this.telegramMessageUrl(channel, id);
+            return url ? [url] : [];
+          });
+          await this.prisma.telegramManagedPost.update({
+            where: { id: post.id },
+            data: {
+              status: 'PUBLISHED',
+              publishedAt:
+                post.scheduledAt && post.scheduledAt.getTime() <= Date.now()
+                  ? post.scheduledAt
+                  : new Date(),
+              scheduledAt: null,
+              telegramMessageUrls: expectedUrls,
+              lastError:
+                'Telegram post link is broken or the published message could not be found. Recreate the post or enter its Telegram link manually.',
+            },
+          });
+          updated += 1;
+        } else if (post.status === 'PUBLISHED') {
+          missing += 1;
+          await this.prisma.telegramManagedPost.update({
+            where: { id: post.id },
+            data: {
+              lastError:
+                'Telegram post link is broken or the message could not be found. Recreate the post or enter its Telegram link manually.',
+            },
+          });
+        }
+        continue;
+      }
+      const remoteText = messages
+        .map((message) => this.telegramHtmlToManagedMarkup(message.html))
+        .filter(Boolean)
+        .join('\n\n');
+      const becamePublished =
+        post.status === 'SCHEDULED' && !scheduledMessages.length;
+      const actualMessageIds =
+        becamePublished && publishedMessages.length
+          ? publishedMessages.map((message) => message.id)
+          : post.telegramMessageIds;
+      await this.prisma.telegramManagedPost.update({
+        where: { id: post.id },
+        data: {
+          ...(post.text?.includes('tg-post:') || !remoteText
+            ? {}
+            : { text: remoteText }),
+          status: becamePublished ? 'PUBLISHED' : post.status,
+          publishedAt: becamePublished
+            ? new Date(messages[0].date || Date.now())
+            : post.publishedAt,
+          scheduledAt: becamePublished ? null : post.scheduledAt,
+          telegramMessageIds: actualMessageIds,
+          telegramMessageUrls: becamePublished
+            ? actualMessageIds.flatMap((id) => {
+                const url = this.telegramMessageUrl(channel, id);
+                return url ? [url] : [];
+              })
+            : post.telegramMessageUrls,
+          lastError: null,
+        },
+      });
+      updated += 1;
+    }
+    return { checked: posts.length, updated, missing };
+  }
+
+  async setManagedPostTelegramUrl(
+    userId: string,
+    channelId: string,
+    postId: string,
+    telegramUrl: string,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const post = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+      select: { id: true },
+    });
+    if (!post) throw new NotFoundException('Managed post not found');
+    const url = new URL(telegramUrl);
+    if (url.protocol !== 'https:' || url.hostname !== 't.me') {
+      throw new BadRequestException('Enter a valid https://t.me/... post URL');
+    }
+    return this.prisma.telegramManagedPost.update({
+      where: { id: postId },
+      data: { telegramMessageUrls: [url.toString()], lastError: null },
       include: this.managedPostInclude,
     });
   }

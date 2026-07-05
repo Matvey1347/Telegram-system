@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -11,6 +16,7 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  ExternalLink,
   FileText,
   FolderPlus,
   GripVertical,
@@ -20,6 +26,7 @@ import {
   LoaderCircle,
   MoveRight,
   Plus,
+  RefreshCw,
   RotateCcw,
   Rocket,
   Trash2,
@@ -83,6 +90,8 @@ const postGroupPreferenceKey = (channelId: string) =>
 export default function TelegramPostsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const { pushToast } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
   const channelId = searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
@@ -96,6 +105,28 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
+  const syncManagedPosts = useMutation({
+    mutationFn: () => telegramChannelsApi.syncManagedPosts(channel!.id),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channel?.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["post-groups", channel?.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channel?.id],
+        }),
+      ]);
+      pushToast(
+        `Telegram sync: ${result.updated} updated${
+          result.missing ? `, ${result.missing} not found` : ""
+        }.`,
+        result.missing ? "error" : "success",
+      );
+    },
+  });
 
   useEffect(() => {
     if (!channelId && channel) {
@@ -110,7 +141,7 @@ export default function TelegramPostsPage() {
         subtitle="Create drafts, publish now, or schedule directly in Telegram"
         action={
           channel ? (
-            <div className="flex w-full flex-col gap-2 sm:min-w-[520px] sm:flex-row">
+            <div className="flex w-full flex-col gap-2 sm:min-w-[620px] sm:flex-row">
               <div className="min-w-0 flex-1">
                 <CustomSelect
                   value={channel.id}
@@ -125,6 +156,21 @@ export default function TelegramPostsPage() {
                   }))}
                 />
               </div>
+              <Button
+                variant="secondary"
+                className="shrink-0"
+                disabled={syncManagedPosts.isPending}
+                onClick={() => syncManagedPosts.mutate()}
+                title="Sync published and scheduled posts from Telegram"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RefreshCw
+                    size={15}
+                    className={syncManagedPosts.isPending ? "animate-spin" : ""}
+                  />
+                  Sync Telegram
+                </span>
+              </Button>
               <Button
                 className="shrink-0"
                 onClick={() => {
@@ -152,6 +198,8 @@ export default function TelegramPostsPage() {
             channelId={channel.id}
             channelTitle={channel.title}
             channelPhotoUrl={channel.photoUrl}
+            channelUsername={channel.username}
+            channelTelegramChatId={channel.telegramChatId}
             newPostToken={newPostToken}
             initialPostId={postId}
             channels={availableChannels}
@@ -173,6 +221,8 @@ function TelegramPostWorkspace({
   channelId,
   channelTitle,
   channelPhotoUrl,
+  channelUsername,
+  channelTelegramChatId,
   newPostToken,
   initialPostId,
   channels,
@@ -181,6 +231,8 @@ function TelegramPostWorkspace({
   channelId: string;
   channelTitle: string;
   channelPhotoUrl?: string | null;
+  channelUsername?: string | null;
+  channelTelegramChatId?: string | null;
   newPostToken: number;
   initialPostId: string;
   channels: TelegramChannel[];
@@ -218,6 +270,8 @@ function TelegramPostWorkspace({
   const [busy, setBusy] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [error, setError] = useState("");
+  const [manualTelegramUrl, setManualTelegramUrl] = useState("");
+  const [savingTelegramUrl, setSavingTelegramUrl] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
   const [draggedSidebarKey, setDraggedSidebarKey] = useState<string | null>(
@@ -315,6 +369,21 @@ function TelegramPostWorkspace({
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
   const isPublished = editing?.status === "PUBLISHED";
+  const telegramPostUrl = (() => {
+    if (!editing || !["PUBLISHED", "SCHEDULED"].includes(editing.status)) {
+      return null;
+    }
+    if (editing.telegramMessageUrls[0]) return editing.telegramMessageUrls[0];
+    const messageId = editing.telegramMessageIds[0];
+    if (!messageId) return null;
+    const username = channelUsername?.trim().replace(/^@/, "");
+    if (username) return `https://t.me/${username}/${messageId}`;
+    const chatId = channelTelegramChatId
+      ?.trim()
+      .replace(/^-100/, "")
+      .replace(/^-/, "");
+    return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
+  })();
   const displayedError = error || editing?.lastError || "";
   const editingIsSaving = Boolean(
     editing && savingPostIds.includes(editing.id),
@@ -681,6 +750,7 @@ function TelegramPostWorkspace({
     setCreatingPostId(null);
     creatingPostIdRef.current = null;
     setError("");
+    setManualTelegramUrl("");
   };
 
   useEffect(() => {
@@ -731,6 +801,30 @@ function TelegramPostWorkspace({
       setLongTextMode("IMAGES_THEN_TEXT");
     }
     setError("");
+    setManualTelegramUrl(post.telegramMessageUrls[0] || "");
+  };
+
+  const saveManualTelegramUrl = async () => {
+    if (!editing || !manualTelegramUrl.trim()) return;
+    setSavingTelegramUrl(true);
+    setError("");
+    try {
+      const post = await telegramChannelsApi.setManagedPostTelegramUrl(
+        channelId,
+        editing.id,
+        manualTelegramUrl.trim(),
+      );
+      setEditing(post);
+      setManualTelegramUrl(post.telegramMessageUrls[0] || "");
+      await queryClient.invalidateQueries({
+        queryKey: ["telegram-managed-posts", channelId],
+      });
+      pushToast("Telegram post link saved.", "success");
+    } catch (saveError) {
+      setError(apiErrorMessage(saveError, "Could not save Telegram post link"));
+    } finally {
+      setSavingTelegramUrl(false);
+    }
   };
 
   const toggleAllVisiblePosts = () => {
@@ -1083,6 +1177,22 @@ function TelegramPostWorkspace({
                         ? "Edit post"
                         : "New post"}
                   </h2>
+                  {telegramPostUrl ? (
+                    <a
+                      href={telegramPostUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-700 px-2.5 text-xs font-medium text-blue-300 transition hover:border-blue-600 hover:bg-blue-950/30 hover:text-blue-200"
+                      title={
+                        editing?.status === "SCHEDULED"
+                          ? "Open scheduled post link in Telegram"
+                          : "Open post in Telegram"
+                      }
+                    >
+                      <ExternalLink size={13} />
+                      Open in Telegram
+                    </a>
+                  ) : null}
                 </div>
                 {isPublished ? (
                   <div className="mt-0.5 space-y-0.5 text-xs">
@@ -1224,7 +1334,8 @@ function TelegramPostWorkspace({
               </div>
             ) : null}
             {displayedError ? (
-              <div className="flex items-start gap-2 rounded-lg border border-red-800/70 bg-red-950/25 px-3 py-2.5 text-sm text-red-200">
+              <div className="rounded-lg border border-red-800/70 bg-red-950/25 px-3 py-2.5 text-sm text-red-200">
+                <div className="flex items-start gap-2">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <p className="font-medium">Last publish error</p>
@@ -1232,6 +1343,31 @@ function TelegramPostWorkspace({
                     {displayedError}
                   </p>
                 </div>
+                </div>
+                {editing &&
+                /link is broken|enter its Telegram link manually/i.test(
+                  displayedError,
+                ) ? (
+                  <div className="mt-3 flex gap-2">
+                    <Input
+                      type="url"
+                      value={manualTelegramUrl}
+                      onChange={(event) =>
+                        setManualTelegramUrl(event.target.value)
+                      }
+                      placeholder="https://t.me/channel/123"
+                    />
+                    <Button
+                      type="button"
+                      disabled={
+                        savingTelegramUrl || !manualTelegramUrl.trim()
+                      }
+                      onClick={saveManualTelegramUrl}
+                    >
+                      {savingTelegramUrl ? "Saving…" : "Save link"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {pendingPostSaves.length + savingPostIds.length > 0 ? (

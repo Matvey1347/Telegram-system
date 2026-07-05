@@ -983,6 +983,67 @@ export class TelegramMtprotoClient {
     }
   }
 
+  async getManagedPostMessages(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    publishedMessageIds: string[];
+    scheduledMessageIds: string[];
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const entity = await client.getEntity(params.channelRef);
+      const peer = await client.getInputEntity(params.channelRef);
+      const publishedIds = params.publishedMessageIds
+        .map(Number)
+        .filter(Number.isFinite);
+      const scheduledIds = params.scheduledMessageIds
+        .map(Number)
+        .filter(Number.isFinite);
+      const published = publishedIds.length
+        ? await client.getMessages(entity, { ids: publishedIds })
+        : [];
+      const recentPublished = scheduledIds.length
+        ? await client.getMessages(entity, { limit: 100 })
+        : [];
+      const scheduledResult = scheduledIds.length
+        ? await client.invoke(
+            new Api.messages.GetScheduledMessages({
+              peer,
+              id: scheduledIds,
+            }),
+          )
+        : null;
+      const scheduled = Array.isArray((scheduledResult as any)?.messages)
+        ? (scheduledResult as any).messages
+        : [];
+      const serialize = (message: any, isScheduled: boolean) => ({
+        id: String(message.id),
+        text: String(message.message || ''),
+        html: HTMLParser.unparse(
+          String(message.message || ''),
+          message.entities || [],
+        ),
+        date: this.toTelegramDate(message.date)?.toISOString() ?? null,
+        isScheduled,
+      });
+      return {
+        published: (published as any[])
+          .filter((message) => message?.id)
+          .map((message) => serialize(message, false)),
+        recentPublished: (recentPublished as any[])
+          .filter((message) => message?.id && message?.date)
+          .map((message) => serialize(message, false)),
+        scheduled: (scheduled as any[])
+          .filter((message) => message?.id)
+          .map((message) => serialize(message, true)),
+      };
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
   async getChannelPostsMetrics(params: {
     apiId: string;
     apiHash: string;

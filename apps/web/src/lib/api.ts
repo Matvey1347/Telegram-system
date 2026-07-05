@@ -1439,6 +1439,23 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts`,
       )
     ).data,
+  syncManagedPosts: async (channelId: string) =>
+    (
+      await api.post<{ checked: number; updated: number; missing: number }>(
+        `/telegram-channels/${channelId}/managed-posts/sync`,
+      )
+    ).data,
+  setManagedPostTelegramUrl: async (
+    channelId: string,
+    postId: string,
+    telegramUrl: string,
+  ) =>
+    (
+      await api.patch<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/telegram-url`,
+        { telegramUrl },
+      )
+    ).data,
   managedPostLinkTargets: async (
     channelId: string,
     params?: {

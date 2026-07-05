@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   Max,
   Min,
@@ -127,6 +128,11 @@ export class ManagedPostLinkTargetsQueryDto {
   @IsOptional() @IsString() groupId?: string;
   @IsOptional() @IsString() excludePostId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
+}
+
+export class SetManagedPostTelegramUrlDto {
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  telegramUrl!: string;
 }
 
 export class CreatePostGroupDto {
