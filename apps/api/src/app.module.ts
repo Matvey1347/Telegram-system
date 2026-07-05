@@ -28,6 +28,7 @@ import { TelegramBotsModule } from './telegram-bots/telegram-bots.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { IconsModule } from './icons/icons.module';
 import { ResponseCacheInterceptor } from './common/response-cache.interceptor';
+import { PromptNotesModule } from './prompt-notes/prompt-notes.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { ResponseCacheInterceptor } from './common/response-cache.interceptor';
     TelegramBotsModule,
     WorkspacesModule,
     IconsModule,
+    PromptNotesModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ResponseCacheInterceptor }],

@@ -576,6 +576,14 @@ export type TelegramManagedPostLinkTarget = {
   publishedAt?: string | null;
   primaryTelegramMessageUrl?: string | null;
 };
+export type PromptNote = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+};
 export type PostGroupStatusSummary = {
   totalPosts: number;
   draftCount: number;
@@ -1342,6 +1350,22 @@ export const workspaceMembersApi = {
       .data,
   investmentsSummary: async () =>
     (await api.get("/workspace-members/investments/summary")).data,
+};
+
+export const promptNotesApi = {
+  list: async (search?: string) =>
+    (
+      await api.get<PromptNote[]>("/prompt-notes", {
+        params: search ? { search } : undefined,
+      })
+    ).data,
+  create: async (payload: { title: string; content: string }) =>
+    (await api.post<PromptNote>("/prompt-notes", payload)).data,
+  update: async (
+    id: string,
+    payload: { title?: string; content?: string },
+  ) => (await api.patch<PromptNote>(`/prompt-notes/${id}`, payload)).data,
+  remove: async (id: string) => (await api.delete(`/prompt-notes/${id}`)).data,
 };
 export const accountsApi = crud<Account>("/accounts");
 export type TransactionQuery = {

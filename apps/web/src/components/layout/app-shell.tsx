@@ -27,6 +27,7 @@ import {
   Send,
   RadioTower,
   ReceiptText,
+  NotebookTabs,
   Settings,
   Target,
   X,
@@ -55,6 +56,7 @@ const groups = [
       { label: 'Telegram', href: '/telegram-channels', icon: RadioTower },
       { label: 'Posts', href: '/telegram-posts', icon: Send },
       { label: 'Ads', href: '/ad-campaigns', icon: Target },
+      { label: 'Prompt library', href: '/prompt-library', icon: NotebookTabs },
     ],
   },
 ] as const;
