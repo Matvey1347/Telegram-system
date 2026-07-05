@@ -161,12 +161,12 @@ export function IconPicker({
     Partial<Record<IconSection, HTMLDivElement | null>>
   >({});
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const { data: selectedIcon } = useQuery({
     queryKey: ["icon", iconId],
@@ -205,6 +205,8 @@ export function IconPicker({
       };
       qc.setQueryData(["icon", icon.id], icon);
       setOptimisticIcon(icon);
+      onChange(icon.id);
+      onPendingChange?.(false);
       setRecentIcons((prev) =>
         [
           recentItem,
@@ -214,7 +216,6 @@ export function IconPicker({
           ),
         ].slice(0, RECENT_LIMIT),
       );
-      onChange(icon.id);
       setOpen(false);
       setSearch("");
       qc.invalidateQueries({ queryKey: ["icons"] });
@@ -242,6 +243,8 @@ export function IconPicker({
       };
       qc.setQueryData(["icon", icon.id], icon);
       setOptimisticIcon(icon);
+      onChange(icon.id);
+      onPendingChange?.(false);
       setRecentIcons((prev) =>
         [
           recentItem,
@@ -250,7 +253,6 @@ export function IconPicker({
           ),
         ].slice(0, RECENT_LIMIT),
       );
-      onChange(icon.id);
       setOpen(false);
       setUpload(null);
       setUploadName("");
@@ -271,6 +273,7 @@ export function IconPicker({
       qc.setQueryData(["icon", icon.id], icon);
       setOptimisticIcon(icon);
       onChange(icon.id);
+      onPendingChange?.(false);
       setOpen(false);
       setUpload(null);
       setUploadName("");
@@ -281,15 +284,6 @@ export function IconPicker({
       if (mountedRef.current) onPendingChange?.(false);
     },
   });
-
-  const iconMutationPending =
-    createEmojiMutation.isPending ||
-    createCustomMutation.isPending ||
-    createTemporaryImageMutation.isPending;
-
-  useEffect(() => {
-    onPendingChange?.(iconMutationPending);
-  }, [iconMutationPending, onPendingChange]);
 
   const { mutate: uploadFile, isPending: isUploading } = useMutation({
     mutationFn: iconsApi.upload,

@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Download,
   FileText,
   FolderPlus,
   GripVertical,
@@ -74,6 +75,7 @@ type PostSidebarSection = {
   pendingPosts: PendingPostSave[];
 };
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
+const POST_OPEN_CLICK_DELAY_MS = 180;
 
 export default function TelegramPostsPage() {
   const router = useRouter();
@@ -193,6 +195,7 @@ function TelegramPostWorkspace({
   const [text, setText] = useState("");
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [icon, setIcon] = useState<string | null>(null);
+  const iconRef = useRef<string | null>(null);
   const [iconPickerGeneration, setIconPickerGeneration] = useState(0);
   const [iconPending, setIconPending] = useState(false);
   const [postGroupId, setPostGroupId] = useState<string | null>(null);
@@ -214,6 +217,7 @@ function TelegramPostWorkspace({
   const sidebarReorderTimerRef = useRef<number | null>(null);
   const sidebarReorderVersionRef = useRef(0);
   const sidebarReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const postOpenTimerRef = useRef<number | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
     null,
@@ -264,6 +268,16 @@ function TelegramPostWorkspace({
     queryKey: ["workspace-members"],
     queryFn: workspaceMembersApi.list,
   });
+
+  useEffect(
+    () => () => {
+      if (postOpenTimerRef.current) {
+        window.clearTimeout(postOpenTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const currentMemberId =
     members.data?.find((member) => member.isCurrentUser)?.id ?? null;
   const effectivePostMember = (post: TelegramManagedPost) =>
@@ -548,6 +562,7 @@ function TelegramPostWorkspace({
     setText("");
     setImageUrls([]);
     setIcon(null);
+    iconRef.current = null;
     setIconPending(false);
     setIconPickerGeneration((current) => current + 1);
     setPostGroupId(null);
@@ -589,6 +604,7 @@ function TelegramPostWorkspace({
     setText(post.text || "");
     setImageUrls(post.imageUrls);
     setIcon(post.icon ?? null);
+    iconRef.current = post.icon ?? null;
     setIconPending(false);
     setPostGroupId(post.groupId ?? null);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
@@ -615,6 +631,23 @@ function TelegramPostWorkspace({
     });
   };
 
+  const downloadSelectedPostsText = () => {
+    if (!selectedPosts.length) return;
+    const content = selectedPosts
+      .map((post) => [post.title, post.text || ""].join("\n"))
+      .join("\n\n\n");
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `telegram-posts-${stamp}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const togglePostSelected = (postId: string) => {
     setSelectedPostIds((current) =>
       current.includes(postId)
@@ -628,7 +661,23 @@ function TelegramPostWorkspace({
     onPostSelect(post.id);
   };
 
+  const cancelScheduledPostOpen = () => {
+    if (postOpenTimerRef.current) {
+      window.clearTimeout(postOpenTimerRef.current);
+      postOpenTimerRef.current = null;
+    }
+  };
+
+  const schedulePostOpen = (post: TelegramManagedPost) => {
+    cancelScheduledPostOpen();
+    postOpenTimerRef.current = window.setTimeout(() => {
+      postOpenTimerRef.current = null;
+      openPost(post);
+    }, POST_OPEN_CLICK_DELAY_MS);
+  };
+
   const changePostIcon = (nextIcon: string | null) => {
+    iconRef.current = nextIcon;
     setIcon(nextIcon);
     setIconPending(false);
   };
@@ -670,6 +719,7 @@ function TelegramPostWorkspace({
     const saveMode = mode;
     const saveTitle = title.trim();
     const saveGroupId = postGroupId;
+    const saveIcon = iconRef.current;
     const saveLongTextMode = longTextMode;
     const saveScheduledAt =
       saveMode === "schedule"
@@ -685,7 +735,7 @@ function TelegramPostWorkspace({
       title: saveTitle,
       text,
       imageUrls: [...imageUrls],
-      icon,
+      icon: saveIcon,
     };
     const selectedMemberId =
       assignedMemberId ??
@@ -702,7 +752,7 @@ function TelegramPostWorkspace({
         {
           id: pendingId,
           title: saveTitle,
-          icon,
+          icon: saveIcon,
           groupId: saveGroupId,
           mode: saveMode,
         },
@@ -1249,16 +1299,19 @@ function TelegramPostWorkspace({
                                   tabIndex={0}
                                   onClick={(event) => {
                                     if (event.shiftKey || event.detail > 1) {
+                                      cancelScheduledPostOpen();
                                       togglePostSelected(post.id);
                                       return;
                                     }
-                                    openPost(post);
+                                    schedulePostOpen(post);
                                   }}
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter") {
+                                      cancelScheduledPostOpen();
                                       openPost(post);
                                     } else if (event.key === " ") {
                                       event.preventDefault();
+                                      cancelScheduledPostOpen();
                                       togglePostSelected(post.id);
                                     }
                                   }}
@@ -1321,6 +1374,7 @@ function TelegramPostWorkspace({
                                     aria-label={`Move ${post.title}`}
                                     onClick={(event) => {
                                       event.stopPropagation();
+                                      cancelScheduledPostOpen();
                                       setMovingPost(post);
                                     }}
                                     className="cursor-pointer rounded-md border border-neutral-700 p-1.5 text-neutral-300 hover:bg-neutral-800"
@@ -1332,6 +1386,7 @@ function TelegramPostWorkspace({
                                     aria-label={`Delete ${post.title}`}
                                     onClick={(event) => {
                                       event.stopPropagation();
+                                      cancelScheduledPostOpen();
                                       setDeletingPost(post);
                                     }}
                                     className="cursor-pointer rounded-md border border-red-800 p-1.5 text-red-300 hover:bg-red-950"
@@ -1353,25 +1408,50 @@ function TelegramPostWorkspace({
                     );
                   })}
                 </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2 py-2">
-                  <button
-                    type="button"
-                    onClick={toggleAllVisiblePosts}
-                    className="rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white"
-                  >
-                    {allVisibleSelected ? "Clear visible" : "Select visible"}
-                  </button>
-                  <Button
-                    type="button"
-                    variant="danger"
-                    disabled={!selectedPosts.length || busy}
-                    onClick={() => setBulkDeleteOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5"
-                  >
-                    <Trash2 size={15} />
-                    Delete selected
-                    {selectedPosts.length ? ` (${selectedPosts.length})` : ""}
-                  </Button>
+                <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={toggleAllVisiblePosts}
+                      className="rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                    >
+                      {allVisibleSelected ? "Clear visible" : "Select visible"}
+                    </button>
+                    <span
+                      className={`min-w-9 rounded-md border px-2 py-1 text-center text-xs ${
+                        selectedPosts.length
+                          ? "border-amber-500/40 bg-amber-950/20 text-amber-200"
+                          : "border-transparent text-transparent"
+                      }`}
+                    >
+                      {selectedPosts.length || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!selectedPosts.length}
+                      onClick={downloadSelectedPostsText}
+                      title="Download selected as TXT"
+                      aria-label="Download selected posts as TXT"
+                      className="flex h-9 items-center gap-1.5 px-3"
+                    >
+                      <Download size={15} />
+                      TXT
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      disabled={!selectedPosts.length || busy}
+                      onClick={() => setBulkDeleteOpen(true)}
+                      title="Delete selected"
+                      aria-label="Delete selected posts"
+                      className="flex h-9 min-w-12 items-center justify-center px-3"
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : !posts.isLoading ? (
