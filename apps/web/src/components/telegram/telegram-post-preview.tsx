@@ -21,6 +21,15 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+function renderFencedCodeBlock(info: string, code: string, hasInfoLine: boolean) {
+  const normalizedInfo = info.replace(/\r/g, "");
+  const normalizedCode = code.replace(/\r/g, "");
+  const hasLabel = hasInfoLine && normalizedInfo.trim().length > 0;
+  const label = hasLabel ? normalizedInfo : "copy";
+  const content = hasInfoLine ? normalizedCode : `${normalizedInfo}${normalizedCode}`;
+  return `<pre class="tg-code-block"><span class="tg-code-header"><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button></span><code>${escapeHtml(content)}</code></pre>`;
+}
+
 function previewHtml(raw: string) {
   const tokens: string[] = [];
   const token = (html: string) => {
@@ -28,13 +37,9 @@ function previewHtml(raw: string) {
     return `\u0000${index}\u0000`;
   };
   let value = raw.replace(
-    /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g,
-    (_match, language: string, code: string) => {
-      const label = language || "copy";
-      const escapedCode = escapeHtml(code);
-      return token(
-        `<pre class="tg-code-block"><span class="tg-code-header"><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button></span><code>${escapedCode}</code></pre>`,
-      );
+    /```([^\n\r\u2028\u2029`]*)((?:\r\n|[\n\r\u2028\u2029])?)([\s\S]*?)```/g,
+    (_match, info: string, lineBreak: string, code: string) => {
+      return token(renderFencedCodeBlock(info, code, Boolean(lineBreak)));
     },
   );
   value = value.replace(/`([^`\n]+)`/g, (_match, code: string) =>

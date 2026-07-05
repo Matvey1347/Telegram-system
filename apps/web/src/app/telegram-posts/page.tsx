@@ -71,6 +71,7 @@ type PostSidebarSection = {
   key: string;
   group: PostGroup | null;
   posts: TelegramManagedPost[];
+  pendingPosts: PendingPostSave[];
 };
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
@@ -337,6 +338,20 @@ function TelegramPostWorkspace({
       ungrouped,
     };
   }, [visiblePosts]);
+  const groupedPendingPostSaves = useMemo(() => {
+    const grouped = new Map<string, PendingPostSave[]>();
+    const ungrouped: PendingPostSave[] = [];
+
+    pendingPostSaves.forEach((post) => {
+      if (!post.groupId) {
+        ungrouped.push(post);
+        return;
+      }
+      grouped.set(post.groupId, [...(grouped.get(post.groupId) ?? []), post]);
+    });
+
+    return { grouped, ungrouped };
+  }, [pendingPostSaves]);
   const canonicalSidebarKeys = useMemo(
     () =>
       [
@@ -363,15 +378,39 @@ function TelegramPostWorkspace({
     [postGroups.data, posts.data],
   );
   const sidebarSections = useMemo<PostSidebarSection[]>(() => {
+    const groupsById = new Map(
+      (postGroups.data || []).map((group) => [group.id, group]),
+    );
+    const visibleGroupsById = new Map(
+      groupedVisiblePosts.groups.map((section) => [section.group.id, section]),
+    );
+    const groupIds = [
+      ...new Set([
+        ...groupedVisiblePosts.groups.map((section) => section.group.id),
+        ...groupedPendingPostSaves.grouped.keys(),
+      ]),
+    ];
     const sections: PostSidebarSection[] = [
-      ...groupedVisiblePosts.groups.map((section) => ({
-        key: `group:${section.group.id}`,
-        ...section,
-      })),
+      ...groupIds
+        .map((groupId) => {
+          const visibleGroup = visibleGroupsById.get(groupId);
+          const group = visibleGroup?.group ?? groupsById.get(groupId);
+          if (!group) return null;
+          return {
+            key: `group:${group.id}`,
+            group,
+            posts: visibleGroup?.posts ?? [],
+            pendingPosts: groupedPendingPostSaves.grouped.get(group.id) ?? [],
+          };
+        })
+        .filter(
+          (section): section is PostSidebarSection => Boolean(section),
+        ),
       ...groupedVisiblePosts.ungrouped.map((post) => ({
         key: `post:${post.id}`,
         group: null,
         posts: [post],
+        pendingPosts: [],
       })),
     ];
     const canonicalIndex = new Map(
@@ -382,7 +421,12 @@ function TelegramPostWorkspace({
         (canonicalIndex.get(left.key) ?? Number.MAX_SAFE_INTEGER) -
         (canonicalIndex.get(right.key) ?? Number.MAX_SAFE_INTEGER),
     );
-  }, [canonicalSidebarKeys, groupedVisiblePosts]);
+  }, [
+    canonicalSidebarKeys,
+    groupedPendingPostSaves.grouped,
+    groupedVisiblePosts,
+    postGroups.data,
+  ]);
   const orderedSidebarSections = useMemo(() => {
     if (
       sidebarOrderKeys.length !== sidebarSections.length ||
@@ -545,6 +589,7 @@ function TelegramPostWorkspace({
     setText(post.text || "");
     setImageUrls(post.imageUrls);
     setIcon(post.icon ?? null);
+    setIconPending(false);
     setPostGroupId(post.groupId ?? null);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
     setScheduleDate(post.scheduledAt?.slice(0, 10) || "");
@@ -568,6 +613,24 @@ function TelegramPostWorkspace({
       }
       return [...new Set([...current, ...visiblePostIds])];
     });
+  };
+
+  const togglePostSelected = (postId: string) => {
+    setSelectedPostIds((current) =>
+      current.includes(postId)
+        ? current.filter((id) => id !== postId)
+        : [...current, postId],
+    );
+  };
+
+  const openPost = (post: TelegramManagedPost) => {
+    selectPost(post);
+    onPostSelect(post.id);
+  };
+
+  const changePostIcon = (nextIcon: string | null) => {
+    setIcon(nextIcon);
+    setIconPending(false);
   };
 
   const deletePosts = async (targetPosts: TelegramManagedPost[]) => {
@@ -746,12 +809,6 @@ function TelegramPostWorkspace({
   const changePostGroup = (nextGroupId: string) => {
     const normalized = nextGroupId || null;
     setPostGroupId(normalized);
-    const nextGroup = normalized
-      ? postGroups.data?.find((group) => group.id === normalized)
-      : null;
-    if (nextGroup?.icon) {
-      setIcon(nextGroup.icon);
-    }
   };
 
   return (
@@ -819,7 +876,7 @@ function TelegramPostWorkspace({
                   <IconPicker
                     key={iconPickerGeneration}
                     iconId={icon}
-                    onChange={setIcon}
+                    onChange={changePostIcon}
                     onPendingChange={setIconPending}
                     buttonLabel="Add icon"
                     compact
@@ -1061,45 +1118,9 @@ function TelegramPostWorkspace({
             {visiblePosts.length || pendingPostSaves.length ? (
               <>
                 <div className="max-h-[calc(100vh-15rem)] space-y-2 overflow-y-auto pr-1">
-                  {pendingPostSaves.map((pending) => {
-                    const group = (postGroups.data || []).find(
-                      (item) => item.id === pending.groupId,
-                    );
-                    return (
-                      <div
-                        key={pending.id}
-                        className="flex items-center gap-2 rounded-lg border border-blue-700/70 bg-blue-950/15 px-3 py-2"
-                      >
-                        <LoaderCircle
-                          size={16}
-                          className="shrink-0 animate-spin text-blue-400"
-                        />
-                        <PostIcon
-                          iconId={pending.icon}
-                          label={pending.title}
-                          bare
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-white">
-                            {pending.title}
-                          </span>
-                          {group ? (
-                            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-blue-300">
-                              <PostIcon
-                                iconId={group.icon}
-                                label={group.title}
-                                bare
-                              />
-                              <span className="truncate">{group.title}</span>
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="text-[11px] text-blue-300">
-                          Saving…
-                        </span>
-                      </div>
-                    );
-                  })}
+                  {groupedPendingPostSaves.ungrouped.map((pending) => (
+                    <PendingPostRow key={pending.id} pending={pending} />
+                  ))}
                   {orderedSidebarSections.map((section) => {
                     const collapsed =
                       section.group &&
@@ -1183,7 +1204,8 @@ function TelegramPostWorkspace({
                                 {section.group.title}
                               </span>
                               <span className="text-xs text-neutral-500">
-                                {section.posts.length}
+                                {section.posts.length +
+                                  section.pendingPosts.length}
                               </span>
                             </button>
                             <button
@@ -1219,20 +1241,35 @@ function TelegramPostWorkspace({
                               const isSelected = selectedPostIds.includes(
                                 post.id,
                               );
+                              const isOpen = editing?.id === post.id;
                               return (
                                 <div
                                   key={post.id}
-                                  onClick={() =>
-                                    setSelectedPostIds((current) =>
-                                      current.includes(post.id)
-                                        ? current.filter((id) => id !== post.id)
-                                        : [...current, post.id],
-                                    )
-                                  }
-                                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${
-                                    editing?.id === post.id || isSelected
-                                      ? "border-blue-500 bg-blue-950/20"
-                                      : "border-neutral-800 hover:bg-neutral-900"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(event) => {
+                                    if (event.shiftKey || event.detail > 1) {
+                                      togglePostSelected(post.id);
+                                      return;
+                                    }
+                                    openPost(post);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      openPost(post);
+                                    } else if (event.key === " ") {
+                                      event.preventDefault();
+                                      togglePostSelected(post.id);
+                                    }
+                                  }}
+                                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 outline-none transition ${
+                                    isOpen && isSelected
+                                      ? "border-blue-400 bg-blue-950/30 ring-1 ring-amber-300/50"
+                                      : isOpen
+                                        ? "border-blue-400 bg-blue-950/25"
+                                        : isSelected
+                                          ? "border-amber-400 bg-amber-950/20"
+                                          : "border-neutral-800 hover:bg-neutral-900"
                                   }`}
                                 >
                                   {!section.group ? (
@@ -1241,15 +1278,7 @@ function TelegramPostWorkspace({
                                       className="shrink-0 cursor-grab text-neutral-500"
                                     />
                                   ) : null}
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      selectPost(post);
-                                      onPostSelect(post.id);
-                                    }}
-                                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                                  >
+                                  <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
                                     {isSaving ? (
                                       <LoaderCircle
                                         size={16}
@@ -1285,7 +1314,7 @@ function TelegramPostWorkspace({
                                         </span>
                                       ) : null}
                                     </span>
-                                  </button>
+                                  </div>
                                   <button
                                     type="button"
                                     title="Move to another channel"
@@ -1312,6 +1341,12 @@ function TelegramPostWorkspace({
                                 </div>
                               );
                             })}
+                            {section.pendingPosts.map((pending) => (
+                              <PendingPostRow
+                                key={pending.id}
+                                pending={pending}
+                              />
+                            ))}
                           </div>
                         ) : null}
                       </div>
@@ -1485,6 +1520,24 @@ function PostIcon({
       bordered={!bare}
       className={bare ? "!border-0 !bg-transparent" : ""}
     />
+  );
+}
+
+function PendingPostRow({ pending }: { pending: PendingPostSave }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-blue-700/70 bg-blue-950/15 px-3 py-2">
+      <LoaderCircle
+        size={16}
+        className="shrink-0 animate-spin text-blue-400"
+      />
+      <PostIcon iconId={pending.icon} label={pending.title} bare />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-white">
+          {pending.title}
+        </span>
+      </span>
+      <span className="text-[11px] text-blue-300">Saving…</span>
+    </div>
   );
 }
 

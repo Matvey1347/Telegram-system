@@ -111,14 +111,14 @@ function isStandardRecent(icon: RecentIcon): icon is RecentStandardIcon {
 function matchesSearch(icon: EmojiIcon, search: string) {
   if (!search) return true;
   const haystack =
-    `${icon.name} ${icon.keywords.join(" ")} ${emojiCategoryLabels[icon.category]}`.toLowerCase();
+    `${icon.emoji} ${icon.name} ${icon.keywords.join(" ")} ${emojiCategoryLabels[icon.category]}`.toLowerCase();
   return haystack.includes(search);
 }
 
 function matchesRecentStandard(item: RecentStandardIcon, search: string) {
   if (!search) return true;
   const haystack =
-    `${item.name} ${item.keywords.join(" ")} ${emojiCategoryLabels[item.category]}`.toLowerCase();
+    `${item.emoji} ${item.name} ${item.keywords.join(" ")} ${emojiCategoryLabels[item.category]}`.toLowerCase();
   return haystack.includes(search);
 }
 
@@ -281,6 +281,15 @@ export function IconPicker({
       if (mountedRef.current) onPendingChange?.(false);
     },
   });
+
+  const iconMutationPending =
+    createEmojiMutation.isPending ||
+    createCustomMutation.isPending ||
+    createTemporaryImageMutation.isPending;
+
+  useEffect(() => {
+    onPendingChange?.(iconMutationPending);
+  }, [iconMutationPending, onPendingChange]);
 
   const { mutate: uploadFile, isPending: isUploading } = useMutation({
     mutationFn: iconsApi.upload,
