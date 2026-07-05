@@ -2457,6 +2457,7 @@ function PostTextTooltip({
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const [position, setPosition] = useState({
     top: 0,
     left: 0,
@@ -2479,6 +2480,23 @@ function PostTextTooltip({
     return () => URL.revokeObjectURL(url);
   }, [media.data]);
   const text = post.text || "";
+
+  useEffect(() => {
+    if (!pinned) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        triggerRef.current?.contains(target) ||
+        tooltipRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setPinned(false);
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [pinned]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !tooltipRef.current) return;
@@ -2508,6 +2526,7 @@ function PostTextTooltip({
       ? createPortal(
           <span
             ref={tooltipRef}
+            onClick={(event) => event.stopPropagation()}
             className={`fixed z-[9999] max-h-[70vh] w-[min(28rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-700 bg-[#182533] p-3 text-sm leading-relaxed text-slate-100 shadow-2xl ${position.ready ? "opacity-100" : "opacity-0"}`}
             style={{ top: position.top, left: position.left }}
           >
@@ -2554,12 +2573,23 @@ function PostTextTooltip({
         setPosition((prev) => ({ ...prev, ready: false }));
         setOpen(true);
       }}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={() => {
+        if (!pinned) setOpen(false);
+      }}
       onFocus={() => {
         setPosition((prev) => ({ ...prev, ready: false }));
         setOpen(true);
       }}
-      onBlur={() => setOpen(false)}
+      onBlur={() => {
+        if (!pinned) setOpen(false);
+      }}
+      onClick={() => {
+        setPosition((prev) => ({ ...prev, ready: false }));
+        const nextPinned = !pinned;
+        setPinned(nextPinned);
+        setOpen(nextPinned);
+      }}
+      title={pinned ? "Click to close preview" : "Click to keep preview open"}
       tabIndex={0}
     >
       <span className="flex min-w-0 items-center gap-1.5">

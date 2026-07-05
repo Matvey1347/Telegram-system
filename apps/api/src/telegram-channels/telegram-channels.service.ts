@@ -1519,29 +1519,35 @@ export class TelegramChannelsService {
       query.usage === 'schedule' && query.scheduledAt
         ? new Date(query.scheduledAt)
         : null;
+    const editingTargets = query.usage === 'edit';
     const posts = await this.prisma.telegramManagedPost.findMany({
       where: {
         workspaceId,
         telegramChannelId: channelId,
-        lastError: null,
-        OR: [
-          {
-            status: TelegramManagedPostStatus.PUBLISHED,
-            telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
-            telegramMessageUrls: { isEmpty: false },
-          },
-          ...(scheduledBefore
-            ? [
+        ...(editingTargets
+          ? {}
+          : {
+              lastError: null,
+              OR: [
                 {
-                  status: TelegramManagedPostStatus.SCHEDULED,
+                  status: TelegramManagedPostStatus.PUBLISHED,
                   telegramRemoteStatus:
-                    TelegramManagedPostRemoteStatus.SCHEDULED,
-                  scheduledAt: { lt: scheduledBefore },
-                  telegramMessageIds: { isEmpty: false },
+                    TelegramManagedPostRemoteStatus.PUBLISHED,
+                  telegramMessageUrls: { isEmpty: false },
                 },
-              ]
-            : []),
-        ],
+                ...(scheduledBefore
+                  ? [
+                      {
+                        status: TelegramManagedPostStatus.SCHEDULED,
+                        telegramRemoteStatus:
+                          TelegramManagedPostRemoteStatus.SCHEDULED,
+                        scheduledAt: { lt: scheduledBefore },
+                        telegramMessageIds: { isEmpty: false },
+                      },
+                    ]
+                  : []),
+              ],
+            }),
         ...(query.groupId ? { groupId: query.groupId } : {}),
         ...(query.excludePostId ? { id: { not: query.excludePostId } } : {}),
         ...(search

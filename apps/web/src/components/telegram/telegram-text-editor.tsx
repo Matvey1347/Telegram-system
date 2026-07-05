@@ -29,7 +29,7 @@ type TelegramTextEditorProps = {
   channelId?: string;
   currentPostId?: string | null;
   enableInternalPostLinks?: boolean;
-  internalLinkUsage?: "publishNow" | "schedule";
+  internalLinkUsage?: "edit" | "publishNow" | "schedule";
   internalLinkScheduledAt?: string;
 };
 

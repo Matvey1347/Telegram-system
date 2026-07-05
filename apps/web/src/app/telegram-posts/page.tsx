@@ -383,6 +383,41 @@ function TelegramPostWorkspace({
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
   const displayedError = error || editing?.lastError || "";
+  const internalLinkTargetIds = useMemo(
+    () => [
+      ...new Set(
+        [...text.matchAll(/\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g)].map(
+          (match) => match[1],
+        ),
+      ),
+    ],
+    [text],
+  );
+  const unresolvedInternalLinkTargets = internalLinkTargetIds.map(
+    (targetId) => {
+      const target = posts.data?.find((post) => post.id === targetId);
+      const ready =
+        target?.status === "PUBLISHED" &&
+        target.telegramRemoteStatus === "PUBLISHED" &&
+        Boolean(target.telegramMessageUrls[0]) &&
+        !target.lastError;
+      return ready ? null : { id: targetId, post: target };
+    },
+  ).filter(
+    (
+      target,
+    ): target is {
+      id: string;
+      post: TelegramManagedPost | undefined;
+    } => Boolean(target),
+  );
+  const dependencyAlertTitle = unresolvedInternalLinkTargets.length
+    ? `To publish this post, publish and sync these linked posts first: ${unresolvedInternalLinkTargets
+        .map((target) => target.post?.title || target.id)
+        .join(", ")}.`
+    : "";
+  const dependencyPublishBlocked =
+    mode !== "draft" && unresolvedInternalLinkTargets.length > 0;
   const internalLinkScheduledAt =
     mode === "schedule" && scheduleDate && scheduleTime
       ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
@@ -1284,12 +1319,55 @@ function TelegramPostWorkspace({
                 channelId={channelId}
                 currentPostId={editing?.id}
                 enableInternalPostLinks
-                internalLinkUsage={
-                  mode === "schedule" ? "schedule" : "publishNow"
-                }
+                internalLinkUsage="edit"
                 internalLinkScheduledAt={internalLinkScheduledAt}
               />
             </FormField>
+            {unresolvedInternalLinkTargets.length ? (
+              <div
+                className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200"
+                title={dependencyAlertTitle}
+              >
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">
+                      Publishing is blocked by linked posts
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-300/80">
+                      Publish and sync these posts with Telegram first:
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {unresolvedInternalLinkTargets.map((target) => (
+                        <span
+                          key={target.id}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs"
+                        >
+                          {target.post?.icon ? (
+                            <PostIcon
+                              iconId={target.post.icon}
+                              label={target.post.title}
+                              bare
+                              size="xs"
+                            />
+                          ) : (
+                            <span aria-hidden="true">📝</span>
+                          )}
+                          <span>
+                            {target.post?.title || `Missing post ${target.id}`}
+                          </span>
+                          {target.post ? (
+                            <span className="text-amber-400/70">
+                              {target.post.status.toLowerCase()}
+                            </span>
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {!isPublished || imageUrls.length ? (
               <MultiImageUpload
                 value={imageUrls}
@@ -1413,7 +1491,10 @@ function TelegramPostWorkspace({
             ) : null}
             {!isPublished ? (
               <div className="flex justify-end">
-                <Button onClick={run} disabled={!!publishDisabledReason}>
+                <Button
+                  onClick={run}
+                  disabled={!!publishDisabledReason || dependencyPublishBlocked}
+                >
                   {mode === "draft"
                     ? "Save draft"
                     : mode === "publish"
@@ -1427,6 +1508,13 @@ function TelegramPostWorkspace({
             {!isPublished && publishDisabledReason ? (
               <p className="text-right text-xs text-neutral-500">
                 {publishDisabledReason}
+              </p>
+            ) : null}
+            {!isPublished &&
+            dependencyPublishBlocked &&
+            !publishDisabledReason ? (
+              <p className="text-right text-xs text-amber-400">
+                Publish the linked posts and sync them with Telegram first.
               </p>
             ) : null}
           </Card>

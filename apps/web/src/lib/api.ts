@@ -1507,7 +1507,7 @@ export const telegramChannelsApi = {
       search?: string;
       groupId?: string;
       excludePostId?: string;
-      usage?: "publishNow" | "schedule";
+      usage?: "edit" | "publishNow" | "schedule";
       scheduledAt?: string;
       limit?: number;
     },
