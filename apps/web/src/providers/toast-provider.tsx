@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { ToastStack, type ToastItem } from "@/components/ui/primitives";
@@ -40,6 +41,29 @@ export function ToastProvider({ children }: PropsWithChildren) {
     () => new Set(),
   );
   const [progress, setProgress] = useState<AppProgress | null>(null);
+  const lastManualSuccessToastAtRef = useRef(0);
+
+  const pushToastInternal = (
+    message: string,
+    tone: ToastItem["tone"] = "info",
+    durationMs = 3500,
+    icon?: { emoji?: string | null; imageUrl?: string | null },
+  ) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setToasts((prev) => [
+      ...prev,
+      {
+        id,
+        message,
+        tone,
+        iconEmoji: icon?.emoji || undefined,
+        iconUrl: icon?.imageUrl || undefined,
+      },
+    ]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, durationMs);
+  };
 
   const value = useMemo<{
     pushToast: PushToast;
@@ -47,20 +71,10 @@ export function ToastProvider({ children }: PropsWithChildren) {
   }>(
     () => ({
       pushToast: (message, tone = "info", durationMs = 3500, icon) => {
-        const id = Date.now() + Math.floor(Math.random() * 1000);
-        setToasts((prev) => [
-          ...prev,
-          {
-            id,
-            message,
-            tone,
-            iconEmoji: icon?.emoji || undefined,
-            iconUrl: icon?.imageUrl || undefined,
-          },
-        ]);
-        window.setTimeout(() => {
-          setToasts((prev) => prev.filter((toast) => toast.id !== id));
-        }, durationMs);
+        if (tone === "success") {
+          lastManualSuccessToastAtRef.current = Date.now();
+        }
+        pushToastInternal(message, tone, durationMs, icon);
       },
       setProgress,
     }),
@@ -88,7 +102,13 @@ export function ToastProvider({ children }: PropsWithChildren) {
       }
       if (detail.phase !== "start" && detail.message) {
         const showToast = () => {
-          value.pushToast(
+          if (
+            detail.phase === "success" &&
+            Date.now() - lastManualSuccessToastAtRef.current < 10_000
+          ) {
+            return;
+          }
+          pushToastInternal(
             detail.message!,
             detail.phase === "success" ? "success" : "error",
             detail.phase === "success" ? 3000 : 6000,
@@ -114,7 +134,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
           };
           window.setTimeout(waitForModalClose, 0);
         } else {
-          window.setTimeout(showToast, 0);
+          window.setTimeout(showToast, detail.phase === "success" ? 120 : 0);
         }
       }
     };

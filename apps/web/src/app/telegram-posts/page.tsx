@@ -11,9 +11,11 @@ import {
 } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Copy,
   Clock3,
   Download,
   ExternalLink,
@@ -41,11 +43,13 @@ import { MemberBadge } from "@/components/workspace/member-badge";
 import { MemberSelect } from "@/components/workspace/member-select";
 import {
   iconsApi,
+  promptNotesApi,
   telegramChannelsApi,
   workspaceMembersApi,
   type BulkActionResult,
   type BulkActionResultItem,
   type PostGroup,
+  type PromptNote,
   type TelegramChannel,
   type TelegramManagedPost,
 } from "@/lib/api";
@@ -302,6 +306,10 @@ function TelegramPostWorkspace({
     queryFn: () =>
       telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
   });
+  const promptNotes = useQuery({
+    queryKey: ["prompt-notes", { telegramChannelId: channelId }],
+    queryFn: () => promptNotesApi.list({ telegramChannelId: channelId }),
+  });
   const groupIconIds = useMemo(
     () => [
       ...new Set(
@@ -336,6 +344,9 @@ function TelegramPostWorkspace({
   useEffect(() => {
     void queryClient.invalidateQueries({
       queryKey: ["telegram-managed-post-link-targets", channelId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["prompt-notes", { telegramChannelId: channelId }],
     });
   }, [channelId, postGroups.data, posts.data, queryClient]);
 
@@ -596,13 +607,13 @@ function TelegramPostWorkspace({
       .map((key) => byKey.get(key))
       .filter((section): section is PostSidebarSection => Boolean(section));
   }, [sidebarOrderKeys, sidebarSections]);
-  const visiblePostIds = visiblePosts.map((post) => post.id);
+  const channelPostIds = (posts.data || []).map((post) => post.id);
   const selectedPosts = selectedPostIds
     .map((id) => posts.data?.find((post) => post.id === id))
     .filter((post): post is TelegramManagedPost => Boolean(post));
-  const allVisibleSelected =
-    visiblePostIds.length > 0 &&
-    visiblePostIds.every((id) => selectedPostIds.includes(id));
+  const allChannelPostsSelected =
+    channelPostIds.length > 0 &&
+    channelPostIds.every((id) => selectedPostIds.includes(id));
 
   const changeStatusTab = (next: PostStatusTab) => {
     setStatusTab(next);
@@ -876,12 +887,12 @@ function TelegramPostWorkspace({
     }
   };
 
-  const toggleAllVisiblePosts = () => {
+  const toggleAllChannelPosts = () => {
     setSelectedPostIds((current) => {
-      if (allVisibleSelected) {
-        return current.filter((id) => !visiblePostIds.includes(id));
+      if (allChannelPostsSelected) {
+        return current.filter((id) => !channelPostIds.includes(id));
       }
-      return [...new Set([...current, ...visiblePostIds])];
+      return [...new Set([...current, ...channelPostIds])];
     });
   };
 
@@ -1173,31 +1184,40 @@ function TelegramPostWorkspace({
 
   return (
     <>
-      <div className="mb-4 inline-flex rounded-lg border border-neutral-800 bg-neutral-950 p-1">
-        <button
-          type="button"
-          onClick={() => setWorkspaceView("posts")}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
-            workspaceView === "posts"
-              ? "bg-blue-600 text-white"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          <FileText size={15} />
-          Posts
-        </button>
-        <button
-          type="button"
-          onClick={() => setWorkspaceView("groups")}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
-            workspaceView === "groups"
-              ? "bg-blue-600 text-white"
-              : "text-neutral-400 hover:text-white"
-          }`}
-        >
-          <Layers3 size={15} />
-          Groups
-        </button>
+      <div className="mb-4 flex min-w-0 flex-wrap items-center gap-3">
+        <div className="inline-flex shrink-0 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+          <button
+            type="button"
+            onClick={() => setWorkspaceView("posts")}
+            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
+              workspaceView === "posts"
+                ? "bg-blue-600 text-white"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <FileText size={15} />
+            Posts
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkspaceView("groups")}
+            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
+              workspaceView === "groups"
+                ? "bg-blue-600 text-white"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Layers3 size={15} />
+            Groups
+          </button>
+        </div>
+        <PromptNotesStrip
+          channelId={channelId}
+          notes={promptNotes.data || []}
+          isLoading={promptNotes.isLoading}
+          channels={channels}
+          currentMemberId={currentMemberId}
+        />
       </div>
       {workspaceView === "groups" ? (
         <PostGroupsWorkspace
@@ -1856,10 +1876,11 @@ function TelegramPostWorkspace({
                   <div className="flex min-w-0 items-center gap-2">
                     <button
                       type="button"
-                      onClick={toggleAllVisiblePosts}
+                      onClick={toggleAllChannelPosts}
                       className="rounded-md px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                      title="Select every post in this channel"
                     >
-                      {allVisibleSelected ? "Clear visible" : "Select visible"}
+                      {allChannelPostsSelected ? "Clear all" : "All"}
                     </button>
                     <span
                       className={`min-w-9 rounded-md border px-2 py-1 text-center text-xs ${
@@ -2023,6 +2044,430 @@ function BulkProgressOverlay({ progress }: { progress: ProgressState | null }) {
       </div>
     </div>,
     document.body,
+  );
+}
+
+function promptNoteTitle(note: PromptNote) {
+  return note.title.trim() || "Untitled prompt";
+}
+
+function promptNoteDisplayTitle(note: PromptNote) {
+  return note.title.trim();
+}
+
+function PromptNotesStrip({
+  channelId,
+  notes,
+  isLoading,
+  channels,
+  currentMemberId,
+}: {
+  channelId: string;
+  notes: PromptNote[];
+  isLoading: boolean;
+  channels: TelegramChannel[];
+  currentMemberId: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useAppToast();
+  const clickTimerRef = useRef<number | null>(null);
+  const [editing, setEditing] = useState<PromptNote | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+    },
+    [],
+  );
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["prompt-notes", { telegramChannelId: channelId }],
+    });
+
+  const copyNote = async (note: PromptNote) => {
+    await navigator.clipboard.writeText(note.content);
+    setCopiedId(note.id);
+    pushToast(`Prompt “${promptNoteTitle(note)}” copied.`, "success", 1800);
+    window.setTimeout(
+      () => setCopiedId((current) => (current === note.id ? null : current)),
+      1400,
+    );
+  };
+
+  const openWithDelay = (note: PromptNote) => {
+    if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(() => {
+      setEditing(note);
+      clickTimerRef.current = null;
+    }, POST_OPEN_CLICK_DELAY_MS);
+  };
+
+  const copyOnDoubleClick = (note: PromptNote) => {
+    if (clickTimerRef.current) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    void copyNote(note);
+  };
+
+  const removeNote = useMutation({
+    mutationFn: promptNotesApi.remove,
+    onSuccess: async () => {
+      await invalidate();
+      pushToast("Prompt note deleted.", "success");
+      setEditing(null);
+    },
+  });
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 p-1.5">
+      <div className="hidden shrink-0 px-2 text-xs font-medium text-neutral-400 xl:block">
+        Prompts
+      </div>
+      {isLoading ? (
+        <div className="flex items-center gap-2 px-2 text-xs text-neutral-400">
+          <LoaderCircle size={14} className="animate-spin" />
+          Loading…
+        </div>
+      ) : notes.length ? (
+        <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto overflow-y-visible pb-0.5">
+          {notes.map((note) => {
+            const displayTitle = promptNoteDisplayTitle(note);
+            return (
+            <button
+              key={note.id}
+              type="button"
+              onClick={() => openWithDelay(note)}
+              onDoubleClick={() => copyOnDoubleClick(note)}
+              className={`group relative flex h-10 shrink-0 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-950 px-2 text-left transition hover:border-blue-700 hover:bg-blue-950/20 ${
+                displayTitle ? "min-w-36 max-w-56" : "w-10 justify-center"
+              }`}
+            >
+              {copiedId === note.id ? (
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-blue-200">
+                  <Check size={14} />
+                </span>
+              ) : note.icon ? (
+                <IconAvatar
+                  icon={note.icon}
+                  label={displayTitle || "Prompt"}
+                  size="xs"
+                  className="!h-6 !w-6"
+                />
+              ) : (
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-sm">
+                  {note.emoji || "📝"}
+                </span>
+              )}
+              {displayTitle ? (
+                <>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-white">
+                      {displayTitle}
+                    </span>
+                  </span>
+                  <Copy
+                    size={12}
+                    className="shrink-0 text-neutral-600 opacity-0 transition group-hover:opacity-100"
+                  />
+                </>
+              ) : null}
+              <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-max max-w-64 -translate-x-1/2 rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                Double-click to copy
+              </span>
+            </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="min-w-0 flex-1 truncate px-2 text-xs text-neutral-500">
+          No prompts for this channel
+        </div>
+      )}
+      <Button className="h-10 shrink-0 px-3 py-1.5" onClick={() => setCreating(true)}>
+        <span className="inline-flex items-center gap-1.5">
+          <Plus size={14} />
+          Add note
+        </span>
+      </Button>
+      <PromptNoteEditorModal
+        key={editing?.id || (creating ? "new" : "closed")}
+        open={creating || Boolean(editing)}
+        note={editing}
+        channelId={channelId}
+        channels={channels}
+        currentMemberId={currentMemberId}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+        onSaved={invalidate}
+        onDelete={(note) => removeNote.mutate(note.id)}
+      />
+    </div>
+  );
+}
+
+function PromptNoteEditorModal({
+  open,
+  note,
+  channelId,
+  channels,
+  currentMemberId,
+  onClose,
+  onSaved,
+  onDelete,
+}: {
+  open: boolean;
+  note: PromptNote | null;
+  channelId: string;
+  channels: TelegramChannel[];
+  currentMemberId: string | null;
+  onClose: () => void;
+  onSaved: () => Promise<unknown>;
+  onDelete: (note: PromptNote) => void;
+}) {
+  const { pushToast } = useAppToast();
+  const [iconId, setIconId] = useState<string | null>(note?.iconId || null);
+  const [title, setTitle] = useState(note?.title || "");
+  const [content, setContent] = useState(note?.content || "");
+  const [assignedMemberId, setAssignedMemberId] = useState<string | null>(
+    note?.assignedMemberId || currentMemberId,
+  );
+  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>(
+    note
+      ? note.telegramChannelIds?.length
+        ? note.telegramChannelIds
+        : note.telegramChannelId
+          ? [note.telegramChannelId]
+          : []
+      : [channelId],
+  );
+  const save = useMutation({
+    mutationFn: () =>
+      note
+        ? promptNotesApi.update(note.id, {
+            iconId,
+            title: title.trim(),
+            content,
+            assignedMemberId,
+            telegramChannelIds: selectedChannelIds,
+            postGroupId: null,
+          })
+        : promptNotesApi.create({
+            iconId,
+            title: title.trim(),
+            content,
+            assignedMemberId,
+            telegramChannelIds: selectedChannelIds,
+            postGroupId: null,
+          }),
+    onSuccess: async () => {
+      await onSaved();
+      pushToast(note ? "Prompt note updated." : "Prompt note created.", "success");
+      onClose();
+    },
+  });
+
+  const close = () => {
+    if (save.isPending) return;
+    onClose();
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title={note ? "Edit prompt note" : "Add prompt note"}
+      size="xl"
+    >
+      <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
+          <FormField label="Emoji">
+            <IconPicker
+              compact
+              iconId={iconId}
+              onChange={setIconId}
+              buttonLabel="Add emoji"
+            />
+          </FormField>
+          <FormField label="Title">
+            <Input
+              autoFocus
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Researcher prompt"
+            />
+          </FormField>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <FormField label="Member">
+            <MemberSelect
+              value={assignedMemberId}
+              onChange={(value) => setAssignedMemberId(value || null)}
+              defaultToCurrent
+            />
+          </FormField>
+          <FormField label="Show for">
+            <ChannelMultiSelect
+              channels={channels}
+              selectedIds={selectedChannelIds}
+              onChange={setSelectedChannelIds}
+            />
+          </FormField>
+        </div>
+        <FormField label="Prompt text">
+          <Textarea
+            rows={10}
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            placeholder="Paste any amount of prompt text…"
+            className="min-h-[14rem] max-h-[calc(100dvh-28rem)] overflow-y-auto font-mono leading-6"
+          />
+        </FormField>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-neutral-500">
+            {content.length.toLocaleString()} characters
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {note ? (
+              <Button
+                variant="danger"
+                disabled={save.isPending}
+                onClick={() => onDelete(note)}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Trash2 size={14} />
+                  Delete
+                </span>
+              </Button>
+            ) : null}
+            <Button
+              disabled={save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? "Saving…" : "Save note"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ChannelMultiSelect({
+  channels,
+  selectedIds,
+  onChange,
+}: {
+  channels: TelegramChannel[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = new Set(selectedIds);
+
+  useEffect(() => {
+    const onDocClick = (event: MouseEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const toggle = (channelId: string) => {
+    onChange(
+      selected.has(channelId)
+        ? selectedIds.filter((id) => id !== channelId)
+        : [...selectedIds, channelId],
+    );
+  };
+  const label = selectedIds.length
+    ? `${selectedIds.length} selected`
+    : "All channels";
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring"
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDown
+          size={16}
+          className={`shrink-0 text-neutral-400 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open ? (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+          <div className="flex items-center justify-between gap-2 border-b border-neutral-800 px-2 py-2">
+            <span className="truncate px-1 text-xs text-neutral-500">
+              Empty = visible in every channel
+            </span>
+            <div className="flex shrink-0 gap-1 text-xs">
+              <button
+                type="button"
+                onClick={() => onChange(channels.map((channel) => channel.id))}
+                className="rounded-md px-2 py-1 text-blue-300 hover:bg-blue-950/50"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="rounded-md px-2 py-1 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+              >
+                All channels
+              </button>
+            </div>
+          </div>
+          <div className="max-h-60 overflow-y-auto p-1.5">
+            {channels.map((channel) => (
+              <button
+                key={channel.id}
+                type="button"
+                onClick={() => toggle(channel.id)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-neutral-800"
+              >
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                    selected.has(channel.id)
+                      ? "border-blue-500 bg-blue-600 text-white"
+                      : "border-neutral-600"
+                  }`}
+                >
+                  {selected.has(channel.id) ? <Check size={11} /> : null}
+                </span>
+                {channel.photoUrl ? (
+                  <span
+                    className="h-6 w-6 shrink-0 rounded-md bg-cover bg-center"
+                    style={{ backgroundImage: `url(${channel.photoUrl})` }}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neutral-800 text-xs">
+                    {channel.title.trim()[0]?.toUpperCase() || "T"}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm text-white">
+                  {channel.title}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

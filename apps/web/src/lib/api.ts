@@ -584,6 +584,16 @@ export type PromptNote = {
   workspaceId: string;
   title: string;
   content: string;
+  emoji?: string | null;
+  iconId?: string | null;
+  icon?: Icon | null;
+  assignedMemberId?: string | null;
+  telegramChannelId?: string | null;
+  telegramChannelIds: string[];
+  postGroupId?: string | null;
+  assignedMember?: WorkspaceMember | null;
+  telegramChannel?: TelegramChannel | null;
+  postGroup?: PostGroup | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1356,17 +1366,39 @@ export const workspaceMembersApi = {
 };
 
 export const promptNotesApi = {
-  list: async (search?: string) =>
+  list: async (params?: {
+    search?: string;
+    telegramChannelId?: string;
+    postGroupId?: string;
+  }) =>
     (
       await api.get<PromptNote[]>("/prompt-notes", {
-        params: search ? { search } : undefined,
+        params,
       })
     ).data,
-  create: async (payload: { title: string; content: string }) =>
+  create: async (payload: {
+    title: string;
+    content: string;
+    emoji?: string | null;
+    iconId?: string | null;
+    assignedMemberId?: string | null;
+    telegramChannelId?: string | null;
+    telegramChannelIds?: string[];
+    postGroupId?: string | null;
+  }) =>
     (await api.post<PromptNote>("/prompt-notes", payload)).data,
   update: async (
     id: string,
-    payload: { title?: string; content?: string },
+    payload: {
+      title?: string;
+      content?: string;
+      emoji?: string | null;
+      iconId?: string | null;
+      assignedMemberId?: string | null;
+      telegramChannelId?: string | null;
+      telegramChannelIds?: string[];
+      postGroupId?: string | null;
+    },
   ) => (await api.patch<PromptNote>(`/prompt-notes/${id}`, payload)).data,
   remove: async (id: string) => (await api.delete(`/prompt-notes/${id}`)).data,
 };
