@@ -66,15 +66,41 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
+export function normalizeTimeInputValue(value: string) {
+  const sanitized = value.replace(/[^\d:.\s]/g, "").replace(/\s+/g, "");
+  if (!sanitized) return "";
+  const normalized = sanitized.replace(/\./g, ":");
+  if (!normalized.includes(":")) {
+    if (normalized.length <= 2) return normalized;
+    return `${normalized.slice(0, 2)}:${normalized.slice(2, 4)}`;
+  }
+  const [hours = "", minutes = ""] = normalized.split(":", 2);
+  return `${hours.slice(0, 2)}:${minutes.slice(0, 2)}`;
+}
+
+export function isValidTimeInputValue(value: string) {
+  if (!/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
 export function TimeInput(
   props: React.InputHTMLAttributes<HTMLInputElement>,
 ) {
+  const { className, onChange, placeholder, ...restProps } = props;
   return (
     <div className="relative">
       <input
-        {...props}
-        type="time"
-        className={`w-full appearance-none rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 pr-11 text-sm text-white outline-none ring-blue-500 focus:ring [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-clear-button]:hidden [&::-webkit-inner-spin-button]:hidden ${props.className ?? ""}`}
+        {...restProps}
+        type="text"
+        inputMode="numeric"
+        maxLength={5}
+        placeholder={placeholder ?? "HH:MM"}
+        onChange={(event) => {
+          event.target.value = normalizeTimeInputValue(event.target.value);
+          onChange?.(event);
+        }}
+        className={`w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 pr-11 text-sm text-white outline-none ring-blue-500 focus:ring ${className ?? ""}`}
       />
       <Clock3
         size={16}

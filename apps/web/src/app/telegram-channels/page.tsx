@@ -68,6 +68,7 @@ import {
   TimeInput,
   TooltipBubble,
   ToastStack,
+  isValidTimeInputValue,
   type ToastItem,
 } from "@/components/ui/primitives";
 import { useAppToast } from "@/providers/toast-provider";
@@ -2230,6 +2231,8 @@ function TelegramPostComposerModal({
       if (mode === "schedule") {
         if (!scheduleDate || !scheduleTime)
           throw new Error("Schedule date and time are required");
+        if (!isValidTimeInputValue(scheduleTime))
+          throw new Error("Schedule time must be in HH:MM format");
         await telegramChannelsApi.scheduleManagedPost(
           channel.id,
           post.id,
@@ -2323,7 +2326,10 @@ function TelegramPostComposerModal({
                   busy ||
                   !title.trim() ||
                   (mode !== "draft" && !text.trim() && !imageUrls.length) ||
-                  (mode === "schedule" && (!scheduleDate || !scheduleTime))
+                  (mode === "schedule" &&
+                    (!scheduleDate ||
+                      !scheduleTime ||
+                      !isValidTimeInputValue(scheduleTime)))
                 }
               >
                 {mode === "draft"

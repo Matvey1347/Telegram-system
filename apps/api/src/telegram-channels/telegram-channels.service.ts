@@ -78,6 +78,8 @@ type BulkProgressCallback = (
   total: number,
 ) => void | Promise<void>;
 
+const TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS = 50;
+
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
@@ -4918,6 +4920,22 @@ export class TelegramChannelsService {
       ...this.accountCredentials(account),
       channelRef,
     });
+    const currentSubscribersCount = channel.currentSubscribersCount ?? 0;
+    const statsUnavailableBecauseChannelIsTooSmall =
+      stats.normalized.status !== 'available' &&
+      currentSubscribersCount > 0 &&
+      currentSubscribersCount < TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS;
+    const statsDataSourceStatus =
+      stats.normalized.status === 'available'
+        ? TelegramDataSourceStatus.SUCCESS
+        : statsUnavailableBecauseChannelIsTooSmall
+          ? TelegramDataSourceStatus.SKIPPED
+          : TelegramDataSourceStatus.FAILED;
+    const statsUnavailableMessage = statsUnavailableBecauseChannelIsTooSmall
+      ? `Stats are not available yet: Telegram usually opens channel analytics after ${TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS}+ subscribers. Current subscribers: ${currentSubscribersCount}.`
+      : Array.isArray(stats.warnings)
+        ? stats.warnings.join('; ')
+        : 'Stats unavailable from this source';
     const syncedAt = new Date();
     const snapshotDate = this.toUtcDay(syncedAt);
     const snapshot = await this.prisma.telegramChannelStatsSnapshot.upsert({
@@ -4979,17 +4997,10 @@ export class TelegramChannelsService {
       sourceId: account.id,
       sourceType: TelegramSourceType.MTPROTO,
       dataType: TelegramChannelDataType.STATS,
-      status:
-        stats.normalized.status === 'available'
-          ? TelegramDataSourceStatus.SUCCESS
-          : TelegramDataSourceStatus.FAILED,
+      status: statsDataSourceStatus,
       sourceDisplayName: this.sourceDisplayName(account),
       errorMessage:
-        stats.normalized.status === 'available'
-          ? null
-          : Array.isArray(stats.warnings)
-            ? stats.warnings.join('; ')
-            : 'Stats unavailable from this source',
+        stats.normalized.status === 'available' ? null : statsUnavailableMessage,
       metadata: {
         availableFields: stats.availableFields,
         warnings: stats.warnings,

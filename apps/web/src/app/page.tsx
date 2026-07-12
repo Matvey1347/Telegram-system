@@ -22,7 +22,7 @@ import { Activity, Banknote, Megaphone, RadioTower, Target, TrendingUp, Users } 
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountDisplayName } from '@/lib/account-display';
-import { Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
+import { Button, Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
 import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, transactionCategoriesApi } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
@@ -89,9 +89,20 @@ type ChartTooltipProps = {
 
 export default function DashboardPage() {
   const qc = useQueryClient();
-  const [period, setPeriod] = useState(defaultPeriod);
+  const defaultCustomPeriod = useMemo(defaultPeriod, []);
+  const [rangeMode, setRangeMode] = useState<'30d' | 'all' | 'custom'>('all');
+  const [customPeriod, setCustomPeriod] = useState(defaultCustomPeriod);
+  const period = useMemo(
+    () =>
+      rangeMode === '30d'
+        ? defaultPeriod()
+        : rangeMode === 'custom'
+          ? customPeriod
+          : undefined,
+    [customPeriod, rangeMode],
+  );
   const { data, isLoading, error } = useQuery({
-    queryKey: ['dashboard-summary', period],
+    queryKey: ['dashboard-summary', rangeMode, period?.dateFrom ?? null, period?.dateTo ?? null],
     queryFn: () => getDashboardSummary(period),
   });
   const updateCategoryIconMutation = useMutation({
@@ -136,21 +147,55 @@ export default function DashboardPage() {
         : 'grid gap-6 xl:grid-cols-1';
   const netMargin = data && data.incomeForPeriod > 0 ? (data.profitForPeriod / data.incomeForPeriod) * 100 : null;
   const activeRate = data && data.totalSubscribers > 0 ? (data.activeSubscribersEstimate / data.totalSubscribers) * 100 : null;
+  const hasAdKpiStatus = statusRows.length > 0;
+  const hasAccounts = (data?.accountBalances.length ?? 0) > 0;
+  const hasChannelPerformance = (data?.channelPerformance.length ?? 0) > 0;
+  const hasBestCampaigns = (data?.bestCampaigns.length ?? 0) > 0;
+  const hasWorstCampaigns = (data?.worstCampaigns.length ?? 0) > 0;
+  const hasCampaignTables = hasBestCampaigns || hasWorstCampaigns;
+  const hasOwnChannels = (data?.topOwnChannels.length ?? 0) > 0;
 
   return (
     <AppShell>
       <PageHeader title="Dashboard" subtitle="Business health, finance, ads and channel performance" />
 
       <Card className="mb-6">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <FormField label="Period">
-            <DateRangeInput
-              from={period.dateFrom}
-              to={period.dateTo}
-              onChange={(range) => setPeriod({ dateFrom: range.from, dateTo: range.to })}
-            />
-          </FormField>
-        </div>
+        <section className="flex flex-wrap items-end gap-2">
+          <Button
+            variant={rangeMode === '30d' ? 'primary' : 'secondary'}
+            type="button"
+            onClick={() => setRangeMode('30d')}
+          >
+            30d
+          </Button>
+          <Button
+            variant={rangeMode === 'all' ? 'primary' : 'secondary'}
+            type="button"
+            onClick={() => setRangeMode('all')}
+          >
+            All
+          </Button>
+          <Button
+            variant={rangeMode === 'custom' ? 'primary' : 'secondary'}
+            type="button"
+            onClick={() => setRangeMode('custom')}
+          >
+            Custom
+          </Button>
+          {rangeMode === 'custom' ? (
+            <div className="w-full max-w-[420px]">
+              <FormField label="Period">
+                <DateRangeInput
+                  from={customPeriod.dateFrom}
+                  to={customPeriod.dateTo}
+                  onChange={(range) =>
+                    setCustomPeriod({ dateFrom: range.from, dateTo: range.to })
+                  }
+                />
+              </FormField>
+            </div>
+          ) : null}
+        </section>
       </Card>
 
       {isLoading && !data ? <DashboardSkeleton /> : null}
@@ -211,9 +256,9 @@ export default function DashboardPage() {
             {incomeBreakdown.length ? (
               <BreakdownCard title="Income by category" rows={incomeBreakdown} money={money} onIconChange={(id, iconId) => updateCategoryIconMutation.mutate({ id, iconId })} />
             ) : null}
-            <Card>
-              <SectionHeader title="Ad KPI Status" meta={`${n(data.periodCampaignsCount)} campaigns`} />
-              {statusRows.length ? (
+            {hasAdKpiStatus ? (
+              <Card>
+                <SectionHeader title="Ad KPI Status" meta={`${n(data.periodCampaignsCount)} campaigns`} />
                 <div className="grid gap-4 md:grid-cols-[170px_1fr] xl:grid-cols-1">
                   <div className="h-[180px]">
                     <ResponsiveContainer width="100%" height="100%">
@@ -234,73 +279,83 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 </div>
-              ) : <EmptyState text="No KPI statuses yet" />}
-            </Card>
+              </Card>
+            ) : null}
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          {hasAccounts || hasChannelPerformance ? (
+            <div className="grid gap-6 xl:grid-cols-2">
+              {hasAccounts ? (
+                <Card>
+                  <SectionHeader title="Accounts" meta="Current balance by account" />
+                  <div className="space-y-3">
+                    {data.accountBalances.map((account) => (
+                      <ProgressRow
+                        key={account.id}
+                        label={
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <IconPicker
+                              bare
+                              compact
+                              iconId={account.iconId ?? null}
+                              onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })}
+                              className="h-6 w-6 shrink-0 rounded-none border-0 bg-transparent hover:bg-transparent"
+                              iconClassName="!h-6 !w-6 !rounded-none !border-0 !bg-transparent !text-xl"
+                            />
+                            <span className="truncate">{accountDisplayName(account)}</span>
+                          </span>
+                        }
+                        value={formatMoney(account.balance, account.currency, 'symbol')}
+                        subValue={money(account.primary)}
+                        amount={Math.max(0, account.primary)}
+                        max={Math.max(...data.accountBalances.map((item) => Math.max(0, item.primary)), 1)}
+                        color="#2563eb"
+                      />
+                    ))}
+                  </div>
+                </Card>
+              ) : null}
+
+              {hasChannelPerformance ? (
+                <Card>
+                  <SectionHeader title="Best Ad Channels" meta="CPA by target channel" />
+                  <div className="space-y-3">
+                    {data.channelPerformance.map((channel) => (
+                      <ProgressRow
+                        key={channel.id}
+                        label={
+                          <span className="flex min-w-0 items-center gap-2">
+                            <AvatarBadge imageUrl={channel.photoUrl} label={channel.title} />
+                            <span className="truncate">{channel.title}</span>
+                          </span>
+                        }
+                        value={channel.cpa == null ? '-' : money(channel.cpa)}
+                        subValue={`${n(channel.joined)} joined · ${money(channel.spend)}`}
+                        amount={channel.joined}
+                        max={Math.max(...data.channelPerformance.map((item) => item.joined), 1)}
+                        color="#10b981"
+                      />
+                    ))}
+                  </div>
+                </Card>
+              ) : null}
+            </div>
+          ) : null}
+
+          {hasCampaignTables ? (
+            <div className="grid gap-6 xl:grid-cols-2">
+              {hasBestCampaigns ? (
+                <CampaignTable title="Best Campaigns" rows={data.bestCampaigns} money={money} />
+              ) : null}
+              {hasWorstCampaigns ? (
+                <CampaignTable title="Worst Campaigns" rows={data.worstCampaigns} money={money} />
+              ) : null}
+            </div>
+          ) : null}
+
+          {hasOwnChannels ? (
             <Card>
-              <SectionHeader title="Accounts" meta="Current balance by account" />
-              <div className="space-y-3">
-                {data.accountBalances.map((account) => (
-                  <ProgressRow
-                    key={account.id}
-                    label={
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <IconPicker
-                          bare
-                          compact
-                          iconId={account.iconId ?? null}
-                          onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })}
-                          className="h-6 w-6 shrink-0 rounded-none border-0 bg-transparent hover:bg-transparent"
-                          iconClassName="!h-6 !w-6 !rounded-none !border-0 !bg-transparent !text-xl"
-                        />
-                        <span className="truncate">{accountDisplayName(account)}</span>
-                      </span>
-                    }
-                    value={formatMoney(account.balance, account.currency, 'symbol')}
-                    subValue={money(account.primary)}
-                    amount={Math.max(0, account.primary)}
-                    max={Math.max(...data.accountBalances.map((item) => Math.max(0, item.primary)), 1)}
-                    color="#2563eb"
-                  />
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <SectionHeader title="Best Ad Channels" meta="CPA by target channel" />
-              {data.channelPerformance.length ? (
-                <div className="space-y-3">
-                  {data.channelPerformance.map((channel) => (
-                    <ProgressRow
-                      key={channel.id}
-                      label={
-                        <span className="flex min-w-0 items-center gap-2">
-                          <AvatarBadge imageUrl={channel.photoUrl} label={channel.title} />
-                          <span className="truncate">{channel.title}</span>
-                        </span>
-                      }
-                      value={channel.cpa == null ? '-' : money(channel.cpa)}
-                      subValue={`${n(channel.joined)} joined · ${money(channel.spend)}`}
-                      amount={channel.joined}
-                      max={Math.max(...data.channelPerformance.map((item) => item.joined), 1)}
-                      color="#10b981"
-                    />
-                  ))}
-                </div>
-              ) : <EmptyState text="No ad channel performance yet" />}
-            </Card>
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-2">
-            <CampaignTable title="Best Campaigns" rows={data.bestCampaigns} money={money} />
-            <CampaignTable title="Worst Campaigns" rows={data.worstCampaigns} money={money} />
-          </div>
-
-          <Card>
-            <SectionHeader title="Channel Health" meta={`${n(data.ownChannelsCount)} own channels`} />
-            {data.topOwnChannels.length ? (
+              <SectionHeader title="Channel Health" meta={`${n(data.ownChannelsCount)} own channels`} />
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {data.topOwnChannels.map((channel) => (
                   <div key={channel.id} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
@@ -319,8 +374,8 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
-            ) : <EmptyState text="No own channels yet" />}
-          </Card>
+            </Card>
+          ) : null}
         </div>
       ) : null}
     </AppShell>

@@ -12,7 +12,7 @@ import {
   Underline,
   X,
 } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   iconsApi,
@@ -31,6 +31,8 @@ type TelegramTextEditorProps = {
   enableInternalPostLinks?: boolean;
   internalLinkUsage?: "edit" | "publishNow" | "schedule";
   internalLinkScheduledAt?: string;
+  highlightInternalLinkTargetId?: string | null;
+  highlightRequestKey?: number;
 };
 
 type WrapAction = {
@@ -102,8 +104,15 @@ export function TelegramTextEditor({
   enableInternalPostLinks = false,
   internalLinkUsage = "publishNow",
   internalLinkScheduledAt,
+  highlightInternalLinkTargetId,
+  highlightRequestKey = 0,
 }: TelegramTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightedSelectionRef = useRef<{
+    start: number;
+    end: number;
+    requestKey: number;
+  } | null>(null);
   const linkSelectionRef = useRef({ start: 0, end: 0 });
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
@@ -156,6 +165,71 @@ export function TelegramTextEditor({
       .map((icon) => [icon!.id, icon!]),
   );
 
+  const scrollTextareaToSelection = useCallback(
+    (textarea: HTMLTextAreaElement, start: number, selectionText: string) => {
+      const style = window.getComputedStyle(textarea);
+      const mirror = document.createElement("div");
+      const marker = document.createElement("span");
+      mirror.setAttribute("aria-hidden", "true");
+      mirror.style.position = "absolute";
+      mirror.style.visibility = "hidden";
+      mirror.style.pointerEvents = "none";
+      mirror.style.whiteSpace = "pre-wrap";
+      mirror.style.wordBreak = "break-word";
+      mirror.style.overflowWrap = "anywhere";
+      mirror.style.boxSizing = style.boxSizing;
+      mirror.style.width = `${textarea.clientWidth}px`;
+      mirror.style.padding = style.padding;
+      mirror.style.border = style.border;
+      mirror.style.font = style.font;
+      mirror.style.fontFamily = style.fontFamily;
+      mirror.style.fontSize = style.fontSize;
+      mirror.style.fontWeight = style.fontWeight;
+      mirror.style.fontStyle = style.fontStyle;
+      mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.lineHeight = style.lineHeight;
+      mirror.style.textTransform = style.textTransform;
+      mirror.style.textIndent = style.textIndent;
+      mirror.style.tabSize = style.tabSize;
+      mirror.style.textRendering = style.textRendering;
+      mirror.style.webkitTextSizeAdjust = style.webkitTextSizeAdjust;
+      mirror.textContent = value.slice(0, start);
+      marker.textContent = selectionText || "\u200b";
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+      const selectionTop = marker.offsetTop;
+      const lineHeight = Number.parseFloat(style.lineHeight) || 24;
+      textarea.scrollTop = Math.max(
+        selectionTop - textarea.clientHeight / 2 + lineHeight * 1.5,
+        0,
+      );
+      document.body.removeChild(mirror);
+    },
+    [value],
+  );
+
+  const focusInternalLinkInText = useCallback((targetId: string, requestKey: number) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const escapedTargetId = targetId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      String.raw`\[[^\]\n]+\]\(tg-post:${escapedTargetId}\)`,
+      "g",
+    );
+    const match = pattern.exec(value);
+    if (!match || match.index == null) return;
+    const start = match.index;
+    const end = start + match[0].length;
+    highlightedSelectionRef.current = { start, end, requestKey };
+    scrollTextareaToSelection(textarea, start, match[0]);
+    textarea.focus();
+    textarea.setSelectionRange(start, end);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+    });
+  }, [scrollTextareaToSelection, value]);
+
   /* eslint-disable react-hooks/refs -- reset editor history when a parent hydrates a different value */
   if (lastKnownValueRef.current !== value) {
     lastKnownValueRef.current = value;
@@ -163,6 +237,14 @@ export function TelegramTextEditor({
     redoStackRef.current = [];
   }
   /* eslint-enable react-hooks/refs */
+
+  useEffect(() => {
+    if (!highlightInternalLinkTargetId || !highlightRequestKey) return;
+    focusInternalLinkInText(
+      highlightInternalLinkTargetId,
+      highlightRequestKey,
+    );
+  }, [focusInternalLinkInText, highlightInternalLinkTargetId, highlightRequestKey]);
 
   const currentSnapshot = (): EditorSnapshot => {
     const textarea = textareaRef.current;
@@ -472,13 +554,15 @@ export function TelegramTextEditor({
                     key={target.id}
                     type="button"
                     onClick={() => applyInternalLink(target)}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-neutral-800"
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-neutral-800"
                   >
                     {target.icon && targetIcons.get(target.icon) ? (
                       <IconAvatar
                         icon={targetIcons.get(target.icon)}
                         label={target.title}
                         size="xs"
+                        bordered={false}
+                        className="!bg-transparent"
                       />
                     ) : (
                       <span
@@ -528,6 +612,9 @@ export function TelegramTextEditor({
         rows={rows}
         value={value}
         disabled={disabled}
+        onMouseDown={() => {
+          highlightedSelectionRef.current = null;
+        }}
         onChange={(event) => commitValue(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Write your Telegram post…"

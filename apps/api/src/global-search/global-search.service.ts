@@ -36,6 +36,16 @@ export class GlobalSearchService {
     return this.queryVariants(query).map((variant) => ({ [field]: this.contains(variant) }));
   }
 
+  private relationTextMatches(relation: string, field: string, query: string) {
+    return this.queryVariants(query).map((variant) => ({
+      [relation]: {
+        is: {
+          [field]: this.contains(variant),
+        },
+      },
+    }));
+  }
+
   private limited<T>(items: T[], limit = 40) {
     return items.slice(0, limit);
   }
@@ -58,6 +68,9 @@ export class GlobalSearchService {
       people,
       campaigns,
       hypotheses,
+      managedPosts,
+      postGroups,
+      promptNotes,
     ] = await Promise.all([
       this.prisma.transaction.findMany({
         where: {
@@ -182,7 +195,76 @@ export class GlobalSearchService {
         take: 6,
         orderBy: { updatedAt: 'desc' },
       }),
+      this.prisma.telegramManagedPost.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('title', query),
+            ...this.textMatches('text', query),
+            ...this.textMatches('lastError', query),
+            ...this.textMatches('lastTelegramSyncNote', query),
+            ...this.relationTextMatches('group', 'title', query),
+            ...this.relationTextMatches('group', 'description', query),
+          ],
+        },
+        include: {
+          telegramChannel: { select: { id: true, title: true, photoUrl: true } },
+          group: { select: { id: true, title: true } },
+        },
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.postGroup.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('title', query),
+            ...this.textMatches('description', query),
+          ],
+        },
+        include: {
+          telegramChannel: { select: { id: true, title: true, photoUrl: true } },
+          _count: { select: { posts: true, promptNotes: true } },
+        },
+        take: 8,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.promptNote.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            ...this.textMatches('title', query),
+            ...this.textMatches('content', query),
+            ...this.textMatches('emoji', query),
+            ...this.relationTextMatches('postGroup', 'title', query),
+            ...this.relationTextMatches('postGroup', 'description', query),
+          ],
+        },
+        include: {
+          icon: { select: { imageUrl: true, emoji: true } },
+          telegramChannel: { select: { id: true, title: true, photoUrl: true } },
+          postGroup: { select: { id: true, title: true, telegramChannelId: true } },
+        },
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+      }),
     ]);
+
+    const iconIds = [
+      ...new Set(
+        [...managedPosts.map((post) => post.icon), ...postGroups.map((group) => group.icon)].filter(Boolean),
+      ),
+    ] as string[];
+    const icons = iconIds.length
+      ? await this.prisma.icon.findMany({
+          where: {
+            workspaceId,
+            id: { in: iconIds },
+          },
+          select: { id: true, imageUrl: true, emoji: true },
+        })
+      : [];
+    const iconsById = new Map(icons.map((icon) => [icon.id, icon]));
 
     return this.limited([
       ...transactions.map((transaction): SearchResult => ({
@@ -268,6 +350,62 @@ export class GlobalSearchService {
         subtitle: hypothesis.description || hypothesis.status,
         href: '/ad-campaigns',
       })),
+      ...managedPosts.map((post): SearchResult => {
+        const icon = post.icon ? iconsById.get(post.icon) : null;
+        return {
+          id: post.id,
+          type: 'telegram-managed-post',
+          label: 'Post',
+          title: post.title,
+          subtitle: [post.status.toLowerCase(), post.telegramChannel.title, post.group?.title].filter(Boolean).join(' · '),
+          href: `/telegram-posts?channelId=${post.telegramChannelId}&postId=${post.id}`,
+          iconUrl: icon?.imageUrl || post.telegramChannel.photoUrl,
+          iconEmoji: icon?.emoji,
+        };
+      }),
+      ...postGroups.map((group): SearchResult => {
+        const icon = group.icon ? iconsById.get(group.icon) : null;
+        return {
+          id: group.id,
+          type: 'post-group',
+          label: 'Post group',
+          title: group.title,
+          subtitle: [
+            group.telegramChannel.title,
+            `${group._count.posts} post${group._count.posts === 1 ? '' : 's'}`,
+            `${group._count.promptNotes} note${group._count.promptNotes === 1 ? '' : 's'}`,
+          ].join(' · '),
+          href: `/telegram-posts?channelId=${group.telegramChannelId}&groupId=${group.id}`,
+          iconUrl: icon?.imageUrl || group.telegramChannel.photoUrl,
+          iconEmoji: icon?.emoji,
+        };
+      }),
+      ...promptNotes.map((note): SearchResult => {
+        const targetChannelId =
+          note.telegramChannelId ||
+          note.postGroup?.telegramChannelId ||
+          note.telegramChannelIds[0] ||
+          '';
+        const title = note.title.trim() || note.content.trim().split('\n')[0] || 'Prompt note';
+        const channelSubtitle =
+          note.telegramChannel?.title ||
+          note.postGroup?.title ||
+          (note.telegramChannelIds.length > 1
+            ? `${note.telegramChannelIds.length} channels`
+            : null);
+        return {
+          id: note.id,
+          type: 'prompt-note',
+          label: 'Prompt note',
+          title,
+          subtitle: channelSubtitle,
+          href: targetChannelId
+            ? `/telegram-posts?channelId=${targetChannelId}&noteId=${note.id}`
+            : '/telegram-posts',
+          iconUrl: note.icon?.imageUrl,
+          iconEmoji: note.icon?.emoji || note.emoji,
+        };
+      }),
     ]);
   }
 }

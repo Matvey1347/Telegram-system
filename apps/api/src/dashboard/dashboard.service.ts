@@ -29,6 +29,9 @@ function isoDay(date: Date) {
 }
 
 function dateRange(input?: { dateFrom?: string; dateTo?: string }) {
+  if (!input?.dateFrom && !input?.dateTo) {
+    return { from: startOfDay(new Date(2000, 0, 1)), to: endOfDay(new Date()) };
+  }
   const fallbackTo = startOfDay(new Date());
   const fallbackFrom = new Date(fallbackTo.getTime() - 29 * DAY);
   const from = startOfDay(parseDate(input?.dateFrom) ?? fallbackFrom);

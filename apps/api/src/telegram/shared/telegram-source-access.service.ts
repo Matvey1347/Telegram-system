@@ -49,6 +49,7 @@ const dataTypeLabels: Record<TelegramChannelDataType, string> = {
   VIEWS: 'Views',
   OTHER: 'Other',
 };
+const TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS = 50;
 
 @Injectable()
 export class TelegramSourceAccessService {
@@ -280,7 +281,13 @@ export class TelegramSourceAccessService {
     const [channel, sources, dataRows] = await Promise.all([
       this.prisma.telegramChannel.findFirst({
         where: { id: channelId, workspaceId },
-        select: { id: true, telegramChatId: true, title: true, username: true },
+        select: {
+          id: true,
+          telegramChatId: true,
+          title: true,
+          username: true,
+          currentSubscribersCount: true,
+        },
       }),
       this.sourcesForChannel(workspaceId, channelId),
       this.prisma.telegramChannelDataSource.findMany({
@@ -316,10 +323,26 @@ export class TelegramSourceAccessService {
     const dataAttribution = Object.values(TelegramChannelDataType).map(
       (dataType) => {
         const rows = latestByType.get(dataType) || [];
+        const latestStatus = rows[0]?.status || TelegramDataSourceStatus.SKIPPED;
+        const rawErrorMessage =
+          rows.find((row) => row.errorMessage)?.errorMessage ||
+          (rows.length ? null : 'No connected source has required permission');
+        const statsUnavailableBecauseChannelIsTooSmall =
+          dataType === TelegramChannelDataType.STATS &&
+          latestStatus === TelegramDataSourceStatus.FAILED &&
+          (channel?.currentSubscribersCount ?? 0) > 0 &&
+          (channel?.currentSubscribersCount ?? 0) <
+            TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS;
+        const status = statsUnavailableBecauseChannelIsTooSmall
+          ? TelegramDataSourceStatus.SKIPPED
+          : latestStatus;
+        const errorMessage = statsUnavailableBecauseChannelIsTooSmall
+          ? `Stats are not available yet: Telegram usually opens channel analytics after ${TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS}+ subscribers. Current subscribers: ${channel?.currentSubscribersCount ?? 0}.`
+          : rawErrorMessage;
         return {
           dataType,
           label: dataTypeLabels[dataType],
-          status: rows[0]?.status || TelegramDataSourceStatus.SKIPPED,
+          status,
           sources: rows
             .filter((row) => row.status !== TelegramDataSourceStatus.FAILED)
             .map((row) => ({
@@ -328,11 +351,7 @@ export class TelegramSourceAccessService {
               displayName: row.sourceDisplayName || null,
             })),
           syncedAt: rows[0]?.syncedAt || null,
-          errorMessage:
-            rows.find((row) => row.errorMessage)?.errorMessage ||
-            (rows.length
-              ? null
-              : 'No connected source has required permission'),
+          errorMessage,
         };
       },
     );

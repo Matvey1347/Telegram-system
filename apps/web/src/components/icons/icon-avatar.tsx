@@ -29,7 +29,10 @@ export function IconAvatar({
   className?: string;
   bordered?: boolean;
 }) {
-  const base = `inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md ${bordered ? 'border border-neutral-700 bg-neutral-800' : 'bg-neutral-800'} text-white ${sizes[size]} ${className}`;
+  const hasEmoji = Boolean(icon?.emoji);
+  const base = `inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md ${
+    bordered && !hasEmoji ? 'border border-neutral-700 bg-neutral-800' : 'bg-neutral-800'
+  } text-white ${sizes[size]} ${className}`;
 
   if (icon?.imageUrl) {
     return <img src={icon.imageUrl} alt="" className={`${base} object-cover`} />;
