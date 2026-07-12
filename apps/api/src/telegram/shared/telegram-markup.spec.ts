@@ -29,6 +29,18 @@ describe('telegramMarkupToHtml', () => {
     );
   });
 
+  it('converts fenced code blocks with a Cyrillic copy label', () => {
+    expect(telegramMarkupToHtml('```ц2увкае\ncode block\n```')).toBe(
+      '<pre><code class="language-ц2увкае">code block\n</code></pre>',
+    );
+  });
+
+  it('keeps the default copy label when fenced code block has no header', () => {
+    expect(telegramMarkupToHtml('```\ncode block\n```')).toBe(
+      '<pre><code>code block\n</code></pre>',
+    );
+  });
+
   it('converts markdown links to safe Telegram HTML links', () => {
     expect(
       telegramMarkupToHtml(

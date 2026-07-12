@@ -130,6 +130,31 @@ function formatLocalDate(value?: string | Date | null) {
   return `${year}-${month}-${day}`;
 }
 
+function localDateTimeParts(value?: string | Date | null) {
+  if (!value) {
+    return {
+      date: "",
+      time: "",
+    };
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      date: "",
+      time: "",
+    };
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hours}:${minutes}`,
+  };
+}
+
 function safeExportFileName(value: string) {
   return (
     value
@@ -2362,13 +2387,14 @@ function TelegramPostComposerModal({
                         setMode(
                           post.status === "SCHEDULED" ? "schedule" : "draft",
                         );
+                        const scheduledLocalParts = localDateTimeParts(
+                          post.scheduledAt,
+                        );
                         setScheduleDate(
-                          post.scheduledAt ? post.scheduledAt.slice(0, 10) : "",
+                          scheduledLocalParts.date,
                         );
                         setScheduleTime(
-                          post.scheduledAt
-                            ? post.scheduledAt.slice(11, 16)
-                            : "09:00",
+                          scheduledLocalParts.time || "09:00",
                         );
                       }}
                       className="flex min-w-0 flex-1 items-center justify-between px-2 py-1 text-left"

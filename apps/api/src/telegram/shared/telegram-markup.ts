@@ -48,10 +48,11 @@ export function telegramMarkupToHtml(raw: string) {
   };
 
   let value = raw.replace(
-    /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g,
+    /```([^\n`]*)\n?([\s\S]*?)```/g,
     (_match, language: string, code: string) => {
-      const languageClass = language
-        ? ` class="language-${escapeHtml(language)}"`
+      const normalizedLanguage = language.trim();
+      const languageClass = normalizedLanguage
+        ? ` class="language-${escapeHtml(normalizedLanguage)}"`
         : '';
       return token(
         `<pre><code${languageClass}>${escapeHtml(code)}</code></pre>`,

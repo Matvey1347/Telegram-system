@@ -100,11 +100,22 @@ const workspaceViewPreferenceKey = (channelId: string) =>
 
 function localNowParts() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
+  return localDateTimeParts(now);
+}
+
+function localDateTimeParts(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      date: "",
+      time: "",
+    };
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
   return {
     date: `${year}-${month}-${day}`,
     time: `${hours}:${minutes}`,
@@ -119,10 +130,7 @@ function scheduleDateForPreset(time: string) {
   if (candidate.getTime() < now.getTime()) {
     candidate.setDate(candidate.getDate() + 1);
   }
-  const year = candidate.getFullYear();
-  const month = String(candidate.getMonth() + 1).padStart(2, "0");
-  const day = String(candidate.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return localDateTimeParts(candidate).date;
 }
 
 export default function TelegramPostsPage() {
@@ -1005,9 +1013,11 @@ function TelegramPostWorkspace({
     setPostGroupId(post.groupId ?? null);
     rememberPostGroup(post.groupId ?? null);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
-    setScheduleDate(post.scheduledAt?.slice(0, 10) || localNowParts().date);
-    const postScheduleTime =
-      post.scheduledAt?.slice(11, 16) || localNowParts().time;
+    const scheduledLocalParts = post.scheduledAt
+      ? localDateTimeParts(post.scheduledAt)
+      : null;
+    setScheduleDate(scheduledLocalParts?.date || localNowParts().date);
+    const postScheduleTime = scheduledLocalParts?.time || localNowParts().time;
     setScheduleTime(postScheduleTime);
     setUploadingImages(false);
     if (
@@ -1147,7 +1157,6 @@ function TelegramPostWorkspace({
   };
 
   const deletePosts = async (targetPosts: TelegramManagedPost[]) => {
-    setBusy(true);
     try {
       for (const post of targetPosts) {
         await telegramChannelsApi.deleteManagedPost(channelId, post.id);
@@ -1165,10 +1174,14 @@ function TelegramPostWorkspace({
         }),
         queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
       ]);
-      setDeletingPost(null);
-      setBulkDeleteOpen(false);
-    } finally {
-      setBusy(false);
+      pushToast(
+        targetPosts.length === 1
+          ? `"${targetPosts[0].title}" deleted.`
+          : `${targetPosts.length} posts deleted.`,
+        "success",
+      );
+    } catch (error) {
+      pushToast(apiErrorMessage(error, "Could not delete posts"), "error", 7000);
     }
   };
 
@@ -1461,7 +1474,7 @@ function TelegramPostWorkspace({
                         ? "Edit post"
                         : "New post"}
                   </h2>
-                  {editing ? (
+                  {editing && incomingInternalLinkPosts.length > 0 ? (
                     <button
                       type="button"
                       onClick={() => setUsageModalOpen(true)}
@@ -2196,9 +2209,11 @@ function TelegramPostWorkspace({
             ? "This will cancel the scheduled message in Telegram and delete it from this system."
             : "This deletes the record only from this system. Published Telegram messages remain untouched."
         }
-        onConfirm={async () => {
+        onConfirm={() => {
           if (!deletingPost) return;
-          await deletePosts([deletingPost]);
+          const postToDelete = deletingPost;
+          setDeletingPost(null);
+          void deletePosts([postToDelete]);
         }}
       />
       {movingPost ? (
@@ -2239,8 +2254,10 @@ function TelegramPostWorkspace({
             ? "This will cancel selected scheduled messages in Telegram and delete the selected records from this system. Published Telegram messages remain untouched."
             : "This deletes the selected records only from this system. Published Telegram messages remain untouched."
         }
-        onConfirm={async () => {
-          await deletePosts(selectedPosts);
+        onConfirm={() => {
+          const postsToDelete = [...selectedPosts];
+          setBulkDeleteOpen(false);
+          void deletePosts(postsToDelete);
         }}
       />
     </>

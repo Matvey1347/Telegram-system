@@ -223,7 +223,7 @@ function TelegramMessageBubble({
       {text.trim() ? (
         <div className="px-3.5 pb-2.5 pt-3">
           <div
-            className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.42] text-[#f5f5f5]"
+            className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
             dangerouslySetInnerHTML={{ __html: previewHtml(text) }}
             onClick={handlePreviewContentClick}
           />

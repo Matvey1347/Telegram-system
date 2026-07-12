@@ -142,7 +142,7 @@ button:disabled,
 
 .telegram-preview-text .tg-code-block {
   position: relative;
-  margin: 8px 0;
+  margin: 5px 0 4px;
   overflow-x: auto;
   border-left: 3px solid #6ab2e7;
   border-radius: 5px;
@@ -197,11 +197,11 @@ button:disabled,
 
 .telegram-preview-text .tg-code-block > code {
   display: block;
-  padding: 8px 10px;
+  padding: 7px 10px;
   background: transparent;
   color: #fff;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.32;
 }
 
 .telegram-preview-text blockquote {
