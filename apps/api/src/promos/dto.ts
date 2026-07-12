@@ -4,6 +4,7 @@ import { IsEnum, IsOptional, IsString } from 'class-validator';
 export class CreatePromoDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() telegramChannelId!: string;
+  @IsOptional() @IsString() iconId?: string | null;
   @IsString() title!: string;
   @IsOptional() @IsString() text?: string;
   @IsOptional() @IsString() imageData?: string;
@@ -12,6 +13,7 @@ export class CreatePromoDto {
 export class UpdatePromoDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional() @IsString() telegramChannelId?: string;
+  @IsOptional() @IsString() iconId?: string | null;
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() text?: string;
   @IsOptional() @IsString() imageData?: string;

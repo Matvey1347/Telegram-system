@@ -1,10 +1,15 @@
 'use client';
 
-import type { ChangeEvent, ClipboardEvent, MouseEventHandler } from 'react';
+import type { MouseEventHandler } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
+import { IconAvatar } from '@/components/icons/icon-avatar';
+import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
+import { TelegramImageUpload } from '@/components/telegram/telegram-image-upload';
+import { TelegramPostPreview } from '@/components/telegram/telegram-post-preview';
+import { TelegramTextEditor } from '@/components/telegram/telegram-text-editor';
 import {
   accountsApi,
   adCampaignsApi,
@@ -12,6 +17,7 @@ import {
   advertisingChannelsApi,
   getTelegramChannelInviteLinks,
   getTelegramChannelPromos,
+  iconsApi,
   promosApi,
   telegramChannelsApi,
   telegramSyncApi,
@@ -1109,10 +1115,13 @@ function PromosSection({
       {promos.length ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {promos.map((promo) => (
-            <Card key={promo.id} className="min-h-[260px]">
-              <div className="mb-3 flex items-start justify-between gap-3">
+            <Card key={promo.id}>
+              <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="truncate text-lg font-semibold text-white">{promo.title}</h3>
+                  <div className="flex items-center gap-2">
+                    <PromoIcon iconId={promo.iconId} icon={promo.icon} title={promo.title} />
+                    <h3 className="truncate text-lg font-semibold text-white">{promo.title}</h3>
+                  </div>
                   {promo.telegramChannel ? <SourceChip source={promo.telegramChannel} compact /> : null}
                 </div>
                 <div className="flex shrink-0 gap-2">
@@ -1120,17 +1129,38 @@ function PromosSection({
                   <IconButton kind="delete" onClick={() => onDelete(promo)} />
                 </div>
               </div>
-              {promo.imageData ? (
-                <div className="mb-3 flex h-36 items-center justify-center overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
-                  <img src={promo.imageData} alt="" className="max-h-full max-w-full object-contain" />
-                </div>
-              ) : null}
-              {promo.text ? <p className="line-clamp-5 whitespace-pre-wrap text-sm leading-relaxed text-neutral-300">{promo.text}</p> : <p className="text-sm text-neutral-500">No description.</p>}
             </Card>
           ))}
         </div>
       ) : null}
     </>
+  );
+}
+
+function PromoIcon({
+  iconId,
+  icon,
+  title,
+}: {
+  iconId?: string | null;
+  icon?: Promo['icon'];
+  title: string;
+}) {
+  const iconQuery = useQuery({
+    queryKey: ['icon', iconId],
+    queryFn: () => iconsApi.get(iconId as string),
+    enabled: Boolean(iconId) && !icon,
+  });
+  const resolvedIcon = icon || iconQuery.data;
+  if (!resolvedIcon) return null;
+  return (
+    <IconAvatar
+      icon={resolvedIcon}
+      label={title}
+      size="xs"
+      bordered={false}
+      className="!bg-transparent"
+    />
   );
 }
 
@@ -1225,7 +1255,7 @@ function PromoModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: { telegramChannelId: string; title: string; imageData?: string; text?: string }) => void;
+  onSubmit: (payload: { telegramChannelId: string; iconId?: string | null; title: string; imageData?: string; text?: string }) => void;
   title: string;
   initial?: Promo;
   channels: TelegramChannel[];
@@ -1234,112 +1264,99 @@ function PromoModal({
     () => channels.map((channel) => ({ value: channel.id, label: channel.title, iconUrl: channel.photoUrl, iconFallback: channel.title })),
     [channels],
   );
-  const { register, handleSubmit, setValue, watch, reset, formState: { errors } } = useForm({
-    defaultValues: {
-      telegramChannelId: initial?.telegramChannelId ?? '',
-      title: initial?.title ?? '',
-      imageData: initial?.imageData ?? '',
-      notes: initial?.text ?? '',
-    },
-  });
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const imageData = watch('imageData') as string | undefined;
-  const selectedChannelId = watch('telegramChannelId') as string;
+  const [iconId, setIconId] = useState<string | null>(initial?.iconId || null);
+  const [selectedChannelId, setSelectedChannelId] = useState(initial?.telegramChannelId ?? '');
+  const [titleValue, setTitleValue] = useState(initial?.title ?? '');
+  const [textValue, setTextValue] = useState(initial?.text ?? '');
+  const [imageUrls, setImageUrls] = useState<string[]>(initial?.imageData ? [initial.imageData] : []);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    reset({
-      telegramChannelId: initial?.telegramChannelId ?? '',
-      title: initial?.title ?? '',
-      imageData: initial?.imageData ?? '',
-      notes: initial?.text ?? '',
-    });
-  }, [initial, open, reset]);
+    setIconId(initial?.iconId || null);
+    setSelectedChannelId(initial?.telegramChannelId ?? '');
+    setTitleValue(initial?.title ?? '');
+    setTextValue(initial?.text ?? '');
+    setImageUrls(initial?.imageData ? [initial.imageData] : []);
+    setUploadingImages(false);
+  }, [initial, open]);
 
   useEffect(() => {
     if (!open || selectedChannelId || channels.length !== 1) return;
-    setValue('telegramChannelId', channels[0].id);
-  }, [channels, open, selectedChannelId, setValue]);
+    setSelectedChannelId(channels[0].id);
+  }, [channels, open, selectedChannelId]);
 
-  const applyImageFile = (file?: File) => {
-    if (!file) return;
-    setUploadingImage(true);
-    promosApi
-      .uploadImage(file)
-      .then((res) => setValue('imageData', String(res.imageUrl || '')))
-      .finally(() => setUploadingImage(false));
-  };
-
-  const submit = (values: any) => {
-    const notes = String(values.notes ?? '').trim();
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const submit = () => {
+    const trimmedTitle = titleValue.trim();
+    const trimmedText = textValue.trim();
     onSubmit({
-      telegramChannelId: values.telegramChannelId,
-      title: String(values.title || '').trim(),
-      imageData: values.imageData || undefined,
-      text: notes || undefined,
+      telegramChannelId: selectedChannelId,
+      iconId,
+      title: trimmedTitle,
+      imageData: imageUrls[0] || undefined,
+      text: trimmedText || undefined,
     });
   };
+  const canSubmit = Boolean(selectedChannelId && titleValue.trim() && !uploadingImages);
 
   return (
-    <Modal open={open} onClose={onClose} title={title}>
-      <form className="space-y-3" onSubmit={handleSubmit(submit)}>
-        <FormField label="Channel" required error={errors.telegramChannelId ? 'Required field' : undefined}>
-          <CustomSelect
-            value={selectedChannelId}
-            onChange={(value) => setValue('telegramChannelId', value)}
-            placeholder="Select channel"
-            options={channelOptions}
+    <Modal open={open} onClose={onClose} title={title} size="xl">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(270px,0.72fr)_minmax(0,1.28fr)]">
+        <TelegramPostPreview
+          channelTitle={selectedChannel?.title || 'Telegram channel'}
+          channelPhotoUrl={selectedChannel?.photoUrl}
+          text={textValue}
+          imageUrls={imageUrls}
+        />
+        <Card className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1.15fr)_minmax(220px,0.85fr)]">
+            <FormField label="Emoji">
+              <IconPicker
+                compact
+                iconId={iconId}
+                onChange={setIconId}
+                buttonLabel="Add emoji"
+              />
+            </FormField>
+            <FormField label="Internal title" required>
+              <Input value={titleValue} onChange={(event) => setTitleValue(event.target.value)} placeholder="Promo title" />
+            </FormField>
+            <FormField label="Channel" required>
+              <CustomSelect
+                value={selectedChannelId}
+                onChange={setSelectedChannelId}
+                placeholder="Select channel"
+                options={channelOptions}
+              />
+            </FormField>
+          </div>
+          <FormField label="Telegram text">
+            <TelegramTextEditor
+              value={textValue}
+              onChange={setTextValue}
+              rows={8}
+              channelId={selectedChannelId || undefined}
+            />
+          </FormField>
+          <TelegramImageUpload
+            value={imageUrls}
+            onChange={(urls) => setImageUrls(urls.slice(0, 1))}
+            onUploadingChange={setUploadingImages}
           />
-        </FormField>
-        <FormField label="Title" required error={errors.title ? 'Required field' : undefined}>
-          <Input {...register('title', { required: true })} />
-        </FormField>
-        <div className="block text-sm">
-          <span className="mb-1 block text-neutral-300">Promo image</span>
-          {!imageData ? (
-            <div
-              tabIndex={0}
-              onPaste={(event: ClipboardEvent<HTMLDivElement>) => {
-                const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith('image/'));
-                if (!imageItem) return;
-                const file = imageItem.getAsFile();
-                if (!file) return;
-                event.preventDefault();
-                applyImageFile(file);
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              className="cursor-pointer rounded-xl border border-dashed border-neutral-600 bg-neutral-900/70 p-4 transition hover:border-neutral-400 focus:border-blue-500 focus:outline-none"
-            >
-              <p className="text-sm text-neutral-200">Click to choose image or paste with Ctrl+V</p>
-              <p className="mt-1 text-xs text-neutral-400">Supports screenshots and copied image files</p>
-              {uploadingImage ? <p className="mt-1 text-xs text-blue-300">Uploading image...</p> : null}
-            </div>
+          {imageUrls.length > 1 ? (
+            <p className="text-xs text-amber-300">
+              Promo keeps only one image. The first uploaded image will be saved.
+            </p>
           ) : null}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={(event: ChangeEvent<HTMLInputElement>) => applyImageFile(event.target.files?.[0])}
-            className="hidden"
-          />
-          {imageData ? (
-            <div className="mt-2 flex h-40 items-center justify-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900">
-              <img src={imageData} alt="" className="max-h-full max-w-full object-contain" />
-            </div>
-          ) : null}
-          {imageData ? <div className="mt-2"><Button variant="secondary" type="button" onClick={() => setValue('imageData', '')}>Remove image</Button></div> : null}
-        </div>
-        <input type="hidden" {...register('telegramChannelId', { required: true })} />
-        <input type="hidden" {...register('imageData')} />
-        <FormField label="Description">
-          <Textarea {...register('notes')} />
-        </FormField>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
-          <Button type="submit">Save</Button>
-        </div>
-      </form>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="button" disabled={!canSubmit} onClick={submit}>
+              {initial ? 'Save promo' : 'Create promo'}
+            </Button>
+          </div>
+        </Card>
+      </div>
     </Modal>
   );
 }

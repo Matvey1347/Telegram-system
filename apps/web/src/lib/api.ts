@@ -962,6 +962,8 @@ export type TelegramInviteLink = {
 export type Promo = {
   id: string;
   telegramChannelId: string;
+  iconId?: string | null;
+  icon?: Icon | null;
   title: string;
   text?: string;
   imageData?: string;

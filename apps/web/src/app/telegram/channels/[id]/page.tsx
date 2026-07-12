@@ -396,7 +396,7 @@ export default function TelegramChannelAnalyticsPage() {
 
   const settingsMutation = useMutation({
     mutationFn: () =>
-      telegramChannelsApi.updateQuiet(id, {
+      telegramChannelsApi.update(id, {
         seedSubscribersCount: toNumber(settings.seedSubscribersCount),
         activeSubscribersWindow: Math.max(
           1,

@@ -45,6 +45,14 @@ export function ToastProvider({ children }: PropsWithChildren) {
   const [progressEntries, setProgressEntries] = useState<AppProgress[]>([]);
   const lastManualSuccessToastAtRef = useRef(0);
   const mutationDismissTimersRef = useRef<Map<string, number>>(new Map());
+  const mutationToastsRef = useRef<ToastItem[]>([]);
+  const recentGenericMutationSuccessRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+
+  useEffect(() => {
+    mutationToastsRef.current = mutationToasts;
+  }, [mutationToasts]);
 
   const pushToastInternal = (
     message: string,
@@ -104,9 +112,49 @@ export function ToastProvider({ children }: PropsWithChildren) {
       setMutationToasts((current) =>
         current.filter((toast) => toast.id !== `mutation:${id}`),
       );
+      recentGenericMutationSuccessRef.current.delete(`mutation:${id}`);
       mutationDismissTimersRef.current.delete(id);
     }, durationMs);
     mutationDismissTimersRef.current.set(id, timer);
+  };
+
+  const isGenericMutationSuccessMessage = (message: string) =>
+    ["Saved successfully.", "Created successfully.", "Deleted successfully."].includes(
+      message,
+    );
+
+  const replaceRecentGenericMutationSuccessToast = (
+    message: string,
+    icon?: { emoji?: string | null; imageUrl?: string | null },
+  ) => {
+    const now = Date.now();
+    const target = [...mutationToastsRef.current]
+      .reverse()
+      .find((toast) => {
+        if (toast.tone !== "success" || typeof toast.id !== "string") {
+          return false;
+        }
+        const completedAt = recentGenericMutationSuccessRef.current.get(toast.id);
+        return Boolean(completedAt && now - completedAt < 2_500);
+      });
+    if (!target || typeof target.id !== "string") return false;
+    const mutationId = target.id.replace("mutation:", "");
+    setMutationToasts((current) =>
+      current.map((toast) =>
+        toast.id === target.id
+          ? {
+              ...toast,
+              title: undefined,
+              message,
+              iconEmoji: icon?.emoji || undefined,
+              iconUrl: icon?.imageUrl || undefined,
+            }
+          : toast,
+      ),
+    );
+    scheduleMutationToastDismiss(mutationId, 3000);
+    recentGenericMutationSuccessRef.current.delete(target.id);
+    return true;
   };
 
   const value = useMemo<{
@@ -118,6 +166,9 @@ export function ToastProvider({ children }: PropsWithChildren) {
       pushToast: (message, tone = "info", durationMs = 3500, icon) => {
         if (tone === "success") {
           lastManualSuccessToastAtRef.current = Date.now();
+          if (replaceRecentGenericMutationSuccessToast(message, icon)) {
+            return;
+          }
         }
         pushToastInternal(message, tone, durationMs, icon);
       },
@@ -187,6 +238,14 @@ export function ToastProvider({ children }: PropsWithChildren) {
             },
           ];
         });
+        if (
+          detail.phase === "success" &&
+          isGenericMutationSuccessMessage(detail.message!)
+        ) {
+          recentGenericMutationSuccessRef.current.set(toastId, Date.now());
+        } else {
+          recentGenericMutationSuccessRef.current.delete(toastId);
+        }
         scheduleMutationToastDismiss(
           detail.id,
           detail.phase === "success" ? 3000 : 6000,
@@ -200,6 +259,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
         window.clearTimeout(timer),
       );
       mutationDismissTimersRef.current.clear();
+      recentGenericMutationSuccessRef.current.clear();
     };
   }, [value]);
   const systemToasts: ToastItem[] = [...mutationToasts];
@@ -234,6 +294,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
           } else if (typeof id === "string" && id.startsWith("mutation:")) {
             const mutationId = id.replace("mutation:", "");
             clearMutationDismissTimer(mutationId);
+            recentGenericMutationSuccessRef.current.delete(id);
             setMutationToasts((current) =>
               current.filter((toast) => toast.id !== id),
             );

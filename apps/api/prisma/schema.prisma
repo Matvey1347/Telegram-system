@@ -756,6 +756,7 @@ model Promo {
   id                String      @id @default(cuid())
   workspaceId       String
   telegramChannelId String
+  iconId            String?
   title             String
   text              String
   angle             String?
@@ -766,6 +767,7 @@ model Promo {
 
   workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel  @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  icon           Icon?            @relation(fields: [iconId], references: [id], onDelete: SetNull)
   assignedMember  WorkspaceMember? @relation("PromoAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser   User?            @relation("PromoCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
@@ -775,6 +777,7 @@ model Promo {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, assignedMemberId])
+  @@index([iconId])
 }
 
 model AdvertisingSource {
@@ -1185,6 +1188,8 @@ model Icon {
   transactions          Transaction[]
   transactionCategories TransactionCategory[]
   promptNotes           PromptNote[]
+  promos                Promo[]
+  telegramChannelTimePosts TelegramChannelTimePost[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
