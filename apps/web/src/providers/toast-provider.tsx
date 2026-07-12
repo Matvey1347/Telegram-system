@@ -41,11 +41,10 @@ const ToastContext = createContext<{
 
 export function ToastProvider({ children }: PropsWithChildren) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [pendingRequests, setPendingRequests] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [mutationToasts, setMutationToasts] = useState<ToastItem[]>([]);
   const [progressEntries, setProgressEntries] = useState<AppProgress[]>([]);
   const lastManualSuccessToastAtRef = useRef(0);
+  const mutationDismissTimersRef = useRef<Map<string, number>>(new Map());
 
   const pushToastInternal = (
     message: string,
@@ -91,6 +90,25 @@ export function ToastProvider({ children }: PropsWithChildren) {
     );
   };
 
+  const clearMutationDismissTimer = (id: string) => {
+    const timer = mutationDismissTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      mutationDismissTimersRef.current.delete(id);
+    }
+  };
+
+  const scheduleMutationToastDismiss = (id: string, durationMs: number) => {
+    clearMutationDismissTimer(id);
+    const timer = window.setTimeout(() => {
+      setMutationToasts((current) =>
+        current.filter((toast) => toast.id !== `mutation:${id}`),
+      );
+      mutationDismissTimersRef.current.delete(id);
+    }, durationMs);
+    mutationDismissTimersRef.current.set(id, timer);
+  };
+
   const value = useMemo<{
     pushToast: PushToast;
     setProgress: typeof setProgress;
@@ -116,72 +134,75 @@ export function ToastProvider({ children }: PropsWithChildren) {
           id: string;
           phase: "start" | "success" | "error";
           message?: string;
-          scope?: "page" | "modal";
+          scope?: "page";
         }>
       ).detail;
       if (!detail?.id) return;
-      if (detail.scope !== "modal") {
-        setPendingRequests((current) => {
-          const next = new Set(current);
-          if (detail.phase === "start") next.add(detail.id);
-          else next.delete(detail.id);
-          return next;
+      const toastId = `mutation:${detail.id}`;
+      if (detail.phase === "start") {
+        clearMutationDismissTimer(detail.id);
+        setMutationToasts((current) => {
+          const next = current.filter((toast) => toast.id !== toastId);
+          return [
+            ...next,
+            {
+              id: toastId,
+              tone: "loading",
+              title: "Processing",
+              message: "Waiting for the server…",
+            },
+          ];
         });
+        return;
       }
-      if (detail.phase !== "start" && detail.message) {
-        const showToast = () => {
-          if (
-            detail.phase === "success" &&
-            Date.now() - lastManualSuccessToastAtRef.current < 10_000
-          ) {
-            return;
-          }
-          pushToastInternal(
-            detail.message!,
-            detail.phase === "success" ? "success" : "error",
-            detail.phase === "success" ? 3000 : 6000,
-          );
-        };
-        if (detail.scope === "modal" && detail.phase === "success") {
-          const initialModalCount = document.querySelectorAll(
-            '[data-app-modal="true"]',
-          ).length;
-          const startedAt = Date.now();
-          const waitForModalClose = () => {
-            const currentModalCount = document.querySelectorAll(
-              '[data-app-modal="true"]',
-            ).length;
-            if (
-              currentModalCount < initialModalCount ||
-              Date.now() - startedAt > 10_000
-            ) {
-              showToast();
-              return;
-            }
-            window.setTimeout(waitForModalClose, 50);
-          };
-          window.setTimeout(waitForModalClose, 0);
-        } else {
-          window.setTimeout(showToast, detail.phase === "success" ? 120 : 0);
-        }
+      if (!detail.message) {
+        setMutationToasts((current) =>
+          current.filter((toast) => toast.id !== toastId),
+        );
+        clearMutationDismissTimer(detail.id);
+        return;
       }
+      const suppressSuccessToast =
+        detail.phase === "success" &&
+        Date.now() - lastManualSuccessToastAtRef.current < 10_000;
+      if (suppressSuccessToast) {
+        setMutationToasts((current) =>
+          current.filter((toast) => toast.id !== toastId),
+        );
+        clearMutationDismissTimer(detail.id);
+        return;
+      }
+      window.setTimeout(() => {
+        setMutationToasts((current) => {
+          const existing = current.find((toast) => toast.id === toastId);
+          const next = current.filter((toast) => toast.id !== toastId);
+          return [
+            ...next,
+            {
+              ...(existing || {}),
+              id: toastId,
+              tone: detail.phase === "success" ? "success" : "error",
+              title: undefined,
+              message: detail.message!,
+            },
+          ];
+        });
+        scheduleMutationToastDismiss(
+          detail.id,
+          detail.phase === "success" ? 3000 : 6000,
+        );
+      }, detail.phase === "success" ? 120 : 0);
     };
     window.addEventListener(API_MUTATION_EVENT, handleMutation);
-    return () => window.removeEventListener(API_MUTATION_EVENT, handleMutation);
+    return () => {
+      window.removeEventListener(API_MUTATION_EVENT, handleMutation);
+      mutationDismissTimersRef.current.forEach((timer) =>
+        window.clearTimeout(timer),
+      );
+      mutationDismissTimersRef.current.clear();
+    };
   }, [value]);
-
-  const systemToasts: ToastItem[] = [];
-  if (pendingRequests.size) {
-    systemToasts.push({
-      id: -1,
-      tone: "loading",
-      title: "Processing",
-      message:
-        pendingRequests.size === 1
-          ? "Waiting for the server…"
-          : `${pendingRequests.size} actions are running…`,
-    });
-  }
+  const systemToasts: ToastItem[] = [...mutationToasts];
   progressEntries.forEach((progress) => {
     const progressId = progress.id || "default";
     systemToasts.push({
@@ -210,6 +231,12 @@ export function ToastProvider({ children }: PropsWithChildren) {
         onClose={(id) => {
           if (typeof id === "string" && id.startsWith("progress:")) {
             clearProgress(id.replace("progress:", ""));
+          } else if (typeof id === "string" && id.startsWith("mutation:")) {
+            const mutationId = id.replace("mutation:", "");
+            clearMutationDismissTimer(mutationId);
+            setMutationToasts((current) =>
+              current.filter((toast) => toast.id !== id),
+            );
           } else if (typeof id === "number" && id >= 0) {
             setToasts((prev) => prev.filter((toast) => toast.id !== id));
           }

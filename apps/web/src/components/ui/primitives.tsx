@@ -25,7 +25,6 @@ import {
   X,
 } from "lucide-react";
 import { createPortal } from "react-dom";
-import { API_MUTATION_EVENT } from "@/lib/api";
 
 export type ToastItem = {
   id: number | string;
@@ -1086,7 +1085,7 @@ export function Modal({
   children,
   size = "md",
   allowOverflow = false,
-  loading = false,
+  loading: _loading = false,
 }: PropsWithChildren<{
   open: boolean;
   onClose: () => void;
@@ -1095,58 +1094,23 @@ export function Modal({
   allowOverflow?: boolean;
   loading?: boolean;
 }>) {
-  const modalRef = useRef<HTMLDivElement | null>(null);
-  const [pendingRequests, setPendingRequests] = useState<Set<string>>(
-    () => new Set(),
-  );
-  useEffect(() => {
-    if (!open) {
-      setPendingRequests(new Set());
-      return;
-    }
-    const handleMutation = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          id: string;
-          phase: "start" | "success" | "error";
-          scope?: "page" | "modal";
-        }>
-      ).detail;
-      if (!detail?.id || detail.scope !== "modal") return;
-      const modals = Array.from(
-        document.querySelectorAll('[data-app-modal="true"]'),
-      );
-      if (modals.at(-1) !== modalRef.current) return;
-      setPendingRequests((current) => {
-        const next = new Set(current);
-        if (detail.phase === "start") next.add(detail.id);
-        else next.delete(detail.id);
-        return next;
-      });
-    };
-    window.addEventListener(API_MUTATION_EVENT, handleMutation);
-    return () => window.removeEventListener(API_MUTATION_EVENT, handleMutation);
-  }, [open]);
   if (!open) return null;
-  const isPending = loading || pendingRequests.size > 0;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !isPending) onClose();
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <div
-        ref={modalRef}
         data-app-modal="true"
         className={`relative flex max-h-[calc(100dvh-1rem)] w-full flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl sm:max-h-[84vh] ${allowOverflow ? "overflow-visible" : "overflow-hidden"} ${size === "sm" ? "max-w-[560px]" : size === "xl" ? "max-w-[1280px]" : "max-w-[660px]"}`}
       >
         <div className="mb-1 flex items-center justify-between p-4 pb-3 sm:p-5 sm:pb-3">
           <h3 className="text-lg font-semibold sm:text-xl">{title}</h3>
           <button
-            disabled={isPending}
             onClick={onClose}
-            className="cursor-pointer rounded-lg border border-neutral-700 p-2 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-lg border border-neutral-700 p-2 hover:bg-neutral-800"
           >
             <X size={16} />
           </button>
@@ -1156,14 +1120,6 @@ export function Modal({
         >
           {children}
         </div>
-        {isPending ? (
-          <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg bg-black/45 backdrop-blur-[2px]">
-            <div className="flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-4 text-sm font-medium text-white shadow-2xl">
-              <LoaderCircle size={21} className="animate-spin text-blue-400" />
-              Processing…
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -1185,24 +1141,15 @@ export function ConfirmDeleteModal({
   description?: string;
 }) {
   const [value, setValue] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const valid = useMemo(() => value === entityName, [value, entityName]);
   useEffect(() => {
     if (!open) {
       setValue("");
-      setSubmitting(false);
     }
   }, [open]);
   if (!open) return null;
   return (
-    <Modal
-      open={open}
-      loading={submitting}
-      onClose={() => {
-        if (!submitting) onClose();
-      }}
-      title="Confirm deletion"
-    >
+    <Modal open={open} onClose={onClose} title="Confirm deletion">
       <p className="mb-2 text-sm text-neutral-300">
         Type <span className="font-semibold text-white">{entityName}</span> to
         confirm deletion.
@@ -1210,15 +1157,9 @@ export function ConfirmDeleteModal({
       {description ? (
         <p className="mb-3 text-sm text-amber-300">{description}</p>
       ) : null}
-      <Input
-        disabled={submitting}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={entityName}
-      />
+      <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={entityName} />
       <div className="mt-4 flex justify-end gap-2">
         <Button
-          disabled={submitting}
           variant="secondary"
           onClick={() => {
             setValue("");
@@ -1229,25 +1170,14 @@ export function ConfirmDeleteModal({
         </Button>
         <Button
           variant="danger"
-          disabled={!valid || submitting}
-          onClick={async () => {
-            setSubmitting(true);
-            try {
-              const result = onConfirm();
-              if (
-                result &&
-                typeof (result as Promise<unknown>).then === "function"
-              ) {
-                await result;
-              }
-            } catch {
-              setSubmitting(false);
-            }
+          disabled={!valid}
+          onClick={() => {
+            setValue("");
+            onClose();
+            void Promise.resolve(onConfirm()).catch(() => undefined);
           }}
         >
-          <span className="inline-flex items-center gap-2">
-            {submitting ? `${label}...` : label}
-          </span>
+          <span className="inline-flex items-center gap-2">{label}</span>
         </Button>
       </div>
     </Modal>

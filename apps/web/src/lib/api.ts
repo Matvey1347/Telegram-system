@@ -33,7 +33,7 @@ type ApiMutationEventDetail = {
   id: string;
   phase: "start" | "success" | "error";
   message?: string;
-  scope?: "page" | "modal";
+  scope?: "page";
 };
 
 function emitMutationEvent(detail: ApiMutationEventDetail) {
@@ -200,23 +200,18 @@ api.interceptors.request.use((config) => {
       return config;
     }
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const scope =
-      typeof document !== "undefined" &&
-      document.querySelector('[data-app-modal="true"]')
-        ? "modal"
-        : "page";
     (
       config as typeof config & {
         mutationRequestId?: string;
-        mutationScope?: "page" | "modal";
+        mutationScope?: "page";
       }
     ).mutationRequestId = requestId;
     (
       config as typeof config & {
-        mutationScope?: "page" | "modal";
+        mutationScope?: "page";
       }
-    ).mutationScope = scope;
-    emitMutationEvent({ id: requestId, phase: "start", scope });
+    ).mutationScope = "page";
+    emitMutationEvent({ id: requestId, phase: "start", scope: "page" });
   }
   return config;
 });
@@ -230,7 +225,7 @@ api.interceptors.response.use(
     ).mutationRequestId;
     const scope = (
       response.config as typeof response.config & {
-        mutationScope?: "page" | "modal";
+        mutationScope?: "page";
       }
     ).mutationScope;
     if (requestId) {
@@ -248,7 +243,7 @@ api.interceptors.response.use(
       error?.config as { mutationRequestId?: string } | undefined
     )?.mutationRequestId;
     const scope = (
-      error?.config as { mutationScope?: "page" | "modal" } | undefined
+      error?.config as { mutationScope?: "page" } | undefined
     )?.mutationScope;
     if (requestId) {
       emitMutationEvent({

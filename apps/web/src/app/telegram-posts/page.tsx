@@ -2541,7 +2541,7 @@ function PromptNoteEditorModal({
         : note.telegramChannelId
           ? [note.telegramChannelId]
           : []
-      : [channelId],
+      : [],
   );
   const save = useMutation({
     mutationFn: () =>
@@ -2565,13 +2565,16 @@ function PromptNoteEditorModal({
     onSuccess: async () => {
       await onSaved();
       pushToast(note ? "Prompt note updated." : "Prompt note created.", "success");
-      onClose();
     },
   });
 
   const close = () => {
-    if (save.isPending) return;
     onClose();
+  };
+
+  const submitSave = () => {
+    onClose();
+    void save.mutateAsync().catch(() => undefined);
   };
 
   return (
@@ -2631,11 +2634,7 @@ function PromptNoteEditorModal({
           </span>
           <div className="flex flex-wrap gap-2">
             {note ? (
-              <Button
-                variant="danger"
-                disabled={save.isPending}
-                onClick={() => onDelete(note)}
-              >
+              <Button variant="danger" onClick={() => onDelete(note)}>
                 <span className="inline-flex items-center gap-1.5">
                   <Trash2 size={14} />
                   Delete
@@ -2643,10 +2642,10 @@ function PromptNoteEditorModal({
               </Button>
             ) : null}
             <Button
-              disabled={save.isPending}
-              onClick={() => save.mutate()}
+              disabled={!title.trim() || !content.trim()}
+              onClick={submitSave}
             >
-              {save.isPending ? "Saving…" : "Save note"}
+              {note ? "Save note" : "Create note"}
             </Button>
           </div>
         </div>
