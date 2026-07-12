@@ -42,7 +42,7 @@ export default function AccountsPage() {
         <AccountStatsSummary account={a} displayMode={settings?.currencyDisplayMode} />
       </EntityCard>)}
     </div>
-    {!isLoading && !data?.length ? <EmptyState text="No accounts yet" /> : null}
+    {!isLoading && !error && !data?.length ? <EmptyState text="No accounts yet" /> : null}
 
     <AccountModal open={createOpen} title="Create Account" currencies={settings?.supportedCurrencies ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v) => createMutation.mutate({ ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance), isActive: true })} />
     <AccountModal open={!!editing} title="Edit Account" currencies={settings?.supportedCurrencies ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance) } })} />

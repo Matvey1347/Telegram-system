@@ -20,6 +20,7 @@ type PushToast = (
 ) => void;
 
 export type AppProgress = {
+  id?: string;
   title: string;
   current: number;
   total: number;
@@ -28,11 +29,14 @@ export type AppProgress = {
   successCount?: number;
   failedCount?: number;
   skippedCount?: number;
+  iconEmoji?: string;
+  iconUrl?: string;
 };
 
 const ToastContext = createContext<{
   pushToast: PushToast;
   setProgress: (progress: AppProgress | null) => void;
+  clearProgress: (id?: string) => void;
 } | null>(null);
 
 export function ToastProvider({ children }: PropsWithChildren) {
@@ -40,7 +44,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
   const [pendingRequests, setPendingRequests] = useState<Set<string>>(
     () => new Set(),
   );
-  const [progress, setProgress] = useState<AppProgress | null>(null);
+  const [progressEntries, setProgressEntries] = useState<AppProgress[]>([]);
   const lastManualSuccessToastAtRef = useRef(0);
 
   const pushToastInternal = (
@@ -65,9 +69,32 @@ export function ToastProvider({ children }: PropsWithChildren) {
     }, durationMs);
   };
 
+  const setProgress = (progress: AppProgress | null) => {
+    if (!progress) {
+      setProgressEntries([]);
+      return;
+    }
+    const progressId = progress.id || "default";
+    setProgressEntries((current) => {
+      const next = current.filter((entry) => (entry.id || "default") !== progressId);
+      return [...next, { ...progress, id: progressId }];
+    });
+  };
+
+  const clearProgress = (id?: string) => {
+    if (!id) {
+      setProgressEntries([]);
+      return;
+    }
+    setProgressEntries((current) =>
+      current.filter((entry) => (entry.id || "default") !== id),
+    );
+  };
+
   const value = useMemo<{
     pushToast: PushToast;
     setProgress: typeof setProgress;
+    clearProgress: typeof clearProgress;
   }>(
     () => ({
       pushToast: (message, tone = "info", durationMs = 3500, icon) => {
@@ -77,6 +104,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
         pushToastInternal(message, tone, durationMs, icon);
       },
       setProgress,
+      clearProgress,
     }),
     [],
   );
@@ -154,9 +182,10 @@ export function ToastProvider({ children }: PropsWithChildren) {
           : `${pendingRequests.size} actions are running…`,
     });
   }
-  if (progress) {
+  progressEntries.forEach((progress) => {
+    const progressId = progress.id || "default";
     systemToasts.push({
-      id: -2,
+      id: `progress:${progressId}`,
       tone: progress.completed
         ? progress.failedCount
           ? "error"
@@ -168,8 +197,10 @@ export function ToastProvider({ children }: PropsWithChildren) {
       details: progress.completed
         ? `${progress.successCount || 0} success · ${progress.failedCount || 0} failed · ${progress.skippedCount || 0} skipped`
         : undefined,
+      iconEmoji: progress.iconEmoji,
+      iconUrl: progress.iconUrl,
     });
-  }
+  });
 
   return (
     <ToastContext.Provider value={value}>
@@ -177,8 +208,9 @@ export function ToastProvider({ children }: PropsWithChildren) {
       <ToastStack
         items={[...systemToasts, ...toasts]}
         onClose={(id) => {
-          if (id === -2) setProgress(null);
-          else if (id >= 0) {
+          if (typeof id === "string" && id.startsWith("progress:")) {
+            clearProgress(id.replace("progress:", ""));
+          } else if (typeof id === "number" && id >= 0) {
             setToasts((prev) => prev.filter((toast) => toast.id !== id));
           }
         }}

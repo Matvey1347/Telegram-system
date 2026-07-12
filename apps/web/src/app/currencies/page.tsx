@@ -74,7 +74,7 @@ export default function CurrenciesPage() {
           </EntityCard>
         ))}
       </div>
-      {!loadingRates && !rates?.length ? <EmptyState text="No exchange rates yet." /> : null}
+      {!loadingRates && !error && !rates?.length ? <EmptyState text="No exchange rates yet." /> : null}
 
       <RateModal open={!!editing} title="Edit Exchange Rate" initial={editing ?? undefined} currencies={settings?.supportedCurrencies ?? ['USD', 'UAH', 'EUR', 'PLN']} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateRate.mutate({ id: editing.id, payload: v })} />
       <ConfirmDeleteModal open={!!deleting} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteRate.mutateAsync(deleting.id) : undefined} entityName={`${deleting?.baseCurrency}->${deleting?.targetCurrency}`} />

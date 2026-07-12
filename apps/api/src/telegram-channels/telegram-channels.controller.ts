@@ -90,6 +90,16 @@ export class TelegramChannelsController {
   import(@CurrentUser() user: JwtUser, @Body() dto: ImportTelegramChannelDto) {
     return this.service.importChannel(user.sub, dto);
   }
+  @Post('import-stream')
+  importStream(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: ImportTelegramChannelDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.importChannel(user.sub, dto, onProgress as never),
+    );
+  }
   @Get('post-groups')
   postGroups(@CurrentUser() user: JwtUser, @Query() query: PostGroupsQueryDto) {
     return this.service.postGroups(user.sub, query);
@@ -238,6 +248,16 @@ export class TelegramChannelsController {
   @Post(':id/managed-posts/sync')
   syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.syncManagedPosts(user.sub, id);
+  }
+  @Post(':id/managed-posts/sync-stream')
+  syncManagedPostsStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.syncManagedPosts(user.sub, id, onProgress as never),
+    );
   }
   @Patch(':id/managed-posts/:postId/telegram-url')
   setManagedPostTelegramUrl(
@@ -404,6 +424,15 @@ export class TelegramChannelsController {
     @Param('id') id: string,
   ) {
     return this.service.syncNow(user.sub, id);
+  }
+  @Post(':id/sync-now-stream') syncNowStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(res, (onProgress) =>
+      this.service.syncNow(user.sub, id, onProgress as never),
+    );
   }
   @Post(':id/sync/historical') syncHistorical(
     @CurrentUser() user: JwtUser,

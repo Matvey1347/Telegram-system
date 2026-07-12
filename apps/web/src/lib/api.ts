@@ -76,16 +76,22 @@ function errorMessage(error: unknown) {
   return message;
 }
 
-type BulkProgressHandler = (
+export type BulkProgressHandler = (
   item: BulkActionResultItem,
   current: number,
   total: number,
 ) => void;
 
-async function streamBulkAction(
+export type StreamProgressHandler<TItem = BulkActionResultItem> = (
+  item: TItem,
+  current: number,
+  total: number,
+) => void;
+
+async function streamAction<TResult, TItem = BulkActionResultItem>(
   path: string,
   payload: unknown,
-  onProgress: BulkProgressHandler,
+  onProgress: StreamProgressHandler<TItem>,
 ) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -110,17 +116,17 @@ async function streamBulkAction(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let completed: BulkActionResult | null = null;
+  let completed: TResult | null = null;
   const consumeLine = (line: string) => {
     if (!line.trim()) return;
     const event = JSON.parse(line) as
       | {
           type: "progress";
-          item: BulkActionResultItem;
+          item: TItem;
           current: number;
           total: number;
         }
-      | { type: "complete"; result: BulkActionResult }
+      | { type: "complete"; result: TResult }
       | { type: "error"; message: string };
     if (event.type === "progress") {
       onProgress(event.item, event.current, event.total);
@@ -141,6 +147,26 @@ async function streamBulkAction(
   consumeLine(buffer);
   if (!completed) throw new Error("The bulk action stream ended unexpectedly");
   return completed;
+}
+
+async function streamBulkAction(
+  path: string,
+  payload: unknown,
+  onProgress: BulkProgressHandler,
+) {
+  return streamAction<BulkActionResult, BulkActionResultItem>(
+    path,
+    payload,
+    onProgress,
+  );
+}
+
+export async function streamProgressAction<TResult, TItem = { message?: string }>(
+  path: string,
+  payload: unknown,
+  onProgress: StreamProgressHandler<TItem>,
+) {
+  return streamAction<TResult, TItem>(path, payload, onProgress);
 }
 
 export function isApiNetworkError(error: unknown) {
@@ -448,6 +474,14 @@ export type TelegramChannelAdminLink = {
     photoUrl?: string;
   };
 };
+export type TelegramChannelTimePost = {
+  id: string;
+  title: string;
+  time: string;
+  position?: number;
+  iconId?: string | null;
+  icon?: Icon | null;
+};
 export type TelegramChannel = EntityAssignment & {
   id: string;
   title: string;
@@ -475,6 +509,7 @@ export type TelegramChannel = EntityAssignment & {
   sourceType?: string;
   lastPublicSyncedAt?: string;
   adminLinks?: TelegramChannelAdminLink[];
+  timePosts?: TelegramChannelTimePost[];
   isActive: boolean;
   preview?: {
     audience: Pick<
@@ -1454,12 +1489,33 @@ export const transfersApi = {
 };
 export const telegramChannelsApi = {
   ...crud<TelegramChannel>("/telegram-channels"),
+  updateQuiet: async (id: string, payload: Record<string, unknown>) =>
+    (
+      await api.patch<TelegramChannel>(
+        `/telegram-channels/${id}`,
+        payload,
+        {
+          skipGlobalMutationFeedback: true,
+        } as AxiosRequestConfig & {
+          skipGlobalMutationFeedback: boolean;
+        },
+      )
+    ).data,
   import: async (input: string) =>
     (
       await api.post<ImportedTelegramSource>("/telegram-channels/import", {
         input,
       })
     ).data,
+  importWithProgress: async (
+    input: string,
+    onProgress: StreamProgressHandler<{ message?: string }>,
+  ) =>
+    streamProgressAction<ImportedTelegramSource, { message?: string }>(
+      "/telegram-channels/import-stream",
+      { input },
+      onProgress,
+    ),
   export: async (id: string) =>
     (
       await api.get<Blob>(`/telegram-channels/${id}/export`, {
@@ -1522,6 +1578,21 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts/sync`,
       )
     ).data,
+  syncManagedPostsWithProgress: async (
+    channelId: string,
+    onProgress: BulkProgressHandler,
+  ) =>
+    streamProgressAction<
+      {
+        checked: number;
+        updated: number;
+        publishedEarly: number;
+        movedToDraft: number;
+        broken: number;
+        missing: number;
+      },
+      BulkActionResultItem
+    >(`/telegram-channels/${channelId}/managed-posts/sync-stream`, {}, onProgress),
   setManagedPostTelegramUrl: async (
     channelId: string,
     postId: string,
@@ -1962,6 +2033,14 @@ export const telegramUserAccountsApi = {
         `/telegram-user-accounts/${id}/sync-dialogs`,
       )
     ).data,
+  syncDialogsWithProgress: async (
+    id: string,
+    onProgress: StreamProgressHandler<{ message?: string }>,
+  ) =>
+    streamProgressAction<
+      TelegramUserAccountSyncDialogsResponse,
+      { message?: string }
+    >(`/telegram-user-accounts/${id}/sync-dialogs-stream`, {}, onProgress),
   importChannels: async (id: string, channelIds: string[]) =>
     (
       await api.post<TelegramUserAccountSyncDialogsResponse>(
@@ -1969,6 +2048,15 @@ export const telegramUserAccountsApi = {
         { channelIds },
       )
     ).data,
+  importChannelsWithProgress: async (
+    id: string,
+    channelIds: string[],
+    onProgress: StreamProgressHandler<{ message?: string }>,
+  ) =>
+    streamProgressAction<
+      TelegramUserAccountSyncDialogsResponse,
+      { message?: string }
+    >(`/telegram-user-accounts/${id}/channels/import-stream`, { channelIds }, onProgress),
   channels: async (id: string) =>
     (
       await api.get<TelegramSourceChannelAccess[]>(
@@ -2075,6 +2163,17 @@ export const exchangeRatesApi = crud("/exchange-rates");
 
 export async function syncTelegramChannelNow(channelId: string) {
   return (await api.post(`/telegram-channels/${channelId}/sync-now`)).data;
+}
+
+export async function syncTelegramChannelNowWithProgress(
+  channelId: string,
+  onProgress: StreamProgressHandler<{ message?: string }>,
+) {
+  return streamProgressAction<any, { message?: string }>(
+    `/telegram-channels/${channelId}/sync-now-stream`,
+    {},
+    onProgress,
+  );
 }
 
 export async function syncTelegramChannelHistorical(

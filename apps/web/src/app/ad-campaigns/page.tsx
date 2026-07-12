@@ -371,7 +371,7 @@ export default function AdCampaignsPage() {
         onToggleExclude={(campaign, excludeFromAnalytics) => excludeMutation.mutate({ id: campaign.id, excludeFromAnalytics })}
       />
     ) : null}
-    {viewMode === 'campaigns' && !isLoading && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
+    {viewMode === 'campaigns' && !isLoading && !error && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
 
     {viewMode === 'hypotheses' ? (
       <HypothesesSection
@@ -1105,7 +1105,7 @@ function PromosSection({
     <>
       {loading ? <LoadingState /> : null}
       {error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load promos.</div> : null}
-      {!loading && !promos.length ? <EmptyState text="No promos yet." /> : null}
+      {!loading && !error && !promos.length ? <EmptyState text="No promos yet." /> : null}
       {promos.length ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {promos.map((promo) => (
@@ -1155,7 +1155,7 @@ function HypothesesSection({
     <>
       {loading ? <LoadingState /> : null}
       {error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load hypotheses.</div> : null}
-      {!loading && !hypotheses.length ? <EmptyState text="No hypotheses yet." /> : null}
+      {!loading && !error && !hypotheses.length ? <EmptyState text="No hypotheses yet." /> : null}
       {hypotheses.length ? (
         <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
           <table className="w-full min-w-[900px] table-fixed text-left text-sm">

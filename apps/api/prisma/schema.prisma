@@ -558,6 +558,7 @@ model TelegramChannel {
   networkMembers    TelegramChannelNetworkMember[]
   statsPoints       TelegramChannelStatsPoint[]
   adAnalyses        TelegramChannelAdAnalysis[]
+  timePosts         TelegramChannelTimePost[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -565,6 +566,23 @@ model TelegramChannel {
   @@index([workspaceId, username])
   @@index([workspaceId, telegramChatId])
   @@index([workspaceId, assignedMemberId])
+}
+
+model TelegramChannelTimePost {
+  id                String   @id @default(uuid())
+  telegramChannelId String
+  iconId            String?
+  title             String
+  time              String   @db.VarChar(5)
+  position          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  icon            Icon?           @relation(fields: [iconId], references: [id], onDelete: SetNull)
+
+  @@index([telegramChannelId, position])
+  @@index([iconId])
 }
 
 model TelegramChannelAdAnalysis {

@@ -90,7 +90,7 @@ export default function TransfersPage() {
         </tbody>
       </table>
     </div>
-    {!isLoading && !data?.length ? <EmptyState text="No transfers" /> : null}
+    {!isLoading && !error && !data?.length ? <EmptyState text="No transfers" /> : null}
     <TransferModal open={createOpen} title="Create Transfer" onClose={() => { createMutation.reset(); setCreateOpen(false); }} accounts={accounts ?? []} error={createMutation.error} onSubmit={(v) => createMutation.mutate(v)} />
     <TransferModal open={!!editing} title="Edit Transfer" onClose={() => { updateMutation.reset(); setEditing(null); }} accounts={accounts ?? []} initial={editing ?? undefined} error={updateMutation.error} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${nameOf(deleting.fromAccountId)} -> ${nameOf(deleting.toAccountId)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} />

@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import {
   Prisma,
   TelegramChannelDataType,
@@ -117,6 +118,24 @@ export class TelegramChannelsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
+  private async notifyTaskProgress(
+    onProgress: BulkProgressCallback | undefined,
+    current: number,
+    total: number,
+    message: string,
+  ) {
+    if (!onProgress) return;
+    await onProgress(
+      ({
+        id: `task-${current}`,
+        status: 'success',
+        message,
+      } as unknown) as BulkActionResultItem,
+      current,
+      total,
+    );
+  }
+
   private async createAudienceSnapshotSafely(
     channelId: string,
     source = 'sync',
@@ -164,6 +183,98 @@ export class TelegramChannelsService {
     const digits = String(value || '').trim();
     if (!digits) return null;
     return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+  }
+
+  private isMissingTimePostsTable(error: unknown) {
+    const code = (error as { code?: string } | undefined)?.code;
+    const cause = (
+      error as {
+        meta?: {
+          driverAdapterError?: {
+            cause?: { originalCode?: string; table?: string };
+          };
+        };
+      }
+    )?.meta?.driverAdapterError?.cause;
+
+    return (
+      code === 'P2010' &&
+      cause?.originalCode === '42P01' &&
+      cause?.table === 'TelegramChannelTimePost'
+    );
+  }
+
+  private async timePostsByChannelIds(channelIds: string[]) {
+    const uniqueChannelIds = [...new Set(channelIds.filter(Boolean))];
+    const grouped = new Map<string, Array<Record<string, unknown>>>();
+    if (!uniqueChannelIds.length) return grouped;
+
+    let rows: Array<{
+      id: string;
+      telegramChannelId: string;
+      title: string;
+      time: string;
+      position: number;
+      iconId: string | null;
+      icon_id: string | null;
+      icon_type: string | null;
+      icon_name: string | null;
+      icon_emoji: string | null;
+      icon_image_url: string | null;
+    }>;
+    try {
+      rows = await this.prisma.$queryRaw(Prisma.sql`
+        SELECT
+          tp."id",
+          tp."telegramChannelId",
+          tp."title",
+          tp."time",
+          tp."position",
+          tp."iconId",
+          i."id" AS "icon_id",
+          i."type" AS "icon_type",
+          i."name" AS "icon_name",
+          i."emoji" AS "icon_emoji",
+          i."imageUrl" AS "icon_image_url"
+        FROM "TelegramChannelTimePost" tp
+        LEFT JOIN "Icon" i ON i."id" = tp."iconId"
+        WHERE tp."telegramChannelId" IN (${Prisma.join(
+          uniqueChannelIds.map((id) => Prisma.sql`${id}`),
+        )})
+        ORDER BY tp."position" ASC, tp."createdAt" ASC
+      `);
+    } catch (error) {
+      if (this.isMissingTimePostsTable(error)) {
+        this.logger.warn(
+          'TelegramChannelTimePost table is missing; returning empty time posts until migrations are applied.',
+        );
+        return grouped;
+      }
+      throw error;
+    }
+
+    for (const row of rows) {
+      const items = grouped.get(row.telegramChannelId) ?? [];
+      items.push({
+        id: row.id,
+        title: row.title,
+        time: row.time,
+        position: row.position,
+        iconId: row.iconId,
+        icon: row.icon_id
+          ? {
+              id: row.icon_id,
+              type: row.icon_type,
+              name: row.icon_name,
+              emoji: row.icon_emoji,
+              imageUrl: row.icon_image_url,
+            }
+          : null,
+      });
+      grouped.set(row.telegramChannelId, items);
+    }
+
+    return grouped;
   }
 
   private telegramMessageUrl(
@@ -574,7 +685,7 @@ export class TelegramChannelsService {
     if (!channels.length) return channels;
 
     const channelIds = channels.map((channel) => channel.id);
-    const [campaigns, inviteLinks] = await Promise.all([
+    const [campaigns, inviteLinks, timePostsByChannel] = await Promise.all([
       this.prisma.adCampaign.findMany({
         where: {
           workspaceId,
@@ -587,6 +698,7 @@ export class TelegramChannelsService {
         where: { workspaceId, telegramChannelId: { in: channelIds } },
         select: { id: true, telegramChannelId: true, joinedCount: true },
       }),
+      this.timePostsByChannelIds(channelIds),
     ]);
 
     const campaignsByChannel = new Map<string, typeof campaigns>();
@@ -715,6 +827,7 @@ export class TelegramChannelsService {
 
       return {
         ...channelData,
+        timePosts: timePostsByChannel.get(channel.id) ?? [],
         preview: {
           audience,
           sourcesCount: sourceAccesses.length || channel.adminLinks.length,
@@ -773,16 +886,22 @@ export class TelegramChannelsService {
 
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const channel = await this.prisma.telegramChannel.findFirst({
+    const [channel, timePostsByChannel] = await Promise.all([
+      this.prisma.telegramChannel.findFirst({
       where: { id, workspaceId },
       include: {
         adminLinks: { include: { telegramUserAccountIntegration: true } },
         assignedMember: WorkspaceService.assignedMemberInclude,
         createdByUser: WorkspaceService.createdByUserInclude,
       },
-    });
+      }),
+      this.timePostsByChannelIds([id]),
+    ]);
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    return channel;
+    return {
+      ...channel,
+      timePosts: timePostsByChannel.get(channel.id) ?? [],
+    };
   }
 
   async channelSources(userId: string, channelId: string) {
@@ -819,6 +938,7 @@ export class TelegramChannelsService {
   }
 
   async update(userId: string, id: string, dto: UpdateTelegramChannelDto) {
+    const workspaceId = await this.workspace(userId);
     await this.findOne(userId, id);
     const assignedMemberId =
       dto.assignedMemberId === undefined
@@ -829,25 +949,87 @@ export class TelegramChannelsService {
               dto.assignedMemberId,
             )
           ).assignedMemberId;
-    return this.prisma.telegramChannel.update({
-      where: { id },
-      data: {
-        ...dto,
-        username:
-          dto.username === undefined
-            ? undefined
-            : this.normalizeUsername(dto.username),
-        dataQualityNotes:
-          dto.dataQualityNotes === undefined
-            ? undefined
-            : String(dto.dataQualityNotes || '').trim() || null,
-        assignedMemberId,
-      },
-      include: {
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-      },
+    const { timePosts: _timePosts, ...channelUpdateData } = dto;
+    const normalizedTimePosts = dto.timePosts?.map((item, index) => ({
+      id: randomUUID(),
+      title: String(item.title || '').trim(),
+      time: item.time,
+      position: index,
+      iconId: item.iconId ? String(item.iconId).trim() || null : null,
+    }));
+    if (normalizedTimePosts) {
+      const iconIds = normalizedTimePosts
+        .map((item) => item.iconId)
+        .filter((iconId): iconId is string => Boolean(iconId));
+      if (iconIds.length) {
+        const icons = await this.prisma.icon.findMany({
+          where: { workspaceId, id: { in: iconIds } },
+          select: { id: true },
+        });
+        if (icons.length !== new Set(iconIds).size) {
+          throw new BadRequestException('One or more time post icons are invalid');
+        }
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.telegramChannel.update({
+        where: { id },
+        data: {
+          ...channelUpdateData,
+          username:
+            dto.username === undefined
+              ? undefined
+              : this.normalizeUsername(dto.username),
+          dataQualityNotes:
+            dto.dataQualityNotes === undefined
+              ? undefined
+              : String(dto.dataQualityNotes || '').trim() || null,
+          assignedMemberId,
+        },
+      });
+      if (normalizedTimePosts !== undefined) {
+        try {
+          await tx.$executeRaw(
+            Prisma.sql`DELETE FROM "TelegramChannelTimePost" WHERE "telegramChannelId" = ${id}`,
+          );
+          if (normalizedTimePosts.length) {
+            await tx.$executeRaw(Prisma.sql`
+              INSERT INTO "TelegramChannelTimePost" (
+                "id",
+                "telegramChannelId",
+                "iconId",
+                "title",
+                "time",
+                "position",
+                "createdAt",
+                "updatedAt"
+              ) VALUES ${Prisma.join(
+                normalizedTimePosts.map((item) => Prisma.sql`(
+                  ${item.id},
+                  ${id},
+                  ${item.iconId},
+                  ${item.title},
+                  ${item.time},
+                  ${item.position},
+                  NOW(),
+                  NOW()
+                )`),
+              )}
+            `);
+          }
+        } catch (error) {
+          if (this.isMissingTimePostsTable(error)) {
+            throw new InternalServerErrorException(
+              'Time posts storage is not available yet. Apply the latest database migration and try again.',
+            );
+          }
+          throw error;
+        }
+      }
     });
+
+    return this.findOne(userId, id);
   }
 
   private async calculateAdAnalysisMetrics(
@@ -1182,7 +1364,11 @@ export class TelegramChannelsService {
     });
   }
 
-  async syncManagedPosts(userId: string, channelId: string) {
+  async syncManagedPosts(
+    userId: string,
+    channelId: string,
+    onProgress?: BulkProgressCallback,
+  ) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const posts = await this.prisma.telegramManagedPost.findMany({
@@ -1283,7 +1469,9 @@ export class TelegramChannelsService {
       return plain.replace(/\s+/g, ' ').trim().toLowerCase();
     };
     const result = { ...emptyResult, checked: posts.length };
+    let current = 0;
     for (const post of posts) {
+      current += 1;
       const postIds = [
         ...new Set([
           ...post.telegramMessageIds,
@@ -1367,6 +1555,20 @@ export class TelegramChannelsService {
                 'Scheduled Telegram message was not found during sync.',
             },
           });
+          await onProgress?.(
+            ({
+              id: post.id,
+              postId: post.id,
+              index: current,
+              total: posts.length,
+              action: 'CONVERTED_TO_DRAFT',
+              success: true,
+              status: 'success',
+              message: `${post.title}: scheduled message not found, moved to draft`,
+            } as unknown) as BulkActionResultItem,
+            current,
+            posts.length,
+          );
         } else if (post.status === 'PUBLISHED') {
           result.broken += 1;
           result.updated += 1;
@@ -1381,6 +1583,20 @@ export class TelegramChannelsService {
                 'Published Telegram message was not found during sync.',
             },
           });
+          await onProgress?.(
+            ({
+              id: post.id,
+              postId: post.id,
+              index: current,
+              total: posts.length,
+              action: 'FAILED',
+              success: true,
+              status: 'success',
+              message: `${post.title}: published link is broken`,
+            } as unknown) as BulkActionResultItem,
+            current,
+            posts.length,
+          );
         }
         continue;
       }
@@ -1436,6 +1652,22 @@ export class TelegramChannelsService {
       });
       result.updated += 1;
       if (becamePublished) result.publishedEarly += 1;
+      await onProgress?.(
+        ({
+          id: post.id,
+          postId: post.id,
+          index: current,
+          total: posts.length,
+          action: becamePublished ? 'PUBLISHED' : 'SCHEDULED',
+          success: true,
+          status: 'success',
+          message: becamePublished
+            ? `${post.title}: published earlier in Telegram`
+            : `${post.title}: synced from Telegram`,
+        } as unknown) as BulkActionResultItem,
+        current,
+        posts.length,
+      );
     }
     return result;
   }
@@ -2783,6 +3015,7 @@ export class TelegramChannelsService {
     if (group.telegramChannelId === targetChannel.id) {
       throw new BadRequestException('Group already belongs to target channel');
     }
+    const originalChannelId = group.telegramChannelId;
 
     const rawResults: Array<{
       postId: string;
@@ -2793,6 +3026,7 @@ export class TelegramChannelsService {
       success: boolean;
       error?: string;
     }> = [];
+    const movedPostIds: string[] = [];
     for (const [index, post] of group.posts.entries()) {
       const moved = await this.moveManagedPostInternal(
         workspaceId,
@@ -2805,6 +3039,41 @@ export class TelegramChannelsService {
         this.moveBulkResultItem(moved.result, index + 1, group.posts.length),
         index + 1,
         group.posts.length,
+      );
+      if (moved.result.success) {
+        movedPostIds.push(post.id);
+        continue;
+      }
+
+      const rollbackFailures: string[] = [];
+      for (const movedPostId of movedPostIds.reverse()) {
+        try {
+          const rolledBack = await this.moveManagedPostInternal(
+            workspaceId,
+            movedPostId,
+            originalChannelId,
+            true,
+          );
+          if (!rolledBack.result.success) {
+            rollbackFailures.push(
+              `${rolledBack.result.title}: ${rolledBack.result.error || 'rollback failed'}`,
+            );
+          }
+        } catch (error) {
+          rollbackFailures.push(
+            `${movedPostId}: ${error instanceof Error ? error.message : 'rollback failed'}`,
+          );
+        }
+      }
+
+      const moveError = moved.result.error || 'Could not move post';
+      if (rollbackFailures.length) {
+        throw new InternalServerErrorException(
+          `Could not move group. ${moveError}. Rollback also failed for: ${rollbackFailures.join('; ')}`,
+        );
+      }
+      throw new BadRequestException(
+        `Could not move group. ${moveError}. The group was left in the original channel.`,
       );
     }
     await this.prisma.postGroup.update({
@@ -3197,9 +3466,20 @@ export class TelegramChannelsService {
     });
   }
 
-  async importChannel(userId: string, dto: ImportTelegramChannelDto) {
+  async importChannel(
+    userId: string,
+    dto: ImportTelegramChannelDto,
+    onProgress?: BulkProgressCallback,
+  ) {
     const workspaceId = await this.workspace(userId);
     const account = await this.firstConnectedAccount(workspaceId);
+    const totalSteps = 4;
+    await this.notifyTaskProgress(
+      onProgress,
+      1,
+      totalSteps,
+      'Loading channel details from Telegram',
+    );
     const channelRef = this.normalizePublicChannelInput(dto.input);
     const info = await this.mtprotoClient.getPublicChannelInfo({
       ...this.accountCredentials(account),
@@ -3231,6 +3511,12 @@ export class TelegramChannelsService {
       sourceType: 'telegram',
       lastPublicSyncedAt: new Date(),
     };
+    await this.notifyTaskProgress(
+      onProgress,
+      2,
+      totalSteps,
+      'Adding channel to workspace',
+    );
     const channel = await this.prisma.$transaction(async (tx) => {
       if (!existing) {
         return tx.telegramChannel.create({
@@ -3264,6 +3550,12 @@ export class TelegramChannelsService {
       sourceDisplayName: this.sourceDisplayName(account),
       metadata: { source: 'public_channel_import' },
     });
+    await this.notifyTaskProgress(
+      onProgress,
+      3,
+      totalSteps,
+      'Importing channel history and metrics',
+    );
     const importedChannel = await this.findOne(userId, channel.id);
     const initialSync = await this.runInitialImportBackfill({
       userId,
@@ -3271,6 +3563,12 @@ export class TelegramChannelsService {
       channelId: channel.id,
       accountId: account.id,
     });
+    await this.notifyTaskProgress(
+      onProgress,
+      4,
+      totalSteps,
+      'Preparing imported channel',
+    );
     return { ...importedChannel, initialSync };
   }
 
@@ -3302,8 +3600,13 @@ export class TelegramChannelsService {
     });
   }
 
-  async syncNow(userId: string, channelId: string) {
+  async syncNow(
+    userId: string,
+    channelId: string,
+    onProgress?: BulkProgressCallback,
+  ) {
     const workspaceId = await this.workspace(userId);
+    const totalSteps = 6;
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
@@ -3313,22 +3616,46 @@ export class TelegramChannelsService {
         TelegramChannelDataType.STATS,
       ),
     );
+    await this.notifyTaskProgress(
+      onProgress,
+      1,
+      totalSteps,
+      'Refreshing public channel info',
+    );
     const publicInfo = await this.syncPublicChannelInfo(
       workspaceId,
       channelId,
       account,
     );
     const postLimit = await this.postSyncLimitForChannel(channelId);
+    await this.notifyTaskProgress(
+      onProgress,
+      2,
+      totalSteps,
+      'Importing posts and invite links',
+    );
     const historical = await this.syncHistorical(userId, channelId, {
       telegramUserAccountId: account.id,
       syncInviteLinks: true,
       syncPosts: true,
       postLimit,
     });
+    await this.notifyTaskProgress(
+      onProgress,
+      3,
+      totalSteps,
+      'Updating post metrics',
+    );
     const postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
       telegramUserAccountId: account.id,
       postLimit,
     });
+    await this.notifyTaskProgress(
+      onProgress,
+      4,
+      totalSteps,
+      'Backfilling older post metrics',
+    );
     const olderPostsBackfill =
       await this.syncOlderPostsMetricsBackfillForWorkspace(
         workspaceId,
@@ -3341,9 +3668,21 @@ export class TelegramChannelsService {
               : 1,
         },
       );
+    await this.notifyTaskProgress(
+      onProgress,
+      5,
+      totalSteps,
+      'Syncing channel stats',
+    );
     const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
       telegramUserAccountId: account.id,
     });
+    await this.notifyTaskProgress(
+      onProgress,
+      6,
+      totalSteps,
+      'Saving audience snapshot',
+    );
     const audienceSnapshot = await this.createAudienceSnapshotSafely(
       channelId,
       'sync',

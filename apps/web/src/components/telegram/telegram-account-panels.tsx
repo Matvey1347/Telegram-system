@@ -14,6 +14,7 @@ import {
   type TelegramUserAccount,
   type TelegramUserAccountSyncDialogsResponse,
 } from "@/lib/api";
+import { scheduleProgressDismiss } from "@/lib/progress";
 import {
   Button,
   ConfirmDeleteModal,
@@ -24,9 +25,11 @@ import {
   Input,
   LoadingState,
   Modal,
+  TooltipBubble,
   ToastStack,
   type ToastItem,
 } from "@/components/ui/primitives";
+import { useAppToast } from "@/providers/toast-provider";
 
 function errorMessage(error: unknown, fallback: string) {
   const responseError = error as { response?: { data?: { message?: string } } };
@@ -63,6 +66,7 @@ export function MtprotoAccountsPanel({
   onCreateClose: () => void;
 }) {
   const qc = useQueryClient();
+  const { setProgress, clearProgress } = useAppToast();
   const [codeTarget, setCodeTarget] = useState<TelegramUserAccount | null>(
     null,
   );
@@ -74,7 +78,7 @@ export function MtprotoAccountsPanel({
     response: TelegramUserAccountSyncDialogsResponse;
   } | null>(null);
   const { toasts, setToasts, pushToast } = useToasts();
-  const { data = [], isLoading } = useQuery({
+  const { data = [], isLoading, error } = useQuery({
     queryKey: ["telegram-user-accounts"],
     queryFn: telegramUserAccountsApi.list,
   });
@@ -111,9 +115,55 @@ export function MtprotoAccountsPanel({
     onError: (error: unknown) =>
       pushToast(errorMessage(error, "Failed to check account."), "error"),
   });
-  const syncMutation = useMutation({
-    mutationFn: (id: string) => telegramUserAccountsApi.syncDialogs(id),
-    onSuccess: (response, accountId) => {
+  const syncMutation = useMutation<
+    { accountId: string; response: TelegramUserAccountSyncDialogsResponse },
+    unknown,
+    TelegramUserAccount
+  >({
+    mutationFn: async (account: TelegramUserAccount) => {
+      const progressId = `telegram-user-sync:${account.id}`;
+      setProgress({
+        id: progressId,
+        title: `Sync ${accountDisplayName(account)}`,
+        current: 0,
+        total: 3,
+        message: "Starting sync…",
+        iconUrl: account.photoUrl || undefined,
+      });
+      try {
+        const response = await telegramUserAccountsApi.syncDialogsWithProgress(
+          account.id,
+          (item: { message?: string }, current, total) => {
+            setProgress({
+              id: progressId,
+              title: `Sync ${accountDisplayName(account)}`,
+              current,
+              total,
+              message: item.message || "Syncing Telegram channels…",
+              iconUrl: account.photoUrl || undefined,
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: `Sync ${accountDisplayName(account)}`,
+          current: 3,
+          total: 3,
+          message: "Channel sync completed",
+          completed: true,
+          successCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          iconUrl: account.photoUrl || undefined,
+        });
+        scheduleProgressDismiss(clearProgress, progressId);
+        return { accountId: account.id, response };
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
+    onSuccess: ({ accountId, response }) => {
       invalidateTelegramAccess(qc);
       const account = data.find((item) => item.id === accountId);
       if (account) setSyncReview({ account, response });
@@ -122,14 +172,62 @@ export function MtprotoAccountsPanel({
     onError: (error: unknown) =>
       pushToast(errorMessage(error, "Failed to sync admin channels."), "error"),
   });
-  const importChannelsMutation = useMutation({
-    mutationFn: ({
-      accountId,
+  const importChannelsMutation = useMutation<
+    TelegramUserAccountSyncDialogsResponse,
+    unknown,
+    { account: TelegramUserAccount; channelIds: string[] }
+  >({
+    mutationFn: async ({
+      account,
       channelIds,
     }: {
-      accountId: string;
+      account: TelegramUserAccount;
       channelIds: string[];
-    }) => telegramUserAccountsApi.importChannels(accountId, channelIds),
+    }) => {
+      const progressId = `telegram-user-import:${account.id}:${Date.now()}`;
+      setProgress({
+        id: progressId,
+        title: `Import from ${accountDisplayName(account)}`,
+        current: 0,
+        total: Math.max(1, 1 + channelIds.length * 2),
+        message: "Starting import…",
+        iconUrl: account.photoUrl || undefined,
+      });
+      try {
+        const response =
+          await telegramUserAccountsApi.importChannelsWithProgress(
+            account.id,
+            channelIds,
+            (item: { message?: string }, current, total) => {
+              setProgress({
+                id: progressId,
+                title: `Import from ${accountDisplayName(account)}`,
+                current,
+                total,
+                message: item.message || "Importing Telegram channels…",
+                iconUrl: account.photoUrl || undefined,
+              });
+            },
+          );
+        setProgress({
+          id: progressId,
+          title: `Import from ${accountDisplayName(account)}`,
+          current: Math.max(1, 1 + channelIds.length * 2),
+          total: Math.max(1, 1 + channelIds.length * 2),
+          message: "Channel import completed",
+          completed: true,
+          successCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          iconUrl: account.photoUrl || undefined,
+        });
+        scheduleProgressDismiss(clearProgress, progressId);
+        return response;
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
     onSuccess: (response) => {
       invalidateTelegramAccess(qc);
       setSyncReview(null);
@@ -225,9 +323,9 @@ export function MtprotoAccountsPanel({
                 >
                   Check
                 </Button>
-                <Button onClick={() => syncMutation.mutate(account.id)}>
-                  Sync channels
-                </Button>
+                  <Button onClick={() => syncMutation.mutate(account)}>
+                    Sync channels
+                  </Button>
               </div>
               <SourceChannelsList
                 sourceId={account.id}
@@ -238,7 +336,7 @@ export function MtprotoAccountsPanel({
           );
         })}
       </div>
-      {!isLoading && !data.length ? (
+      {!isLoading && !error && !data.length ? (
         <EmptyState text="No MTProto accounts" />
       ) : null}
       <CreateMtprotoModal
@@ -285,7 +383,7 @@ export function MtprotoAccountsPanel({
         onSubmit={(channelIds) =>
           syncReview &&
           importChannelsMutation.mutate({
-            accountId: syncReview.account.id,
+            account: syncReview.account,
             channelIds,
           })
         }
@@ -310,7 +408,7 @@ export function BotAccountsPanel({
   const qc = useQueryClient();
   const [deleting, setDeleting] = useState<TelegramBot | null>(null);
   const { toasts, setToasts, pushToast } = useToasts();
-  const { data = [], isLoading } = useQuery({
+  const { data = [], isLoading, error } = useQuery({
     queryKey: ["telegram-bots"],
     queryFn: telegramBotsApi.list,
   });
@@ -391,7 +489,7 @@ export function BotAccountsPanel({
           </EntityCard>
         ))}
       </div>
-      {!isLoading && !data.length ? <EmptyState text="No bots" /> : null}
+      {!isLoading && !error && !data.length ? <EmptyState text="No bots" /> : null}
       <CreateBotModal
         open={createOpen}
         onClose={onCreateClose}
@@ -595,7 +693,7 @@ function SourceChannelsList({
   const [selected, setSelected] = useState<TelegramSourceChannelAccess | null>(
     null,
   );
-  const { data = [], isLoading } = useQuery({
+  const { data = [], isLoading, error } = useQuery({
     queryKey: ["telegram-source-channels", sourceType, sourceId],
     queryFn,
   });
@@ -618,6 +716,7 @@ function SourceChannelsList({
         onClose={() => setModalOpen(false)}
         channels={data}
         isLoading={isLoading}
+        error={error}
         onSelect={setSelected}
       />
       <ChannelAccessModal
@@ -634,19 +733,21 @@ function SourceChannelsModal({
   onClose,
   channels,
   isLoading,
+  error,
   onSelect,
 }: {
   open: boolean;
   onClose: () => void;
   channels: TelegramSourceChannelAccess[];
   isLoading: boolean;
+  error: unknown;
   onSelect: (channel: TelegramSourceChannelAccess) => void;
 }) {
   return (
     <Modal open={open} onClose={onClose} title="Channel access">
       <div className="space-y-3">
         {isLoading ? <LoadingState /> : null}
-        {!isLoading && !channels.length ? (
+        {!isLoading && !error && !channels.length ? (
           <EmptyState text="No synced channel access yet." />
         ) : null}
         {channels.map((channel) => (
@@ -851,9 +952,13 @@ function AccessBadge({
       className={`group relative inline-flex rounded border px-2 py-0.5 text-xs ${toneClass}`}
     >
       {label}
-      <span className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+      <TooltipBubble
+        side="top"
+        align="left"
+        className="hidden w-64 border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 group-hover:block"
+      >
         {tip}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }

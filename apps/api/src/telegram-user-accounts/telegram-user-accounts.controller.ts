@@ -6,8 +6,10 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
@@ -25,6 +27,36 @@ import { TelegramUserAccountsService } from './telegram-user-accounts.service';
 @Controller('telegram-user-accounts')
 export class TelegramUserAccountsController {
   constructor(private readonly service: TelegramUserAccountsService) {}
+
+  private async streamAction(
+    res: Response,
+    action: (
+      onProgress: (item: { message: string }, current: number, total: number) => void,
+    ) => Promise<unknown>,
+  ) {
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    try {
+      const result = await action((item, current, total) => {
+        res.write(
+          `${JSON.stringify({ type: 'progress', item, current, total })}\n`,
+        );
+      });
+      res.write(`${JSON.stringify({ type: 'complete', result })}\n`);
+    } catch (error) {
+      res.write(
+        `${JSON.stringify({
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Action failed',
+        })}\n`,
+      );
+    } finally {
+      res.end();
+    }
+  }
 
   @Get() findAll(@CurrentUser() user: JwtUser) {
     return this.service.findAll(user.sub);
@@ -88,11 +120,30 @@ export class TelegramUserAccountsController {
   ) {
     return this.service.syncDialogs(user.sub, id);
   }
+  @Post(':id/sync-dialogs-stream') syncDialogsStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    return this.streamAction(res, (onProgress) =>
+      this.service.syncDialogs(user.sub, id, onProgress),
+    );
+  }
   @Post(':id/channels/import') importChannels(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
     @Body() dto: ImportUserAccountChannelsDto,
   ) {
     return this.service.importChannels(user.sub, id, dto);
+  }
+  @Post(':id/channels/import-stream') importChannelsStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ImportUserAccountChannelsDto,
+    @Res() res: Response,
+  ) {
+    return this.streamAction(res, (onProgress) =>
+      this.service.importChannels(user.sub, id, dto, onProgress),
+    );
   }
 }

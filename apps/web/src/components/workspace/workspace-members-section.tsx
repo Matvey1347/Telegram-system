@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { currenciesApi, workspaceMembersApi, type WorkspaceMember, type WorkspaceRole } from '@/lib/api';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, CustomSelect, EmptyState, FormError, FormField, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, Card, CustomSelect, EmptyState, FormError, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 
 type CreateValues = { email: string; name?: string; password?: string; role: WorkspaceRole; avatarIconId?: string | null };
 
@@ -24,7 +24,7 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
   const [open, setOpen] = useState(false);
   const [tempPassword, setTempPassword] = useState<string>('');
   const [error, setError] = useState('');
-  const { data, isLoading } = useQuery({ queryKey: ['workspace-members'], queryFn: workspaceMembersApi.list });
+  const { data, isLoading, error: membersError } = useQuery({ queryKey: ['workspace-members'], queryFn: workspaceMembersApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
 
@@ -155,14 +155,22 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
                   onChange={(role) => updateMutation.mutate({ id: m.id, payload: { role: role as WorkspaceRole } })}
                 />
               </div>
-              {canRemove(m) ? <Button variant="secondary" onClick={() => removeMutation.mutate(m.id)} className="shrink-0">Remove</Button> : null}
+              {canRemove(m) ? (
+                <IconButton
+                  kind="delete"
+                  onClick={() => removeMutation.mutate(m.id)}
+                  className="shrink-0"
+                  aria-label={`Remove ${m.user.name}`}
+                  title="Remove member"
+                />
+              ) : null}
             </div> : null}
           </div>
         </Card>;
       })}
     </div>
 
-    {!isLoading && !data?.length ? <EmptyState text="No members" /> : null}
+    {!isLoading && !membersError && !data?.length ? <EmptyState text="No members" /> : null}
 
     <MemberModal open={open} onClose={() => setOpen(false)} onSubmit={(v: any) => createMutation.mutate(v)} currentRole={currentRole || 'member'} />
   </>;

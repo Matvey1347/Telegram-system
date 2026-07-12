@@ -13,6 +13,7 @@ import {
   Matches,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateTelegramChannelDto {
@@ -22,6 +23,12 @@ export class CreateTelegramChannelDto {
   @IsOptional() @IsString() telegramChatId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @Type(() => Number) @IsInt() currentSubscribersCount?: number;
+}
+
+export class TelegramChannelTimePostDto {
+  @IsOptional() @IsString() iconId?: string | null;
+  @IsOptional() @IsString() title?: string;
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time!: string;
 }
 
 export class UpdateTelegramChannelDto {
@@ -66,6 +73,11 @@ export class UpdateTelegramChannelDto {
   @IsIn(['normal', 'suspicious', 'polluted', 'invalid'])
   subscriberBaseQuality?: string;
   @IsOptional() @IsString() dataQualityNotes?: string | null;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TelegramChannelTimePostDto)
+  timePosts?: TelegramChannelTimePostDto[];
 }
 
 export class ImportTelegramChannelDto {

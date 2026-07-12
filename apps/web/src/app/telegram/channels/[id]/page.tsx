@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Clock3,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -22,6 +23,7 @@ import {
   Pencil,
   RefreshCw,
   Smile,
+  Trash2,
 } from "lucide-react";
 import {
   Bar,
@@ -34,18 +36,21 @@ import {
   YAxis,
 } from "recharts";
 import { AppShell } from "@/components/layout/app-shell";
+import { IconAvatar } from "@/components/icons/icon-avatar";
+import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
 import {
   Button,
-  DateInput,
   DateRangeInput,
   FormField,
   Input,
   LoadingState,
   Modal,
   PageHeader,
+  TimeInput,
+  TooltipBubble,
   ToastStack,
   type ToastItem,
 } from "@/components/ui/primitives";
@@ -53,12 +58,15 @@ import {
   currenciesApi,
   getTelegramChannelAnalytics,
   getTelegramChannelPosts,
-  syncTelegramChannelNow,
+  syncTelegramChannelNowWithProgress,
   telegramChannelsApi,
+  type Icon,
   type TelegramChannel,
   type TelegramChannelAudienceSnapshot,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
+import { scheduleProgressDismiss } from "@/lib/progress";
+import { useAppToast } from "@/providers/toast-provider";
 
 function formatLocalDate(value?: string | Date | null) {
   if (!value) return "-";
@@ -168,6 +176,7 @@ export default function TelegramChannelAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const queryClient = useQueryClient();
+  const { setProgress, clearProgress } = useAppToast();
   const [todayIso] = useState(() => formatLocalDate(new Date()));
   const [thirtyDaysAgoIso] = useState(() =>
     formatLocalDate(new Date(Date.now() - 30 * 24 * 3600 * 1000)),
@@ -184,7 +193,7 @@ export default function TelegramChannelAnalyticsPage() {
   const [openSections, setOpenSections] = useState<ChannelSectionState>(() =>
     readStoredChannelSections(id),
   );
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<SettingsState>({
     seedSubscribersCount: "0",
     activeSubscribersWindow: "5",
     knownFakeSubscribersCount: "0",
@@ -196,6 +205,7 @@ export default function TelegramChannelAnalyticsPage() {
     acceptableCpa: "",
     stopCpaFrom: "",
     stopCpa: "",
+    timePosts: [],
   });
 
   const pushToast = (
@@ -295,13 +305,69 @@ export default function TelegramChannelAnalyticsPage() {
             : String(source.stopCpa)
           : String(source.stopCpaFrom),
       stopCpa: "",
+      timePosts: (source.timePosts || []).map((item: {
+        id: string;
+        title: string;
+        time: string;
+        iconId?: string | null;
+        icon?: Icon | null;
+      }) => ({
+        id: item.id,
+        title: item.title,
+        time: item.time,
+        iconId: item.iconId || null,
+        icon: item.icon || null,
+      })),
     });
   }, [channel, data?.channel]);
 
   const syncMutation = useMutation({
-    mutationFn: () => syncTelegramChannelNow(id),
-    onMutate: () => pushToast("Syncing data...", "info"),
+    mutationFn: async () => {
+      const progressId = `telegram-channel-sync:${id}`;
+      const progressTitle = `Sync ${channel?.title || "channel"}`;
+      setProgress({
+        id: progressId,
+        title: progressTitle,
+        current: 0,
+        total: 6,
+        message: "Starting sync…",
+        iconUrl: channel?.photoUrl || undefined,
+      });
+      try {
+        const result = await syncTelegramChannelNowWithProgress(
+          id,
+          (item: { message?: string }, current, total) => {
+            setProgress({
+              id: progressId,
+              title: progressTitle,
+              current,
+              total,
+              message: item.message || "Syncing channel…",
+              iconUrl: channel?.photoUrl || undefined,
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: progressTitle,
+          current: 6,
+          total: 6,
+          message: "Channel sync completed",
+          completed: true,
+          successCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          iconUrl: channel?.photoUrl || undefined,
+        });
+        scheduleProgressDismiss(clearProgress, progressId);
+        return result;
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
     onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
       queryClient.invalidateQueries({
         queryKey: ["telegram-channel-analytics", id],
       });
@@ -320,6 +386,7 @@ export default function TelegramChannelAnalyticsPage() {
       queryClient.invalidateQueries({
         queryKey: ["telegram-channel-audience-snapshots", id],
       });
+      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
       setLastSyncResult(result);
       pushToast(summarizeSync(result), "success", 8000);
     },
@@ -329,7 +396,7 @@ export default function TelegramChannelAnalyticsPage() {
 
   const settingsMutation = useMutation({
     mutationFn: () =>
-      telegramChannelsApi.update(id, {
+      telegramChannelsApi.updateQuiet(id, {
         seedSubscribersCount: toNumber(settings.seedSubscribersCount),
         activeSubscribersWindow: Math.max(
           1,
@@ -356,6 +423,11 @@ export default function TelegramChannelAnalyticsPage() {
         stopCpaFrom:
           settings.stopCpaFrom === "" ? null : toNumber(settings.stopCpaFrom),
         stopCpa: null,
+        timePosts: settings.timePosts.map((item) => ({
+          title: item.title.trim(),
+          time: item.time,
+          iconId: item.iconId || null,
+        })),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
@@ -368,6 +440,7 @@ export default function TelegramChannelAnalyticsPage() {
       queryClient.invalidateQueries({
         queryKey: ["telegram-channel-financial-summary", id],
       });
+      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
       pushToast("Settings saved.", "success");
     },
     onError: (error: any) =>
@@ -683,6 +756,12 @@ export default function TelegramChannelAnalyticsPage() {
               onSave={() => settingsMutation.mutate()}
             />
             <SeedSettingsControl
+              settings={settings}
+              setSettings={setSettings}
+              isSaving={settingsMutation.isPending}
+              onSave={() => settingsMutation.mutate()}
+            />
+            <TimePostsControl
               settings={settings}
               setSettings={setSettings}
               isSaving={settingsMutation.isPending}
@@ -1242,6 +1321,13 @@ type SettingsState = {
   acceptableCpa: string;
   stopCpaFrom: string;
   stopCpa: string;
+  timePosts: Array<{
+    id: string;
+    title: string;
+    time: string;
+    iconId?: string | null;
+    icon?: Icon | null;
+  }>;
 };
 
 function KpiSettingsControl({
@@ -1488,6 +1574,172 @@ function SeedSettingsControl({
             <Button type="button" disabled={isSaving} onClick={save}>
               {isSaving ? "Saving..." : "Save seed"}
             </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function TimePostsControl({
+  settings,
+  setSettings,
+  isSaving,
+  onSave,
+}: {
+  settings: SettingsState;
+  setSettings: (settings: SettingsState) => void;
+  isSaving: boolean;
+  onSave: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasTimePosts = settings.timePosts.length > 0;
+
+  const updateTimePost = (
+    index: number,
+    patch: Partial<SettingsState["timePosts"][number]>,
+  ) => {
+    setSettings({
+      ...settings,
+      timePosts: settings.timePosts.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    });
+  };
+
+  const addTimePost = () => {
+    setSettings({
+      ...settings,
+      timePosts: [
+        ...settings.timePosts,
+        {
+          id: `draft-${Date.now()}-${settings.timePosts.length}`,
+          title: "",
+          time: "17:00",
+          iconId: null,
+          icon: null,
+        },
+      ],
+    });
+  };
+
+  const removeTimePost = (index: number) => {
+    setSettings({
+      ...settings,
+      timePosts: settings.timePosts.filter((_, itemIndex) => itemIndex !== index),
+    });
+  };
+
+  const save = () => {
+    onSave();
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant={hasTimePosts ? "secondary" : "primary"}
+        onClick={() => setOpen(true)}
+        className={
+          hasTimePosts
+            ? "inline-flex h-11 items-center justify-center gap-2 border border-slate-600/80 bg-slate-900 px-5 text-slate-100 transition hover:border-blue-400/70 hover:bg-slate-800 hover:text-white"
+            : "inline-flex h-11 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 px-5 text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
+        }
+      >
+        <Clock3 size={15} />
+        {hasTimePosts ? "Edit time posts" : "Set time posts"}
+      </Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Time posts">
+        <div className="space-y-4">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm text-slate-300">
+            Save reusable channel publishing slots. Later, in schedule mode, you
+            can insert these times with one tap.
+          </div>
+          <div className="space-y-3">
+            {settings.timePosts.map((item, index) => (
+              <div
+                key={item.id}
+                className="rounded-lg border border-slate-800 bg-slate-900/20 p-3"
+              >
+                <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_140px_auto]">
+                  <div className="flex items-end">
+                    <IconPicker
+                      compact
+                      iconId={item.iconId || null}
+                      onChange={(iconId) =>
+                        updateTimePost(index, { iconId: iconId || null, icon: null })
+                      }
+                      buttonLabel="Pick icon"
+                    />
+                  </div>
+                  <FormField label="Title">
+                    <Input
+                      value={item.title}
+                      onChange={(event) =>
+                        updateTimePost(index, { title: event.target.value })
+                      }
+                      placeholder="Optional label"
+                    />
+                  </FormField>
+                  <FormField label="Time">
+                    <TimeInput
+                      value={item.time}
+                      onChange={(event) =>
+                        updateTimePost(index, { time: event.target.value })
+                      }
+                    />
+                  </FormField>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-10 px-3"
+                      onClick={() => removeTimePost(index)}
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!settings.timePosts.length ? (
+              <div className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+                No time posts yet. Add your first reusable channel slot.
+              </div>
+            ) : null}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={addTimePost}
+              className="inline-flex items-center gap-2 whitespace-nowrap"
+            >
+              <Clock3 size={15} />
+              Add time post
+            </Button>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={
+                  isSaving ||
+                  settings.timePosts.some(
+                    (item) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(item.time),
+                  )
+                }
+                onClick={save}
+              >
+                {isSaving ? "Saving..." : "Save time posts"}
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -2060,9 +2312,13 @@ function AccessBadge({
       className={`group relative inline-flex rounded border px-2 py-0.5 text-xs ${toneClass}`}
     >
       {label}
-      <span className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+      <TooltipBubble
+        side="top"
+        align="left"
+        className="hidden w-64 border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 group-hover:block"
+      >
         {tip}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }
@@ -2977,9 +3233,13 @@ function InfoTooltip({ tip, children }: { tip: string; children?: ReactNode }) {
           <CircleHelp size={13} />
         </span>
       )}
-      <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <TooltipBubble
+        side="bottom"
+        align="right"
+        className="w-64 border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      >
         {tip}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }

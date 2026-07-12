@@ -23,6 +23,13 @@ import {
   UpdateTelegramUserAccountDto,
 } from './dto';
 import { ConfigService } from '@nestjs/config';
+import { TelegramChannelsService } from '../telegram-channels/telegram-channels.service';
+
+type ProgressCallback = (
+  item: { message: string },
+  current: number,
+  total: number,
+) => void | Promise<void>;
 
 @Injectable()
 export class TelegramUserAccountsService {
@@ -35,7 +42,18 @@ export class TelegramUserAccountsService {
     private readonly mtprotoClient: TelegramMtprotoClient,
     private readonly sourceAccessService: TelegramSourceAccessService,
     private readonly configService: ConfigService,
+    private readonly telegramChannelsService: TelegramChannelsService,
   ) {}
+
+  private async notifyProgress(
+    onProgress: ProgressCallback | undefined,
+    current: number,
+    total: number,
+    message: string,
+  ) {
+    if (!onProgress) return;
+    await onProgress({ message }, current, total);
+  }
 
   private maskPhone(phone: string) {
     const digits = phone.replace(/\D/g, '');
@@ -583,7 +601,11 @@ export class TelegramUserAccountsService {
     return this.safe(row);
   }
 
-  async syncDialogs(userId: string, id: string) {
+  async syncDialogs(
+    userId: string,
+    id: string,
+    onProgress?: ProgressCallback,
+  ) {
     const workspaceId = await this.getWorkspaceId(userId);
     const account = await this.prisma.telegramUserAccountIntegration.findFirst({
       where: { id, workspaceId, isActive: true },
@@ -608,6 +630,12 @@ export class TelegramUserAccountsService {
       iv: account.sessionIv,
       authTag: account.sessionAuthTag,
     });
+    await this.notifyProgress(
+      onProgress,
+      1,
+      3,
+      'Loading admin channels from Telegram',
+    );
     const [channels, me] = await Promise.all([
       this.mtprotoClient.getAdminChannels({
         apiId: account.apiId,
@@ -617,6 +645,12 @@ export class TelegramUserAccountsService {
       this.mtprotoClient.getMe({ apiId: account.apiId, apiHash, session }),
     ]);
 
+    await this.notifyProgress(
+      onProgress,
+      2,
+      3,
+      'Matching Telegram channels with workspace channels',
+    );
     const workspaceChannels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
       select: { id: true, username: true, telegramChatId: true },
@@ -681,6 +715,12 @@ export class TelegramUserAccountsService {
       };
     };
 
+    await this.notifyProgress(
+      onProgress,
+      3,
+      3,
+      'Saving channel access links',
+    );
     await this.prisma.$transaction(async (tx) => {
       await tx.telegramUserAccountIntegration.update({
         where: { id: account.id },
@@ -748,6 +788,7 @@ export class TelegramUserAccountsService {
     userId: string,
     id: string,
     dto: ImportUserAccountChannelsDto,
+    onProgress?: ProgressCallback,
   ) {
     const workspaceId = await this.getWorkspaceId(userId);
     const account = await this.prisma.telegramUserAccountIntegration.findFirst({
@@ -785,6 +826,14 @@ export class TelegramUserAccountsService {
     if (!selectedChannels.length) {
       return { success: true, channels: [], message: 'No channels selected' };
     }
+    const totalSteps = 1 + selectedChannels.length * 2;
+    let currentStep = 1;
+    await this.notifyProgress(
+      onProgress,
+      currentStep,
+      totalSteps,
+      'Preparing selected Telegram channels',
+    );
 
     const existingChannels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, isActive: true },
@@ -815,6 +864,13 @@ export class TelegramUserAccountsService {
       canBeUsedForAnalytics: boolean;
     }> = [];
     for (const channel of selectedChannels) {
+      currentStep += 1;
+      await this.notifyProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        `Adding ${channel.title} to workspace`,
+      );
       const { rawPermissions, normalized } = this.channelAccessPayload(channel);
       const existingId = findExistingId(channel);
       const workspaceChannel = existingId
@@ -862,6 +918,18 @@ export class TelegramUserAccountsService {
         permissions: normalized.permissions,
         rawPermissions,
       });
+      await this.sourceAccessService.recordDataSource({
+        workspaceId,
+        channelId: workspaceChannel.id,
+        sourceId: account.id,
+        sourceType: TelegramSourceType.MTPROTO,
+        dataType: TelegramChannelDataType.CHANNEL_INFO,
+        sourceDisplayName: this.sourceDisplayName(account),
+        metadata: {
+          source: 'mtproto_dialog_import',
+          telegramDialogChannelId: channel.id,
+        },
+      });
       imported.push({
         channelId: channel.id,
         workspaceChannelId: workspaceChannel.id,
@@ -874,29 +942,20 @@ export class TelegramUserAccountsService {
           normalized.role,
         ),
       });
+      currentStep += 1;
+      await this.notifyProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        `Importing data for ${workspaceChannel.title}`,
+      );
+      await this.telegramChannelsService.syncNow(userId, workspaceChannel.id);
     }
-
-    await Promise.all(
-      imported.map((channel) =>
-        this.sourceAccessService.recordDataSource({
-          workspaceId,
-          channelId: channel.workspaceChannelId,
-          sourceId: account.id,
-          sourceType: TelegramSourceType.MTPROTO,
-          dataType: TelegramChannelDataType.CHANNEL_INFO,
-          sourceDisplayName: this.sourceDisplayName(account),
-          metadata: {
-            source: 'mtproto_dialog_import',
-            telegramDialogChannelId: channel.channelId,
-          },
-        }),
-      ),
-    );
 
     return {
       success: true,
       channels: imported,
-      message: `Added ${imported.length} channels from ${this.sourceDisplayName(account)}`,
+      message: `Added and synced ${imported.length} channels from ${this.sourceDisplayName(account)}`,
     };
   }
 }

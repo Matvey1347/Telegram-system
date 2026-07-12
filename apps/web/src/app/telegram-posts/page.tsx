@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useMutation,
   useQueries,
@@ -27,6 +27,7 @@ import {
   ListPlus,
   LoaderCircle,
   MoveRight,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -52,6 +53,7 @@ import {
   type PromptNote,
   type TelegramChannel,
   type TelegramManagedPost,
+  type TelegramChannelTimePost,
 } from "@/lib/api";
 import {
   Button,
@@ -66,6 +68,8 @@ import {
   Modal,
   PageHeader,
   Textarea,
+  TimeInput,
+  TooltipBubble,
 } from "@/components/ui/primitives";
 import { useAppToast } from "@/providers/toast-provider";
 
@@ -90,12 +94,42 @@ const POST_OPEN_CLICK_DELAY_MS = 180;
 
 const postGroupPreferenceKey = (channelId: string) =>
   `telegram-posts-new-post-group:${channelId}`;
+const workspaceViewPreferenceKey = (channelId: string) =>
+  `telegram-posts-workspace-view:${channelId}`;
+
+function localNowParts() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hours}:${minutes}`,
+  };
+}
+
+function scheduleDateForPreset(time: string) {
+  const now = new Date();
+  const [hours, minutes] = time.split(":").map((value) => Number(value));
+  const candidate = new Date(now);
+  candidate.setHours(hours, minutes, 0, 0);
+  if (candidate.getTime() < now.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  const year = candidate.getFullYear();
+  const month = String(candidate.getMonth() + 1).padStart(2, "0");
+  const day = String(candidate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 export default function TelegramPostsPage() {
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
   const channelId = searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
@@ -109,8 +143,72 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
-  const syncManagedPosts = useMutation({
-    mutationFn: () => telegramChannelsApi.syncManagedPosts(channel!.id),
+  const syncManagedPosts = useMutation<{
+    checked: number;
+    updated: number;
+    publishedEarly: number;
+    movedToDraft: number;
+    broken: number;
+    missing: number;
+  }>({
+    mutationFn: async (): Promise<{
+      checked: number;
+      updated: number;
+      publishedEarly: number;
+      movedToDraft: number;
+      broken: number;
+      missing: number;
+    }> => {
+      const currentChannel = channel!;
+      const progressId = `managed-posts-sync:${currentChannel.id}`;
+      setProgress({
+        id: progressId,
+        title: 'Sync Telegram',
+        current: 0,
+        total: 1,
+        message: 'Starting post sync…',
+        iconUrl: currentChannel.photoUrl || undefined,
+      });
+      try {
+        const result: {
+          checked: number;
+          updated: number;
+          publishedEarly: number;
+          movedToDraft: number;
+          broken: number;
+          missing: number;
+        } = await telegramChannelsApi.syncManagedPostsWithProgress(
+          currentChannel.id,
+          (item, current, total) => {
+            setProgress({
+              id: progressId,
+              title: 'Sync Telegram',
+              current,
+              total,
+              message: item.message || 'Syncing posts from Telegram…',
+              iconUrl: currentChannel.photoUrl || undefined,
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: 'Sync Telegram',
+          current: result.checked || 0,
+          total: result.checked || 0,
+          message: 'Post sync completed',
+          completed: true,
+          successCount: result.updated || 0,
+          failedCount: result.broken || 0,
+          skippedCount: result.missing || 0,
+          iconUrl: currentChannel.photoUrl || undefined,
+        });
+        window.setTimeout(() => clearProgress(progressId), 2800);
+        return result;
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
     onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -132,9 +230,16 @@ export default function TelegramPostsPage() {
 
   useEffect(() => {
     if (!channelId && channel) {
-      router.replace(`/telegram-posts?channelId=${channel.id}`);
+      router.replace(`${pathname}?channelId=${channel.id}`);
     }
-  }, [channel, channelId, router]);
+  }, [channel, channelId, pathname, router]);
+
+  const navigateToChannel = (nextChannelId: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("channelId", nextChannelId);
+    params.delete("postId");
+    router.push(`${pathname}?${params.toString()}`);
+  };
 
   return (
     <AppShell>
@@ -147,9 +252,7 @@ export default function TelegramPostsPage() {
               <div className="min-w-0 flex-1">
                 <CustomSelect
                   value={channel.id}
-                  onChange={(value) =>
-                    router.replace(`/telegram-posts?channelId=${value}`)
-                  }
+                  onChange={navigateToChannel}
                   options={availableChannels.map((item) => ({
                     value: item.id,
                     label: item.title,
@@ -190,7 +293,7 @@ export default function TelegramPostsPage() {
         }
       />
       {channels.isLoading ? <LoadingState /> : null}
-      {!channels.isLoading && !availableChannels.length ? (
+      {!channels.isLoading && !channels.error && !availableChannels.length ? (
         <EmptyState text="No Telegram channels with publishing access" />
       ) : null}
       {channel ? (
@@ -202,6 +305,7 @@ export default function TelegramPostsPage() {
             channelPhotoUrl={channel.photoUrl}
             channelUsername={channel.username}
             channelTelegramChatId={channel.telegramChatId}
+            channelTimePosts={channel.timePosts || []}
             newPostToken={newPostToken}
             initialPostId={postId}
             channels={availableChannels}
@@ -225,6 +329,7 @@ function TelegramPostWorkspace({
   channelPhotoUrl,
   channelUsername,
   channelTelegramChatId,
+  channelTimePosts,
   newPostToken,
   initialPostId,
   channels,
@@ -235,6 +340,7 @@ function TelegramPostWorkspace({
   channelPhotoUrl?: string | null;
   channelUsername?: string | null;
   channelTelegramChatId?: string | null;
+  channelTimePosts: TelegramChannelTimePost[];
   newPostToken: number;
   initialPostId: string;
   channels: TelegramChannel[];
@@ -244,7 +350,13 @@ function TelegramPostWorkspace({
   const queryClient = useQueryClient();
   const { pushToast } = useAppToast();
   const [workspaceView, setWorkspaceView] = useState<"posts" | "groups">(
-    "posts",
+    () => {
+      if (typeof window === "undefined") return "posts";
+      return window.localStorage.getItem(workspaceViewPreferenceKey(channelId)) ===
+        "groups"
+        ? "groups"
+        : "posts";
+    },
   );
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
@@ -264,8 +376,11 @@ function TelegramPostWorkspace({
   });
   const [postGroupId, setPostGroupId] = useState<string | null>(null);
   const [mode, setMode] = useState<PublishingMode>("draft");
-  const [scheduleDate, setScheduleDate] = useState("");
-  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [scheduleDate, setScheduleDate] = useState(() => localNowParts().date);
+  const [scheduleTime, setScheduleTime] = useState(() => localNowParts().time);
+  const [selectedTimePostId, setSelectedTimePostId] = useState<string | null>(
+    null,
+  );
   const [longTextMode, setLongTextMode] =
     useState<LongTextMode>("IMAGES_THEN_TEXT");
   const [statusTab, setStatusTab] = useState<PostStatusTab>("DRAFT");
@@ -275,7 +390,9 @@ function TelegramPostWorkspace({
   const [manualTelegramUrl, setManualTelegramUrl] = useState("");
   const [savingTelegramUrl, setSavingTelegramUrl] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
+  const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [collapsedGroupIdsPreference, setCollapsedGroupIdsPreference] =
+    useState<string[] | null>(null);
   const [draggedSidebarKey, setDraggedSidebarKey] = useState<string | null>(
     null,
   );
@@ -345,9 +462,6 @@ function TelegramPostWorkspace({
     void queryClient.invalidateQueries({
       queryKey: ["telegram-managed-post-link-targets", channelId],
     });
-    void queryClient.invalidateQueries({
-      queryKey: ["prompt-notes", { telegramChannelId: channelId }],
-    });
   }, [channelId, postGroups.data, posts.data, queryClient]);
 
   useEffect(
@@ -404,6 +518,20 @@ function TelegramPostWorkspace({
     ],
     [text],
   );
+  const incomingInternalLinkPosts = useMemo(() => {
+    if (!editing) return [];
+    return (posts.data || []).filter((post) => {
+      if (post.id === editing.id) return false;
+      const linkedIds = [
+        ...new Set(
+          [...(post.text || "").matchAll(/\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g)].map(
+            (match) => match[1],
+          ),
+        ),
+      ];
+      return linkedIds.includes(editing.id);
+    });
+  }, [editing, posts.data]);
   const unresolvedInternalLinkTargets = internalLinkTargetIds.map(
     (targetId) => {
       const target = posts.data?.find((post) => post.id === targetId);
@@ -614,17 +742,25 @@ function TelegramPostWorkspace({
   const allChannelPostsSelected =
     channelPostIds.length > 0 &&
     channelPostIds.every((id) => selectedPostIds.includes(id));
+  const allGroupIds = (postGroups.data || []).map((group) => group.id);
+  const collapsedGroupIds = collapsedGroupIdsPreference ?? allGroupIds;
 
   const changeStatusTab = (next: PostStatusTab) => {
     setStatusTab(next);
     window.localStorage.setItem(`telegram-posts-status:${channelId}`, next);
   };
 
+  const changeWorkspaceView = (next: "posts" | "groups") => {
+    setWorkspaceView(next);
+    window.localStorage.setItem(workspaceViewPreferenceKey(channelId), next);
+  };
+
   const toggleGroupCollapsed = (groupId: string) => {
-    setCollapsedGroupIds((current) => {
-      const next = current.includes(groupId)
-        ? current.filter((id) => id !== groupId)
-        : [...current, groupId];
+    setCollapsedGroupIdsPreference((current) => {
+      const base = current ?? allGroupIds;
+      const next = base.includes(groupId)
+        ? base.filter((id) => id !== groupId)
+        : [...base, groupId];
       window.localStorage.setItem(
         `telegram-posts-collapsed-groups:${channelId}`,
         JSON.stringify(next),
@@ -732,21 +868,32 @@ function TelegramPostWorkspace({
   }, [channelId]);
 
   useEffect(() => {
+    const saved = window.localStorage.getItem(
+      workspaceViewPreferenceKey(channelId),
+    );
+    setWorkspaceView(saved === "groups" ? "groups" : "posts");
+  }, [channelId]);
+
+  useEffect(() => {
     try {
-      const saved = JSON.parse(
-        window.localStorage.getItem(
-          `telegram-posts-collapsed-groups:${channelId}`,
-        ) || "[]",
+      const raw = window.localStorage.getItem(
+        `telegram-posts-collapsed-groups:${channelId}`,
       );
+      if (!raw) {
+        setCollapsedGroupIdsPreference(null);
+        return;
+      }
+      const saved = JSON.parse(raw);
       // Restore the collapsed groups independently for every channel.
+      // Null means "no manual preference yet", so groups stay collapsed by default.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCollapsedGroupIds(
+      setCollapsedGroupIdsPreference(
         Array.isArray(saved)
           ? saved.filter((id): id is string => typeof id === "string")
-          : [],
+          : null,
       );
     } catch {
-      setCollapsedGroupIds([]);
+      setCollapsedGroupIdsPreference(null);
     }
   }, [channelId]);
 
@@ -776,7 +923,8 @@ function TelegramPostWorkspace({
   }, [rememberedPostGroupId, postGroups.data]);
 
   const reset = () => {
-    setWorkspaceView("posts");
+    const now = localNowParts();
+    changeWorkspaceView("posts");
     restoredPostIdRef.current = "";
     setEditing(null);
     setTitle("");
@@ -790,8 +938,9 @@ function TelegramPostWorkspace({
     setIconPickerGeneration((current) => current + 1);
     setPostGroupId(rememberedPostGroupId);
     setMode("draft");
-    setScheduleDate("");
-    setScheduleTime("09:00");
+    setScheduleDate(now.date);
+    setScheduleTime(now.time);
+    setSelectedTimePostId(null);
     setLongTextMode("IMAGES_THEN_TEXT");
     setUploadingImages(false);
     setSelectedPostIds([]);
@@ -841,8 +990,14 @@ function TelegramPostWorkspace({
     setPostGroupId(post.groupId ?? null);
     rememberPostGroup(post.groupId ?? null);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
-    setScheduleDate(post.scheduledAt?.slice(0, 10) || "");
-    setScheduleTime(post.scheduledAt?.slice(11, 16) || "09:00");
+    setScheduleDate(post.scheduledAt?.slice(0, 10) || localNowParts().date);
+    const postScheduleTime =
+      post.scheduledAt?.slice(11, 16) || localNowParts().time;
+    setScheduleTime(postScheduleTime);
+    setSelectedTimePostId(
+      channelTimePosts.find((timePost) => timePost.time === postScheduleTime)
+        ?.id || null,
+    );
     setUploadingImages(false);
     if (
       post.publishMode === "IMAGES_THEN_TEXT" ||
@@ -948,6 +1103,33 @@ function TelegramPostWorkspace({
     selectPost(post);
     onPostSelect(post.id);
   };
+
+  const applyChannelTimePost = (timePost: TelegramChannelTimePost) => {
+    setSelectedTimePostId(timePost.id);
+    setScheduleDate((current) => current || scheduleDateForPreset(timePost.time));
+    setScheduleTime(timePost.time);
+  };
+
+  useEffect(() => {
+    if (mode !== "schedule") {
+      setSelectedTimePostId(null);
+      return;
+    }
+    if (!channelTimePosts.length) return;
+    const matchedTimePost =
+      channelTimePosts.find((timePost) => timePost.id === selectedTimePostId) ||
+      (selectedTimePostId == null ? channelTimePosts[0] : null) ||
+      channelTimePosts.find((timePost) => timePost.time === scheduleTime) ||
+      channelTimePosts[0];
+    if (!matchedTimePost) return;
+    if (!scheduleTime || !channelTimePosts.some((timePost) => timePost.time === scheduleTime)) {
+      setScheduleDate((current) => current || scheduleDateForPreset(matchedTimePost.time));
+      setScheduleTime(matchedTimePost.time);
+    }
+    if (selectedTimePostId !== matchedTimePost.id) {
+      setSelectedTimePostId(matchedTimePost.id);
+    }
+  }, [channelTimePosts, mode, scheduleTime, selectedTimePostId]);
 
   const cancelScheduledPostOpen = () => {
     if (postOpenTimerRef.current) {
@@ -1188,7 +1370,7 @@ function TelegramPostWorkspace({
         <div className="inline-flex shrink-0 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
           <button
             type="button"
-            onClick={() => setWorkspaceView("posts")}
+            onClick={() => changeWorkspaceView("posts")}
             className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
               workspaceView === "posts"
                 ? "bg-blue-600 text-white"
@@ -1200,7 +1382,7 @@ function TelegramPostWorkspace({
           </button>
           <button
             type="button"
-            onClick={() => setWorkspaceView("groups")}
+            onClick={() => changeWorkspaceView("groups")}
             className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
               workspaceView === "groups"
                 ? "bg-blue-600 text-white"
@@ -1224,7 +1406,7 @@ function TelegramPostWorkspace({
           channelId={channelId}
           channels={channels}
           onOpenPost={(post) => {
-            setWorkspaceView("posts");
+            changeWorkspaceView("posts");
             selectPost(post);
             onPostSelect(post.id);
           }}
@@ -1269,6 +1451,20 @@ function TelegramPostWorkspace({
                         ? "Edit post"
                         : "New post"}
                   </h2>
+                  {editing ? (
+                    <button
+                      type="button"
+                      onClick={() => setUsageModalOpen(true)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-700 px-2.5 text-xs font-medium text-neutral-300 transition hover:border-blue-600 hover:bg-blue-950/30 hover:text-white"
+                      title="Show posts that link to this post"
+                    >
+                      <Layers3 size={13} />
+                      Used in
+                      <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-200">
+                        {incomingInternalLinkPosts.length}
+                      </span>
+                    </button>
+                  ) : null}
                   {telegramPostUrl ? (
                     <a
                       href={telegramPostUrl}
@@ -1465,21 +1661,68 @@ function TelegramPostWorkspace({
               </FormField>
             ) : null}
             {!isPublished && mode === "schedule" ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <FormField label="Publish date" required>
-                  <DateInput
-                    value={scheduleDate}
-                    onChange={(event) => setScheduleDate(event.target.value)}
-                    placeholder="Select date"
-                  />
-                </FormField>
-                <FormField label="Publish time" required>
-                  <Input
-                    type="time"
-                    value={scheduleTime}
-                    onChange={(event) => setScheduleTime(event.target.value)}
-                  />
-                </FormField>
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Publish date" required>
+                    <DateInput
+                      value={scheduleDate}
+                      onChange={(event) => setScheduleDate(event.target.value)}
+                      placeholder="Select date"
+                    />
+                  </FormField>
+                  <FormField label="Publish time" required>
+                    <TimeInput
+                      value={scheduleTime}
+                      onChange={(event) => {
+                        const nextTime = event.target.value;
+                        setScheduleTime(nextTime);
+                        setSelectedTimePostId(
+                          channelTimePosts.find(
+                            (timePost) => timePost.time === nextTime,
+                          )?.id || null,
+                        );
+                      }}
+                    />
+                  </FormField>
+                </div>
+                {channelTimePosts.length ? (
+                  <div>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
+                      Time posts
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {channelTimePosts.map((timePost) => (
+                        <button
+                          key={timePost.id}
+                          type="button"
+                          onClick={() => applyChannelTimePost(timePost)}
+                          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm text-white transition ${
+                            selectedTimePostId === timePost.id
+                              ? "border-blue-500 bg-blue-950/25 ring-1 ring-blue-400"
+                              : "border-neutral-700 bg-neutral-950 hover:border-blue-600 hover:bg-blue-950/20"
+                          }`}
+                        >
+                          <IconAvatar
+                            icon={timePost.icon}
+                            label={timePost.title}
+                            size="xs"
+                            bordered
+                          />
+                          <span className="min-w-0">
+                            {timePost.title ? (
+                              <span className="block truncate text-xs text-neutral-300">
+                                {timePost.title}
+                              </span>
+                            ) : null}
+                            <span className="block text-sm font-medium text-white">
+                              {timePost.time}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {displayedError ? (
@@ -1559,6 +1802,17 @@ function TelegramPostWorkspace({
               <p className="text-right text-xs text-amber-400">
                 Publish the linked posts and sync them with Telegram first.
               </p>
+            ) : null}
+            {editing && usageModalOpen ? (
+              <PostUsageModal
+                post={editing}
+                usages={incomingInternalLinkPosts}
+                onClose={() => setUsageModalOpen(false)}
+                onOpenPost={(post) => {
+                  setUsageModalOpen(false);
+                  openPost(post);
+                }}
+              />
             ) : null}
           </Card>
 
@@ -2133,7 +2387,7 @@ function PromptNotesStrip({
           Loading…
         </div>
       ) : notes.length ? (
-        <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto overflow-y-visible pb-0.5">
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 overflow-visible pb-0.5">
           {notes.map((note) => {
             const displayTitle = promptNoteDisplayTitle(note);
             return (
@@ -2175,9 +2429,13 @@ function PromptNotesStrip({
                   />
                 </>
               ) : null}
-              <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-max max-w-64 -translate-x-1/2 rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+              <TooltipBubble
+                side="bottom"
+                align="center"
+                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
+              >
                 Double-click to copy
-              </span>
+              </TooltipBubble>
             </button>
             );
           })}
@@ -2611,11 +2869,14 @@ function PostGroupsWorkspace({
   onOpenPost: (post: TelegramManagedPost) => void;
 }) {
   const queryClient = useQueryClient();
-  const { pushToast, setProgress } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [groupForm, setGroupForm] = useState<PostGroup | "new" | null>(null);
   const [addPostsOpen, setAddPostsOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [movingListGroup, setMovingListGroup] = useState<PostGroup | null>(null);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [movingGroupPost, setMovingGroupPost] =
     useState<TelegramManagedPost | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -2655,18 +2916,109 @@ function PostGroupsWorkspace({
       .filter((post): post is TelegramManagedPost => Boolean(post));
   }, [detail.data?.posts, orderedPostIds]);
 
-  const refresh = async () => {
+  const groupsList = useMemo(() => groups.data || [], [groups.data]);
+  const groupIconIds = useMemo(
+    () =>
+      [...new Set(groupsList.map((group) => group.icon).filter(Boolean))] as string[],
+    [groupsList],
+  );
+  const groupIconQueries = useQueries({
+    queries: groupIconIds.map((iconId) => ({
+      queryKey: ["icon", iconId],
+      queryFn: () => iconsApi.get(iconId),
+    })),
+  });
+  const groupIconsById = useMemo(() => {
+    const map = new Map<string, Awaited<ReturnType<typeof iconsApi.get>>>();
+    groupIconQueries.forEach((query, index) => {
+      if (query.data) map.set(groupIconIds[index], query.data);
+    });
+    return map;
+  }, [groupIconIds, groupIconQueries]);
+  const allGroupIds = useMemo(
+    () => groupsList.map((group) => group.id),
+    [groupsList],
+  );
+  const visibleSelectedGroupIds = useMemo(
+    () => selectedGroupIds.filter((id) => allGroupIds.includes(id)),
+    [allGroupIds, selectedGroupIds],
+  );
+  const allGroupsSelected =
+    groupsList.length > 0 && visibleSelectedGroupIds.length === groupsList.length;
+  const selectedGroups = groupsList.filter((group) =>
+    visibleSelectedGroupIds.includes(group.id),
+  );
+
+  const refresh = async (channelIds: string[] = [channelId]) => {
+    const uniqueChannelIds = [...new Set(channelIds.filter(Boolean))];
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+      ...uniqueChannelIds.flatMap((id) => [
+        queryClient.invalidateQueries({ queryKey: ["post-groups", id] }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", id],
+        }),
+      ]),
       selectedGroupId
         ? queryClient.invalidateQueries({
             queryKey: ["post-group", selectedGroupId],
           })
         : Promise.resolve(),
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-managed-posts", channelId],
-      }),
     ]);
+  };
+
+  const forceReloadGroupData = async (channelIds: string[]) => {
+    const uniqueChannelIds = [...new Set(channelIds.filter(Boolean))];
+    uniqueChannelIds.forEach((id) => {
+      queryClient.removeQueries({ queryKey: ["post-groups", id], exact: true });
+      queryClient.removeQueries({
+        queryKey: ["telegram-managed-posts", id],
+        exact: true,
+      });
+    });
+    if (selectedGroupId) {
+      queryClient.removeQueries({
+        queryKey: ["post-group", selectedGroupId],
+        exact: true,
+      });
+    }
+    await Promise.all([
+      ...uniqueChannelIds.flatMap((id) => [
+        queryClient.refetchQueries({
+          queryKey: ["post-groups", id],
+          exact: true,
+          type: "active",
+        }),
+        queryClient.refetchQueries({
+          queryKey: ["telegram-managed-posts", id],
+          exact: true,
+          type: "active",
+        }),
+      ]),
+    ]);
+  };
+
+  const toggleGroupSelected = (groupId: string) => {
+    setSelectedGroupIds((current) =>
+      current.includes(groupId)
+        ? current.filter((id) => id !== groupId)
+        : [...current, groupId],
+    );
+  };
+
+  const toggleAllGroupsSelected = () => {
+    setSelectedGroupIds(allGroupsSelected ? [] : allGroupIds);
+  };
+  const scheduleProgressDismiss = (progressId: string, delayMs = 2800) => {
+    window.setTimeout(() => clearProgress(progressId), delayMs);
+  };
+  const progressMetaForGroup = (group: PostGroup) => {
+    const icon = group.icon ? groupIconsById.get(group.icon) : undefined;
+    return {
+      id: `move-group:${group.id}`,
+      title: `Move ${group.title}`,
+      iconEmoji: icon?.emoji || undefined,
+      iconUrl: icon?.imageUrl || undefined,
+    };
   };
   const scheduleReorderSave = (
     groupId: string,
@@ -2767,20 +3119,40 @@ function PostGroupsWorkspace({
         total: number,
       ) => void,
     ) => Promise<BulkActionResult>,
+    progressMeta?: {
+      id?: string;
+      title?: string;
+      iconEmoji?: string;
+      iconUrl?: string;
+      initialMessage?: string;
+    },
   ) => {
     const total = detail.data?.posts?.length || 0;
-    setProgress({ title, current: 0, total });
+    const progressId = progressMeta?.id;
+    setProgress({
+      id: progressId,
+      title: progressMeta?.title || title,
+      current: 0,
+      total,
+      message: progressMeta?.initialMessage || "Loading…",
+      iconEmoji: progressMeta?.iconEmoji,
+      iconUrl: progressMeta?.iconUrl,
+    });
     try {
       const result = await request((item, current, progressTotal) => {
         setProgress({
-          title,
+          id: progressId,
+          title: progressMeta?.title || title,
           current,
           total: progressTotal,
           message: item.message,
+          iconEmoji: progressMeta?.iconEmoji,
+          iconUrl: progressMeta?.iconUrl,
         });
       });
       setProgress({
-        title,
+        id: progressId,
+        title: progressMeta?.title || title,
         current: result.total,
         total: result.total,
         message: result.results.at(-1)?.message,
@@ -2788,57 +3160,101 @@ function PostGroupsWorkspace({
         successCount: result.successCount,
         failedCount: result.failedCount,
         skippedCount: result.skippedCount,
+        iconEmoji: progressMeta?.iconEmoji,
+        iconUrl: progressMeta?.iconUrl,
       });
-      window.setTimeout(() => setProgress(null), 2800);
+      if (progressId) scheduleProgressDismiss(progressId);
+      else window.setTimeout(() => setProgress(null), 2800);
       await refresh();
       return result;
     } catch (error) {
-      setProgress(null);
+      if (progressId) clearProgress(progressId);
+      else setProgress(null);
       pushToast(apiErrorMessage(error, `${title} failed`), "error", 7000);
       throw error;
     }
   };
+
+  const groupActionButtonClass =
+    "inline-flex h-9 items-center gap-2 rounded-md border border-neutral-700 px-3 text-sm font-medium text-neutral-200 transition hover:bg-neutral-800";
+  const groupIconActionButtonClass =
+    "inline-flex h-9 w-9 items-center justify-center rounded-md border border-neutral-700 text-neutral-300 transition hover:bg-neutral-800";
+  const groupDangerActionButtonClass =
+    "inline-flex h-9 w-9 items-center justify-center rounded-md border border-rose-700 text-rose-300 transition hover:bg-rose-950/40";
 
   if (selectedGroupId) {
     const group = detail.data;
     return (
       <>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <Button variant="secondary" onClick={() => setSelectedGroupId(null)}>
+          <button
+            type="button"
+            onClick={() => setSelectedGroupId(null)}
+            className={groupActionButtonClass}
+          >
             ← Groups
-          </Button>
+          </button>
           {group ? (
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => setAddPostsOpen(true)}>
-                <span className="inline-flex items-center gap-2">
-                  <ListPlus size={15} /> Add posts
-                </span>
-              </Button>
-              <Button variant="secondary" onClick={() => setScheduleOpen(true)}>
-                Schedule sequence
-              </Button>
-              <Button onClick={() => setPublishOpen(true)}>
-                <span className="inline-flex items-center gap-2">
-                  <Rocket size={15} /> Publish all
-                </span>
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setResetDraftsOpen(true)}
+              <button
+                type="button"
+                onClick={() => setAddPostsOpen(true)}
+                className={groupActionButtonClass}
               >
-                <span className="inline-flex items-center gap-2">
-                  <RotateCcw size={15} /> Make drafts
-                </span>
-              </Button>
-              <Button variant="secondary" onClick={() => setMoveOpen(true)}>
-                Move group
-              </Button>
-              <Button variant="secondary" onClick={() => setGroupForm(group)}>
-                Edit
-              </Button>
-              <Button variant="danger" onClick={() => setDeletingGroup(group)}>
-                Delete
-              </Button>
+                <ListPlus size={14} />
+                Add posts
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                className={groupActionButtonClass}
+              >
+                <Clock3 size={14} />
+                Schedule sequence
+              </button>
+              <button
+                type="button"
+                onClick={() => setPublishOpen(true)}
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-medium text-white transition hover:bg-blue-500"
+              >
+                <Rocket size={14} />
+                Publish all
+              </button>
+              <button
+                type="button"
+                onClick={() => setResetDraftsOpen(true)}
+                className={groupActionButtonClass}
+              >
+                <RotateCcw size={14} />
+                Make drafts
+              </button>
+              <button
+                type="button"
+                onClick={() => setMoveOpen(true)}
+                className={groupIconActionButtonClass}
+                title="Move group"
+                aria-label="Move group"
+              >
+                <MoveRight size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setGroupForm(group)}
+                className={groupIconActionButtonClass}
+                title="Edit group"
+                aria-label="Edit group"
+              >
+                <Pencil size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeletingGroup(group)}
+                className={groupDangerActionButtonClass}
+                title="Delete group"
+                aria-label="Delete group"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
           ) : null}
         </div>
@@ -3014,8 +3430,13 @@ function PostGroupsWorkspace({
                   onProgress,
                 );
                 return response;
+              }, {
+                ...progressMetaForGroup(group!),
+                initialMessage: "Loading…",
               });
               setSelectedGroupId(null);
+              await refresh([channelId, targetId]);
+              await forceReloadGroupData([channelId, targetId]);
             }}
           />
         ) : null}
@@ -3135,32 +3556,103 @@ function PostGroupsWorkspace({
           </span>
         </Button>
       </div>
+      {groupsList.length ? (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={toggleAllGroupsSelected}>
+              {allGroupsSelected ? "Clear all" : "Select all"}
+            </Button>
+            <span className="text-sm text-neutral-400">
+              {visibleSelectedGroupIds.length
+                ? `${visibleSelectedGroupIds.length} selected`
+                : "No groups selected"}
+            </span>
+          </div>
+          <Button
+            disabled={!visibleSelectedGroupIds.length}
+            onClick={() => setBulkMoveOpen(true)}
+          >
+            Move selected
+          </Button>
+        </Card>
+      ) : null}
       {groups.isLoading ? <LoadingState /> : null}
-      {groups.data?.length ? (
+      {groupsList.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {groups.data.map((group) => (
-            <button
+          {groupsList.map((group) => {
+            const isSelected = visibleSelectedGroupIds.includes(group.id);
+            return (
+            <div
               key={group.id}
-              type="button"
-              onClick={() => setSelectedGroupId(group.id)}
-              className="rounded-xl border border-neutral-800 bg-neutral-900 p-4 text-left transition hover:border-blue-700 hover:bg-neutral-900/80"
+              className={`rounded-xl border bg-neutral-900 p-4 text-left transition hover:bg-neutral-900/80 ${
+                isSelected
+                  ? "border-blue-600 shadow-[0_0_0_1px_rgba(37,99,235,0.45)]"
+                  : "border-neutral-800 hover:border-blue-700"
+              }`}
             >
               <div className="flex items-start gap-3">
-                <PostIcon iconId={group.icon} label={group.title} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate font-semibold text-white">
-                    {group.title}
-                  </h3>
-                  <div className="mt-1">
-                    <MemberBadge member={group.createdByMember} />
+                <button
+                  type="button"
+                  aria-label={
+                    isSelected ? "Deselect group" : "Select group for bulk move"
+                  }
+                  onClick={() => toggleGroupSelected(group.id)}
+                  className={`mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                    isSelected
+                      ? "border-blue-500 bg-blue-600 text-white"
+                      : "border-neutral-600 bg-neutral-950 text-transparent"
+                  }`}
+                >
+                  <Check size={12} />
+                </button>
+                <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGroupId(group.id)}
+                    className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                  >
+                    <PostIcon iconId={group.icon} label={group.title} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate font-semibold text-white">
+                        {group.title}
+                      </h3>
+                      <div className="mt-1">
+                        <MemberBadge member={group.createdByMember} />
+                      </div>
+                    </div>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMovingListGroup(group)}
+                      className={groupIconActionButtonClass}
+                      title="Move group"
+                      aria-label={`Move ${group.title}`}
+                    >
+                      <MoveRight size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeletingGroup(group)}
+                      className={groupDangerActionButtonClass}
+                      title="Delete group"
+                      aria-label={`Delete ${group.title}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               </div>
-              <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setSelectedGroupId(group.id)}
+                className="mt-4 block w-full text-left"
+              >
                 <GroupSummary summary={group.statusSummary} />
-              </div>
-            </button>
-          ))}
+              </button>
+            </div>
+            );
+          })}
         </div>
       ) : !groups.isLoading ? (
         <EmptyState text="No groups yet. Create the first named post series." />
@@ -3179,6 +3671,124 @@ function PostGroupsWorkspace({
           }}
         />
       ) : null}
+      {bulkMoveOpen ? (
+        <BulkMoveGroupsModal
+          groups={selectedGroups}
+          channels={channels}
+          sourceChannelId={channelId}
+          onClose={() => setBulkMoveOpen(false)}
+          onSubmit={async (targetId) => {
+            const groupsToMove = selectedGroups;
+            setBulkMoveOpen(false);
+            if (!groupsToMove.length) return;
+            const results = await Promise.all(
+              groupsToMove.map(async (group) => {
+                const progressMeta = progressMetaForGroup(group);
+                setProgress({
+                  ...progressMeta,
+                  current: 0,
+                  total: group.statusSummary.totalPosts || 0,
+                  message: "Loading…",
+                });
+                try {
+                  const response = await telegramChannelsApi.movePostGroup(
+                    group.id,
+                    targetId,
+                    true,
+                    (item, current, total) => {
+                      setProgress({
+                        ...progressMeta,
+                        current,
+                        total,
+                        message: item.message,
+                      });
+                    },
+                  );
+                  setProgress({
+                    ...progressMeta,
+                    current: response.total,
+                    total: response.total,
+                    message: response.results.at(-1)?.message || "Completed",
+                    completed: true,
+                    successCount: response.successCount,
+                    failedCount: response.failedCount,
+                    skippedCount: response.skippedCount,
+                  });
+                  scheduleProgressDismiss(progressMeta.id);
+                  return {
+                    ok: true as const,
+                    message: `${group.title}: moved`,
+                  };
+                } catch (error) {
+                  clearProgress(progressMeta.id);
+                  return {
+                    ok: false as const,
+                    message: `${group.title}: ${apiErrorMessage(error, "Move failed")}`,
+                  };
+                }
+              }),
+            );
+            const movedCount = results.filter((item) => item.ok).length;
+            const failedCount = results.length - movedCount;
+            const messages = results.map((item) => item.message);
+            setSelectedGroupIds([]);
+            await refresh([channelId, targetId]);
+            await forceReloadGroupData([channelId, targetId]);
+            pushToast(
+              messages.join("\n"),
+              failedCount ? "error" : "success",
+              7000,
+            );
+          }}
+        />
+      ) : null}
+      {movingListGroup ? (
+        <MoveGroupModal
+          group={movingListGroup}
+          channels={channels}
+          onClose={() => setMovingListGroup(null)}
+          onSubmit={async (targetId) => {
+            const group = movingListGroup;
+            setMovingListGroup(null);
+            if (!group) return;
+            await runBulk(
+              "Moving group",
+              async (onProgress) =>
+                telegramChannelsApi.movePostGroup(
+                  group.id,
+                  targetId,
+                  true,
+                  onProgress,
+                ),
+              {
+                ...progressMetaForGroup(group),
+                initialMessage: "Loading…",
+              },
+            );
+            setSelectedGroupIds((current) =>
+              current.filter((id) => id !== group.id),
+            );
+            await refresh([channelId, targetId]);
+            await forceReloadGroupData([channelId, targetId]);
+          }}
+        />
+      ) : null}
+      <ConfirmDeleteModal
+        open={!!deletingGroup}
+        onClose={() => setDeletingGroup(null)}
+        entityName={deletingGroup?.title || ""}
+        label="Delete group"
+        description="Delete group? Posts will not be deleted. They will become ungrouped."
+        onConfirm={async () => {
+          if (!deletingGroup) return;
+          await telegramChannelsApi.deletePostGroup(deletingGroup.id);
+          setSelectedGroupIds((current) =>
+            current.filter((id) => id !== deletingGroup.id),
+          );
+          setDeletingGroup(null);
+          await groups.refetch();
+        }}
+      />
     </>
   );
 }
@@ -3473,6 +4083,129 @@ function MoveGroupModal({
   );
 }
 
+function BulkMoveGroupsModal({
+  groups,
+  channels,
+  sourceChannelId,
+  onClose,
+  onSubmit,
+}: {
+  groups: PostGroup[];
+  channels: TelegramChannel[];
+  sourceChannelId: string;
+  onClose: () => void;
+  onSubmit: (targetId: string) => Promise<void>;
+}) {
+  const [targetId, setTargetId] = useState("");
+  return (
+    <Modal open onClose={onClose} title="Move selected groups" allowOverflow>
+      <div className="space-y-4">
+        <p className="text-sm text-amber-200">
+          Drafts remain drafts. Scheduled posts are recreated at the same time.
+          Published posts become drafts; old Telegram messages remain.
+        </p>
+        <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+          <p className="text-xs uppercase text-neutral-500">Selected groups</p>
+          <p className="mt-2 text-sm text-neutral-200">
+            {groups.map((group) => group.title).join(", ")}
+          </p>
+        </div>
+        <FormField label="Target channel" required>
+          <CustomSelect
+            value={targetId}
+            onChange={setTargetId}
+            options={channels
+              .filter((channel) => channel.id !== sourceChannelId)
+              .map((channel) => ({
+                value: channel.id,
+                label: channel.title,
+                iconUrl: channel.photoUrl || undefined,
+              }))}
+          />
+        </FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!targetId || !groups.length} onClick={() => onSubmit(targetId)}>
+            Move {groups.length} group{groups.length === 1 ? "" : "s"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PostUsageModal({
+  post,
+  usages,
+  onClose,
+  onOpenPost,
+}: {
+  post: TelegramManagedPost;
+  usages: TelegramManagedPost[];
+  onClose: () => void;
+  onOpenPost: (post: TelegramManagedPost) => void;
+}) {
+  return (
+    <Modal open onClose={onClose} title={`Used in posts`} allowOverflow>
+      <div className="space-y-3">
+        <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            {post.icon ? <PostIcon iconId={post.icon} label={post.title} /> : null}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-white">
+                {post.title}
+              </p>
+              <p className="text-xs text-neutral-400">
+                {usages.length
+                  ? `Used in ${usages.length} post${usages.length === 1 ? "" : "s"}`
+                  : "This post is not used in other posts yet"}
+              </p>
+            </div>
+          </div>
+        </div>
+        {usages.length ? (
+          <div className="space-y-1.5">
+            {usages.map((usagePost) => (
+              <button
+                key={usagePost.id}
+                type="button"
+                onClick={() => onOpenPost(usagePost)}
+                className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
+              >
+                {usagePost.icon ? (
+                  <PostIcon iconId={usagePost.icon} label={usagePost.title} />
+                ) : (
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-sm">
+                    📝
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-white">
+                    {usagePost.title}
+                  </p>
+                  <p className="text-xs text-neutral-400">
+                    {usagePost.status.toLowerCase()}
+                  </p>
+                </div>
+                <span className="text-xs text-blue-300">Open</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyState text="This post is not linked from other posts in this channel." />
+        )}
+        <div className="flex justify-end">
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function PublishGroupModal({
   open,
   onClose,
@@ -3608,8 +4341,7 @@ function ScheduleGroupModal({
             />
           </FormField>
           <FormField label="Time" required>
-            <Input
-              type="time"
+            <TimeInput
               value={time}
               onChange={(event) => setTime(event.target.value)}
             />

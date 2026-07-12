@@ -31,7 +31,7 @@ import {
   advertisingChannelsApi,
   currenciesApi,
   iconsApi,
-  syncTelegramChannelNow,
+  syncTelegramChannelNowWithProgress,
   telegramChannelNetworksApi,
   telegramChannelsApi,
   type AdvertisingChannel,
@@ -49,6 +49,7 @@ import {
   type TelegramManagedPost,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
+import { scheduleProgressDismiss } from "@/lib/progress";
 import {
   Button,
   ConfirmDeleteModal,
@@ -64,9 +65,12 @@ import {
   PageHeader,
   Select,
   Textarea,
+  TimeInput,
+  TooltipBubble,
   ToastStack,
   type ToastItem,
 } from "@/components/ui/primitives";
+import { useAppToast } from "@/providers/toast-provider";
 
 type TelegramTab = "channels" | "networks" | "accounts" | "bot";
 type ChannelFilter = "own" | "external";
@@ -323,7 +327,7 @@ function ChannelSourcesSummary({
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedSource, setSelectedSource] =
     useState<TelegramChannelSourceAccess | null>(null);
-  const { data: analyticsSources, isLoading: analyticsSourcesLoading } =
+  const { data: analyticsSources, isLoading: analyticsSourcesLoading, error: analyticsSourcesError } =
     useQuery({
       queryKey: ["telegram-channel-analytics-sources", channelId],
       queryFn: () => telegramChannelsApi.analyticsSources(channelId),
@@ -352,6 +356,7 @@ function ChannelSourcesSummary({
         sources={analyticsSources?.sources || []}
         dataAttribution={analyticsSources?.dataAttribution || []}
         isLoading={analyticsSourcesLoading}
+        error={analyticsSourcesError}
         onSelectSource={setSelectedSource}
       />
       <SourceAccessModal
@@ -368,6 +373,7 @@ function ChannelSourcesModal({
   sources,
   dataAttribution,
   isLoading,
+  error,
   onSelectSource,
 }: {
   open: boolean;
@@ -375,6 +381,7 @@ function ChannelSourcesModal({
   sources: Array<TelegramChannelSourceAccess & { usedFor?: string[] }>;
   dataAttribution: TelegramAnalyticsSources["dataAttribution"];
   isLoading: boolean;
+  error: unknown;
   onSelectSource: (source: TelegramChannelSourceAccess) => void;
 }) {
   return (
@@ -385,7 +392,7 @@ function ChannelSourcesModal({
             Connected sources
           </p>
           {isLoading ? <LoadingState /> : null}
-          {!isLoading && !sources.length ? (
+          {!isLoading && !error && !sources.length ? (
             <EmptyState text="No synced source access for this channel yet." />
           ) : null}
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -859,7 +866,11 @@ function KpiPreviewTooltip({
   return (
     <span className={`group relative inline-flex cursor-help ${className}`}>
       {children}
-      <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 hidden w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+      <TooltipBubble
+        side="top"
+        align="right"
+        className="hidden w-72 border-slate-700 bg-slate-950 text-xs leading-relaxed text-slate-100 group-hover:block"
+      >
         <span className="block font-semibold text-white">
           KPI is calculated by CPA / sub
         </span>
@@ -889,7 +900,7 @@ function KpiPreviewTooltip({
             Ranges: {targets.map((target) => target.label).join(" · ")}
           </span>
         ) : null}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }
@@ -933,9 +944,7 @@ type TooltipPlacement = {
 };
 
 function tooltipPlacementClass(placement: TooltipPlacement) {
-  const xClass = placement.x === "right" ? "right-0" : "left-0";
-  const yClass = placement.y === "top" ? "bottom-full mb-2" : "top-full mt-2";
-  return `${xClass} ${yClass}`;
+  return placement.x === "right" ? "right-0" : "left-0";
 }
 
 function resolveTooltipPlacement(
@@ -973,11 +982,13 @@ function InfoTooltip({ tip }: { tip: string }) {
       <span className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-600 text-slate-400">
         <CircleHelp size={11} />
       </span>
-      <span
-        className={`pointer-events-none absolute z-50 w-80 max-w-[calc(100vw-2rem)] whitespace-pre-line rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-normal leading-relaxed text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPlacementClass(placement)}`}
+      <TooltipBubble
+        side={placement.y === "top" ? "top" : "bottom"}
+        align={placement.x === "right" ? "right" : "left"}
+        className={`w-80 whitespace-pre-line border-slate-700 bg-slate-950 text-xs font-normal leading-relaxed text-slate-100 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPlacementClass(placement)}`}
       >
         {tip}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }
@@ -1010,7 +1021,11 @@ function DataQualityBadge({
       >
         {quality}
       </span>
-      <span className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 hidden w-72 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+      <TooltipBubble
+        side="top"
+        align="left"
+        className="hidden w-72 border-slate-700 bg-slate-950 text-xs leading-relaxed text-slate-100 group-hover:block"
+      >
         <span className="block font-semibold text-white">
           Data quality: {quality}
         </span>
@@ -1037,7 +1052,7 @@ function DataQualityBadge({
         {warning ? (
           <span className="mt-1 block text-amber-200">{warning}</span>
         ) : null}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }
@@ -1151,9 +1166,13 @@ function AccessBadge({
       className={`group relative inline-flex rounded border px-2 py-0.5 text-xs ${toneClass}`}
     >
       {label}
-      <span className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 shadow-xl group-hover:block">
+      <TooltipBubble
+        side="top"
+        align="left"
+        className="hidden w-64 border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 group-hover:block"
+      >
         {tip}
-      </span>
+      </TooltipBubble>
     </span>
   );
 }
@@ -1318,6 +1337,7 @@ export default function TelegramChannelsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { setProgress, clearProgress } = useAppToast();
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -1400,7 +1420,46 @@ export default function TelegramChannelsPage() {
     queryFn: advertisingChannelsApi.list,
   });
   const importMutation = useMutation({
-    mutationFn: (input: string) => telegramChannelsApi.import(input),
+    mutationFn: async (input: string) => {
+      const progressId = `telegram-channel-import:${Date.now()}`;
+      setProgress({
+        id: progressId,
+        title: "Import channel",
+        current: 0,
+        total: 4,
+        message: "Starting import…",
+      });
+      try {
+        const source = await telegramChannelsApi.importWithProgress(
+          input,
+          (item: { message?: string }, current, total) => {
+            setProgress({
+              id: progressId,
+              title: "Import channel",
+              current,
+              total,
+              message: item.message || "Importing channel…",
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: "Import channel",
+          current: 4,
+          total: 4,
+          message: "Channel import completed",
+          completed: true,
+          successCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+        });
+        scheduleProgressDismiss(clearProgress, progressId);
+        return source;
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
     onSuccess: (source: ImportedTelegramSource) => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
       queryClient.invalidateQueries({ queryKey: ["advertising-people"] });
@@ -1562,9 +1621,52 @@ export default function TelegramChannelsPage() {
       ),
   });
   const syncNowMutation = useMutation({
-    mutationFn: (id: string) => syncTelegramChannelNow(id),
-    onSuccess: (result) => {
+    mutationFn: async (channel: TelegramChannel) => {
+      const progressId = `telegram-channel-sync:${channel.id}`;
+      setProgress({
+        id: progressId,
+        title: `Sync ${channel.title}`,
+        current: 0,
+        total: 6,
+        message: "Starting sync…",
+        iconUrl: channel.photoUrl || undefined,
+      });
+      try {
+        const result = await syncTelegramChannelNowWithProgress(
+          channel.id,
+          (item: { message?: string }, current, total) => {
+            setProgress({
+              id: progressId,
+              title: `Sync ${channel.title}`,
+              current,
+              total,
+              message: item.message || "Syncing channel…",
+              iconUrl: channel.photoUrl || undefined,
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: `Sync ${channel.title}`,
+          current: 6,
+          total: 6,
+          message: "Channel sync completed",
+          completed: true,
+          successCount: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          iconUrl: channel.photoUrl || undefined,
+        });
+        scheduleProgressDismiss(clearProgress, progressId);
+        return { channelId: channel.id, result };
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
+    onSuccess: ({ channelId, result }) => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
+      queryClient.invalidateQueries({ queryKey: ["telegram-channel", channelId] });
       pushToast(summarizeSync(result), "success", 8000);
     },
     onError: (requestError: unknown) =>
@@ -1741,7 +1843,7 @@ export default function TelegramChannelsPage() {
                           <Button
                             className="inline-flex h-11 min-w-0 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             variant="primary"
-                            onClick={() => syncNowMutation.mutate(channel.id)}
+                            onClick={() => syncNowMutation.mutate(channel)}
                           >
                             <RefreshCw size={16} />
                             Sync
@@ -1807,7 +1909,7 @@ export default function TelegramChannelsPage() {
               );
             })}
           </div>
-          {!isLoading && !filteredChannels.length ? (
+          {!isLoading && !error && !filteredChannels.length ? (
             <EmptyState text={emptyText} />
           ) : null}
         </>
@@ -1875,7 +1977,7 @@ export default function TelegramChannelsPage() {
                   );
                 })}
               </div>
-              {!isLoading && !(people || []).length ? (
+              {!isLoading && !error && !(people || []).length ? (
                 <EmptyState text="No people" />
               ) : null}
             </>
@@ -2204,8 +2306,7 @@ function TelegramPostComposerModal({
                   />
                 </FormField>
                 <FormField label="Publish time" required>
-                  <Input
-                    type="time"
+                  <TimeInput
                     value={scheduleTime}
                     onChange={(event) => setScheduleTime(event.target.value)}
                   />
@@ -2280,7 +2381,7 @@ function TelegramPostComposerModal({
                   </div>
                 ))}
               </div>
-            ) : !posts.isLoading ? (
+            ) : !posts.isLoading && !posts.error ? (
               <EmptyState text="No posts yet" />
             ) : null}
           </div>
@@ -2495,7 +2596,7 @@ function TelegramNetworksSection({
           Failed to load networks.
         </div>
       ) : null}
-      {!loading && !networks.length ? (
+      {!loading && !error && !networks.length ? (
         <EmptyState text="No channel networks yet." />
       ) : null}
       {networks.length ? (

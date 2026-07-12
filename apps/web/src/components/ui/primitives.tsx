@@ -14,6 +14,7 @@ import {
   Check,
   CircleCheck,
   CircleX,
+  Clock3,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -27,7 +28,7 @@ import { createPortal } from "react-dom";
 import { API_MUTATION_EVENT } from "@/lib/api";
 
 export type ToastItem = {
-  id: number;
+  id: number | string;
   message: string;
   title?: string;
   tone?: "success" | "error" | "info" | "loading";
@@ -62,6 +63,24 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
       {...props}
       className={`w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none ring-blue-500 focus:ring ${props.className ?? ""}`}
     />
+  );
+}
+
+export function TimeInput(
+  props: React.InputHTMLAttributes<HTMLInputElement>,
+) {
+  return (
+    <div className="relative">
+      <input
+        {...props}
+        type="time"
+        className={`w-full appearance-none rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 pr-11 text-sm text-white outline-none ring-blue-500 focus:ring [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-clear-button]:hidden [&::-webkit-inner-spin-button]:hidden ${props.className ?? ""}`}
+      />
+      <Clock3
+        size={16}
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-300"
+      />
+    </div>
   );
 }
 
@@ -157,16 +176,28 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       .includes(search.trim().toLocaleLowerCase()),
   );
 
+  const pickFirstFilteredOption = () => {
+    const normalizedSearch = search.trim();
+    const candidate = normalizedSearch
+      ? filteredMenuOptions.find((option) => !option.disabled)
+      : menuOptions.find((option) => !option.disabled);
+    if (!candidate) return;
+    commit(candidate.value);
+    setOpen(false);
+    setSearch("");
+  };
+
   useEffect(() => {
-    const onDocClick = (event: MouseEvent) => {
+    const onDocPointerDown = (event: PointerEvent) => {
       if (!rootRef.current) return;
       if (!rootRef.current.contains(event.target as Node)) {
         setOpen(false);
         setSearch("");
       }
     };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
 
   const commit = (next: string) => {
@@ -216,6 +247,11 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
                 if (event.key === "Escape") {
                   setOpen(false);
                   setSearch("");
+                  return;
+                }
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  pickFirstFilteredOption();
                 }
               }}
               placeholder="Search..."
@@ -774,8 +810,19 @@ export function CustomSelect({
       )
     : options;
 
+  const pickFirstFilteredOption = () => {
+    const normalizedSearch = search.trim();
+    const candidate = normalizedSearch
+      ? filteredOptions[0]
+      : options[0];
+    if (!candidate) return;
+    onChange(candidate.value);
+    setOpen(false);
+    setSearch("");
+  };
+
   useEffect(() => {
-    const onDocClick = (event: MouseEvent) => {
+    const onDocPointerDown = (event: PointerEvent) => {
       if (!rootRef.current) return;
       const target = event.target as Node;
       if (!rootRef.current.contains(target)) {
@@ -783,8 +830,9 @@ export function CustomSelect({
         setSearch("");
       }
     };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
 
   const toneClass = (tone?: SelectOption["tone"]) =>
@@ -846,6 +894,11 @@ export function CustomSelect({
                   if (event.key === "Escape") {
                     setOpen(false);
                     setSearch("");
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    pickFirstFilteredOption();
                   }
                 }}
                 placeholder="Search..."
@@ -952,6 +1005,51 @@ export function IconButton({
     >
       {kind === "delete" ? <Trash2 size={16} /> : <Pencil size={16} />}
     </button>
+  );
+}
+
+export function TooltipBubble({
+  children,
+  side = "top",
+  align = "center",
+  className = "",
+}: {
+  children: React.ReactNode;
+  side?: "top" | "bottom";
+  align?: "left" | "center" | "right";
+  className?: string;
+}) {
+  const positionClass =
+    side === "top"
+      ? "bottom-full mb-3"
+      : "top-full mt-3";
+  const alignClass =
+    align === "left"
+      ? "left-0"
+      : align === "right"
+        ? "right-0"
+        : "left-1/2 -translate-x-1/2";
+  const arrowAnchorClass =
+    align === "left"
+      ? "left-4"
+      : align === "right"
+        ? "right-4"
+        : "left-1/2 -translate-x-1/2";
+  const arrowClass =
+    side === "top"
+      ? "top-full -translate-y-1/2 rotate-45 border-b border-r"
+      : "bottom-full translate-y-1/2 rotate-45 border-t border-l";
+
+  return (
+    <span
+      className={`pointer-events-none absolute z-50 w-max max-w-[calc(100vw-2rem)] rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs leading-relaxed text-neutral-100 shadow-xl ${positionClass} ${alignClass} ${className}`}
+    >
+      {children}
+      <span
+        className={`absolute h-3 w-3 border-neutral-700 bg-neutral-950 ${arrowAnchorClass} ${arrowClass}`}
+        aria-hidden="true"
+      />
+    </span>
   );
 }
 
@@ -1226,7 +1324,7 @@ export function ToastStack({
   onClose,
 }: {
   items: ToastItem[];
-  onClose: (id: number) => void;
+  onClose: (id: number | string) => void;
 }) {
   const [host, setHost] = useState<HTMLElement | null>(null);
 

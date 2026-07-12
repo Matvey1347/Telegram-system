@@ -155,7 +155,7 @@ export default function CategoriesPage() {
       })}
     </div>
 
-    {!isLoading && !transactionsLoading && !data?.length ? <EmptyState text="No categories" /> : null}
+    {!isLoading && !transactionsLoading && !error && !data?.length ? <EmptyState text="No categories" /> : null}
 
     <CategoryModal
       open={createOpen}

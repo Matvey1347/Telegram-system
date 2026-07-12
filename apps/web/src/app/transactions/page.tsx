@@ -130,7 +130,7 @@ export default function TransactionsPage() {
         </tbody>
       </table>
     </div>
-    {!isLoading && !data?.length ? <EmptyState text="No transactions" /> : null}
+    {!isLoading && !error && !data?.length ? <EmptyState text="No transactions" /> : null}
     <TransactionModal open={createOpen} title="Create Transaction" onClose={() => setCreateOpen(false)} members={members ?? []} accounts={accounts ?? []} onSubmit={(v) => createMutation.mutate({ ...v, amount: Number(v.amount), memberId: v.memberId || undefined })} />
     <TransactionModal open={!!editing} title="Edit Transaction" onClose={() => setEditing(null)} members={members ?? []} accounts={accounts ?? []} initial={editing ?? undefined} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, amount: Number(v.amount), memberId: v.memberId || undefined } })} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${deleting.type} ${Number(deleting.amount).toFixed(2)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} />

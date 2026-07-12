@@ -5,8 +5,17 @@ import { PropsWithChildren, useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { logout } from '@/lib/auth';
-import { accountApi, globalSearchApi, iconsApi, workspacesApi, type GlobalSearchResult } from '@/lib/api';
+import {
+  accountApi,
+  globalSearchApi,
+  iconsApi,
+  telegramChannelsApi,
+  workspacesApi,
+  type GlobalSearchResult,
+} from '@/lib/api';
+import { runProgressSequence } from '@/lib/progress';
 import { clearPersistedQueryCache, isWorkspaceScopedQuery } from '@/providers/query-provider';
+import { useAppToast } from '@/providers/toast-provider';
 import { CustomSelect } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { IconAvatar } from '@/components/icons/icon-avatar';
@@ -23,6 +32,7 @@ import {
   Menu,
   Plus,
   Search,
+  RefreshCw,
   MessageCircle,
   Send,
   RadioTower,
@@ -62,6 +72,7 @@ const groups = [
 export function AppShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const qc = useQueryClient();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
@@ -69,6 +80,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     return localStorage.getItem('selected-workspace-id') ?? '';
@@ -181,6 +193,129 @@ export function AppShell({ children }: PropsWithChildren) {
     logout();
   };
 
+  const handleGlobalRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const selectedChannelId =
+        pathname === '/telegram-posts' && typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('channelId')
+          : null;
+      await runProgressSequence({
+        api: { pushToast, setProgress, clearProgress },
+        id: `global-refresh:${Date.now()}`,
+        title: 'Refreshing workspace',
+        steps: [
+          {
+            message: 'Clearing cached workspace data',
+            run: async () => {
+              clearPersistedQueryCache();
+              qc.removeQueries({
+                predicate: (query) =>
+                  isWorkspaceScopedQuery(query.queryKey) &&
+                  query.getObserversCount() === 0,
+              });
+            },
+          },
+          {
+            message: 'Refreshing current user',
+            run: async () => {
+              await qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+            },
+          },
+          {
+            message: 'Refreshing current account',
+            run: async () => {
+              await qc.invalidateQueries({ queryKey: ['account-me'] });
+            },
+          },
+          {
+            message: 'Refreshing workspace list',
+            run: async () => {
+              await qc.invalidateQueries({ queryKey: ['workspaces'] });
+            },
+          },
+          {
+            message: 'Refreshing workspace resources',
+            run: async () => {
+              await qc.invalidateQueries({
+                predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
+              });
+            },
+          },
+          {
+            message: 'Refetching visible page data',
+            run: async () => {
+              await qc.refetchQueries({ type: 'active' });
+            },
+          },
+        ],
+      });
+      if (selectedChannelId) {
+        const syncProgressId = `telegram-posts-global-sync:${selectedChannelId}:${Date.now()}`;
+        setProgress({
+          id: syncProgressId,
+          title: 'Sync Telegram',
+          current: 0,
+          total: 1,
+          message: 'Starting post sync…',
+        });
+        try {
+          const result: {
+            checked: number;
+            updated: number;
+            publishedEarly: number;
+            movedToDraft: number;
+            broken: number;
+            missing: number;
+          } = await telegramChannelsApi.syncManagedPostsWithProgress(
+            selectedChannelId,
+            (item, current, total) => {
+              setProgress({
+                id: syncProgressId,
+                title: 'Sync Telegram',
+                current,
+                total,
+                message: item.message || 'Syncing posts from Telegram…',
+              });
+            },
+          );
+          setProgress({
+            id: syncProgressId,
+            title: 'Sync Telegram',
+            current: result.checked || 0,
+            total: result.checked || 0,
+            message: 'Post sync completed',
+            completed: true,
+            successCount: result.updated || 0,
+            failedCount: result.broken || 0,
+            skippedCount: result.missing || 0,
+          });
+          window.setTimeout(() => clearProgress(syncProgressId), 2800);
+          await Promise.all([
+            qc.invalidateQueries({ queryKey: ['telegram-channels'] }),
+            qc.invalidateQueries({
+              queryKey: ['telegram-managed-posts', selectedChannelId],
+            }),
+            qc.invalidateQueries({
+              queryKey: ['post-groups', selectedChannelId],
+            }),
+            qc.invalidateQueries({
+              queryKey: ['telegram-managed-post-link-targets', selectedChannelId],
+            }),
+          ]);
+        } catch (error) {
+          clearProgress(syncProgressId);
+          throw error;
+        }
+      }
+      pushToast('Data refreshed from server.', 'success');
+    } catch {
+      pushToast('Failed to refresh data.', 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const toggleGroup = (key: string) => {
     setOpenGroups((prev) => {
       const next = { ...prev, [key]: !prev[key] };
@@ -216,7 +351,14 @@ export function AppShell({ children }: PropsWithChildren) {
           <Menu size={20} />
         </button>
         <span className="text-sm font-semibold">Telegram System</span>
-        <span className="h-10 w-10" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={() => void handleGlobalRefresh()}
+          className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-800 text-neutral-200 hover:bg-neutral-900"
+          aria-label="Refresh data"
+        >
+          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+        </button>
       </header>
       {mobileMenuOpen ? (
         <button
@@ -241,7 +383,18 @@ export function AppShell({ children }: PropsWithChildren) {
           <X size={18} />
         </button>
         <div className="mb-8">
-          <h1 className="pr-10 text-xl font-semibold lg:pr-0">Telegram System</h1>
+          <div className="flex items-center justify-between gap-2 pr-10 lg:pr-0">
+            <h1 className="text-xl font-semibold">Telegram System</h1>
+            <button
+              type="button"
+              onClick={() => void handleGlobalRefresh()}
+              className="hidden h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-900 hover:text-white lg:flex"
+              aria-label="Refresh data"
+              title="Refresh data from server"
+            >
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+          </div>
           <p className="mt-1 text-sm text-neutral-400">Finance, ads and analytics</p>
         </div>
 
@@ -286,6 +439,14 @@ export function AppShell({ children }: PropsWithChildren) {
               <button type="submit" className="rounded-md border border-neutral-700 px-2 text-sm text-neutral-200 hover:bg-neutral-800">Add</button>
             </form>
           ) : null}
+          <button
+            type="button"
+            onClick={() => void handleGlobalRefresh()}
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-neutral-800 px-3 py-2 text-sm text-neutral-300 transition hover:bg-neutral-900 hover:text-white lg:hidden"
+          >
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+            Refresh data
+          </button>
         </div>
 
         <nav className="app-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">

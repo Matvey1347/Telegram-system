@@ -36,7 +36,7 @@ export default function FinancePage() {
 
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
-  const { data: accounts, isLoading: loadingAccounts } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
+  const { data: accounts, isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: transactions, isLoading: loadingTransactions, error: transactionsError } = useQuery({
     queryKey: ['transactions', 'finance', datedQuery],
     queryFn: () => transactionsApi.list({ ...datedQuery, sort: 'date_desc' }),
@@ -121,7 +121,7 @@ export default function FinancePage() {
               </EntityCard>
             ))}
           </div>
-          {!loadingAccounts && !accounts?.length ? <EmptyState text="No accounts yet" /> : null}
+          {!loadingAccounts && !accountsError && !accounts?.length ? <EmptyState text="No accounts yet" /> : null}
         </FinanceSection>
 
         <FinanceSection title="Transactions" href="/transactions" isLoading={loadingTransactions} skeleton="table">
@@ -164,7 +164,7 @@ export default function FinancePage() {
               </tbody>
             </table>
           </div>
-          {!loadingTransactions && !transactions?.length ? <EmptyState text="No transactions" /> : null}
+          {!loadingTransactions && !transactionsError && !transactions?.length ? <EmptyState text="No transactions" /> : null}
         </FinanceSection>
 
         <FinanceSection title="Categories" href="/categories" isLoading={loadingCategories} skeleton="cards">
@@ -211,7 +211,7 @@ export default function FinancePage() {
               );
             })}
           </div>
-          {!loadingCategories && !categories?.length ? <EmptyState text="No categories" /> : null}
+          {!loadingCategories && !categoriesError && !categories?.length ? <EmptyState text="No categories" /> : null}
         </FinanceSection>
 
         <FinanceSection title="Transfers" href="/transfers" isLoading={loadingTransfers} skeleton="table">
@@ -236,7 +236,7 @@ export default function FinancePage() {
               </tbody>
             </table>
           </div>
-          {!loadingTransfers && !transfers?.length ? <EmptyState text="No transfers" /> : null}
+          {!loadingTransfers && !transfersError && !transfers?.length ? <EmptyState text="No transfers" /> : null}
         </FinanceSection>
       </div>
     </AppShell>
