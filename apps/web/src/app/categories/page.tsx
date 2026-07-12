@@ -10,6 +10,8 @@ import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { CircleMinus, CirclePlus } from 'lucide-react';
+import { useAppToast } from '@/providers/toast-provider';
+import { pushFinanceMutationToast } from '@/lib/finance-mutation-toast';
 
 type CategoryFormValues = { name: string; type: TransactionType; iconId?: string | null };
 type CategoryStats = { count: number; totalPrimary: number };
@@ -28,6 +30,7 @@ function loadCategoryType(): TransactionType {
 
 export default function CategoriesPage() {
   const qc = useQueryClient();
+  const { pushToast } = useAppToast();
   const [activeType, setActiveType] = useState<TransactionType>(() => loadCategoryType());
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<TransactionCategory | null>(null);
@@ -51,20 +54,30 @@ export default function CategoriesPage() {
 
   const createMutation = useMutation({
     mutationFn: (payload: CategoryFormValues) => transactionCategoriesApi.create(payload),
-    onSuccess: () => {
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['transaction-categories-admin', activeType] });
       qc.invalidateQueries({ queryKey: ['transaction-categories'] });
-      setCreateOpen(false);
+      pushFinanceMutationToast(pushToast, {
+        action: 'created',
+        entityLabel: 'Category',
+        name: created.name,
+        icon: created.icon,
+      });
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: { name: string; iconId?: string | null } }) =>
       transactionCategoriesApi.update(id, payload),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ['transaction-categories-admin', activeType] });
       qc.invalidateQueries({ queryKey: ['transaction-categories'] });
-      setEditing(null);
+      pushFinanceMutationToast(pushToast, {
+        action: 'updated',
+        entityLabel: 'Category',
+        name: updated.name,
+        icon: updated.icon,
+      });
     },
   });
 
@@ -161,7 +174,7 @@ export default function CategoriesPage() {
       open={createOpen}
       title="Create Category"
       onClose={() => setCreateOpen(false)}
-      onSubmit={(v) => createMutation.mutate(v)}
+      onSubmit={(v) => { setCreateOpen(false); createMutation.mutate(v); }}
       initial={{ type: activeType, name: '' }}
       disableType={false}
     />
@@ -170,7 +183,7 @@ export default function CategoriesPage() {
       open={!!editing}
       title="Edit Category"
       onClose={() => setEditing(null)}
-      onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { name: v.name, iconId: v.iconId ?? null } })}
+      onSubmit={(v) => { if (!editing) return; setEditing(null); updateMutation.mutate({ id: editing.id, payload: { name: v.name, iconId: v.iconId ?? null } }); }}
       initial={editing ? { name: editing.name, type: editing.type, iconId: editing.iconId ?? null } : undefined}
       disableType
       readOnlyName={Boolean(editing?.isSystem)}

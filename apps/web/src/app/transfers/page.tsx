@@ -9,8 +9,10 @@ import { accountDisplayName } from '@/lib/account-display';
 import { Account, Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
 import { formatRate } from '@/lib/money';
+import { useAppToast } from '@/providers/toast-provider';
+import { pushFinanceMutationToast } from '@/lib/finance-mutation-toast';
 
 type Values = { fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; date: string; description?: string };
 
@@ -41,6 +43,7 @@ function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null
 
 export default function TransfersPage() {
   const qc = useQueryClient();
+  const { pushToast } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Transfer | null>(null);
   const [deleting, setDeleting] = useState<Transfer | null>(null);
@@ -52,8 +55,32 @@ export default function TransfersPage() {
     queryKey: ['transfers', filters],
     queryFn: () => transfersApi.list(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) as TransferQuery),
   });
-  const createMutation = useMutation({ mutationFn: transfersApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setCreateOpen(false); } });
-  const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transfersApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setEditing(null); } });
+  const createMutation = useMutation({
+    mutationFn: transfersApi.create,
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ['transfers'] });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      pushFinanceMutationToast(pushToast, {
+        action: 'created',
+        entityLabel: 'Transfer',
+        name: `${created.fromAccount?.name ?? nameOf(created.fromAccountId)} -> ${created.toAccount?.name ?? nameOf(created.toAccountId)}`,
+        icon: accountOf(created.fromAccountId)?.icon ?? created.fromAccount?.icon ?? null,
+      });
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transfersApi.update(id, payload),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ['transfers'] });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      pushFinanceMutationToast(pushToast, {
+        action: 'updated',
+        entityLabel: 'Transfer',
+        name: `${updated.fromAccount?.name ?? nameOf(updated.fromAccountId)} -> ${updated.toAccount?.name ?? nameOf(updated.toAccountId)}`,
+        icon: accountOf(updated.fromAccountId)?.icon ?? updated.fromAccount?.icon ?? null,
+      });
+    },
+  });
   const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const deleteMutation = useMutation({ mutationFn: (id: string) => transfersApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
   const nameOf = (id: string) => accounts?.find((a) => a.id === id)?.name ?? id;
@@ -67,32 +94,35 @@ export default function TransfersPage() {
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
       </div>
     </Card>
-    {isLoading ? <LoadingState /> : null}{error ? <div className="text-red-300">Failed to load transfers</div> : null}
-    <div className="table-scroll w-full rounded-lg border border-neutral-800">
-      <table className="w-full min-w-[980px] text-left text-sm">
-        <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
-          <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">From</th><th className="px-3 py-2">From amount</th><th className="px-3 py-2">To</th><th className="px-3 py-2">To amount</th><th className="px-3 py-2">Exchange rate</th><th className="px-3 py-2">Loss</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Actions</th></tr>
-        </thead>
-        <tbody className="divide-y divide-neutral-800">
-          {data?.map((t) => (
-            <tr key={t.id} className="bg-neutral-950">
-              <td className="px-3 py-2">{new Date(t.date).toLocaleDateString()}</td>
-              <td className="px-3 py-2"><TransferAccountCell account={accountOf(t.fromAccountId) ?? t.fromAccount} fallback={nameOf(t.fromAccountId)} onIconChange={(iconId) => updateAccountIconMutation.mutate({ id: t.fromAccountId, iconId })} /></td>
-              <td className="px-3 py-2"><MoneyStack amount={t.fromAmount} currency={t.fromCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
-              <td className="px-3 py-2"><TransferAccountCell account={accountOf(t.toAccountId) ?? t.toAccount} fallback={nameOf(t.toAccountId)} onIconChange={(iconId) => updateAccountIconMutation.mutate({ id: t.toAccountId, iconId })} /></td>
-              <td className="px-3 py-2"><MoneyStack amount={t.toAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
-              <td className="px-3 py-2">{formatRate(t.exchangeRate, 1)}</td>
-              <td className="px-3 py-2">{t.transferLossAmount != null ? <MoneyStack amount={t.transferLossAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /> : '-'}</td>
-              <td className="max-w-[240px] truncate px-3 py-2">{t.description || '-'}</td>
-              <td className="px-3 py-2"><div className="flex gap-2"><IconButton onClick={() => setEditing(t)} /><IconButton kind="delete" onClick={() => setDeleting(t)} /></div></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    {error ? <div className="text-red-300">Failed to load transfers</div> : null}
+    {isLoading ? <TableLoadingState text="Loading transfers" columns={9} rows={6} /> : null}
+    {!isLoading ? (
+      <div className="table-scroll w-full rounded-lg border border-neutral-800">
+        <table className="w-full min-w-[980px] text-left text-sm">
+          <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
+            <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">From</th><th className="px-3 py-2">From amount</th><th className="px-3 py-2">To</th><th className="px-3 py-2">To amount</th><th className="px-3 py-2">Exchange rate</th><th className="px-3 py-2">Loss</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Actions</th></tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-800">
+            {data?.map((t) => (
+              <tr key={t.id} className="bg-neutral-950">
+                <td className="px-3 py-2">{new Date(t.date).toLocaleDateString()}</td>
+                <td className="px-3 py-2"><TransferAccountCell account={accountOf(t.fromAccountId) ?? t.fromAccount} fallback={nameOf(t.fromAccountId)} onIconChange={(iconId) => updateAccountIconMutation.mutate({ id: t.fromAccountId, iconId })} /></td>
+                <td className="px-3 py-2"><MoneyStack amount={t.fromAmount} currency={t.fromCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
+                <td className="px-3 py-2"><TransferAccountCell account={accountOf(t.toAccountId) ?? t.toAccount} fallback={nameOf(t.toAccountId)} onIconChange={(iconId) => updateAccountIconMutation.mutate({ id: t.toAccountId, iconId })} /></td>
+                <td className="px-3 py-2"><MoneyStack amount={t.toAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /></td>
+                <td className="px-3 py-2">{formatRate(t.exchangeRate, 1)}</td>
+                <td className="px-3 py-2">{t.transferLossAmount != null ? <MoneyStack amount={t.transferLossAmount} currency={t.toCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-400" /> : '-'}</td>
+                <td className="max-w-[240px] truncate px-3 py-2">{t.description || '-'}</td>
+                <td className="px-3 py-2"><div className="flex gap-2"><IconButton onClick={() => setEditing(t)} /><IconButton kind="delete" onClick={() => setDeleting(t)} /></div></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : null}
     {!isLoading && !error && !data?.length ? <EmptyState text="No transfers" /> : null}
-    <TransferModal open={createOpen} title="Create Transfer" onClose={() => { createMutation.reset(); setCreateOpen(false); }} accounts={accounts ?? []} error={createMutation.error} onSubmit={(v) => createMutation.mutate(v)} />
-    <TransferModal open={!!editing} title="Edit Transfer" onClose={() => { updateMutation.reset(); setEditing(null); }} accounts={accounts ?? []} initial={editing ?? undefined} error={updateMutation.error} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
+    <TransferModal open={createOpen} title="Create Transfer" onClose={() => { createMutation.reset(); setCreateOpen(false); }} accounts={accounts ?? []} error={createMutation.error} onSubmit={(v) => { createMutation.reset(); setCreateOpen(false); createMutation.mutate(v); }} />
+    <TransferModal open={!!editing} title="Edit Transfer" onClose={() => { updateMutation.reset(); setEditing(null); }} accounts={accounts ?? []} initial={editing ?? undefined} error={updateMutation.error} onSubmit={(v) => { if (!editing) return; updateMutation.reset(); setEditing(null); updateMutation.mutate({ id: editing.id, payload: v }); }} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${nameOf(deleting.fromAccountId)} -> ${nameOf(deleting.toAccountId)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} />
   </AppShell>;
 }

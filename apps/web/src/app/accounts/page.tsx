@@ -12,11 +12,14 @@ import { IconPicker } from '@/components/icons/icon-picker';
 import { formatMoney } from '@/lib/money';
 import { MemberSelect } from '@/components/workspace/member-select';
 import { AccountName } from '@/components/accounts/account-name';
+import { useAppToast } from '@/providers/toast-provider';
+import { pushFinanceMutationToast } from '@/lib/finance-mutation-toast';
 
 type Values = { name: string; currency: string; initialBalance: number; iconId?: string | null; assignedMemberId?: string | null };
 
 export default function AccountsPage() {
   const qc = useQueryClient();
+  const { pushToast } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [deleting, setDeleting] = useState<Account | null>(null);
@@ -24,8 +27,32 @@ export default function AccountsPage() {
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
 
-  const createMutation = useMutation({ mutationFn: accountsApi.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['currency-rates'] }); setCreateOpen(false); } });
-  const updateMutation = useMutation({ mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => accountsApi.update(id, payload), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['currency-rates'] }); setEditing(null); } });
+  const createMutation = useMutation({
+    mutationFn: accountsApi.create,
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      qc.invalidateQueries({ queryKey: ['currency-rates'] });
+      pushFinanceMutationToast(pushToast, {
+        action: 'created',
+        entityLabel: 'Account',
+        name: created.name,
+        icon: created.icon,
+      });
+    },
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => accountsApi.update(id, payload),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      qc.invalidateQueries({ queryKey: ['currency-rates'] });
+      pushFinanceMutationToast(pushToast, {
+        action: 'updated',
+        entityLabel: 'Account',
+        name: updated.name,
+        icon: updated.icon,
+      });
+    },
+  });
   const updateIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); } });
   const deleteMutation = useMutation({ mutationFn: (id: string) => accountsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
 
@@ -44,8 +71,8 @@ export default function AccountsPage() {
     </div>
     {!isLoading && !error && !data?.length ? <EmptyState text="No accounts yet" /> : null}
 
-    <AccountModal open={createOpen} title="Create Account" currencies={settings?.supportedCurrencies ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v) => createMutation.mutate({ ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance), isActive: true })} />
-    <AccountModal open={!!editing} title="Edit Account" currencies={settings?.supportedCurrencies ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateMutation.mutate({ id: editing.id, payload: { ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance) } })} />
+    <AccountModal open={createOpen} title="Create Account" currencies={settings?.supportedCurrencies ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v) => { setCreateOpen(false); createMutation.mutate({ ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance), isActive: true }); }} />
+    <AccountModal open={!!editing} title="Edit Account" currencies={settings?.supportedCurrencies ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v) => { if (!editing) return; setEditing(null); updateMutation.mutate({ id: editing.id, payload: { ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance) } }); }} />
     <ConfirmDeleteModal open={!!deleting} entityName={deleting?.name ?? ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} label="Archive" />
   </AppShell>;
 }
@@ -97,5 +124,5 @@ function AccountModal({ open, onClose, onSubmit, title, initial, currencies }: {
         : { currency: 'USD', initialBalance: 0, name: '', iconId: null },
     );
   }, [open, initial, reset]);
-  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit((v) => { onSubmit(v); reset(); })}><IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} buttonLabel="Add icon" /><FormField label="Name" required error={errors.name ? 'Required field' : undefined}><Input {...register('name', { required: true })} /></FormField><FormField label="Member"><MemberSelect value={watch('assignedMemberId')} onChange={(assignedMemberId) => setValue('assignedMemberId', assignedMemberId || null)} defaultToCurrent={!initial} /></FormField><FormField label="Currency"><Select {...register('currency', { required: true })} value={watch('currency')}>{currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</Select></FormField><FormField label="Initial Balance"><Input type="number" step="0.01" {...register('initialBalance', { valueAsNumber: true })} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
+  return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit(onSubmit)}><IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} buttonLabel="Add icon" /><FormField label="Name" required error={errors.name ? 'Required field' : undefined}><Input {...register('name', { required: true })} /></FormField><FormField label="Member"><MemberSelect value={watch('assignedMemberId')} onChange={(assignedMemberId) => setValue('assignedMemberId', assignedMemberId || null)} defaultToCurrent={!initial} /></FormField><FormField label="Currency"><Select {...register('currency', { required: true })} value={watch('currency')}>{currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</Select></FormField><FormField label="Initial Balance"><Input type="number" step="0.01" {...register('initialBalance', { valueAsNumber: true })} /></FormField><div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></Modal>;
 }
