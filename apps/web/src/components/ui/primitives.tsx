@@ -986,6 +986,27 @@ export function Card({
   );
 }
 
+export function MasonryGrid({
+  children,
+  className = "",
+  itemClassName = "",
+}: PropsWithChildren<{ className?: string; itemClassName?: string }>) {
+  return (
+    <div
+      className={`columns-1 gap-4 md:columns-2 xl:columns-3 ${className}`}
+    >
+      {Children.map(children, (child, index) => (
+        <div
+          key={isValidElement(child) && child.key != null ? String(child.key) : index}
+          className={`mb-4 break-inside-avoid ${itemClassName}`}
+        >
+          {child}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Table({ children }: PropsWithChildren) {
   return (
     <div className="table-scroll w-full">

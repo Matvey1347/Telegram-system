@@ -81,7 +81,9 @@ export class UpdateTelegramChannelDto {
 }
 
 export class ImportTelegramChannelDto {
-  @IsString() input!: string;
+  @IsOptional() @IsString() input?: string;
+  @IsOptional() @IsString() username?: string;
+  @IsOptional() @IsString() telegramAccountId?: string;
 }
 
 export class HistoricalSyncDto {

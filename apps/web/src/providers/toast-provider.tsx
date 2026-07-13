@@ -49,6 +49,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
   const recentGenericMutationSuccessRef = useRef<Map<string, number>>(
     new Map(),
   );
+  const genericSuccessReplacementWindowMs = 10_000;
 
   useEffect(() => {
     mutationToastsRef.current = mutationToasts;
@@ -135,7 +136,9 @@ export function ToastProvider({ children }: PropsWithChildren) {
           return false;
         }
         const completedAt = recentGenericMutationSuccessRef.current.get(toast.id);
-        return Boolean(completedAt && now - completedAt < 2_500);
+        return Boolean(
+          completedAt && now - completedAt < genericSuccessReplacementWindowMs,
+        );
       });
     if (!target || typeof target.id !== "string") return false;
     const mutationId = target.id.replace("mutation:", "");

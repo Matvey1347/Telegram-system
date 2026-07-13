@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Account, accountsApi, currenciesApi } from '@/lib/api';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
+import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, Input, LoadingState, MasonryGrid, Modal, PageHeader, IconButton, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { formatMoney } from '@/lib/money';
 import { MemberSelect } from '@/components/workspace/member-select';
@@ -60,7 +60,7 @@ export default function AccountsPage() {
     <PageHeader title="Accounts" subtitle="Manage balances by currency" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
     {isLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load accounts</div> : null}
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <MasonryGrid>
       {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><AccountName account={a} /></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>
         <div className="mb-2 flex items-center justify-between gap-2">
           <MoneyStack amount={a.balance ?? a.calculatedBalance} currency={a.currency} settings={settings} rates={rates} amountInPrimary={a.convertedCurrency === settings?.primaryCurrency ? a.convertedBalance : null} />
@@ -68,7 +68,7 @@ export default function AccountsPage() {
         </div>
         <AccountStatsSummary account={a} displayMode={settings?.currencyDisplayMode} />
       </EntityCard>)}
-    </div>
+    </MasonryGrid>
     {!isLoading && !error && !data?.length ? <EmptyState text="No accounts yet" /> : null}
 
     <AccountModal open={createOpen} title="Create Account" currencies={settings?.supportedCurrencies ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v) => { setCreateOpen(false); createMutation.mutate({ ...v, currency: v.currency.toUpperCase(), initialBalance: Number(v.initialBalance), isActive: true }); }} />

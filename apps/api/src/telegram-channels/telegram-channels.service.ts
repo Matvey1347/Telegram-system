@@ -62,6 +62,13 @@ import {
 } from '../telegram/shared/internal-post-links';
 import { parseTelegramPostUrl } from '../telegram/shared/telegram-post-url';
 import {
+  parseTelegramImportInput,
+  canonicalTelegramInviteLink,
+  normalizeTelegramUsername,
+  type TelegramImportInput,
+  type ResolvedTelegramEntity,
+} from '../telegram/shared/telegram-import.helpers';
+import {
   bulkActionCounts,
   movedPostDatabaseState,
   movedPostState,
@@ -174,11 +181,7 @@ export class TelegramChannelsService {
   }
 
   private normalizeUsername(value?: string | null) {
-    const normalized = String(value || '')
-      .trim()
-      .replace(/^@/, '')
-      .toLowerCase();
-    return normalized || null;
+    return normalizeTelegramUsername(value);
   }
 
   private normalizeChatId(value?: string | null) {
@@ -314,26 +317,87 @@ export class TelegramChannelsService {
       .replace(/&amp;/g, '&');
   }
 
-  private normalizePublicChannelInput(input: string) {
-    const trimmed = String(input || '').trim();
-    if (!trimmed)
-      throw new BadRequestException('Telegram channel input is required');
-    let normalized = trimmed
-      .replace(/^https?:\/\//i, '')
-      .replace(/^tg:\/\//i, '');
-    normalized = normalized.replace(/^www\./i, '');
-    if (/^(t\.me|telegram\.me)\//i.test(normalized)) {
-      normalized = normalized.replace(/^(t\.me|telegram\.me)\//i, '');
+  private maskInviteHash(value?: string | null) {
+    const hash = String(value || '').trim();
+    if (!hash) return null;
+    if (hash.length <= 6) return `${hash.slice(0, 2)}***`;
+    return `${hash.slice(0, 4)}***${hash.slice(-2)}`;
+  }
+
+  private importProgressSteps(inputType: TelegramImportInput['type']) {
+    if (inputType === 'invite') {
+      return [
+        'Parsing import input',
+        'Checking private invite',
+        'Resolving Telegram channel',
+        'Adding channel to workspace',
+        'Importing channel history and metrics',
+      ] as const;
     }
-    normalized = normalized
-      .split(/[?#]/)[0]
-      .replace(/^s\//i, '')
-      .replace(/\/+$/, '');
-    const firstPathPart = normalized.split('/')[0] || normalized;
-    const username = this.normalizeUsername(firstPathPart);
-    if (!username)
-      throw new BadRequestException('Telegram channel input is invalid');
-    return `@${username}`;
+    return [
+      'Parsing import input',
+      'Resolving Telegram channel',
+      'Adding channel to workspace',
+      'Importing channel history and metrics',
+    ] as const;
+  }
+
+  private async notifyImportProgress(
+    onProgress: BulkProgressCallback | undefined,
+    steps: readonly string[],
+    index: number,
+  ) {
+    await this.notifyTaskProgress(onProgress, index + 1, steps.length, steps[index]);
+  }
+
+  private ensureImportableChannelEntity(
+    info: ResolvedTelegramEntity,
+    inputType: TelegramImportInput['type'],
+  ) {
+    if (info.kind === 'channel' && !String(info.telegramChatId || '').trim()) {
+      if (inputType === 'invite') {
+        throw new BadRequestException(
+          'Could not resolve a real Telegram channel from the invite link.',
+        );
+      }
+      throw new BadRequestException(
+        'Could not resolve a real Telegram channel for import.',
+      );
+    }
+    return info;
+  }
+
+  private async resolveImportEntity(
+    account: {
+      id: string;
+      apiId: string;
+      apiHashEncrypted: string;
+      apiHashIv: string;
+      apiHashAuthTag: string;
+      sessionEncrypted: string | null;
+      sessionIv: string | null;
+      sessionAuthTag: string | null;
+    },
+    input: TelegramImportInput,
+  ) {
+    const credentials = this.accountCredentials(account);
+    if (input.type === 'title') {
+      return this.mtprotoClient.findAccessibleChannelInfoByTitle({
+        ...credentials,
+        titleQuery: input.titleQuery,
+      });
+    }
+    if (input.type === 'invite') {
+      return this.mtprotoClient.getPublicChannelInfo({
+        ...credentials,
+        channelRef: input.inviteLink,
+        inviteHash: input.inviteHash,
+      });
+    }
+    return this.mtprotoClient.getPublicChannelInfo({
+      ...credentials,
+      channelRef: input.channelRef,
+    });
   }
 
   private async connectedAccount(
@@ -3475,18 +3539,26 @@ export class TelegramChannelsService {
   ) {
     const workspaceId = await this.workspace(userId);
     const account = await this.firstConnectedAccount(workspaceId);
-    const totalSteps = 4;
-    await this.notifyTaskProgress(
-      onProgress,
-      1,
-      totalSteps,
-      'Loading channel details from Telegram',
+    const rawInput = dto.input ?? dto.username;
+    const importInput = parseTelegramImportInput(rawInput || '');
+    const steps = this.importProgressSteps(importInput.type);
+    this.logger.log(
+      `Importing Telegram source: inputType=${importInput.type} account=${account.id} invite=${importInput.type === 'invite' ? this.maskInviteHash(importInput.inviteHash) : 'n/a'}`,
     );
-    const channelRef = this.normalizePublicChannelInput(dto.input);
-    const info = await this.mtprotoClient.getPublicChannelInfo({
-      ...this.accountCredentials(account),
-      channelRef,
-    });
+
+    await this.notifyImportProgress(onProgress, steps, 0);
+    if (importInput.type === 'invite') {
+      await this.notifyImportProgress(onProgress, steps, 1);
+    }
+    await this.notifyImportProgress(
+      onProgress,
+      steps,
+      importInput.type === 'invite' ? 2 : 1,
+    );
+    const info = this.ensureImportableChannelEntity(
+      await this.resolveImportEntity(account, importInput),
+      importInput.type,
+    );
     const username = this.normalizeUsername(info.username);
     if (info.kind === 'person') {
       return this.upsertImportedPerson(workspaceId, {
@@ -3507,17 +3579,20 @@ export class TelegramChannelsService {
       title: info.title,
       username,
       telegramChatId,
+      inviteLink:
+        importInput.type === 'invite'
+          ? canonicalTelegramInviteLink(importInput.inviteHash)
+          : info.inviteLink || undefined,
       description: info.description,
       currentSubscribersCount: info.participantsCount,
       photoUrl: info.photoUrl,
       sourceType: 'telegram',
       lastPublicSyncedAt: new Date(),
     };
-    await this.notifyTaskProgress(
+    await this.notifyImportProgress(
       onProgress,
-      2,
-      totalSteps,
-      'Adding channel to workspace',
+      steps,
+      importInput.type === 'invite' ? 3 : 2,
     );
     const channel = await this.prisma.$transaction(async (tx) => {
       if (!existing) {
@@ -3550,13 +3625,16 @@ export class TelegramChannelsService {
       dataType: TelegramChannelDataType.CHANNEL_INFO,
       status: TelegramDataSourceStatus.SUCCESS,
       sourceDisplayName: this.sourceDisplayName(account),
-      metadata: { source: 'public_channel_import' },
+      metadata: {
+        source: 'channel_import',
+        inputType: importInput.type,
+        joinedByInvite: Boolean(info.joinedByInvite),
+      },
     });
-    await this.notifyTaskProgress(
+    await this.notifyImportProgress(
       onProgress,
-      3,
-      totalSteps,
-      'Importing channel history and metrics',
+      steps,
+      importInput.type === 'invite' ? 4 : 3,
     );
     const importedChannel = await this.findOne(userId, channel.id);
     const initialSync = await this.runInitialImportBackfill({
@@ -3565,11 +3643,8 @@ export class TelegramChannelsService {
       channelId: channel.id,
       accountId: account.id,
     });
-    await this.notifyTaskProgress(
-      onProgress,
-      4,
-      totalSteps,
-      'Preparing imported channel',
+    this.logger.log(
+      `Imported Telegram entity: kind=${info.kind} chatId=${info.telegramChatId} joinedByInvite=${Boolean(info.joinedByInvite)} backfillSuccess=${Boolean(initialSync?.success)}`,
     );
     return { ...importedChannel, initialSync };
   }

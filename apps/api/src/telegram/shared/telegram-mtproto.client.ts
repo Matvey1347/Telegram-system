@@ -1,10 +1,24 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Api, TelegramClient } from 'telegram';
 import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { HTMLParser } from 'telegram/extensions/html';
 import { CustomFile } from 'telegram/client/uploads';
 import { StringSession } from 'telegram/sessions';
 import { telegramHtmlToMtprotoHtml } from './telegram-markup';
+import {
+  MatchScore,
+  canonicalTelegramInviteLink,
+  normalizeTelegramUsername,
+  resolveTelegramTitleCandidates,
+  type ResolvedTelegramEntity,
+  type TelegramTitleCandidate,
+} from './telegram-import.helpers';
 
 type ApiCredentials = { apiId: string; apiHash: string };
 type SessionParams = ApiCredentials & { session?: string };
@@ -18,12 +32,16 @@ type BroadcastStatsGraphField =
   | 'views_by_source_graph'
   | 'new_followers_by_source_graph'
   | 'reactions_by_emotion_graph';
+type ImportableTelegramEntity = Api.User | Api.Channel | Api.Chat;
 
 @Injectable()
 export class TelegramMtprotoClient {
+  private readonly logger = new Logger(TelegramMtprotoClient.name);
   private readonly maxPostBackfillLimit = 10_000;
   private readonly defaultTelegramPaletteSize = 7;
   private readonly maxPublishImageBytes = 10 * 1024 * 1024;
+  private readonly telegramResolveTimeoutMs = 20_000;
+  private readonly telegramMetadataTimeoutMs = 10_000;
   private readonly broadcastStatsGraphFields: Array<{
     normalized: BroadcastStatsGraphField;
     raw: string[];
@@ -94,6 +112,10 @@ export class TelegramMtprotoClient {
   }
 
   private async createClient({ apiId, apiHash, session }: SessionParams) {
+    const startedAt = this.now();
+    this.logger.log(
+      `Connecting MTProto client: apiId=${apiId} session=${this.sessionFingerprint(session)}`,
+    );
     const client = new TelegramClient(
       new StringSession(session || ''),
       Number(apiId),
@@ -106,19 +128,82 @@ export class TelegramMtprotoClient {
       },
     );
     await client.connect();
+    this.logger.log(
+      `MTProto client connected in ${this.elapsed(startedAt)}: apiId=${apiId}`,
+    );
     return client;
   }
 
   private async closeClient(client: TelegramClient) {
     try {
+      const startedAt = this.now();
       await client.destroy();
+      this.logger.log(`MTProto client destroyed in ${this.elapsed(startedAt)}`);
     } catch {
       try {
+        const startedAt = this.now();
         await client.disconnect();
+        this.logger.log(
+          `MTProto client disconnected in ${this.elapsed(startedAt)}`,
+        );
       } catch {
         // Best-effort cleanup for short-lived MTProto clients.
       }
     }
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    label: string,
+  ) {
+    return await Promise.race<T>([
+      promise,
+      new Promise<T>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  }
+
+  private now() {
+    return Date.now();
+  }
+
+  private elapsed(startedAt: number) {
+    return `${this.now() - startedAt}ms`;
+  }
+
+  private maskInviteHash(value?: string | null) {
+    const hash = String(value || '').trim().replace(/^\+/, '');
+    if (!hash) return 'n/a';
+    if (hash.length <= 6) return `${hash.slice(0, 2)}***`;
+    return `${hash.slice(0, 4)}***${hash.slice(-2)}`;
+  }
+
+  private sessionFingerprint(session?: string | null) {
+    const raw = String(session || '').trim();
+    if (!raw) return 'empty';
+    if (raw.length <= 10) return `${raw.slice(0, 3)}***`;
+    return `${raw.slice(0, 5)}***${raw.slice(-4)}`;
+  }
+
+  private errorSummary(error: unknown) {
+    if (!error || typeof error !== 'object') {
+      return { message: String(error || 'unknown error') };
+    }
+    return {
+      name: (error as any).name || null,
+      message: (error as any).message || null,
+      errorMessage: (error as any).errorMessage || null,
+      errorCode: (error as any).errorCode || null,
+      code: (error as any).code || null,
+      seconds: this.toFiniteNumber((error as any).seconds),
+      newDc: this.toFiniteNumber((error as any).newDc),
+      stack: typeof (error as any).stack === 'string' ? (error as any).stack : null,
+    };
   }
 
   private parseMtprotoHtml(html: string) {
@@ -345,9 +430,13 @@ export class TelegramMtprotoClient {
 
   private async profilePhotoDataUrl(client: TelegramClient, entity: unknown) {
     try {
-      const photo = await client.downloadProfilePhoto(entity as any, {
-        isBig: true,
-      });
+      const photo = await this.withTimeout(
+        client.downloadProfilePhoto(entity as any, {
+          isBig: true,
+        }),
+        this.telegramMetadataTimeoutMs,
+        'Telegram profile photo download',
+      );
       if (!Buffer.isBuffer(photo) || photo.length === 0) return null;
       return `data:image/jpeg;base64,${photo.toString('base64')}`;
     } catch {
@@ -423,6 +512,398 @@ export class TelegramMtprotoClient {
   private saveSession(client: TelegramClient): string {
     const saved = client.session.save();
     return typeof saved === 'string' ? saved : '';
+  }
+
+  private entityIdToString(entity: { id?: unknown }) {
+    if (typeof entity.id === 'bigint') return entity.id.toString();
+    if (entity.id == null) return '';
+    return String(entity.id);
+  }
+
+  private isImportableTelegramEntity(
+    entity: unknown,
+  ): entity is ImportableTelegramEntity {
+    return (
+      entity instanceof Api.User ||
+      entity instanceof Api.Channel ||
+      entity instanceof Api.Chat
+    );
+  }
+
+  private entityKind(entity: ImportableTelegramEntity): 'channel' | 'person' {
+    return entity instanceof Api.User ? 'person' : 'channel';
+  }
+
+  private entityTitle(entity: ImportableTelegramEntity) {
+    if (entity instanceof Api.User) {
+      return [entity.firstName, entity.lastName].filter(Boolean).join(' ').trim();
+    }
+    return String(entity.title || '').trim();
+  }
+
+  private inviteErrorCode(error: unknown) {
+    const candidate = error as {
+      errorMessage?: string;
+      message?: string;
+      errorCode?: string;
+    };
+    const raw =
+      candidate?.errorMessage ||
+      candidate?.errorCode ||
+      candidate?.message ||
+      '';
+    const match = String(raw).match(/[A-Z_]+/);
+    return match?.[0] || '';
+  }
+
+  private mapInviteError(error: unknown): never {
+    const code = this.inviteErrorCode(error);
+    switch (code) {
+      case 'INVITE_HASH_INVALID':
+        throw new BadRequestException('Telegram invite link is invalid.');
+      case 'INVITE_HASH_EXPIRED':
+        throw new BadRequestException('Telegram invite link has expired.');
+      case 'INVITE_REQUEST_SENT':
+        throw new ConflictException(
+          'Join request was sent. Wait for approval and retry the import.',
+        );
+      case 'CHANNELS_TOO_MUCH':
+        throw new ForbiddenException(
+          'The connected Telegram account has reached its channel limit.',
+        );
+      default:
+        throw error;
+    }
+  }
+
+  private async describeEntity(
+    client: TelegramClient,
+    entity: ImportableTelegramEntity,
+    fallbackRef: string,
+    rawExtra?: Record<string, unknown>,
+  ): Promise<ResolvedTelegramEntity & { raw: Record<string, unknown> }> {
+    const startedAt = this.now();
+    this.logger.log(
+      `Describing Telegram entity: kind=${this.entityKind(entity)} id=${this.entityIdToString(entity) || 'n/a'} fallback=${fallbackRef}`,
+    );
+    let fullChannel: unknown = null;
+    if (!(entity instanceof Api.User)) {
+      try {
+        const fullStartedAt = this.now();
+        const full = await this.withTimeout(
+          client.invoke(new Api.channels.GetFullChannel({ channel: entity })),
+          this.telegramMetadataTimeoutMs,
+          'Telegram full channel lookup',
+        );
+        fullChannel = (full as { fullChat?: unknown }).fullChat || null;
+        this.logger.log(
+          `Telegram full channel lookup completed in ${this.elapsed(fullStartedAt)}: id=${this.entityIdToString(entity) || 'n/a'}`,
+        );
+      } catch {
+        fullChannel = null;
+        this.logger.warn(
+          `Telegram full channel lookup failed or timed out for id=${this.entityIdToString(entity) || 'n/a'}`,
+        );
+      }
+    }
+
+    const username = normalizeTelegramUsername(
+      (entity as { username?: string | null }).username,
+    );
+    const firstName = entity instanceof Api.User ? String(entity.firstName || '') || null : null;
+    const lastName = entity instanceof Api.User ? String(entity.lastName || '') || null : null;
+    const participantsCount =
+      this.toFiniteNumber(
+        (fullChannel as { participantsCount?: unknown } | null)?.participantsCount,
+      ) ??
+      this.toFiniteNumber(
+        (entity as { participantsCount?: unknown }).participantsCount,
+      );
+    const photoUrl =
+      (await this.profilePhotoDataUrl(client, entity)) ||
+      this.telegramPublicPhotoUrl(username);
+    this.logger.log(
+      `Telegram entity described in ${this.elapsed(startedAt)}: kind=${this.entityKind(entity)} id=${this.entityIdToString(entity) || 'n/a'} username=${username || 'n/a'}`,
+    );
+    return {
+      kind: this.entityKind(entity),
+      telegramChatId: this.entityIdToString(entity),
+      title: this.entityTitle(entity) || username || fallbackRef,
+      username,
+      description:
+        ((fullChannel as { about?: string | null } | null)?.about as string | null) ||
+        null,
+      participantsCount,
+      photoUrl,
+      raw: {
+        ...(rawExtra || {}),
+        entity: this.toJsonSafe({
+          id: this.entityIdToString(entity),
+          title: this.entityTitle(entity),
+          firstName,
+          lastName,
+          username,
+          participantsCount: (entity as { participantsCount?: unknown }).participantsCount,
+        }),
+        fullChannel: this.toJsonSafe({
+          about: (fullChannel as { about?: unknown } | null)?.about,
+          participantsCount:
+            (fullChannel as { participantsCount?: unknown } | null)?.participantsCount,
+        }),
+      },
+    };
+  }
+
+  private searchResultCandidates(result: unknown): ImportableTelegramEntity[] {
+    const users = Array.isArray((result as { users?: unknown[] } | null)?.users)
+      ? (result as { users: unknown[] }).users
+      : [];
+    const chats = Array.isArray((result as { chats?: unknown[] } | null)?.chats)
+      ? (result as { chats: unknown[] }).chats
+      : [];
+    return [...chats, ...users].filter((entity) =>
+      this.isImportableTelegramEntity(entity),
+    ) as ImportableTelegramEntity[];
+  }
+
+  private dedupeTitleCandidates(
+    candidates: Array<TelegramTitleCandidate<ImportableTelegramEntity>>,
+  ) {
+    const seen = new Set<string>();
+    return candidates.filter((candidate) => {
+      const key = `${candidate.kind}:${candidate.entityId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private async titleCandidates(
+    client: TelegramClient,
+    titleQuery: string,
+  ) {
+    const dialogs = await client.getDialogs({ limit: 300 });
+    const dialogCandidates = dialogs
+      .map((dialog: unknown) => {
+        const row = dialog as { title?: string; entity?: unknown };
+        if (!this.isImportableTelegramEntity(row.entity)) return null;
+        return {
+          entity: row.entity,
+          entityId: this.entityIdToString(row.entity),
+          kind: this.entityKind(row.entity),
+          title: String(row.title || this.entityTitle(row.entity)).trim(),
+          username: normalizeTelegramUsername(
+            (row.entity as { username?: string | null }).username,
+          ),
+          source: 'dialogs' as const,
+        };
+      })
+      .filter(Boolean) as Array<TelegramTitleCandidate<ImportableTelegramEntity>>;
+
+    const searchResult = await client.invoke(
+      new Api.contacts.Search({ q: titleQuery, limit: 50 }),
+    );
+    const searchCandidates = this.searchResultCandidates(searchResult).map(
+      (entity) => ({
+        entity,
+        entityId: this.entityIdToString(entity),
+        kind: this.entityKind(entity),
+        title: this.entityTitle(entity),
+        username: normalizeTelegramUsername(
+          (entity as { username?: string | null }).username,
+        ),
+        source: 'search' as const,
+      }),
+    );
+
+    return this.dedupeTitleCandidates([
+      ...dialogCandidates,
+      ...searchCandidates,
+    ]);
+  }
+
+  private suggestionsMessage(
+    titleQuery: string,
+    suggestions: Array<{ title: string; username: string | null }>,
+  ) {
+    if (!suggestions.length) {
+      return 'Private channels that are not accessible to the connected Telegram account require an invite link.';
+    }
+    const rendered = suggestions
+      .slice(0, 5)
+      .map((item) => (item.username ? `${item.title} (@${item.username})` : item.title))
+      .join(', ');
+    return `Channel "${titleQuery}" was not found. Possible matches: ${rendered}.`;
+  }
+
+  private async importEntityFromInviteUpdates(
+    client: TelegramClient,
+    updates: unknown,
+    fallbackRef: string,
+    inviteLink: string,
+    joinedByInvite: boolean,
+  ) {
+    const candidates = this.searchResultCandidates(updates);
+    const entity =
+      candidates.find(
+        (candidate) =>
+          candidate instanceof Api.Channel || candidate instanceof Api.Chat,
+      ) || candidates[0];
+    if (!entity) {
+      throw new BadRequestException(
+        'Could not resolve a real Telegram channel from the invite link.',
+      );
+    }
+    const described = await this.describeEntity(client, entity, fallbackRef, {
+      inviteLink,
+      joinedByInvite,
+    });
+    return {
+      ...described,
+      inviteLink,
+      joinedByInvite,
+    };
+  }
+
+  private async findInviteAlreadyEntity(
+    client: TelegramClient,
+    invite: Api.ChatInviteAlready,
+    fallbackRef: string,
+    inviteLink: string,
+  ) {
+    const entity = await client.getEntity(invite.chat);
+    if (!this.isImportableTelegramEntity(entity)) {
+      throw new BadRequestException(
+        'Could not resolve a real Telegram channel from the invite link.',
+      );
+    }
+    const described = await this.describeEntity(client, entity, fallbackRef, {
+      invite: this.toJsonSafe(invite),
+    });
+    return {
+      ...described,
+      inviteLink,
+      joinedByInvite: false,
+    };
+  }
+
+  private async resolveInviteParticipantConflict(
+    client: TelegramClient,
+    inviteLink: string,
+    previewTitle: string,
+  ) {
+    const candidates = await this.titleCandidates(client, previewTitle);
+    const resolved = resolveTelegramTitleCandidates(previewTitle, candidates);
+    if (!resolved.resolved) {
+      throw new BadRequestException(
+        'Could not resolve a real Telegram channel from the invite link.',
+      );
+    }
+    const described = await this.describeEntity(
+      client,
+      resolved.resolved.entity,
+      previewTitle,
+      { matchedBy: 'invite-participant-conflict' },
+    );
+    return {
+      ...described,
+      inviteLink,
+      joinedByInvite: false,
+    };
+  }
+
+  private async resolveInviteLinkInfo(
+    client: TelegramClient,
+    fallbackRef: string,
+    inviteHash: string,
+  ) {
+    const inviteLink = canonicalTelegramInviteLink(inviteHash);
+    const maskedInvite = this.maskInviteHash(inviteHash);
+    this.logger.log(
+      `Resolving Telegram invite link: invite=${maskedInvite} fallback=${fallbackRef}`,
+    );
+    let invite: Api.TypeChatInvite;
+    try {
+      const checkStartedAt = this.now();
+      this.logger.log(`Checking Telegram invite: invite=${maskedInvite}`);
+      invite = await this.withTimeout(
+        client.invoke(new Api.messages.CheckChatInvite({ hash: inviteHash })),
+        this.telegramResolveTimeoutMs,
+        'Telegram invite check',
+      );
+      this.logger.log(
+        `Telegram invite check completed in ${this.elapsed(checkStartedAt)}: invite=${maskedInvite} result=${invite?.constructor?.name || 'unknown'}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Telegram invite check failed: invite=${maskedInvite}`,
+        JSON.stringify(this.errorSummary(error)),
+      );
+      this.mapInviteError(error);
+    }
+
+    if (invite instanceof Api.ChatInviteAlready) {
+      this.logger.log(
+        `Telegram invite already joined: invite=${maskedInvite}`,
+      );
+      return this.findInviteAlreadyEntity(client, invite, fallbackRef, inviteLink);
+    }
+
+    const previewTitle = String((invite as { title?: string }).title || fallbackRef);
+    try {
+      const importStartedAt = this.now();
+      this.logger.log(
+        `Importing Telegram invite: invite=${maskedInvite} previewTitle=${previewTitle}`,
+      );
+      const updates = await this.withTimeout(
+        client.invoke(new Api.messages.ImportChatInvite({ hash: inviteHash })),
+        this.telegramResolveTimeoutMs,
+        'Telegram invite import',
+      );
+      this.logger.log(
+        `Telegram invite import completed in ${this.elapsed(importStartedAt)}: invite=${maskedInvite} updatesType=${(updates as any)?.constructor?.name || typeof updates}`,
+      );
+      return this.importEntityFromInviteUpdates(
+        client,
+        updates,
+        previewTitle,
+        inviteLink,
+        true,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Telegram invite import failed: invite=${maskedInvite} previewTitle=${previewTitle}`,
+        JSON.stringify(this.errorSummary(error)),
+      );
+      const code = this.inviteErrorCode(error);
+      if (code === 'USER_ALREADY_PARTICIPANT') {
+        return this.resolveInviteParticipantConflict(
+          client,
+          inviteLink,
+          previewTitle,
+        );
+      }
+      this.mapInviteError(error);
+    }
+  }
+
+  private async resolveTitleInfo(
+    client: TelegramClient,
+    titleQuery: string,
+  ) {
+    const candidates = await this.titleCandidates(client, titleQuery);
+    const resolved = resolveTelegramTitleCandidates(titleQuery, candidates);
+    if (!resolved.resolved) {
+      throw new BadRequestException(
+        this.suggestionsMessage(titleQuery, resolved.suggestions),
+      );
+    }
+    return this.describeEntity(client, resolved.resolved.entity, titleQuery, {
+      matchedBy:
+        resolved.resolved.score === MatchScore.EXACT_USERNAME
+          ? 'exact-username'
+          : 'exact-title',
+    });
   }
 
   private async getSelfUserWithDetails(
@@ -620,55 +1101,59 @@ export class TelegramMtprotoClient {
     apiHash: string;
     session: string;
     channelRef: string;
+    inviteHash?: string;
+  }) {
+    const startedAt = this.now();
+    this.logger.log(
+      `Starting Telegram public channel lookup: ref=${params.channelRef} invite=${this.maskInviteHash(params.inviteHash)}`,
+    );
+    const client = await this.createClient(params);
+    try {
+      if (params.inviteHash) {
+        const resolved = await this.resolveInviteLinkInfo(
+          client,
+          params.channelRef,
+          params.inviteHash,
+        );
+        this.logger.log(
+          `Telegram invite-based lookup finished in ${this.elapsed(startedAt)}: ref=${params.channelRef} chatId=${resolved.telegramChatId || 'n/a'}`,
+        );
+        return resolved;
+      }
+
+      const entityStartedAt = this.now();
+      const entity = await this.withTimeout(
+        client.getEntity(params.channelRef),
+        this.telegramResolveTimeoutMs,
+        'Telegram entity lookup',
+      );
+      this.logger.log(
+        `Telegram entity lookup completed in ${this.elapsed(entityStartedAt)}: ref=${params.channelRef} type=${entity?.constructor?.name || 'unknown'}`,
+      );
+      if (!this.isImportableTelegramEntity(entity)) {
+        throw new BadRequestException(
+          `Cannot find any entity corresponding to "${params.channelRef}"`,
+        );
+      }
+      const described = await this.describeEntity(client, entity, params.channelRef);
+      this.logger.log(
+        `Telegram public channel lookup finished in ${this.elapsed(startedAt)}: ref=${params.channelRef} chatId=${described.telegramChatId || 'n/a'}`,
+      );
+      return described;
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
+  async findAccessibleChannelInfoByTitle(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    titleQuery: string;
   }) {
     const client = await this.createClient(params);
     try {
-      const entity = (await client.getEntity(params.channelRef)) as any;
-      let fullChannel: any = null;
-      try {
-        const full = await client.invoke(
-          new Api.channels.GetFullChannel({ channel: entity }),
-        );
-        fullChannel = (full as any)?.fullChat || null;
-      } catch {
-        fullChannel = null;
-      }
-
-      const username = entity?.username
-        ? String(entity.username).replace(/^@/, '').toLowerCase()
-        : null;
-      const firstName = entity?.firstName ? String(entity.firstName) : null;
-      const lastName = entity?.lastName ? String(entity.lastName) : null;
-      const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
-      const participantsCount =
-        this.toFiniteNumber(fullChannel?.participantsCount) ??
-        this.toFiniteNumber(entity?.participantsCount);
-      const photoUrl =
-        (await this.profilePhotoDataUrl(client, entity)) ||
-        this.telegramPublicPhotoUrl(username);
-      return {
-        kind: entity instanceof Api.User ? 'person' : 'channel',
-        telegramChatId: entity?.id != null ? String(entity.id) : '',
-        title: entity?.title || fullName || username || params.channelRef,
-        username,
-        description: fullChannel?.about || null,
-        participantsCount,
-        photoUrl,
-        raw: {
-          entity: this.toJsonSafe({
-            id: entity?.id,
-            title: entity?.title,
-            firstName,
-            lastName,
-            username: entity?.username,
-            participantsCount: entity?.participantsCount,
-          }),
-          fullChannel: this.toJsonSafe({
-            about: fullChannel?.about,
-            participantsCount: fullChannel?.participantsCount,
-          }),
-        },
-      };
+      return this.resolveTitleInfo(client, params.titleQuery);
     } finally {
       await this.closeClient(client);
     }

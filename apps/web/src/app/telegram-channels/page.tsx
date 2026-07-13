@@ -61,6 +61,7 @@ import {
   IconButton,
   Input,
   LoadingState,
+  MasonryGrid,
   Modal,
   PageHeader,
   Select,
@@ -1446,14 +1447,29 @@ export default function TelegramChannelsPage() {
     queryFn: advertisingChannelsApi.list,
   });
   const importMutation = useMutation({
-    mutationFn: async (input: string) => {
-      const progressId = `telegram-channel-import:${Date.now()}`;
+    mutationFn: async ({
+      input,
+      mode,
+    }: {
+      input: string;
+      mode: "import" | "refresh";
+    }) => {
+      const progressId = `telegram-channel-${mode}:${Date.now()}`;
+      const progressTitle =
+        mode === "refresh" ? "Refresh channel" : "Import channel";
+      const activeMessage =
+        mode === "refresh" ? "Refreshing channel…" : "Importing channel…";
+      const completedMessage =
+        mode === "refresh"
+          ? "Channel refresh completed"
+          : "Channel import completed";
       setProgress({
         id: progressId,
-        title: "Import channel",
+        title: progressTitle,
         current: 0,
         total: 4,
-        message: "Starting import…",
+        message:
+          mode === "refresh" ? "Starting refresh…" : "Starting import…",
       });
       try {
         const source = await telegramChannelsApi.importWithProgress(
@@ -1461,19 +1477,19 @@ export default function TelegramChannelsPage() {
           (item: { message?: string }, current, total) => {
             setProgress({
               id: progressId,
-              title: "Import channel",
+              title: progressTitle,
               current,
               total,
-              message: item.message || "Importing channel…",
+              message: item.message || activeMessage,
             });
           },
         );
         setProgress({
           id: progressId,
-          title: "Import channel",
+          title: progressTitle,
           current: 4,
           total: 4,
-          message: "Channel import completed",
+          message: completedMessage,
           completed: true,
           successCount: 1,
           failedCount: 0,
@@ -1499,10 +1515,6 @@ export default function TelegramChannelsPage() {
             "adminLinks" in source && isOwnChannel(source) ? "own" : "external",
         });
       }
-      pushToast(
-        isPersonSource(source) ? "Person imported." : "Channel imported.",
-        "success",
-      );
     },
     onError: (requestError: unknown) =>
       pushToast(
@@ -1826,7 +1838,7 @@ export default function TelegramChannelsPage() {
           {error ? (
             <div className="text-red-300">Failed to load channels</div>
           ) : null}
-          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <MasonryGrid>
             {filteredChannels.map((channel: TelegramChannel) => {
               const hasAdminLink = isOwnChannel(channel);
               const username = normalizeUsername(channel.username);
@@ -1841,10 +1853,10 @@ export default function TelegramChannelsPage() {
                       />
                     }
                   />
-                  <div className="space-y-1">
-                    <p>
-                      Username:{" "}
-                      {username ? (
+                  {username ? (
+                    <div className="space-y-1">
+                      <p>
+                        Username:{" "}
                         <a
                           href={`https://t.me/${username}`}
                           target="_blank"
@@ -1853,11 +1865,9 @@ export default function TelegramChannelsPage() {
                         >
                           @{username}
                         </a>
-                      ) : (
-                        "-"
-                      )}
-                    </p>
-                  </div>
+                      </p>
+                    </div>
+                  ) : null}
                   <ChannelFinanceMiniSummary
                     channel={channel}
                     isOwnChannel={hasAdminLink}
@@ -1880,7 +1890,10 @@ export default function TelegramChannelsPage() {
                             className="inline-flex h-11 min-w-56 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 text-center text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             variant="primary"
                             onClick={() =>
-                              importMutation.mutate(`@${username}`)
+                              importMutation.mutate({
+                                input: `@${username}`,
+                                mode: "refresh",
+                              })
                             }
                           >
                             <RefreshCw size={16} />
@@ -1934,7 +1947,7 @@ export default function TelegramChannelsPage() {
                 </EntityCard>
               );
             })}
-          </div>
+          </MasonryGrid>
           {!isLoading && !error && !filteredChannels.length ? (
             <EmptyState text={emptyText} />
           ) : null}
@@ -1980,7 +1993,7 @@ export default function TelegramChannelsPage() {
               {error ? (
                 <div className="text-red-300">Failed to load people</div>
               ) : null}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <MasonryGrid>
                 {(people || []).map((person: AdvertisingChannel) => {
                   const username = normalizeUsername(person.username);
                   return (
@@ -2002,7 +2015,7 @@ export default function TelegramChannelsPage() {
                     </EntityCard>
                   );
                 })}
-              </div>
+              </MasonryGrid>
               {!isLoading && !error && !(people || []).length ? (
                 <EmptyState text="No people" />
               ) : null}
@@ -2018,7 +2031,9 @@ export default function TelegramChannelsPage() {
       <ImportChannelModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onSubmit={(input) => importMutation.mutate(input)}
+        onSubmit={(input) =>
+          importMutation.mutate({ input, mode: "import" })
+        }
         isSubmitting={importMutation.isPending}
       />
       <ExportChannelsModal
@@ -3016,15 +3031,25 @@ function ImportChannelModal({
         })}
       >
         <FormField
-          label="@username or Telegram link"
+          label="Username, Telegram link, invite link or exact title"
           required
           error={errors.input ? "Required field" : undefined}
         >
           <Input
-            placeholder="@channel, @person or https://t.me/name"
-            {...register("input", { required: true })}
+            placeholder="@channel, https://t.me/channel, https://t.me/+invite or Channel title"
+            {...register("input", {
+              required: true,
+              validate: (value) =>
+                String(value || "").trim().length > 0 || "Required field",
+              maxLength: 300,
+            })}
           />
         </FormField>
+        <p className="text-xs leading-5 text-slate-400">
+          Private invite links may join the channel using the connected Telegram
+          account. Private channels cannot be found by title unless the account
+          already has access.
+        </p>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel

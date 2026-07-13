@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { currenciesApi, Currency, CurrencyDisplayMode, ExchangeRate } from '@/lib/api';
-import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, MasonryGrid, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { formatRate } from '@/lib/money';
 
 type RateValues = { baseCurrency: Currency; targetCurrency: Currency; rate: number; date: string; source?: string };
@@ -56,7 +56,7 @@ export default function CurrenciesPage() {
 
       {settings ? <CurrencySettingsCard key={`${settings.primaryCurrency}-${settings.secondaryCurrency}-${settings.currencyDisplayMode}`} settings={settings} onSave={(payload) => saveSettings.mutate(payload)} /> : null}
 
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <MasonryGrid className="mt-6">
         {rates?.map((rate) => (
           <EntityCard
             key={rate.id}
@@ -73,7 +73,7 @@ export default function CurrenciesPage() {
             <p>Source: {rate.source || 'manual'}</p>
           </EntityCard>
         ))}
-      </div>
+      </MasonryGrid>
       {!loadingRates && !error && !rates?.length ? <EmptyState text="No exchange rates yet." /> : null}
 
       <RateModal open={!!editing} title="Edit Exchange Rate" initial={editing ?? undefined} currencies={settings?.supportedCurrencies ?? ['USD', 'UAH', 'EUR', 'PLN']} onClose={() => setEditing(null)} onSubmit={(v) => editing && updateRate.mutate({ id: editing.id, payload: v })} />

@@ -19,7 +19,7 @@ import {
 import { formatMoney, formatRate } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { AccountName } from '@/components/accounts/account-name';
-import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, PageHeader, Skeleton } from '@/components/ui/primitives';
+import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, MasonryGrid, PageHeader, Skeleton } from '@/components/ui/primitives';
 
 type DateFilters = { dateFrom: string; dateTo: string };
 type CategoryStats = { count: number; totalPrimary: number };
@@ -107,7 +107,7 @@ export default function FinancePage() {
 
       <div className="space-y-6">
         <FinanceSection title="Accounts" href="/accounts" isLoading={loadingAccounts} skeleton="cards">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <MasonryGrid>
             {accounts?.map((account) => (
               <EntityCard
                 key={account.id}
@@ -120,7 +120,7 @@ export default function FinancePage() {
                 <AccountStatsSummary account={account} displayMode={settings?.currencyDisplayMode} />
               </EntityCard>
             ))}
-          </div>
+          </MasonryGrid>
           {!loadingAccounts && !accountsError && !accounts?.length ? <EmptyState text="No accounts yet" /> : null}
         </FinanceSection>
 
@@ -189,7 +189,7 @@ export default function FinancePage() {
             })}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <MasonryGrid>
             {categories?.map((category) => {
               const stats = categoryStats.get(category.id) ?? { count: 0, totalPrimary: 0 };
               const tone = category.type === 'income' ? 'text-emerald-300' : 'text-rose-300';
@@ -208,9 +208,9 @@ export default function FinancePage() {
                     </p>
                   </div>
                 </EntityCard>
-              );
-            })}
-          </div>
+                );
+              })}
+          </MasonryGrid>
           {!loadingCategories && !categoriesError && !categories?.length ? <EmptyState text="No categories" /> : null}
         </FinanceSection>
 

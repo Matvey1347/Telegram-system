@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { currenciesApi, transactionCategoriesApi, transactionsApi, type TransactionCategory, type TransactionType } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, MasonryGrid, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { CircleMinus, CirclePlus } from 'lucide-react';
 import { useAppToast } from '@/providers/toast-provider';
@@ -144,7 +144,7 @@ export default function CategoriesPage() {
     {isLoading || transactionsLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load categories</div> : null}
 
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <MasonryGrid>
       {data?.map((c) => {
         const stats = categoryStats.get(c.id) ?? { count: 0, totalPrimary: 0 };
         const tone = c.type === 'income' ? 'text-emerald-300' : 'text-rose-300';
@@ -166,7 +166,7 @@ export default function CategoriesPage() {
           </EntityCard>
         );
       })}
-    </div>
+    </MasonryGrid>
 
     {!isLoading && !transactionsLoading && !error && !data?.length ? <EmptyState text="No categories" /> : null}
 

@@ -1388,6 +1388,23 @@ const crud = <T>(path: string) => ({
   remove: async (id: string) => (await api.delete<T>(`${path}/${id}`)).data,
 });
 
+const quietMutationConfig = {
+  skipGlobalMutationFeedback: true,
+} as AxiosRequestConfig & {
+  skipGlobalMutationFeedback: boolean;
+};
+
+const quietCrud = <T>(path: string) => ({
+  list: async () => (await api.get<T[]>(path)).data,
+  get: async (id: string) => (await api.get<T>(`${path}/${id}`)).data,
+  create: async (payload: Record<string, unknown>) =>
+    (await api.post<T>(path, payload, quietMutationConfig)).data,
+  update: async (id: string, payload: Record<string, unknown>) =>
+    (await api.patch<T>(`${path}/${id}`, payload, quietMutationConfig)).data,
+  remove: async (id: string) =>
+    (await api.delete<T>(`${path}/${id}`, quietMutationConfig)).data,
+});
+
 export const workspaceMembersApi = {
   ...crud<WorkspaceMember>("/workspace-members"),
   investments: async (memberId: string) =>
@@ -1434,7 +1451,7 @@ export const promptNotesApi = {
   ) => (await api.patch<PromptNote>(`/prompt-notes/${id}`, payload)).data,
   remove: async (id: string) => (await api.delete(`/prompt-notes/${id}`)).data,
 };
-export const accountsApi = crud<Account>("/accounts");
+export const accountsApi = quietCrud<Account>("/accounts");
 export type TransactionQuery = {
   assignedMemberId?: string;
   dateFrom?: string;
@@ -1446,7 +1463,7 @@ export type TransactionQuery = {
   search?: string;
 };
 export const transactionsApi = {
-  ...crud<Transaction>("/transactions"),
+  ...quietCrud<Transaction>("/transactions"),
   list: async (params?: TransactionQuery) =>
     (await api.get<Transaction[]>("/transactions", { params })).data,
 };
@@ -1462,15 +1479,26 @@ export const transactionCategoriesApi = {
     type: TransactionType;
     iconId?: string | null;
   }) =>
-    (await api.post<TransactionCategory>("/finance/categories", payload)).data,
+    (
+      await api.post<TransactionCategory>(
+        "/finance/categories",
+        payload,
+        quietMutationConfig,
+      )
+    ).data,
   update: async (
     id: string,
     payload: { name?: string; iconId?: string | null },
   ) =>
-    (await api.patch<TransactionCategory>(`/finance/categories/${id}`, payload))
-      .data,
+    (
+      await api.patch<TransactionCategory>(
+        `/finance/categories/${id}`,
+        payload,
+        quietMutationConfig,
+      )
+    ).data,
   remove: async (id: string) =>
-    (await api.delete(`/finance/categories/${id}`)).data,
+    (await api.delete(`/finance/categories/${id}`, quietMutationConfig)).data,
 };
 export type TransferQuery = {
   assignedMemberId?: string;
@@ -1480,7 +1508,7 @@ export type TransferQuery = {
   sort?: "date_desc" | "date_asc";
 };
 export const transfersApi = {
-  ...crud<Transfer>("/transfers"),
+  ...quietCrud<Transfer>("/transfers"),
   list: async (params?: TransferQuery) =>
     (await api.get<Transfer[]>("/transfers", { params })).data,
 };
@@ -1500,9 +1528,11 @@ export const telegramChannelsApi = {
     ).data,
   import: async (input: string) =>
     (
-      await api.post<ImportedTelegramSource>("/telegram-channels/import", {
-        input,
-      })
+      await api.post<ImportedTelegramSource>(
+        "/telegram-channels/import",
+        { input },
+        quietMutationConfig,
+      )
     ).data,
   importWithProgress: async (
     input: string,

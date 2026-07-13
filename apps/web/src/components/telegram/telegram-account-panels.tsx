@@ -24,6 +24,7 @@ import {
   IconButton,
   Input,
   LoadingState,
+  MasonryGrid,
   Modal,
   TooltipBubble,
   ToastStack,
@@ -250,7 +251,7 @@ export function MtprotoAccountsPanel({
   return (
     <>
       {isLoading ? <LoadingState /> : null}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <MasonryGrid>
         {data.map((account) => {
           const username = String(account.username || "").replace("@", "");
           const fullName = [account.firstName, account.lastName]
@@ -335,7 +336,7 @@ export function MtprotoAccountsPanel({
             </EntityCard>
           );
         })}
-      </div>
+      </MasonryGrid>
       {!isLoading && !error && !data.length ? (
         <EmptyState text="No MTProto accounts" />
       ) : null}
@@ -445,7 +446,7 @@ export function BotAccountsPanel({
   return (
     <>
       {isLoading ? <LoadingState /> : null}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <MasonryGrid>
         {data.map((bot) => (
           <EntityCard key={bot.id} title="" actions={null}>
             <div className="mb-4 flex items-center gap-3 rounded-lg border border-neutral-700 bg-slate-900/70 p-3">
@@ -488,7 +489,7 @@ export function BotAccountsPanel({
             />
           </EntityCard>
         ))}
-      </div>
+      </MasonryGrid>
       {!isLoading && !error && !data.length ? <EmptyState text="No bots" /> : null}
       <CreateBotModal
         open={createOpen}
