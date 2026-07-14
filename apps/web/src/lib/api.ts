@@ -596,6 +596,32 @@ export type TelegramManagedPost = {
   createdAt: string;
   updatedAt: string;
 };
+export type TelegramManagedPostRevision = {
+  id: string;
+  telegramManagedPostId: string;
+  workspaceId: string;
+  telegramChannelId: string;
+  title: string;
+  text?: string | null;
+  imageUrls: string[];
+  status: TelegramManagedPostStatus;
+  scheduledAt?: string | null;
+  publishedAt?: string | null;
+  telegramMessageIds: string[];
+  telegramMessageUrls: string[];
+  telegramRemoteStatus: TelegramManagedPostRemoteStatus;
+  lastTelegramSyncedAt?: string | null;
+  lastTelegramSyncNote?: string | null;
+  publishMode?: string | null;
+  lastError?: string | null;
+  assignedMemberId: string;
+  icon?: string | null;
+  groupId?: string | null;
+  groupPosition?: number | null;
+  sidebarPosition?: number | null;
+  reason: string;
+  createdAt: string;
+};
 export type TelegramManagedPostLinkTarget = {
   id: string;
   title: string;
@@ -1629,6 +1655,22 @@ export const telegramChannelsApi = {
       await api.patch<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts/${postId}/telegram-url`,
         { telegramUrl },
+      )
+    ).data,
+  managedPostHistory: async (channelId: string, postId: string) =>
+    (
+      await api.get<TelegramManagedPostRevision[]>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/history`,
+      )
+    ).data,
+  restoreManagedPostHistory: async (
+    channelId: string,
+    postId: string,
+    revisionId: string,
+  ) =>
+    (
+      await api.post<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/history/${revisionId}/restore`,
       )
     ).data,
   managedPostLinkTargets: async (

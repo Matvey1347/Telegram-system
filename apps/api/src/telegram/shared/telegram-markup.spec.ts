@@ -2,6 +2,7 @@ import { Api } from 'telegram';
 import { HTMLParser } from 'telegram/extensions/html';
 import { parseTelegramSpoilers } from './telegram-spoilers';
 import {
+  telegramHtmlToManagedMarkup,
   telegramHtmlToMtprotoHtml,
   telegramMarkupToHtml,
 } from './telegram-markup';
@@ -38,6 +39,12 @@ describe('telegramMarkupToHtml', () => {
   it('keeps the default copy label when fenced code block has no header', () => {
     expect(telegramMarkupToHtml('```\ncode block\n```')).toBe(
       '<pre><code>code block\n</code></pre>',
+    );
+  });
+
+  it('converts fenced code blocks with Windows line endings', () => {
+    expect(telegramMarkupToHtml('```сделка\r\nубрать слабый актив\r\n```')).toBe(
+      '<pre><code class="language-сделка">убрать слабый актив\n</code></pre>',
     );
   });
 
@@ -99,6 +106,18 @@ describe('telegramMarkupToHtml', () => {
     expect(text).toBe('hidden text');
     expect(entities).toHaveLength(1);
     expect(entities[0]).toBeInstanceOf(Api.MessageEntitySpoiler);
+  });
+});
+
+describe('telegramHtmlToManagedMarkup', () => {
+  it('restores fenced code blocks with a language label', () => {
+    expect(
+      telegramHtmlToManagedMarkup(
+        '<pre><code class="language-сделка">убрать слабый актив\n→ не держать минус внутри группы</code></pre>',
+      ),
+    ).toBe(
+      '```сделка\nубрать слабый актив\n→ не держать минус внутри группы```',
+    );
   });
 });
 

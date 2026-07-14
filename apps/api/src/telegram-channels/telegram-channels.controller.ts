@@ -273,6 +273,28 @@ export class TelegramChannelsController {
       dto.telegramUrl,
     );
   }
+  @Get(':id/managed-posts/:postId/history')
+  managedPostHistory(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.service.managedPostHistory(user.sub, id, postId);
+  }
+  @Post(':id/managed-posts/:postId/history/:revisionId/restore')
+  restoreManagedPostHistory(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+    @Param('revisionId') revisionId: string,
+  ) {
+    return this.service.restoreManagedPostRevision(
+      user.sub,
+      id,
+      postId,
+      revisionId,
+    );
+  }
   @Post(':id/managed-posts/reorder-sidebar')
   reorderManagedPostSidebar(
     @CurrentUser() user: JwtUser,

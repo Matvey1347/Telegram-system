@@ -53,6 +53,7 @@ import {
   type PromptNote,
   type TelegramChannel,
   type TelegramManagedPost,
+  type TelegramManagedPostRevision,
   type TelegramChannelTimePost,
 } from "@/lib/api";
 import {
@@ -120,6 +121,33 @@ function localDateTimeParts(value: string | Date) {
     date: `${year}-${month}-${day}`,
     time: `${hours}:${minutes}`,
   };
+}
+
+function formatManagedPostRevisionReason(reason: string) {
+  switch (reason) {
+    case "before_update":
+      return "Before edit";
+    case "before_publish":
+      return "Before publish";
+    case "before_schedule":
+      return "Before schedule";
+    case "before_manual_link":
+      return "Before manual link";
+    case "before_sync_missing":
+      return "Before sync: missing in Telegram";
+    case "before_sync_broken":
+      return "Before sync: broken Telegram post";
+    case "before_sync_publish_transition":
+      return "Before sync: published early";
+    case "before_sync_update":
+      return "Before sync update";
+    case "before_restore":
+      return "Before restore";
+    case "before_delete":
+      return "Before delete";
+    default:
+      return reason.replaceAll("_", " ");
+  }
 }
 
 function scheduleDateForPreset(time: string) {
@@ -436,6 +464,12 @@ function TelegramPostWorkspace({
     queryKey: ["telegram-managed-posts", channelId],
     queryFn: () => telegramChannelsApi.managedPosts(channelId),
   });
+  const postHistory = useQuery({
+    queryKey: ["telegram-managed-post-history", channelId, editing?.id],
+    queryFn: () =>
+      telegramChannelsApi.managedPostHistory(channelId, editing?.id as string),
+    enabled: Boolean(editing?.id),
+  });
   const postGroups = useQuery({
     queryKey: ["post-groups", channelId],
     queryFn: () =>
@@ -510,6 +544,8 @@ function TelegramPostWorkspace({
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
   const isPublished = editing?.status === "PUBLISHED";
+  const hasLockedTelegramMedia =
+    editing?.status === "PUBLISHED" || editing?.status === "SCHEDULED";
   const telegramPostUrl = (() => {
     if (!editing || !["PUBLISHED", "SCHEDULED"].includes(editing.status)) {
       return null;
@@ -1032,6 +1068,39 @@ function TelegramPostWorkspace({
     setManualTelegramUrl(post.telegramMessageUrls[0] || "");
   };
 
+  const restorePostRevision = useMutation({
+    mutationFn: async (revision: TelegramManagedPostRevision) => {
+      if (!editing) throw new Error("No post selected");
+      return telegramChannelsApi.restoreManagedPostHistory(
+        channelId,
+        editing.id,
+        revision.id,
+      );
+    },
+    onSuccess: async (post) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-history", channelId, post.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channelId],
+        }),
+      ]);
+      selectPost(post);
+      pushToast(`"${post.title}" restored from backup and moved to draft.`, "success");
+    },
+    onError: (mutationError) => {
+      pushToast(
+        apiErrorMessage(mutationError, "Could not restore post backup"),
+        "error",
+        7000,
+      );
+    },
+  });
+
   const saveManualTelegramUrl = async () => {
     if (!editing || !manualTelegramUrl.trim()) return;
     setSavingTelegramUrl(true);
@@ -1313,7 +1382,9 @@ function TelegramPostWorkspace({
           ? await iconsApi.get(payload.icon).catch(() => null)
           : null;
         pushToast(
-          saveMode === "publish"
+          editingPost?.status === "PUBLISHED"
+            ? `"${saveTitle}" updated in Telegram.`
+            : saveMode === "publish"
             ? `"${saveTitle}" published.`
             : saveMode === "schedule"
               ? `"${saveTitle}" scheduled.`
@@ -1517,7 +1588,7 @@ function TelegramPostWorkspace({
                   <div className="mt-0.5 space-y-0.5 text-xs">
                     <p className="flex items-center gap-1.5 text-emerald-300">
                       <CheckCircle2 size={13} />
-                      Published posts are read-only
+                      Telegram text can still be updated after publishing
                     </p>
                     <p className="text-neutral-400">
                       {publishModeLabel(
@@ -1556,7 +1627,7 @@ function TelegramPostWorkspace({
               <FormField label="Internal title" required>
                 <Input
                   value={title}
-                  disabled={busy || isPublished}
+                  disabled={busy}
                   onChange={(event) => setTitle(event.target.value)}
                 />
               </FormField>
@@ -1568,7 +1639,7 @@ function TelegramPostWorkspace({
                     setAssignedMemberId(value || null);
                   }}
                   defaultToCurrent={!editing}
-                  disabled={busy || isPublished}
+                  disabled={busy}
                 />
               </FormField>
             </div>
@@ -1576,7 +1647,7 @@ function TelegramPostWorkspace({
               <TelegramTextEditor
                 value={text}
                 onChange={setText}
-                disabled={busy || isPublished}
+                disabled={busy}
                 rows={7}
                 channelId={channelId}
                 currentPostId={editing?.id}
@@ -1635,13 +1706,21 @@ function TelegramPostWorkspace({
               </div>
             ) : null}
             {!isPublished || imageUrls.length ? (
-              <TelegramImageUpload
-                value={imageUrls}
-                onChange={setImageUrls}
-                disabled={busy || isPublished}
-                readOnly={isPublished}
-                onUploadingChange={setUploadingImages}
-              />
+              <div className="space-y-2">
+                <TelegramImageUpload
+                  value={imageUrls}
+                  onChange={setImageUrls}
+                  disabled={busy || hasLockedTelegramMedia}
+                  readOnly={hasLockedTelegramMedia}
+                  onUploadingChange={setUploadingImages}
+                />
+                {hasLockedTelegramMedia ? (
+                  <p className="text-xs text-amber-300">
+                    Images cannot be changed after a post is sent or scheduled.
+                    You can still update the Telegram text.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {publishedLongImageTextMode ? (
               <LongImageTextModePanel
@@ -1784,6 +1863,55 @@ function TelegramPostWorkspace({
                 ) : null}
               </div>
             ) : null}
+            {editing ? (
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">History</p>
+                    <p className="text-xs text-neutral-400">
+                      Automatic backups are kept for 7 days before risky changes.
+                    </p>
+                  </div>
+                  {postHistory.isFetching ? (
+                    <LoaderCircle size={14} className="animate-spin text-neutral-500" />
+                  ) : null}
+                </div>
+                <div className="mt-3 space-y-2">
+                  {(postHistory.data || []).length ? (
+                    (postHistory.data || []).slice(0, 6).map((revision) => (
+                      <div
+                        key={revision.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-neutral-800 bg-neutral-900/80 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm text-white">
+                            {formatManagedPostRevisionReason(revision.reason)}
+                          </p>
+                          <p className="text-xs text-neutral-400">
+                            {new Date(revision.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={restorePostRevision.isPending}
+                          onClick={() => restorePostRevision.mutate(revision)}
+                        >
+                          {restorePostRevision.isPending ? "Restoring…" : "Restore"}
+                        </Button>
+                      </div>
+                    ))
+                  ) : postHistory.isLoading ? (
+                    <p className="text-xs text-neutral-500">Loading history…</p>
+                  ) : (
+                    <p className="text-xs text-neutral-500">
+                      No backups yet. A backup is created before publish, schedule,
+                      sync changes, restore, delete, and manual edits.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : null}
             {pendingPostSaves.length + savingPostIds.length > 0 ? (
               <div className="flex items-center gap-2 rounded-lg border border-blue-800/70 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
                 <LoaderCircle size={14} className="animate-spin" />
@@ -1794,30 +1922,28 @@ function TelegramPostWorkspace({
                 saving in background. You can continue working.
               </div>
             ) : null}
-            {!isPublished ? (
-              <div className="flex justify-end">
-                <Button
-                  onClick={run}
-                  disabled={!!publishDisabledReason || dependencyPublishBlocked}
-                >
-                  {mode === "draft"
+            <div className="flex justify-end">
+              <Button
+                onClick={run}
+                disabled={!!publishDisabledReason || dependencyPublishBlocked}
+              >
+                {isPublished
+                  ? "Update Telegram text"
+                  : mode === "draft"
                     ? "Save draft"
                     : mode === "publish"
                       ? "Publish now"
                       : editing?.status === "SCHEDULED"
                         ? "Update scheduled post"
                         : "Schedule post"}
-                </Button>
-              </div>
-            ) : null}
-            {!isPublished && publishDisabledReason ? (
+              </Button>
+            </div>
+            {publishDisabledReason ? (
               <p className="text-right text-xs text-neutral-500">
                 {publishDisabledReason}
               </p>
             ) : null}
-            {!isPublished &&
-            dependencyPublishBlocked &&
-            !publishDisabledReason ? (
+            {dependencyPublishBlocked && !publishDisabledReason ? (
               <p className="text-right text-xs text-amber-400">
                 Publish the linked posts and sync them with Telegram first.
               </p>

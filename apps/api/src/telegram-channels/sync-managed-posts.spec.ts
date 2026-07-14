@@ -6,8 +6,17 @@ import {
 import { TelegramChannelsService } from './telegram-channels.service';
 
 describe('TelegramChannelsService syncManagedPosts', () => {
-  const setup = (post: Record<string, unknown>) => {
+  const setup = (
+    post: Record<string, unknown>,
+    remote?: {
+      published?: Array<Record<string, unknown>>;
+      scheduled?: Array<Record<string, unknown>>;
+      recentPublished?: Array<Record<string, unknown>>;
+    },
+  ) => {
     const update = jest.fn().mockResolvedValue({});
+    const createRevision = jest.fn().mockResolvedValue({});
+    const deleteOldRevisions = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {
       telegramManagedPost: {
         findMany: jest
@@ -16,12 +25,20 @@ describe('TelegramChannelsService syncManagedPosts', () => {
           .mockResolvedValueOnce([]),
         update,
       },
+      telegramManagedPostRevision: {
+        create: createRevision,
+        deleteMany: deleteOldRevisions,
+      },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
+      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
     };
     const mtprotoClient = {
       getManagedPostMessages: jest.fn().mockResolvedValue({
-        published: [],
-        scheduled: [],
-        recentPublished: [],
+        published: remote?.published ?? [],
+        scheduled: remote?.scheduled ?? [],
+        recentPublished: remote?.recentPublished ?? [],
       }),
     };
     const service = new TelegramChannelsService(
@@ -44,12 +61,13 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       apiHash: 'hash',
       session: 'session',
     });
-    return { service, update };
+    return { service, update, createRevision };
   };
 
   it('moves a missing scheduled post back to draft', async () => {
-    const { service, update } = setup({
+    const { service, update, createRevision } = setup({
       id: 'scheduled',
+      title: 'Scheduled',
       status: TelegramManagedPostStatus.SCHEDULED,
       text: 'Scheduled',
       imageUrls: [],
@@ -69,11 +87,20 @@ describe('TelegramChannelsService syncManagedPosts', () => {
         }),
       }),
     );
+    expect(createRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          telegramManagedPostId: 'scheduled',
+          reason: 'before_sync_missing',
+        }),
+      }),
+    );
   });
 
   it('keeps a missing published post published but marks its link broken', async () => {
     const { service, update } = setup({
       id: 'published',
+      title: 'Published',
       status: TelegramManagedPostStatus.PUBLISHED,
       text: 'Published',
       imageUrls: [],
@@ -88,6 +115,50 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           telegramRemoteStatus: TelegramManagedPostRemoteStatus.BROKEN,
+        }),
+      }),
+    );
+  });
+
+  it('does not overwrite local text or images during sync', async () => {
+    const { service, update } = setup(
+      {
+        id: 'published',
+        title: 'Dealz',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        text: 'Local managed text',
+        imageUrls: ['https://example.com/local-image.png'],
+        publishMode: 'IMAGE_WITH_CAPTION',
+        scheduledAt: null,
+        publishedAt: new Date('2026-07-13T10:00:00Z'),
+        telegramMessageIds: ['42'],
+        telegramMessageUrls: ['https://t.me/example/42'],
+      },
+      {
+        published: [
+          {
+            id: '42',
+            html: '<b>Remote replacement text</b>',
+            date: '2026-07-13T10:00:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+    );
+
+    await service.syncManagedPosts('user', 'channel');
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({
+          text: expect.anything(),
+        }),
+      }),
+    );
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({
+          imageUrls: expect.anything(),
         }),
       }),
     );

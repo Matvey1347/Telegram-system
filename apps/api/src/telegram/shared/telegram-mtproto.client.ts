@@ -237,6 +237,24 @@ export class TelegramMtprotoClient {
     })._getResponseMessage(request, result, peer);
   }
 
+  private async editMessageWithEntities(
+    client: TelegramClient,
+    peerRef: unknown,
+    messageId: string | number,
+    html: string,
+  ) {
+    const { text, entities } = this.parseMtprotoHtml(html);
+    await client.invoke(
+      new Api.messages.EditMessage({
+        peer: await client.getInputEntity(peerRef as never),
+        id: Number(messageId),
+        message: text,
+        entities,
+        noWebpage: true,
+      }),
+    );
+  }
+
   private toJsonSafe(value: unknown): unknown {
     if (
       value == null ||
@@ -1386,6 +1404,54 @@ export class TelegramMtprotoClient {
     }
   }
 
+  async editPostText(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef: string;
+    messageIds: string[];
+    imageCount: number;
+    publishMode: string | null | undefined;
+    captionHtml?: string;
+    followupHtmlParts?: string[];
+    textHtmlParts?: string[];
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const mediaMessageIds = params.messageIds.slice(0, params.imageCount);
+      const followupMessageIds = params.messageIds.slice(params.imageCount);
+
+      if (params.imageCount > 0) {
+        await this.editMessageWithEntities(
+          client,
+          params.channelRef,
+          mediaMessageIds[0],
+          params.captionHtml ?? '',
+        );
+        for (let index = 0; index < followupMessageIds.length; index += 1) {
+          await this.editMessageWithEntities(
+            client,
+            params.channelRef,
+            followupMessageIds[index],
+            params.followupHtmlParts?.[index] ?? '',
+          );
+        }
+        return;
+      }
+
+      for (let index = 0; index < params.messageIds.length; index += 1) {
+        await this.editMessageWithEntities(
+          client,
+          params.channelRef,
+          params.messageIds[index],
+          params.textHtmlParts?.[index] ?? '',
+        );
+      }
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
   private async downloadPublishImage(url: string, index: number) {
     let parsedUrl: URL;
     try {
@@ -1489,9 +1555,7 @@ export class TelegramMtprotoClient {
       const published = publishedIds.length
         ? await client.getMessages(entity, { ids: publishedIds })
         : [];
-      const recentPublished = scheduledIds.length
-        ? await client.getMessages(entity, { limit: 100 })
-        : [];
+      const recentPublished = await client.getMessages(entity, { limit: 200 });
       const scheduledResult = scheduledIds.length
         ? await client.invoke(
             new Api.messages.GetScheduledMessages({

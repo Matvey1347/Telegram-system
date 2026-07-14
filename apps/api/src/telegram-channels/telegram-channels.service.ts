@@ -53,6 +53,7 @@ import {
 } from './dto';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
 import {
+  telegramHtmlToManagedMarkup,
   telegramHtmlToMtprotoHtml,
   telegramMarkupToHtml,
 } from '../telegram/shared/telegram-markup';
@@ -99,12 +100,69 @@ type BotMessageEntity = {
   custom_emoji_id?: string;
 };
 
+type ManagedPostPublishRender = {
+  html: string;
+  captionHtml: string;
+  followupHtmlParts: string[];
+  textHtmlParts: string[];
+  publishMode: string;
+};
+
+type ManagedPostSyncMessage = {
+  id: string;
+  text: string;
+  html: string;
+  date: string | null;
+  isScheduled: boolean;
+  hasMedia: boolean;
+  mediaKind: string | null;
+  groupedId: string | null;
+};
+
+type ManagedPostRevisionSource = {
+  id: string;
+  workspaceId: string;
+  telegramChannelId: string;
+  title: string;
+  text: string | null;
+  imageUrls: string[];
+  status: TelegramManagedPostStatus;
+  scheduledAt: Date | null;
+  publishedAt: Date | null;
+  telegramMessageIds: string[];
+  telegramMessageUrls: string[];
+  telegramRemoteStatus: TelegramManagedPostRemoteStatus;
+  lastTelegramSyncedAt: Date | null;
+  lastTelegramSyncNote: string | null;
+  sourceType: TelegramSourceType | null;
+  sourceId: string | null;
+  publishMode: string | null;
+  lastError: string | null;
+  assignedMemberId: string;
+  icon: string | null;
+  groupId: string | null;
+  groupPosition: number | null;
+  sidebarPosition: number | null;
+};
+
+type ManagedPostRevisionRecord = ManagedPostRevisionSource & {
+  id: string;
+  reason: string;
+  createdAt: Date;
+};
+
 @Injectable()
 export class TelegramChannelsService {
   private readonly logger = new Logger(TelegramChannelsService.name);
   private readonly defaultPostSyncLimit = 100;
   private readonly initialPostBackfillLimit = 10_000;
   private readonly olderPostBackfillMaxPages = 5;
+  private readonly managedPostRevisionRetentionMs =
+    7 * 24 * 60 * 60 * 1000;
+  private managedPostRevisionStorageState:
+    | 'unknown'
+    | 'available'
+    | 'missing' = 'unknown';
   private readonly managedPostInclude = {
     assignedMember: WorkspaceService.assignedMemberInclude,
     group: {
@@ -292,29 +350,130 @@ export class TelegramChannelsService {
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   }
 
-  private telegramHtmlToManagedMarkup(html: string) {
-    return html
-      .replace(/<pre><code(?: class="language-([^"]+)")?>([\s\S]*?)<\/code><\/pre>/gi, (_match, language: string, code: string) => `\`\`\`${language || ''}\n${code}\`\`\``)
-      .replace(/<code>([\s\S]*?)<\/code>/gi, '`$1`')
-      .replace(/<(?:strong|b)>([\s\S]*?)<\/(?:strong|b)>/gi, '**$1**')
-      .replace(/<(?:em|i)>([\s\S]*?)<\/(?:em|i)>/gi, '__$1__')
-      .replace(/<u>([\s\S]*?)<\/u>/gi, '++$1++')
-      .replace(/<(?:s|del|strike)>([\s\S]*?)<\/(?:s|del|strike)>/gi, '~~$1~~')
-      .replace(/<tg-spoiler>([\s\S]*?)<\/tg-spoiler>/gi, '||$1||')
-      .replace(
-        /<a href="([^"]+)">([\s\S]*?)<\/a>/gi,
-        (_match, href: string, label: string) => `[${label}](${href})`,
-      )
-      .replace(/<blockquote(?: expandable)?>([\s\S]*?)<\/blockquote>/gi, (_match, content: string) =>
-        content
-          .split('\n')
-          .map((line: string) => `> ${line}`)
-          .join('\n'),
-      )
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, '&');
+  private primaryTelegramMessageId(params: {
+    messageIds: string[];
+    imageCount?: number | null;
+  }) {
+    const { messageIds, imageCount } = params;
+    if (!messageIds.length) return null;
+    if ((imageCount ?? 0) > 1) {
+      return messageIds[Math.min((imageCount ?? 1) - 1, messageIds.length - 1)];
+    }
+    return messageIds[0];
+  }
+
+  private telegramMessageUrlsForPost(
+    channel: { username: string | null; telegramChatId: string | null },
+    messageIds: string[],
+    imageCount = 0,
+  ) {
+    const urls = messageIds.flatMap((id) => {
+      const url = this.telegramMessageUrl(channel, id);
+      return url ? [url] : [];
+    });
+    const primaryId = this.primaryTelegramMessageId({ messageIds, imageCount });
+    const primaryUrl = primaryId ? this.telegramMessageUrl(channel, primaryId) : null;
+    if (!primaryUrl) return urls;
+    return [primaryUrl, ...urls.filter((url) => url !== primaryUrl)];
+  }
+
+  private normalizedPlainText(value: string) {
+    const withoutInternalTargets = (value || '').replace(
+      /\[([^\]\n]+)\]\(tg-post:[a-zA-Z0-9_-]+\)/g,
+      '$1',
+    );
+    const [plain] = HTMLParser.parse(
+      telegramMarkupToHtml(withoutInternalTargets),
+    );
+    return plain.replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  private normalizeSearchText(value: string) {
+    return value
+      .toLowerCase()
+      .replace(/^\s*\d+(?:[.)]\d+)*(?:[.)])?\s*/g, '')
+      .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private titleSearchClue(title: string) {
+    const normalized = this.normalizeSearchText(title);
+    if (!normalized || normalized === 'pinned') return null;
+    const words = normalized.split(' ').filter(Boolean);
+    if (words.length < 2 && normalized.length < 8) return null;
+    return normalized;
+  }
+
+  private textMatchesTitle(title: string, text: string) {
+    const clue = this.titleSearchClue(title);
+    if (!clue) return true;
+    const plain = this.normalizeSearchText(text);
+    return plain.includes(clue) || clue.includes(plain.slice(0, clue.length));
+  }
+
+  private findMatchingRecentPublishedMessage(
+    post: {
+      title: string;
+      text: string | null;
+      publishMode: string | null;
+    },
+    recentPublished: ManagedPostSyncMessage[],
+  ) {
+    const titleClue = this.titleSearchClue(post.title);
+    const localText = post.text?.trim() || '';
+    const normalizedLocal = localText
+      ? this.normalizedPlainText(localText)
+      : '';
+    const textLooksConsistent = localText
+      ? this.textMatchesTitle(post.title, localText)
+      : false;
+
+    const byExactText =
+      normalizedLocal &&
+      recentPublished.find(
+        (message) =>
+          this.normalizedPlainText(
+            telegramHtmlToManagedMarkup(message.html),
+          ) === normalizedLocal,
+      );
+    const byTitle =
+      titleClue &&
+      recentPublished.find((message) =>
+        this.normalizeSearchText(
+          telegramHtmlToManagedMarkup(message.html),
+        ).includes(titleClue),
+      );
+    if (!textLooksConsistent && titleClue && !byTitle) {
+      return null;
+    }
+    const matched =
+      !textLooksConsistent && byTitle
+        ? byTitle
+        : byExactText ?? byTitle ?? null;
+    if (!matched) return null;
+
+    const messageIds =
+      post.publishMode === 'IMAGES_THEN_TEXT'
+        ? [
+            ...(() => {
+              const previousMedia = recentPublished.find(
+                (candidate) =>
+                  candidate.hasMedia &&
+                  candidate.date === matched.date &&
+                  Number(candidate.id) < Number(matched.id),
+              );
+              return previousMedia ? [previousMedia.id] : [];
+            })(),
+            matched.id,
+          ]
+        : [matched.id];
+
+    return {
+      messageIds: [...new Set(messageIds)],
+      matchedMessage: matched,
+      remoteText: telegramHtmlToManagedMarkup(matched.html),
+    };
   }
 
   private maskInviteHash(value?: string | null) {
@@ -475,6 +634,558 @@ export class TelegramChannelsService {
         iv: account.sessionIv || '',
         authTag: account.sessionAuthTag || '',
       }),
+    };
+  }
+
+  private renderManagedPostText(
+    text: string,
+    imageUrls: string[],
+    longTextMode: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT' = 'IMAGES_THEN_TEXT',
+  ): ManagedPostPublishRender {
+    const html = telegramMarkupToHtml(text);
+    const [plainText] = HTMLParser.parse(html);
+    let captionHtml = html;
+    let followupHtmlParts: string[] = [];
+    let textHtmlParts = [html];
+    let publishMode = imageUrls.length ? 'IMAGE_WITH_CAPTION' : 'TEXT_ONLY';
+
+    if (imageUrls.length && plainText.length > TELEGRAM_CAPTION_LIMIT) {
+      publishMode = longTextMode;
+      if (longTextMode === 'CAPTION_THEN_TEXT') {
+        const [caption, remainder] = this.splitTelegramMarkupOnce(
+          text,
+          TELEGRAM_CAPTION_LIMIT,
+        );
+        captionHtml = telegramMarkupToHtml(caption);
+        followupHtmlParts = this.splitTelegramMarkup(
+          remainder,
+          TELEGRAM_TEXT_MESSAGE_LIMIT,
+        ).map((part) => telegramMarkupToHtml(part));
+      } else {
+        captionHtml = '';
+        followupHtmlParts = this.splitTelegramMarkup(
+          text,
+          TELEGRAM_TEXT_MESSAGE_LIMIT,
+        ).map((part) => telegramMarkupToHtml(part));
+      }
+    } else if (
+      !imageUrls.length &&
+      plainText.length > TELEGRAM_TEXT_MESSAGE_LIMIT
+    ) {
+      publishMode = 'TEXT_PARTS';
+      textHtmlParts = this.splitTelegramMarkup(
+        text,
+        TELEGRAM_TEXT_MESSAGE_LIMIT,
+      ).map((part) => telegramMarkupToHtml(part));
+    }
+
+    return {
+      html,
+      captionHtml,
+      followupHtmlParts,
+      textHtmlParts,
+      publishMode,
+    };
+  }
+
+  private sameImageUrls(left: string[], right: string[]) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  }
+
+  private managedPostRevisionData(
+    post: ManagedPostRevisionSource,
+    reason: string,
+  ) {
+    return {
+      telegramManagedPostId: post.id,
+      workspaceId: post.workspaceId,
+      telegramChannelId: post.telegramChannelId,
+      title: post.title,
+      text: post.text,
+      imageUrls: [...post.imageUrls],
+      status: post.status,
+      scheduledAt: post.scheduledAt,
+      publishedAt: post.publishedAt,
+      telegramMessageIds: [...post.telegramMessageIds],
+      telegramMessageUrls: [...post.telegramMessageUrls],
+      telegramRemoteStatus: post.telegramRemoteStatus,
+      lastTelegramSyncedAt: post.lastTelegramSyncedAt,
+      lastTelegramSyncNote: post.lastTelegramSyncNote,
+      sourceType: post.sourceType,
+      sourceId: post.sourceId,
+      publishMode: post.publishMode,
+      lastError: post.lastError,
+      assignedMemberId: post.assignedMemberId,
+      icon: post.icon,
+      groupId: post.groupId,
+      groupPosition: post.groupPosition,
+      sidebarPosition: post.sidebarPosition,
+      reason,
+    };
+  }
+
+  private managedPostRevisionDelegate(
+    client: Prisma.TransactionClient | PrismaService,
+  ) {
+    return (client as PrismaService & {
+      telegramManagedPostRevision: {
+        create: (args: { data: ReturnType<typeof this.managedPostRevisionData> }) => Promise<unknown>;
+        deleteMany: (args: { where: Record<string, unknown> }) => Promise<unknown>;
+        findMany: (args: Record<string, unknown>) => Promise<unknown>;
+        findFirst: (args: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).telegramManagedPostRevision;
+  }
+
+  private managedPostRevisionQueryClient(
+    client: Prisma.TransactionClient | PrismaService,
+  ) {
+    return client as Prisma.TransactionClient & {
+      $queryRaw<T = unknown>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<T>;
+      $executeRaw(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<number>;
+    };
+  }
+
+  private isManagedPostRevisionTableMissing(error: unknown) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+    if (error.code === 'P2021') return true;
+    if (error.code !== 'P2010') return false;
+    const originalCode =
+      (
+        error.meta as
+          | {
+              driverAdapterError?: {
+                cause?: { originalCode?: string };
+              };
+            }
+          | undefined
+      )?.driverAdapterError?.cause?.originalCode ?? null;
+    return originalCode === '42P01';
+  }
+
+  private async hasManagedPostRevisionStorage() {
+    if (this.managedPostRevisionStorageState === 'available') return true;
+    if (this.managedPostRevisionStorageState === 'missing') return false;
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ exists: string | null }>>(
+        Prisma.sql`
+          SELECT to_regclass('"TelegramManagedPostRevision"')::text AS "exists"
+        `,
+      );
+      const exists = Boolean(rows[0]?.exists);
+      this.managedPostRevisionStorageState = exists ? 'available' : 'missing';
+      return exists;
+    } catch (error) {
+      if (this.isManagedPostRevisionTableMissing(error)) {
+        this.managedPostRevisionStorageState = 'missing';
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  private async insertManagedPostRevisionRaw(
+    client: Prisma.TransactionClient | PrismaService,
+    data: ReturnType<typeof this.managedPostRevisionData>,
+  ) {
+    const db = this.managedPostRevisionQueryClient(client);
+    const revisionId = randomUUID();
+    try {
+      await db.$executeRaw(Prisma.sql`
+        INSERT INTO "TelegramManagedPostRevision" (
+          "id",
+          "telegramManagedPostId",
+          "workspaceId",
+          "telegramChannelId",
+          "title",
+          "text",
+          "imageUrls",
+          "status",
+          "scheduledAt",
+          "publishedAt",
+          "telegramMessageIds",
+          "telegramMessageUrls",
+          "telegramRemoteStatus",
+          "lastTelegramSyncedAt",
+          "lastTelegramSyncNote",
+          "sourceType",
+          "sourceId",
+          "publishMode",
+          "lastError",
+          "assignedMemberId",
+          "icon",
+          "groupId",
+          "groupPosition",
+          "sidebarPosition",
+          "reason"
+        ) VALUES (
+          ${revisionId},
+          ${data.telegramManagedPostId},
+          ${data.workspaceId},
+          ${data.telegramChannelId},
+          ${data.title},
+          ${data.text},
+          ${data.imageUrls},
+          CAST(${data.status} AS "TelegramManagedPostStatus"),
+          ${data.scheduledAt},
+          ${data.publishedAt},
+          ${data.telegramMessageIds},
+          ${data.telegramMessageUrls},
+          CAST(${data.telegramRemoteStatus} AS "TelegramManagedPostRemoteStatus"),
+          ${data.lastTelegramSyncedAt},
+          ${data.lastTelegramSyncNote},
+          ${data.sourceType ? Prisma.sql`CAST(${data.sourceType} AS "TelegramSourceType")` : Prisma.sql`NULL`},
+          ${data.sourceId},
+          ${data.publishMode},
+          ${data.lastError},
+          ${data.assignedMemberId},
+          ${data.icon},
+          ${data.groupId},
+          ${data.groupPosition},
+          ${data.sidebarPosition},
+          ${data.reason}
+        )
+      `);
+    } catch (error) {
+      if (this.isManagedPostRevisionTableMissing(error)) {
+        this.managedPostRevisionStorageState = 'missing';
+        return false;
+      }
+      throw error;
+    }
+    this.managedPostRevisionStorageState = 'available';
+    return true;
+  }
+
+  private async listManagedPostRevisions(
+    client: Prisma.TransactionClient | PrismaService,
+    where: { telegramManagedPostId: string; workspaceId: string },
+  ) {
+    const delegate = this.managedPostRevisionDelegate(client);
+    if (delegate) {
+      try {
+        return (await delegate.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: 30,
+        })) as ManagedPostRevisionRecord[];
+      } catch (error) {
+        if (this.isManagedPostRevisionTableMissing(error)) {
+          this.managedPostRevisionStorageState = 'missing';
+          return [];
+        }
+        throw error;
+      }
+    }
+    const db = this.managedPostRevisionQueryClient(client);
+    try {
+      return await db.$queryRaw<ManagedPostRevisionRecord[]>(Prisma.sql`
+        SELECT *
+        FROM "TelegramManagedPostRevision"
+        WHERE "telegramManagedPostId" = ${where.telegramManagedPostId}
+          AND "workspaceId" = ${where.workspaceId}
+        ORDER BY "createdAt" DESC
+        LIMIT 30
+      `);
+    } catch (error) {
+      if (this.isManagedPostRevisionTableMissing(error)) {
+        this.managedPostRevisionStorageState = 'missing';
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async findManagedPostRevision(
+    client: Prisma.TransactionClient | PrismaService,
+    where: {
+      id: string;
+      telegramManagedPostId: string;
+      workspaceId: string;
+      telegramChannelId: string;
+    },
+  ) {
+    const delegate = this.managedPostRevisionDelegate(client);
+    if (delegate) {
+      try {
+        return (await delegate.findFirst({
+          where,
+        })) as ManagedPostRevisionRecord | null;
+      } catch (error) {
+        if (this.isManagedPostRevisionTableMissing(error)) {
+          this.managedPostRevisionStorageState = 'missing';
+          return null;
+        }
+        throw error;
+      }
+    }
+    const db = this.managedPostRevisionQueryClient(client);
+    let rows: ManagedPostRevisionRecord[];
+    try {
+      rows = await db.$queryRaw<ManagedPostRevisionRecord[]>(Prisma.sql`
+        SELECT *
+        FROM "TelegramManagedPostRevision"
+        WHERE "id" = ${where.id}
+          AND "telegramManagedPostId" = ${where.telegramManagedPostId}
+          AND "workspaceId" = ${where.workspaceId}
+          AND "telegramChannelId" = ${where.telegramChannelId}
+        LIMIT 1
+      `);
+    } catch (error) {
+      if (this.isManagedPostRevisionTableMissing(error)) {
+        this.managedPostRevisionStorageState = 'missing';
+        return null;
+      }
+      throw error;
+    }
+    return rows[0] ?? null;
+  }
+
+  private async deleteExpiredManagedPostRevisions(
+    client: Prisma.TransactionClient | PrismaService,
+    postId: string,
+  ) {
+    const cutoff = new Date(Date.now() - this.managedPostRevisionRetentionMs);
+    const delegate = this.managedPostRevisionDelegate(client);
+    if (delegate) {
+      try {
+        await delegate.deleteMany({
+          where: {
+            telegramManagedPostId: postId,
+            createdAt: { lt: cutoff },
+          },
+        });
+      } catch (error) {
+        if (this.isManagedPostRevisionTableMissing(error)) {
+          this.managedPostRevisionStorageState = 'missing';
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    const db = this.managedPostRevisionQueryClient(client);
+    try {
+      await db.$executeRaw(Prisma.sql`
+        DELETE FROM "TelegramManagedPostRevision"
+        WHERE "telegramManagedPostId" = ${postId}
+          AND "createdAt" < ${cutoff}
+      `);
+    } catch (error) {
+      if (this.isManagedPostRevisionTableMissing(error)) {
+        this.managedPostRevisionStorageState = 'missing';
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async createManagedPostRevision(
+    client: Prisma.TransactionClient | PrismaService,
+    post: ManagedPostRevisionSource,
+    reason: string,
+  ) {
+    const storageAvailable = await this.hasManagedPostRevisionStorage();
+    if (!storageAvailable) return;
+    const data = this.managedPostRevisionData(post, reason);
+    const delegate = this.managedPostRevisionDelegate(client);
+    if (delegate) {
+      try {
+        await delegate.create({ data });
+      } catch (error) {
+        if (this.isManagedPostRevisionTableMissing(error)) {
+          this.managedPostRevisionStorageState = 'missing';
+          return;
+        }
+        throw error;
+      }
+    } else {
+      const inserted = await this.insertManagedPostRevisionRaw(client, data);
+      if (!inserted) return;
+    }
+    await this.deleteExpiredManagedPostRevisions(client, post.id);
+  }
+
+  private async editManagedPostTextInTelegram(params: {
+    workspaceId: string;
+    channelId: string;
+    post: {
+      id: string;
+      status: TelegramManagedPostStatus;
+      text: string | null;
+      imageUrls: string[];
+      publishMode: string | null;
+      sourceId: string | null;
+      sourceType: TelegramSourceType | null;
+      scheduledAt: Date | null;
+      telegramMessageIds: string[];
+    };
+    channel: {
+      id: string;
+      workspaceId: string;
+      username: string | null;
+      telegramChatId: string | null;
+    };
+    nextText: string;
+  }) {
+    const { workspaceId, channelId, post, channel, nextText } = params;
+    if (
+      post.status !== TelegramManagedPostStatus.PUBLISHED &&
+      post.status !== TelegramManagedPostStatus.SCHEDULED
+    ) {
+      return null;
+    }
+    if (!post.sourceId || !post.sourceType || !post.telegramMessageIds.length) {
+      throw new BadRequestException(
+        'This Telegram post cannot be updated because no Telegram message link is attached yet.',
+      );
+    }
+
+    const sources = await this.sourceAccessService.sourcesForChannel(
+      workspaceId,
+      channelId,
+    );
+    const source = sources.find(
+      (item) =>
+        item.sourceId === post.sourceId &&
+        item.sourceType === post.sourceType &&
+        item.permissions.canEditMessages,
+    );
+    if (!source) {
+      throw new BadRequestException(
+        'No connected Telegram source has permission to edit this post.',
+      );
+    }
+
+    const channelRef = this.channelRef(channel);
+    if (!channelRef)
+      throw new BadRequestException('Channel has no Telegram reference');
+
+    const resolvedText = await this.resolveInternalPostLinksForPublish(
+      workspaceId,
+      post.id,
+      nextText,
+      post.status === TelegramManagedPostStatus.SCHEDULED
+        ? post.scheduledAt || undefined
+        : undefined,
+    );
+    const rendered = this.renderManagedPostText(
+      resolvedText,
+      post.imageUrls,
+      post.publishMode === 'CAPTION_THEN_TEXT'
+        ? 'CAPTION_THEN_TEXT'
+        : 'IMAGES_THEN_TEXT',
+    );
+    const expectedMessageCount = post.imageUrls.length
+      ? post.imageUrls.length + rendered.followupHtmlParts.length
+      : rendered.textHtmlParts.length;
+    if (expectedMessageCount !== post.telegramMessageIds.length) {
+      throw new BadRequestException(
+        'Text update would change the number of Telegram messages. Keep the same message count or republish the post.',
+      );
+    }
+
+    if (source.sourceType === TelegramSourceType.MTPROTO) {
+      const account = await this.connectedAccount(
+        workspaceId,
+        channelId,
+        source.sourceId,
+      );
+      await this.mtprotoClient.editPostText({
+        ...this.accountCredentials(account),
+        channelRef,
+        messageIds: post.telegramMessageIds,
+        imageCount: post.imageUrls.length,
+        publishMode: rendered.publishMode,
+        captionHtml: rendered.captionHtml,
+        followupHtmlParts: rendered.followupHtmlParts,
+        textHtmlParts: rendered.textHtmlParts,
+      });
+      return {
+        publishMode: rendered.publishMode,
+        lastTelegramSyncedAt: new Date(),
+        lastTelegramSyncNote: 'Text was edited in Telegram.',
+      };
+    }
+
+    const bot = await this.prisma.telegramBotIntegration.findFirst({
+      where: { id: source.sourceId, workspaceId, isActive: true },
+    });
+    if (!bot) throw new BadRequestException('Telegram bot is not connected');
+    const token = this.encryptionService.decrypt({
+      encrypted: bot.botTokenEncrypted,
+      iv: bot.botTokenIv,
+      authTag: bot.botTokenAuthTag,
+    });
+    const chatId = channel.username ? `@${channel.username}` : channel.telegramChatId;
+    if (!chatId) {
+      throw new BadRequestException('Channel has no Telegram chat id');
+    }
+    const call = async (method: string, body: Record<string, unknown>) => {
+      const response = await fetch(
+        `https://api.telegram.org/bot${token}/${method}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, ...body }),
+        },
+      );
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        description?: string;
+      };
+      if (!response.ok || !payload.ok) {
+        throw new BadRequestException(
+          payload.description || 'Telegram Bot API edit failed',
+        );
+      }
+    };
+    const toBotFormattedText = (html: string) => {
+      const [text, entities] = HTMLParser.parse(
+        telegramHtmlToMtprotoHtml(html),
+      );
+      return {
+        text,
+        entities: entities
+          .map((entity) => this.toBotMessageEntity(entity))
+          .filter((entity): entity is BotMessageEntity => Boolean(entity)),
+      };
+    };
+    if (post.imageUrls.length) {
+      const caption = toBotFormattedText(rendered.captionHtml);
+      await call('editMessageCaption', {
+        message_id: Number(post.telegramMessageIds[0]),
+        caption: caption.text,
+        caption_entities: caption.entities,
+      });
+      for (let index = 0; index < rendered.followupHtmlParts.length; index += 1) {
+        const message = toBotFormattedText(rendered.followupHtmlParts[index]);
+        await call('editMessageText', {
+          message_id: Number(post.telegramMessageIds[post.imageUrls.length + index]),
+          text: message.text,
+          entities: message.entities,
+          disable_web_page_preview: true,
+        });
+      }
+    } else {
+      for (let index = 0; index < rendered.textHtmlParts.length; index += 1) {
+        const message = toBotFormattedText(rendered.textHtmlParts[index]);
+        await call('editMessageText', {
+          message_id: Number(post.telegramMessageIds[index]),
+          text: message.text,
+          entities: message.entities,
+          disable_web_page_preview: true,
+        });
+      }
+    }
+
+    return {
+      publishMode: rendered.publishMode,
+      lastTelegramSyncedAt: new Date(),
+      lastTelegramSyncNote: 'Text was edited in Telegram.',
     };
   }
 
@@ -1523,17 +2234,6 @@ export class TelegramChannelsService {
       }
       return restored;
     };
-    const claimedRecentMessageIds = new Set<string>();
-    const normalizedPlainText = (value: string) => {
-      const withoutInternalTargets = (value || '').replace(
-        /\[([^\]\n]+)\]\(tg-post:[a-zA-Z0-9_-]+\)/g,
-        '$1',
-      );
-      const [plain] = HTMLParser.parse(
-        telegramMarkupToHtml(withoutInternalTargets),
-      );
-      return plain.replace(/\s+/g, ' ').trim().toLowerCase();
-    };
     const result = { ...emptyResult, checked: posts.length };
     let current = 0;
     for (const post of posts) {
@@ -1557,42 +2257,62 @@ export class TelegramChannelsService {
         .filter((message): message is NonNullable<typeof message> =>
           Boolean(message),
         );
+      const currentRemoteText = restoreInternalLinks(
+        publishedMessages
+          .map((message) => telegramHtmlToManagedMarkup(message.html))
+          .filter(Boolean)
+          .join('\n\n'),
+      );
+      const exactCurrentTextMatch =
+        Boolean(post.text?.trim()) &&
+        this.normalizedPlainText(currentRemoteText) ===
+          this.normalizedPlainText(post.text || '');
+      const currentTitleMatch = currentRemoteText
+        ? this.textMatchesTitle(post.title, currentRemoteText)
+        : false;
+      const shouldReconcilePublishedMessage =
+        post.status === TelegramManagedPostStatus.PUBLISHED &&
+        (!publishedMessages.length ||
+          !exactCurrentTextMatch ||
+          !currentTitleMatch);
+      if (shouldReconcilePublishedMessage) {
+        const reconciled = this.findMatchingRecentPublishedMessage(
+          {
+            title: post.title,
+            text: post.text,
+            publishMode: post.publishMode,
+          },
+          remote.recentPublished,
+        );
+        if (reconciled) {
+          publishedMessages = reconciled.messageIds
+            .map(
+              (id) =>
+                publishedById.get(id) ??
+                remote.recentPublished.find((message) => message.id === id),
+            )
+            .filter((message): message is NonNullable<typeof message> =>
+              Boolean(message),
+            );
+        } else if (post.status === TelegramManagedPostStatus.PUBLISHED) {
+          publishedMessages = [];
+        }
+      }
       if (
-        post.status === 'SCHEDULED' &&
-        !scheduledMessages.length &&
-        !publishedMessages.length
+        post.status === TelegramManagedPostStatus.PUBLISHED &&
+        post.publishMode === 'IMAGES_THEN_TEXT' &&
+        publishedMessages.length === 1 &&
+        !publishedMessages[0].hasMedia &&
+        publishedMessages[0].date
       ) {
-        const localText = normalizedPlainText(post.text || '');
-        const candidates = remote.recentPublished
-          .filter(
-            (message) =>
-              message.date && !claimedRecentMessageIds.has(message.id),
-          )
-          .map((message) => ({
-            message,
-            exactText:
-              Boolean(localText) &&
-              normalizedPlainText(
-                this.telegramHtmlToManagedMarkup(message.html),
-              ) === localText,
-            distance: post.scheduledAt
-              ? Math.abs(
-                  new Date(message.date!).getTime() -
-                    post.scheduledAt.getTime(),
-                )
-              : Number.MAX_SAFE_INTEGER,
-          }));
-        const nearest =
-          candidates
-            .filter((candidate) => candidate.exactText)
-            .sort((left, right) => left.distance - right.distance)[0]
-            ?.message ??
-          candidates
-            .filter((candidate) => candidate.distance <= 10 * 60_000)
-            .sort((left, right) => left.distance - right.distance)[0]?.message;
-        if (nearest) {
-          claimedRecentMessageIds.add(nearest.id);
-          publishedMessages = [nearest];
+        const previousMedia = remote.recentPublished.find(
+          (message) =>
+            message.hasMedia &&
+            message.date === publishedMessages[0].date &&
+            Number(message.id) < Number(publishedMessages[0].id),
+        );
+        if (previousMedia) {
+          publishedMessages = [previousMedia, publishedMessages[0]];
         }
       }
       const messages = scheduledMessages.length
@@ -1603,23 +2323,26 @@ export class TelegramChannelsService {
           result.missing += 1;
           result.movedToDraft += 1;
           result.updated += 1;
-          await this.prisma.telegramManagedPost.update({
-            where: { id: post.id },
-            data: {
-              status: TelegramManagedPostStatus.DRAFT,
-              telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
-              publishedAt: null,
-              scheduledAt: null,
-              telegramMessageIds: [],
-              telegramMessageUrls: [],
-              sourceType: null,
-              sourceId: null,
-              lastError:
-                'This post was scheduled in Telegram, but the scheduled message was not found. It may have been deleted in Telegram. Publish it again or enter a valid Telegram post link manually.',
-              lastTelegramSyncedAt: new Date(),
-              lastTelegramSyncNote:
-                'Scheduled Telegram message was not found during sync.',
-            },
+          await this.prisma.$transaction(async (tx) => {
+            await this.createManagedPostRevision(tx, post, 'before_sync_missing');
+            await tx.telegramManagedPost.update({
+              where: { id: post.id },
+              data: {
+                status: TelegramManagedPostStatus.DRAFT,
+                telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
+                publishedAt: null,
+                scheduledAt: null,
+                telegramMessageIds: [],
+                telegramMessageUrls: [],
+                sourceType: null,
+                sourceId: null,
+                lastError:
+                  'This post was scheduled in Telegram, but the scheduled message was not found. It may have been deleted in Telegram. Publish it again or enter a valid Telegram post link manually.',
+                lastTelegramSyncedAt: new Date(),
+                lastTelegramSyncNote:
+                  'Scheduled Telegram message was not found during sync.',
+              },
+            });
           });
           await onProgress?.(
             ({
@@ -1637,17 +2360,28 @@ export class TelegramChannelsService {
           );
         } else if (post.status === 'PUBLISHED') {
           result.broken += 1;
+          result.movedToDraft += 1;
           result.updated += 1;
-          await this.prisma.telegramManagedPost.update({
-            where: { id: post.id },
-            data: {
-              telegramRemoteStatus: TelegramManagedPostRemoteStatus.BROKEN,
-              lastError:
-                'Telegram post link is broken. The message could not be found in Telegram. Enter a valid Telegram link manually or publish the post again.',
-              lastTelegramSyncedAt: new Date(),
-              lastTelegramSyncNote:
-                'Published Telegram message was not found during sync.',
-            },
+          await this.prisma.$transaction(async (tx) => {
+            await this.createManagedPostRevision(tx, post, 'before_sync_broken');
+            await tx.telegramManagedPost.update({
+              where: { id: post.id },
+              data: {
+                status: TelegramManagedPostStatus.DRAFT,
+                telegramRemoteStatus: TelegramManagedPostRemoteStatus.BROKEN,
+                publishedAt: null,
+                scheduledAt: null,
+                telegramMessageIds: [],
+                telegramMessageUrls: [],
+                sourceType: null,
+                sourceId: null,
+                lastError:
+                  'Telegram post was not found or no longer matches this record. It was moved to draft. Enter a valid Telegram post link manually, publish it again, or schedule it again.',
+                lastTelegramSyncedAt: new Date(),
+                lastTelegramSyncNote:
+                  'Published Telegram message was not found or did not match during sync.',
+              },
+            });
           });
           await onProgress?.(
             ({
@@ -1655,10 +2389,10 @@ export class TelegramChannelsService {
               postId: post.id,
               index: current,
               total: posts.length,
-              action: 'FAILED',
+              action: 'CONVERTED_TO_DRAFT',
               success: true,
               status: 'success',
-              message: `${post.title}: published link is broken`,
+              message: `${post.title}: published Telegram post not found or mismatched, moved to draft`,
             } as unknown) as BulkActionResultItem,
             current,
             posts.length,
@@ -1666,12 +2400,6 @@ export class TelegramChannelsService {
         }
         continue;
       }
-      const remoteText = restoreInternalLinks(
-        messages
-        .map((message) => this.telegramHtmlToManagedMarkup(message.html))
-        .filter(Boolean)
-          .join('\n\n'),
-      );
       const becamePublished =
         post.status !== TelegramManagedPostStatus.PUBLISHED &&
         !scheduledMessages.length &&
@@ -1683,38 +2411,44 @@ export class TelegramChannelsService {
       const isScheduledRemote = scheduledMessages.length > 0;
       const remoteUrls = isScheduledRemote
         ? []
-        : actualMessageIds.flatMap((id) => {
-            const url = this.telegramMessageUrl(channel, id);
-            return url ? [url] : [];
-          });
+        : this.telegramMessageUrlsForPost(
+            channel,
+            actualMessageIds,
+            post.imageUrls.length,
+          );
       const hasRemoteMedia = messages.some((message) => message.hasMedia);
       const mediaNote =
         hasRemoteMedia && !post.imageUrls.length
           ? 'Telegram media changed, but media download is not implemented.'
           : null;
-      await this.prisma.telegramManagedPost.update({
-        where: { id: post.id },
-        data: {
-          ...(remoteText ? { text: remoteText } : {}),
-          ...(!hasRemoteMedia && post.imageUrls.length ? { imageUrls: [] } : {}),
-          status: becamePublished ? 'PUBLISHED' : post.status,
-          telegramRemoteStatus: isScheduledRemote
-            ? TelegramManagedPostRemoteStatus.SCHEDULED
-            : TelegramManagedPostRemoteStatus.PUBLISHED,
-          publishedAt: becamePublished
-            ? new Date(messages[0].date || Date.now())
-            : post.publishedAt,
-          scheduledAt: isScheduledRemote
-            ? new Date(messages[0].date || post.scheduledAt || Date.now())
-            : null,
-          telegramMessageIds: actualMessageIds,
-          telegramMessageUrls: remoteUrls,
-          lastError: null,
-          lastTelegramSyncedAt: new Date(),
-          lastTelegramSyncNote: becamePublished
-            ? 'Post was published in Telegram before the scheduled time.'
-            : mediaNote,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await this.createManagedPostRevision(
+          tx,
+          post,
+          becamePublished ? 'before_sync_publish_transition' : 'before_sync_update',
+        );
+        await tx.telegramManagedPost.update({
+          where: { id: post.id },
+          data: {
+            status: becamePublished ? 'PUBLISHED' : post.status,
+            telegramRemoteStatus: isScheduledRemote
+              ? TelegramManagedPostRemoteStatus.SCHEDULED
+              : TelegramManagedPostRemoteStatus.PUBLISHED,
+            publishedAt: becamePublished
+              ? new Date(messages[0].date || Date.now())
+              : post.publishedAt,
+            scheduledAt: isScheduledRemote
+              ? new Date(messages[0].date || post.scheduledAt || Date.now())
+              : null,
+            telegramMessageIds: actualMessageIds,
+            telegramMessageUrls: remoteUrls,
+            lastError: null,
+            lastTelegramSyncedAt: new Date(),
+            lastTelegramSyncNote: becamePublished
+              ? 'Post was published in Telegram before the scheduled time.'
+              : mediaNote,
+          },
+        });
       });
       result.updated += 1;
       if (becamePublished) result.publishedEarly += 1;
@@ -1785,23 +2519,31 @@ export class TelegramChannelsService {
         'Telegram message was not found. Enter a valid post link.',
       );
     }
-    const text = this.telegramHtmlToManagedMarkup(message.html);
-    return this.prisma.telegramManagedPost.update({
-      where: { id: postId },
-      data: {
-        status: TelegramManagedPostStatus.PUBLISHED,
-        telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
-        telegramMessageIds: [parsed.messageId],
-        telegramMessageUrls: [telegramUrl],
-        publishedAt: message.date ? new Date(message.date) : new Date(),
-        scheduledAt: null,
-        ...(text ? { text } : {}),
-        lastError: null,
-        lastTelegramSyncedAt: new Date(),
-        lastTelegramSyncNote:
-          'Telegram link was manually attached and verified.',
-      },
-      include: this.managedPostInclude,
+    const text = telegramHtmlToManagedMarkup(message.html);
+    const currentPost = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!currentPost)
+      throw new NotFoundException('Managed post not found');
+    return this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(tx, currentPost, 'before_manual_link');
+      return tx.telegramManagedPost.update({
+        where: { id: postId },
+        data: {
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          telegramMessageIds: [parsed.messageId],
+          telegramMessageUrls: [telegramUrl],
+          publishedAt: message.date ? new Date(message.date) : new Date(),
+          scheduledAt: null,
+          ...(text ? { text } : {}),
+          lastError: null,
+          lastTelegramSyncedAt: new Date(),
+          lastTelegramSyncNote:
+            'Telegram link was manually attached and verified.',
+        },
+        include: this.managedPostInclude,
+      });
     });
   }
 
@@ -1860,10 +2602,14 @@ export class TelegramChannelsService {
         telegramRemoteStatus: true,
         groupId: true,
         publishedAt: true,
+        imageUrls: true,
+        telegramMessageIds: true,
         telegramMessageUrls: true,
         telegramChannelId: true,
         group: { select: { title: true } },
-        telegramChannel: { select: { title: true } },
+        telegramChannel: {
+          select: { title: true, username: true, telegramChatId: true },
+        },
       },
       orderBy: [{ updatedAt: 'desc' }, { title: 'asc' }],
       take: query.limit ?? 30,
@@ -1879,7 +2625,20 @@ export class TelegramChannelsService {
       telegramChannelId: post.telegramChannelId,
       telegramChannelTitle: post.telegramChannel.title,
       publishedAt: post.publishedAt,
-      primaryTelegramMessageUrl: post.telegramMessageUrls[0] ?? null,
+      primaryTelegramMessageUrl:
+        post.telegramMessageUrls[0] ??
+        (() => {
+          const primaryId = this.primaryTelegramMessageId({
+            messageIds: post.telegramMessageIds,
+            imageCount: post.imageUrls.length,
+          });
+          return primaryId
+            ? this.telegramMessageUrl(
+                post.telegramChannel,
+                primaryId,
+              )
+            : null;
+        })(),
     }));
   }
 
@@ -1905,6 +2664,7 @@ export class TelegramChannelsService {
         telegramRemoteStatus: true,
         lastError: true,
         scheduledAt: true,
+        imageUrls: true,
         telegramMessageIds: true,
         telegramMessageUrls: true,
         telegramChannel: {
@@ -1932,10 +2692,16 @@ export class TelegramChannelsService {
           ];
         }
         if (
-          !target.telegramMessageIds[0] ||
+          !this.primaryTelegramMessageId({
+            messageIds: target.telegramMessageIds,
+            imageCount: target.imageUrls.length,
+          }) ||
           !this.telegramMessageUrl(
             target.telegramChannel,
-            target.telegramMessageIds[0],
+            this.primaryTelegramMessageId({
+              messageIds: target.telegramMessageIds,
+              imageCount: target.imageUrls.length,
+            })!,
           )
         ) {
           return [
@@ -1972,10 +2738,16 @@ export class TelegramChannelsService {
         target.telegramMessageUrls[0] ??
         (currentScheduleAt &&
         target.status === TelegramManagedPostStatus.SCHEDULED &&
-        target.telegramMessageIds[0]
+        this.primaryTelegramMessageId({
+          messageIds: target.telegramMessageIds,
+          imageCount: target.imageUrls.length,
+        })
           ? this.telegramMessageUrl(
               target.telegramChannel,
-              target.telegramMessageIds[0],
+              this.primaryTelegramMessageId({
+                messageIds: target.telegramMessageIds,
+                imageCount: target.imageUrls.length,
+              })!,
             )
           : null);
       if (url) urlsByPostId.set(target.id, url);
@@ -2063,6 +2835,73 @@ export class TelegramChannelsService {
     });
   }
 
+  async managedPostHistory(userId: string, channelId: string, postId: string) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const post = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+      select: { id: true },
+    });
+    if (!post) throw new NotFoundException('Managed post not found');
+    return this.listManagedPostRevisions(this.prisma, {
+      telegramManagedPostId: postId,
+      workspaceId,
+    });
+  }
+
+  async restoreManagedPostRevision(
+    userId: string,
+    channelId: string,
+    postId: string,
+    revisionId: string,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const [post, revision] = (await Promise.all([
+      this.prisma.telegramManagedPost.findFirst({
+        where: { id: postId, workspaceId, telegramChannelId: channelId },
+      }),
+      this.findManagedPostRevision(this.prisma, {
+        id: revisionId,
+        telegramManagedPostId: postId,
+        workspaceId,
+        telegramChannelId: channelId,
+      }),
+    ])) as [ManagedPostRevisionSource | null, ManagedPostRevisionRecord | null];
+    if (!post) throw new NotFoundException('Managed post not found');
+    if (!revision) throw new NotFoundException('Post revision not found');
+    return this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(tx, post, 'before_restore');
+      return tx.telegramManagedPost.update({
+        where: { id: postId },
+        data: {
+          title: revision.title,
+          text: revision.text,
+          imageUrls: revision.imageUrls,
+          assignedMemberId: revision.assignedMemberId,
+          icon: revision.icon,
+          groupId: revision.groupId,
+          groupPosition: revision.groupPosition,
+          sidebarPosition: revision.sidebarPosition,
+          status: TelegramManagedPostStatus.DRAFT,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
+          scheduledAt: null,
+          publishedAt: null,
+          telegramMessageIds: [],
+          telegramMessageUrls: [],
+          sourceType: null,
+          sourceId: null,
+          publishMode: null,
+          lastError:
+            'This post was restored from backup history and moved to draft. Publish it again, schedule it again, or attach a valid Telegram link manually.',
+          lastTelegramSyncedAt: new Date(),
+          lastTelegramSyncNote: `Restored from backup created at ${revision.createdAt.toISOString()}.`,
+        },
+        include: this.managedPostInclude,
+      });
+    });
+  }
+
   async updateManagedPost(
     userId: string,
     channelId: string,
@@ -2074,12 +2913,20 @@ export class TelegramChannelsService {
       where: { id: postId, workspaceId, telegramChannelId: channelId },
     });
     if (!post) throw new NotFoundException('Post draft not found');
-    if (post.status === 'PUBLISHED')
-      throw new BadRequestException('Published posts cannot be edited');
     if (dto.title !== undefined && !dto.title.trim())
       throw new BadRequestException('Title is required');
     if (dto.assignedMemberId === null)
       throw new BadRequestException('Assigned member is required');
+    if (
+      (post.status === TelegramManagedPostStatus.PUBLISHED ||
+        post.status === TelegramManagedPostStatus.SCHEDULED) &&
+      dto.imageUrls !== undefined &&
+      !this.sameImageUrls(dto.imageUrls, post.imageUrls)
+    ) {
+      throw new BadRequestException(
+        'Images cannot be edited after the post is sent or scheduled. Update only the text.',
+      );
+    }
     let assignedMemberId: string | undefined;
     if (dto.assignedMemberId !== undefined) {
       const resolved = await this.workspaceService.resolveAssignedMemberId(
@@ -2091,17 +2938,48 @@ export class TelegramChannelsService {
       }
       assignedMemberId = resolved.assignedMemberId;
     }
-    return this.prisma.telegramManagedPost.update({
-      where: { id: postId },
-      data: {
-        title: dto.title?.trim(),
-        text: dto.text,
-        imageUrls: dto.imageUrls,
-        assignedMemberId,
-        icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
-        lastError: null,
-      },
-      include: this.managedPostInclude,
+    const nextText = dto.text ?? post.text ?? '';
+    const channel =
+      dto.text !== undefined && post.status === TelegramManagedPostStatus.PUBLISHED
+        ? await this.prisma.telegramChannel.findFirst({
+            where: { id: channelId, workspaceId },
+            select: {
+              id: true,
+              workspaceId: true,
+              username: true,
+              telegramChatId: true,
+            },
+          })
+        : null;
+    const telegramEdit =
+      dto.text !== undefined &&
+      post.status === TelegramManagedPostStatus.PUBLISHED &&
+      channel
+        ? await this.editManagedPostTextInTelegram({
+            workspaceId,
+            channelId,
+            post,
+            channel,
+            nextText,
+          })
+        : null;
+    return this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(tx, post, 'before_update');
+      return tx.telegramManagedPost.update({
+        where: { id: postId },
+        data: {
+          title: dto.title?.trim(),
+          text: dto.text,
+          imageUrls: dto.imageUrls,
+          assignedMemberId,
+          icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
+          lastError: null,
+          publishMode: telegramEdit?.publishMode,
+          lastTelegramSyncedAt: telegramEdit?.lastTelegramSyncedAt,
+          lastTelegramSyncNote: telegramEdit?.lastTelegramSyncNote,
+        },
+        include: this.managedPostInclude,
+      });
     });
   }
 
@@ -2125,6 +3003,11 @@ export class TelegramChannelsService {
       throw new NotFoundException('Post or channel not found');
     if (!post.text?.trim() && !post.imageUrls.length)
       throw new BadRequestException('Text or at least one image is required');
+    await this.createManagedPostRevision(
+      this.prisma,
+      post,
+      scheduleAt ? 'before_schedule' : 'before_publish',
+    );
     const existingScheduledSource =
       scheduleAt && post.status === 'SCHEDULED' && post.sourceId
         ? sources.find(
@@ -2168,43 +3051,13 @@ export class TelegramChannelsService {
         post.text || '',
         scheduleAt,
       );
-      const html = telegramMarkupToHtml(resolvedText);
-      const [plainText] = HTMLParser.parse(html);
-      let captionHtml = html;
-      let followupHtmlParts: string[] = [];
-      let textHtmlParts = [html];
-      let publishMode = post.imageUrls.length
-        ? 'IMAGE_WITH_CAPTION'
-        : 'TEXT_ONLY';
-      if (post.imageUrls.length && plainText.length > TELEGRAM_CAPTION_LIMIT) {
-        publishMode = longTextMode;
-        if (longTextMode === 'CAPTION_THEN_TEXT') {
-          const [caption, remainder] = this.splitTelegramMarkupOnce(
-            resolvedText,
-            TELEGRAM_CAPTION_LIMIT,
-          );
-          captionHtml = telegramMarkupToHtml(caption);
-          followupHtmlParts = this.splitTelegramMarkup(
-            remainder,
-            TELEGRAM_TEXT_MESSAGE_LIMIT,
-          ).map((part) => telegramMarkupToHtml(part));
-        } else {
-          captionHtml = '';
-          followupHtmlParts = this.splitTelegramMarkup(
-            resolvedText,
-            TELEGRAM_TEXT_MESSAGE_LIMIT,
-          ).map((part) => telegramMarkupToHtml(part));
-        }
-      } else if (
-        !post.imageUrls.length &&
-        plainText.length > TELEGRAM_TEXT_MESSAGE_LIMIT
-      ) {
-        publishMode = 'TEXT_PARTS';
-        textHtmlParts = this.splitTelegramMarkup(
-          resolvedText,
-          TELEGRAM_TEXT_MESSAGE_LIMIT,
-        ).map((part) => telegramMarkupToHtml(part));
-      }
+      const {
+        html,
+        captionHtml,
+        followupHtmlParts,
+        textHtmlParts,
+        publishMode,
+      } = this.renderManagedPostText(resolvedText, post.imageUrls, longTextMode);
       let ids: string[];
       if (source.sourceType === TelegramSourceType.MTPROTO) {
         const account = await this.connectedAccount(
@@ -2330,6 +3183,9 @@ export class TelegramChannelsService {
           }
         }
       }
+      const publishedUrls = scheduleAt
+        ? []
+        : this.telegramMessageUrlsForPost(channel, ids, post.imageUrls.length);
       return this.prisma.telegramManagedPost.update({
         where: { id: post.id },
         data: {
@@ -2340,12 +3196,7 @@ export class TelegramChannelsService {
           scheduledAt: scheduleAt ?? null,
           publishedAt: scheduleAt ? null : new Date(),
           telegramMessageIds: ids,
-          telegramMessageUrls: scheduleAt
-            ? []
-            : ids.flatMap((id) => {
-                const url = this.telegramMessageUrl(channel, id);
-                return url ? [url] : [];
-              }),
+          telegramMessageUrls: publishedUrls,
           sourceType: source.sourceType,
           sourceId: source.sourceId,
           publishMode,
@@ -3316,7 +4167,10 @@ export class TelegramChannelsService {
         messageIds: post.telegramMessageIds,
       });
     }
-    return this.prisma.telegramManagedPost.delete({ where: { id: postId } });
+    return this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(tx, post, 'before_delete');
+      return tx.telegramManagedPost.delete({ where: { id: postId } });
+    });
   }
 
   async adAnalyses(userId: string, channelId: string) {

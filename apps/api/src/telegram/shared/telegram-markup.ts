@@ -41,13 +41,14 @@ function convertBlockquotes(value: string) {
 }
 
 export function telegramMarkupToHtml(raw: string) {
+  const normalizedRaw = raw.replace(/\r\n?/g, '\n');
   const tokens: string[] = [];
   const token = (html: string) => {
     const index = tokens.push(html) - 1;
     return `\uE000${index}\uE001`;
   };
 
-  let value = raw.replace(
+  let value = normalizedRaw.replace(
     /```([^\n`]*)\n?([\s\S]*?)```/g,
     (_match, language: string, code: string) => {
       const normalizedLanguage = language.trim();
@@ -107,4 +108,35 @@ export function telegramHtmlToMtprotoHtml(html: string) {
   return html.replace(/<\/?tg-spoiler>/g, (tag) =>
     tag.startsWith('</') ? '</spoiler>' : '<spoiler>',
   );
+}
+
+export function telegramHtmlToManagedMarkup(html: string) {
+  return html
+    .replace(
+      /<pre><code(?: class="language-([^"]+)")?>([\s\S]*?)<\/code><\/pre>/gi,
+      (_match, language: string, code: string) =>
+        `\`\`\`${language || ''}\n${code}\`\`\``,
+    )
+    .replace(/<code>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<(?:strong|b)>([\s\S]*?)<\/(?:strong|b)>/gi, '**$1**')
+    .replace(/<(?:em|i)>([\s\S]*?)<\/(?:em|i)>/gi, '__$1__')
+    .replace(/<u>([\s\S]*?)<\/u>/gi, '++$1++')
+    .replace(/<(?:s|del|strike)>([\s\S]*?)<\/(?:s|del|strike)>/gi, '~~$1~~')
+    .replace(/<tg-spoiler>([\s\S]*?)<\/tg-spoiler>/gi, '||$1||')
+    .replace(
+      /<a href="([^"]+)">([\s\S]*?)<\/a>/gi,
+      (_match, href: string, label: string) => `[${label}](${href})`,
+    )
+    .replace(
+      /<blockquote(?: expandable)?>([\s\S]*?)<\/blockquote>/gi,
+      (_match, content: string) =>
+        content
+          .split('\n')
+          .map((line: string) => `> ${line}`)
+          .join('\n'),
+    )
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
 }
