@@ -1368,7 +1368,7 @@ export class TelegramMtprotoClient {
           ),
         );
         const result = await client.sendFile(entity, {
-          file: files,
+          file: files.length === 1 ? files[0] : files,
           caption: caption.text,
           formattingEntities: caption.entities,
           parseMode: false,
