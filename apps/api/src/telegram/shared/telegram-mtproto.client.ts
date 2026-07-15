@@ -224,7 +224,6 @@ export class TelegramMtprotoClient {
       peer,
       message: text,
       entities,
-      noWebpage: true,
       scheduleDate: schedule,
     });
     const result = await client.invoke(request);
@@ -250,7 +249,6 @@ export class TelegramMtprotoClient {
         id: Number(messageId),
         message: text,
         entities,
-        noWebpage: true,
       }),
     );
   }

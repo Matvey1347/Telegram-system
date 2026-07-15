@@ -23,6 +23,7 @@ import {
   FolderPlus,
   GripVertical,
   Layers3,
+  Link,
   ListPlus,
   LoaderCircle,
   MoveRight,
@@ -454,6 +455,9 @@ function TelegramPostWorkspace({
   const [movingPost, setMovingPost] = useState<TelegramManagedPost | null>(
     null,
   );
+  const [restorePreviewRevision, setRestorePreviewRevision] =
+    useState<TelegramManagedPostRevision | null>(null);
+  const [restoreConfirmationValue, setRestoreConfirmationValue] = useState("");
   const [pendingPostSaves, setPendingPostSaves] = useState<PendingPostSave[]>(
     [],
   );
@@ -562,15 +566,41 @@ function TelegramPostWorkspace({
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
   const displayedError = error || editing?.lastError || "";
+  const showManualTelegramUrlInput = Boolean(
+    editing &&
+      (["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus) ||
+        /link is broken|Telegram link manually/i.test(displayedError)),
+  );
+  const outgoingInternalLinks = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        targetId: string;
+        labels: string[];
+        target?: TelegramManagedPost;
+      }
+    >();
+    for (const match of text.matchAll(
+      /\[([^\]\n]+)\]\(tg-post:([a-zA-Z0-9_-]+)\)/g,
+    )) {
+      const label = match[1]?.trim() || match[2];
+      const targetId = match[2];
+      const existing = grouped.get(targetId);
+      if (existing) {
+        if (!existing.labels.includes(label)) existing.labels.push(label);
+        continue;
+      }
+      grouped.set(targetId, {
+        targetId,
+        labels: [label],
+        target: posts.data?.find((post) => post.id === targetId),
+      });
+    }
+    return [...grouped.values()];
+  }, [posts.data, text]);
   const internalLinkTargetIds = useMemo(
-    () => [
-      ...new Set(
-        [...text.matchAll(/\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g)].map(
-          (match) => match[1],
-        ),
-      ),
-    ],
-    [text],
+    () => outgoingInternalLinks.map((link) => link.targetId),
+    [outgoingInternalLinks],
   );
   const incomingInternalLinkPosts = useMemo(() => {
     if (!editing) return [];
@@ -1090,6 +1120,8 @@ function TelegramPostWorkspace({
         }),
       ]);
       selectPost(post);
+      setRestorePreviewRevision(null);
+      setRestoreConfirmationValue("");
       pushToast(`"${post.title}" restored from backup and moved to draft.`, "success");
     },
     onError: (mutationError) => {
@@ -1100,6 +1132,15 @@ function TelegramPostWorkspace({
       );
     },
   });
+  const restoreConfirmationValid = useMemo(
+    () =>
+      Boolean(
+        editing &&
+          restorePreviewRevision &&
+          restoreConfirmationValue.trim() === editing.title,
+      ),
+    [editing, restoreConfirmationValue, restorePreviewRevision],
+  );
 
   const saveManualTelegramUrl = async () => {
     if (!editing || !manualTelegramUrl.trim()) return;
@@ -1658,6 +1699,85 @@ function TelegramPostWorkspace({
                 highlightRequestKey={highlightRequestKey}
               />
             </FormField>
+            {outgoingInternalLinks.length ? (
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-3 py-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <Link size={15} className="text-blue-300" />
+                  <p className="text-sm font-medium text-white">
+                    Uses internal posts
+                  </p>
+                  <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-300">
+                    {outgoingInternalLinks.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {outgoingInternalLinks.map((link) => (
+                    <div
+                      key={link.targetId}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => highlightInternalLinkTarget(link.targetId)}
+                        className="rounded-md border border-blue-800/70 bg-blue-950/30 px-2 py-1 text-xs text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/40"
+                      >
+                        Find in text
+                      </button>
+                      {link.target ? (
+                        <button
+                          type="button"
+                          onClick={() => openPost(link.target as TelegramManagedPost)}
+                          className="inline-flex min-w-0 items-center gap-2 rounded-md border border-neutral-700 px-2.5 py-1.5 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
+                        >
+                          {link.target.icon ? (
+                            <PostIcon
+                              iconId={link.target.icon}
+                              label={link.target.title}
+                            />
+                          ) : (
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-xs">
+                              📝
+                            </span>
+                          )}
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-white">
+                              {link.target.title}
+                            </span>
+                            <span className="block truncate text-[11px] text-neutral-400">
+                              {link.labels.join(", ")}
+                            </span>
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="min-w-0 rounded-md border border-red-900/70 bg-red-950/20 px-2.5 py-1.5">
+                          <p className="truncate text-sm font-medium text-red-200">
+                            Missing target
+                          </p>
+                          <p className="truncate text-[11px] text-red-300/80">
+                            {link.labels.join(", ")} · {link.targetId}
+                          </p>
+                        </div>
+                      )}
+                      {link.target ? (
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] ${
+                            link.target.status === "PUBLISHED"
+                              ? "bg-emerald-950 text-emerald-300"
+                              : link.target.status === "SCHEDULED"
+                                ? "bg-amber-950 text-amber-300"
+                                : link.target.status === "FAILED"
+                                  ? "bg-red-950 text-red-300"
+                                  : "bg-neutral-800 text-neutral-300"
+                          }`}
+                        >
+                          {link.target.status}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {unresolvedInternalLinkTargets.length ? (
               <div
                 className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200"
@@ -1834,13 +1954,7 @@ function TelegramPostWorkspace({
                   </p>
                 </div>
                 </div>
-                {editing &&
-                (["BROKEN", "MISSING"].includes(
-                  editing.telegramRemoteStatus,
-                ) ||
-                  /link is broken|Telegram link manually/i.test(
-                    displayedError,
-                  )) ? (
+                {showManualTelegramUrlInput ? (
                   <div className="mt-3 flex gap-2">
                     <Input
                       type="url"
@@ -1861,6 +1975,35 @@ function TelegramPostWorkspace({
                     </Button>
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+            {showManualTelegramUrlInput && !displayedError ? (
+              <div className="rounded-lg border border-amber-800/70 bg-amber-950/20 px-3 py-2.5 text-sm text-amber-100">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-medium">Telegram link needs repair</p>
+                    <p className="mt-0.5 text-amber-300">
+                      This post has a broken or missing Telegram link. Paste a
+                      valid Telegram post URL to reconnect it.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Input
+                    type="url"
+                    value={manualTelegramUrl}
+                    onChange={(event) => setManualTelegramUrl(event.target.value)}
+                    placeholder="https://t.me/channel/123"
+                  />
+                  <Button
+                    type="button"
+                    disabled={savingTelegramUrl || !manualTelegramUrl.trim()}
+                    onClick={saveManualTelegramUrl}
+                  >
+                    {savingTelegramUrl ? "Saving…" : "Save link"}
+                  </Button>
+                </div>
               </div>
             ) : null}
             {editing ? (
@@ -1895,9 +2038,12 @@ function TelegramPostWorkspace({
                           type="button"
                           variant="secondary"
                           disabled={restorePostRevision.isPending}
-                          onClick={() => restorePostRevision.mutate(revision)}
+                          onClick={() => {
+                            setRestorePreviewRevision(revision);
+                            setRestoreConfirmationValue("");
+                          }}
                         >
-                          {restorePostRevision.isPending ? "Restoring…" : "Restore"}
+                          Restore
                         </Button>
                       </div>
                     ))
@@ -2369,6 +2515,92 @@ function TelegramPostWorkspace({
             if (editing?.id === movingPost.id) reset();
           }}
         />
+      ) : null}
+      {editing && restorePreviewRevision ? (
+        <Modal
+          open
+          onClose={() => {
+            if (restorePostRevision.isPending) return;
+            setRestorePreviewRevision(null);
+            setRestoreConfirmationValue("");
+          }}
+          title="Restore backup"
+          size="xl"
+        >
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_360px]">
+            <TelegramPostPreview
+              channelTitle={channelTitle}
+              channelPhotoUrl={channelPhotoUrl}
+              text={restorePreviewRevision.text || ""}
+              imageUrls={restorePreviewRevision.imageUrls}
+              longTextMode={
+                restorePreviewRevision.publishMode === "CAPTION_THEN_TEXT"
+                  ? "CAPTION_THEN_TEXT"
+                  : "IMAGES_THEN_TEXT"
+              }
+            />
+            <div className="space-y-4">
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-4">
+                <p className="text-sm font-medium text-white">
+                  {formatManagedPostRevisionReason(
+                    restorePreviewRevision.reason,
+                  )}
+                </p>
+                <p className="mt-1 text-xs text-neutral-400">
+                  Backup created{" "}
+                  {new Date(
+                    restorePreviewRevision.createdAt,
+                  ).toLocaleString()}
+                </p>
+              </div>
+              <div className="space-y-2 rounded-lg border border-amber-800/70 bg-amber-950/20 p-4 text-sm text-amber-100">
+                <p>
+                  Restoring will immediately replace the current editor content
+                  of this post with the backup version and move the post to
+                  draft.
+                </p>
+                <p className="text-xs text-amber-300/80">
+                  To confirm, type the current post title exactly:
+                </p>
+                <p className="rounded-md border border-amber-900/70 bg-black/20 px-3 py-2 font-medium text-white">
+                  {editing.title}
+                </p>
+                <Input
+                  value={restoreConfirmationValue}
+                  onChange={(event) =>
+                    setRestoreConfirmationValue(event.target.value)
+                  }
+                  placeholder={editing.title}
+                  disabled={restorePostRevision.isPending}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setRestorePreviewRevision(null);
+                    setRestoreConfirmationValue("");
+                  }}
+                  disabled={restorePostRevision.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    restorePostRevision.isPending || !restoreConfirmationValid
+                  }
+                  onClick={() =>
+                    restorePostRevision.mutate(restorePreviewRevision)
+                  }
+                >
+                  {restorePostRevision.isPending
+                    ? "Restoring…"
+                    : "Restore this version"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
       ) : null}
       <ConfirmDeleteModal
         open={bulkDeleteOpen}

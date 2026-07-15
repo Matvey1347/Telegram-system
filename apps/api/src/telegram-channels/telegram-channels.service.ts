@@ -1167,7 +1167,6 @@ export class TelegramChannelsService {
           message_id: Number(post.telegramMessageIds[post.imageUrls.length + index]),
           text: message.text,
           entities: message.entities,
-          disable_web_page_preview: true,
         });
       }
     } else {
@@ -1177,7 +1176,6 @@ export class TelegramChannelsService {
           message_id: Number(post.telegramMessageIds[index]),
           text: message.text,
           entities: message.entities,
-          disable_web_page_preview: true,
         });
       }
     }
@@ -2892,8 +2890,7 @@ export class TelegramChannelsService {
           sourceType: null,
           sourceId: null,
           publishMode: null,
-          lastError:
-            'This post was restored from backup history and moved to draft. Publish it again, schedule it again, or attach a valid Telegram link manually.',
+          lastError: null,
           lastTelegramSyncedAt: new Date(),
           lastTelegramSyncNote: `Restored from backup created at ${revision.createdAt.toISOString()}.`,
         },
