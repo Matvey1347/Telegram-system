@@ -28,7 +28,6 @@ import {
   MoveRight,
   Pencil,
   Plus,
-  RefreshCw,
   RotateCcw,
   Rocket,
   Trash2,
@@ -165,8 +164,6 @@ export default function TelegramPostsPage() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
-  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
   const channelId = searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
@@ -182,91 +179,6 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
-  const syncManagedPosts = useMutation<{
-    checked: number;
-    updated: number;
-    publishedEarly: number;
-    movedToDraft: number;
-    broken: number;
-    missing: number;
-  }>({
-    mutationFn: async (): Promise<{
-      checked: number;
-      updated: number;
-      publishedEarly: number;
-      movedToDraft: number;
-      broken: number;
-      missing: number;
-    }> => {
-      const currentChannel = channel!;
-      const progressId = `managed-posts-sync:${currentChannel.id}`;
-      setProgress({
-        id: progressId,
-        title: 'Sync Telegram',
-        current: 0,
-        total: 1,
-        message: 'Starting post sync…',
-        iconUrl: currentChannel.photoUrl || undefined,
-      });
-      try {
-        const result: {
-          checked: number;
-          updated: number;
-          publishedEarly: number;
-          movedToDraft: number;
-          broken: number;
-          missing: number;
-        } = await telegramChannelsApi.syncManagedPostsWithProgress(
-          currentChannel.id,
-          (item, current, total) => {
-            setProgress({
-              id: progressId,
-              title: 'Sync Telegram',
-              current,
-              total,
-              message: item.message || 'Syncing posts from Telegram…',
-              iconUrl: currentChannel.photoUrl || undefined,
-            });
-          },
-        );
-        setProgress({
-          id: progressId,
-          title: 'Sync Telegram',
-          current: result.checked || 0,
-          total: result.checked || 0,
-          message: 'Post sync completed',
-          completed: true,
-          successCount: result.updated || 0,
-          failedCount: result.broken || 0,
-          skippedCount: result.missing || 0,
-          iconUrl: currentChannel.photoUrl || undefined,
-        });
-        window.setTimeout(() => clearProgress(progressId), 2800);
-        return result;
-      } catch (error) {
-        clearProgress(progressId);
-        throw error;
-      }
-    },
-    onSuccess: async (result) => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["telegram-managed-posts", channel?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["post-groups", channel?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["telegram-managed-post-link-targets", channel?.id],
-        }),
-      ]);
-      pushToast(
-        `Telegram sync: ${result.checked} checked, ${result.updated} updated, ${result.publishedEarly} published early, ${result.movedToDraft} moved to draft, ${result.broken} broken links.`,
-        result.broken || result.missing ? "error" : "success",
-      );
-    },
-  });
-
   useEffect(() => {
     if (!channelId && channel) {
       router.replace(`${pathname}?channelId=${channel.id}`);
@@ -300,21 +212,6 @@ export default function TelegramPostsPage() {
                   }))}
                 />
               </div>
-              <Button
-                variant="secondary"
-                className="shrink-0"
-                disabled={syncManagedPosts.isPending}
-                onClick={() => syncManagedPosts.mutate()}
-                title="Sync published and scheduled posts from Telegram"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <RefreshCw
-                    size={15}
-                    className={syncManagedPosts.isPending ? "animate-spin" : ""}
-                  />
-                  Sync Telegram
-                </span>
-              </Button>
               <Button
                 className="shrink-0"
                 onClick={() => {
@@ -567,7 +464,10 @@ function TelegramPostWorkspace({
   const displayedError = error || editing?.lastError || "";
   const showManualTelegramUrlInput = Boolean(
     editing &&
-      (["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus) ||
+      (editing.status === "SCHEDULED" ||
+        editing.status === "PUBLISHED" ||
+        editing.status === "FAILED" ||
+        ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus) ||
         /link is broken|Telegram link manually/i.test(displayedError)),
   );
   const outgoingInternalLinks = useMemo(() => {
@@ -644,7 +544,7 @@ function TelegramPostWorkspace({
     );
   });
   const dependencyAlertTitle = unresolvedInternalLinkTargets.length
-    ? `To publish this post, publish and sync these linked posts first: ${unresolvedInternalLinkTargets
+    ? `To publish this post, publish or attach links for these linked posts first: ${unresolvedInternalLinkTargets
         .map((target) => target.post?.title || target.id)
         .join(", ")}.`
     : "";
@@ -1723,7 +1623,7 @@ function TelegramPostWorkspace({
                     </p>
                     <p className="mt-0.5 text-xs text-amber-300/80">
                       {unresolvedInternalLinkTargets.length
-                        ? "Publish and sync these posts with Telegram first:"
+                        ? "Publish these posts or attach their Telegram links first:"
                         : "All linked posts are already ready for publishing."}
                     </p>
                     {unresolvedInternalLinkTargets.length ? (
@@ -1959,10 +1859,10 @@ function TelegramPostWorkspace({
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    <p className="font-medium">Telegram link needs repair</p>
+                    <p className="font-medium">Telegram link</p>
                     <p className="mt-0.5 text-amber-300">
-                      This post has a broken or missing Telegram link. Paste a
-                      valid Telegram post URL to reconnect it.
+                      Paste a Telegram post URL manually to attach it locally.
+                      This also moves the post into published.
                     </p>
                   </div>
                 </div>

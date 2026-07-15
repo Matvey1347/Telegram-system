@@ -9,7 +9,6 @@ import {
   accountApi,
   globalSearchApi,
   iconsApi,
-  telegramChannelsApi,
   workspacesApi,
   type GlobalSearchResult,
 } from '@/lib/api';
@@ -196,10 +195,6 @@ export function AppShell({ children }: PropsWithChildren) {
   const handleGlobalRefresh = async () => {
     setRefreshing(true);
     try {
-      const selectedChannelId =
-        pathname === '/telegram-posts' && typeof window !== 'undefined'
-          ? new URLSearchParams(window.location.search).get('channelId')
-          : null;
       await runProgressSequence({
         api: { pushToast, setProgress, clearProgress },
         id: `global-refresh:${Date.now()}`,
@@ -250,64 +245,6 @@ export function AppShell({ children }: PropsWithChildren) {
           },
         ],
       });
-      if (selectedChannelId) {
-        const syncProgressId = `telegram-posts-global-sync:${selectedChannelId}:${Date.now()}`;
-        setProgress({
-          id: syncProgressId,
-          title: 'Sync Telegram',
-          current: 0,
-          total: 1,
-          message: 'Starting post sync…',
-        });
-        try {
-          const result: {
-            checked: number;
-            updated: number;
-            publishedEarly: number;
-            movedToDraft: number;
-            broken: number;
-            missing: number;
-          } = await telegramChannelsApi.syncManagedPostsWithProgress(
-            selectedChannelId,
-            (item, current, total) => {
-              setProgress({
-                id: syncProgressId,
-                title: 'Sync Telegram',
-                current,
-                total,
-                message: item.message || 'Syncing posts from Telegram…',
-              });
-            },
-          );
-          setProgress({
-            id: syncProgressId,
-            title: 'Sync Telegram',
-            current: result.checked || 0,
-            total: result.checked || 0,
-            message: 'Post sync completed',
-            completed: true,
-            successCount: result.updated || 0,
-            failedCount: result.broken || 0,
-            skippedCount: result.missing || 0,
-          });
-          window.setTimeout(() => clearProgress(syncProgressId), 2800);
-          await Promise.all([
-            qc.invalidateQueries({ queryKey: ['telegram-channels'] }),
-            qc.invalidateQueries({
-              queryKey: ['telegram-managed-posts', selectedChannelId],
-            }),
-            qc.invalidateQueries({
-              queryKey: ['post-groups', selectedChannelId],
-            }),
-            qc.invalidateQueries({
-              queryKey: ['telegram-managed-post-link-targets', selectedChannelId],
-            }),
-          ]);
-        } catch (error) {
-          clearProgress(syncProgressId);
-          throw error;
-        }
-      }
       pushToast('Data refreshed from server.', 'success');
     } catch {
       pushToast('Failed to refresh data.', 'error');
