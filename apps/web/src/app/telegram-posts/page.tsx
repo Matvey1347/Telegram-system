@@ -23,7 +23,6 @@ import {
   FolderPlus,
   GripVertical,
   Layers3,
-  Link,
   ListPlus,
   LoaderCircle,
   MoveRight,
@@ -634,6 +633,16 @@ function TelegramPostWorkspace({
       post: TelegramManagedPost | undefined;
     } => Boolean(target),
   );
+  const resolvedInternalLinkTargets = outgoingInternalLinks.filter((link) => {
+    const target = link.target;
+    return Boolean(
+      target &&
+        target.status === "PUBLISHED" &&
+        target.telegramRemoteStatus === "PUBLISHED" &&
+        target.telegramMessageUrls[0] &&
+        !target.lastError,
+    );
+  });
   const dependencyAlertTitle = unresolvedInternalLinkTargets.length
     ? `To publish this post, publish and sync these linked posts first: ${unresolvedInternalLinkTargets
         .map((target) => target.post?.title || target.id)
@@ -1700,85 +1709,6 @@ function TelegramPostWorkspace({
               />
             </FormField>
             {outgoingInternalLinks.length ? (
-              <div className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-3 py-3">
-                <div className="mb-2 flex items-center gap-2">
-                  <Link size={15} className="text-blue-300" />
-                  <p className="text-sm font-medium text-white">
-                    Uses internal posts
-                  </p>
-                  <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-300">
-                    {outgoingInternalLinks.length}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {outgoingInternalLinks.map((link) => (
-                    <div
-                      key={link.targetId}
-                      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => highlightInternalLinkTarget(link.targetId)}
-                        className="rounded-md border border-blue-800/70 bg-blue-950/30 px-2 py-1 text-xs text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/40"
-                      >
-                        Find in text
-                      </button>
-                      {link.target ? (
-                        <button
-                          type="button"
-                          onClick={() => openPost(link.target as TelegramManagedPost)}
-                          className="inline-flex min-w-0 items-center gap-2 rounded-md border border-neutral-700 px-2.5 py-1.5 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
-                        >
-                          {link.target.icon ? (
-                            <PostIcon
-                              iconId={link.target.icon}
-                              label={link.target.title}
-                            />
-                          ) : (
-                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-xs">
-                              📝
-                            </span>
-                          )}
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-white">
-                              {link.target.title}
-                            </span>
-                            <span className="block truncate text-[11px] text-neutral-400">
-                              {link.labels.join(", ")}
-                            </span>
-                          </span>
-                        </button>
-                      ) : (
-                        <div className="min-w-0 rounded-md border border-red-900/70 bg-red-950/20 px-2.5 py-1.5">
-                          <p className="truncate text-sm font-medium text-red-200">
-                            Missing target
-                          </p>
-                          <p className="truncate text-[11px] text-red-300/80">
-                            {link.labels.join(", ")} · {link.targetId}
-                          </p>
-                        </div>
-                      )}
-                      {link.target ? (
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] ${
-                            link.target.status === "PUBLISHED"
-                              ? "bg-emerald-950 text-emerald-300"
-                              : link.target.status === "SCHEDULED"
-                                ? "bg-amber-950 text-amber-300"
-                                : link.target.status === "FAILED"
-                                  ? "bg-red-950 text-red-300"
-                                  : "bg-neutral-800 text-neutral-300"
-                          }`}
-                        >
-                          {link.target.status}
-                        </span>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {unresolvedInternalLinkTargets.length ? (
               <div
                 className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200"
                 title={dependencyAlertTitle}
@@ -1787,40 +1717,87 @@ function TelegramPostWorkspace({
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-sm font-medium">
-                      Publishing is blocked by linked posts
+                      {unresolvedInternalLinkTargets.length
+                        ? "Publishing is blocked by linked posts"
+                        : "Internal linked posts are ready"}
                     </p>
                     <p className="mt-0.5 text-xs text-amber-300/80">
-                      Publish and sync these posts with Telegram first:
+                      {unresolvedInternalLinkTargets.length
+                        ? "Publish and sync these posts with Telegram first:"
+                        : "All linked posts are already ready for publishing."}
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {unresolvedInternalLinkTargets.map((target) => (
-                        <button
-                          key={target.id}
-                          type="button"
-                          onClick={() => highlightInternalLinkTarget(target.id)}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
-                        >
-                          {target.post?.icon ? (
-                            <PostIcon
-                              iconId={target.post.icon}
-                              label={target.post.title}
-                              bare
-                              size="xs"
-                            />
-                          ) : (
-                            <span aria-hidden="true">📝</span>
-                          )}
-                          <span>
-                            {target.post?.title || `Missing post ${target.id}`}
-                          </span>
-                          {target.post ? (
-                            <span className="text-amber-400/70">
-                              {target.post.status.toLowerCase()}
-                            </span>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
+                    {unresolvedInternalLinkTargets.length ? (
+                      <div className="mt-3">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-300/75">
+                          Blocking
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {unresolvedInternalLinkTargets.map((target) => (
+                            <button
+                              key={target.id}
+                              type="button"
+                              onClick={() => highlightInternalLinkTarget(target.id)}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
+                            >
+                              {target.post?.icon ? (
+                                <PostIcon
+                                  iconId={target.post.icon}
+                                  label={target.post.title}
+                                  bare
+                                  size="xs"
+                                />
+                              ) : (
+                                <span aria-hidden="true">📝</span>
+                              )}
+                              <span>
+                                {target.post?.title || `Missing post ${target.id}`}
+                              </span>
+                              {target.post ? (
+                                <span className="text-amber-400/70">
+                                  {target.post.status.toLowerCase()}
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {resolvedInternalLinkTargets.length ? (
+                      <div className="mt-3">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-300/75">
+                          Ready
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {resolvedInternalLinkTargets.map((target) => (
+                            <button
+                              key={target.targetId}
+                              type="button"
+                              onClick={() =>
+                                highlightInternalLinkTarget(target.targetId)
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/70 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-100 transition hover:border-emerald-600 hover:bg-emerald-900/30"
+                            >
+                              {target.target?.icon ? (
+                                <PostIcon
+                                  iconId={target.target.icon}
+                                  label={target.target.title}
+                                  bare
+                                  size="xs"
+                                />
+                              ) : (
+                                <span aria-hidden="true">📝</span>
+                              )}
+                              <span>
+                                {target.target?.title || target.targetId}
+                              </span>
+                              <span className="text-emerald-300/80">
+                                published
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
