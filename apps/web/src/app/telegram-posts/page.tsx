@@ -28,6 +28,7 @@ import {
   MoveRight,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Rocket,
   Trash2,
@@ -164,6 +165,8 @@ export default function TelegramPostsPage() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
   const channelId = searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
@@ -179,6 +182,83 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
+  const syncManagedPosts = useMutation<{
+    checked: number;
+    updated: number;
+    publishedEarly: number;
+    movedToDraft: number;
+    broken: number;
+    missing: number;
+  }>({
+    mutationFn: async (): Promise<{
+      checked: number;
+      updated: number;
+      publishedEarly: number;
+      movedToDraft: number;
+      broken: number;
+      missing: number;
+    }> => {
+      const currentChannel = channel!;
+      const progressId = `managed-posts-sync:${currentChannel.id}`;
+      setProgress({
+        id: progressId,
+        title: "Sync posts from Telegram",
+        current: 0,
+        total: 1,
+        message: "Starting post sync…",
+        iconUrl: currentChannel.photoUrl || undefined,
+      });
+      try {
+        const result = await telegramChannelsApi.syncManagedPostsWithProgress(
+          currentChannel.id,
+          (item, current, total) => {
+            setProgress({
+              id: progressId,
+              title: "Sync posts from Telegram",
+              current,
+              total,
+              message: item.message || "Syncing posts from Telegram…",
+              iconUrl: currentChannel.photoUrl || undefined,
+            });
+          },
+        );
+        setProgress({
+          id: progressId,
+          title: "Sync posts from Telegram",
+          current: result.checked || 0,
+          total: result.checked || 0,
+          message: "Post sync completed",
+          completed: true,
+          successCount: result.updated || 0,
+          failedCount: result.broken || 0,
+          skippedCount: result.missing || 0,
+          iconUrl: currentChannel.photoUrl || undefined,
+        });
+        window.setTimeout(() => clearProgress(progressId), 2800);
+        return result;
+      } catch (error) {
+        clearProgress(progressId);
+        throw error;
+      }
+    },
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channel?.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["post-groups", channel?.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channel?.id],
+        }),
+      ]);
+      pushToast(
+        `Telegram sync: ${result.checked} checked, ${result.updated} updated, ${result.publishedEarly} published early, ${result.movedToDraft} moved to draft, ${result.broken} broken links.`,
+        result.broken || result.missing ? "error" : "success",
+      );
+    },
+  });
   useEffect(() => {
     if (!channelId && channel) {
       router.replace(`${pathname}?channelId=${channel.id}`);
@@ -212,6 +292,21 @@ export default function TelegramPostsPage() {
                   }))}
                 />
               </div>
+              <Button
+                variant="secondary"
+                className="shrink-0"
+                disabled={syncManagedPosts.isPending}
+                onClick={() => syncManagedPosts.mutate()}
+                title="Sync posts from Telegram"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RefreshCw
+                    size={15}
+                    className={syncManagedPosts.isPending ? "animate-spin" : ""}
+                  />
+                  Sync posts from Telegram
+                </span>
+              </Button>
               <Button
                 className="shrink-0"
                 onClick={() => {
@@ -331,6 +426,7 @@ function TelegramPostWorkspace({
   const [savingTelegramUrl, setSavingTelegramUrl] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [highlightedInternalLinkTargetId, setHighlightedInternalLinkTargetId] =
     useState<string | null>(null);
   const [highlightRequestKey, setHighlightRequestKey] = useState(0);
@@ -1892,47 +1988,64 @@ function TelegramPostWorkspace({
                       Automatic backups are kept for 7 days before risky changes.
                     </p>
                   </div>
-                  {postHistory.isFetching ? (
-                    <LoaderCircle size={14} className="animate-spin text-neutral-500" />
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    {postHistory.isFetching ? (
+                      <LoaderCircle
+                        size={14}
+                        className="animate-spin text-neutral-500"
+                      />
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setHistoryExpanded((current) => !current)}
+                    >
+                      {historyExpanded ? "Hide" : "Show"}
+                    </Button>
+                  </div>
                 </div>
-                <div className="mt-3 space-y-2">
-                  {(postHistory.data || []).length ? (
-                    (postHistory.data || []).slice(0, 6).map((revision) => (
-                      <div
-                        key={revision.id}
-                        className="flex items-center justify-between gap-3 rounded-md border border-neutral-800 bg-neutral-900/80 px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm text-white">
-                            {formatManagedPostRevisionReason(revision.reason)}
-                          </p>
-                          <p className="text-xs text-neutral-400">
-                            {new Date(revision.createdAt).toLocaleString()}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={restorePostRevision.isPending}
-                          onClick={() => {
-                            setRestorePreviewRevision(revision);
-                            setRestoreConfirmationValue("");
-                          }}
+                {historyExpanded ? (
+                  <div className="mt-3 space-y-2">
+                    {(postHistory.data || []).length ? (
+                      (postHistory.data || []).slice(0, 6).map((revision) => (
+                        <div
+                          key={revision.id}
+                          className="flex items-center justify-between gap-3 rounded-md border border-neutral-800 bg-neutral-900/80 px-3 py-2"
                         >
-                          Restore
-                        </Button>
-                      </div>
-                    ))
-                  ) : postHistory.isLoading ? (
-                    <p className="text-xs text-neutral-500">Loading history…</p>
-                  ) : (
-                    <p className="text-xs text-neutral-500">
-                      No backups yet. A backup is created before publish, schedule,
-                      sync changes, restore, delete, and manual edits.
-                    </p>
-                  )}
-                </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-white">
+                              {formatManagedPostRevisionReason(revision.reason)}
+                            </p>
+                            <p className="text-xs text-neutral-400">
+                              {new Date(revision.createdAt).toLocaleString()}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={restorePostRevision.isPending}
+                            onClick={() => {
+                              setRestorePreviewRevision(revision);
+                              setRestoreConfirmationValue("");
+                            }}
+                          >
+                            Restore
+                          </Button>
+                        </div>
+                      ))
+                    ) : postHistory.isLoading ? (
+                      <p className="text-xs text-neutral-500">
+                        Loading history…
+                      </p>
+                    ) : (
+                      <p className="text-xs text-neutral-500">
+                        No backups yet. A backup is created before publish,
+                        schedule, sync changes, restore, delete, and manual
+                        edits.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {pendingPostSaves.length + savingPostIds.length > 0 ? (

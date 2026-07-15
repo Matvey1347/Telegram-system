@@ -476,6 +476,30 @@ export class TelegramChannelsService {
     };
   }
 
+  private appendFollowupTextMessageForImagesThenText(
+    publishMode: string | null,
+    messages: ManagedPostSyncMessage[],
+    recentPublished: ManagedPostSyncMessage[],
+  ) {
+    if (
+      publishMode !== 'IMAGES_THEN_TEXT' ||
+      messages.length !== 1 ||
+      !messages[0]?.hasMedia
+    ) {
+      return messages;
+    }
+    const mediaMessage = messages[0];
+    const followup = recentPublished
+      .filter(
+        (candidate) =>
+          !candidate.hasMedia &&
+          candidate.date === mediaMessage.date &&
+          Number(candidate.id) > Number(mediaMessage.id),
+      )
+      .sort((left, right) => Number(left.id) - Number(right.id))[0];
+    return followup ? [mediaMessage, followup] : messages;
+  }
+
   private maskInviteHash(value?: string | null) {
     const hash = String(value || '').trim();
     if (!hash) return null;
@@ -2312,6 +2336,11 @@ export class TelegramChannelsService {
         .filter((message): message is NonNullable<typeof message> =>
           Boolean(message),
         );
+      publishedMessages = this.appendFollowupTextMessageForImagesThenText(
+        post.publishMode,
+        publishedMessages,
+        remote.recentPublished,
+      );
       const currentRemoteText = restoreInternalLinks(
         publishedMessages
           .map((message) => telegramHtmlToManagedMarkup(message.html))
@@ -2349,6 +2378,11 @@ export class TelegramChannelsService {
             .filter((message): message is NonNullable<typeof message> =>
               Boolean(message),
             );
+          publishedMessages = this.appendFollowupTextMessageForImagesThenText(
+            post.publishMode,
+            publishedMessages,
+            remote.recentPublished,
+          );
         } else if (post.status === TelegramManagedPostStatus.PUBLISHED) {
           publishedMessages = [];
         }
@@ -2375,27 +2409,19 @@ export class TelegramChannelsService {
         : publishedMessages;
       if (!messages.length) {
         if (post.status === 'SCHEDULED') {
-          result.missing += 1;
-          result.movedToDraft += 1;
           result.updated += 1;
           await this.prisma.$transaction(async (tx) => {
             await this.createManagedPostRevision(tx, post, 'before_sync_missing');
             await tx.telegramManagedPost.update({
               where: { id: post.id },
               data: {
-                status: TelegramManagedPostStatus.DRAFT,
-                telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
+                status: TelegramManagedPostStatus.SCHEDULED,
+                telegramRemoteStatus: post.telegramRemoteStatus,
                 publishedAt: null,
-                scheduledAt: null,
-                telegramMessageIds: [],
-                telegramMessageUrls: [],
-                sourceType: null,
-                sourceId: null,
-                lastError:
-                  'This post was scheduled in Telegram, but the scheduled message was not found. It may have been deleted in Telegram. Publish it again or enter a valid Telegram post link manually.',
+                lastError: null,
                 lastTelegramSyncedAt: new Date(),
                 lastTelegramSyncNote:
-                  'Scheduled Telegram message was not found during sync.',
+                  'Scheduled Telegram message was not confirmed during sync. Post was kept scheduled.',
               },
             });
           });
@@ -2405,36 +2431,27 @@ export class TelegramChannelsService {
               postId: post.id,
               index: current,
               total: posts.length,
-              action: 'CONVERTED_TO_DRAFT',
+              action: 'SCHEDULED',
               success: true,
               status: 'success',
-              message: `${post.title}: scheduled message not found, moved to draft`,
+              message: `${post.title}: scheduled message not found, kept scheduled`,
             } as unknown) as BulkActionResultItem,
             current,
             posts.length,
           );
         } else if (post.status === 'PUBLISHED') {
-          result.broken += 1;
-          result.movedToDraft += 1;
           result.updated += 1;
           await this.prisma.$transaction(async (tx) => {
             await this.createManagedPostRevision(tx, post, 'before_sync_broken');
             await tx.telegramManagedPost.update({
               where: { id: post.id },
               data: {
-                status: TelegramManagedPostStatus.DRAFT,
-                telegramRemoteStatus: TelegramManagedPostRemoteStatus.BROKEN,
-                publishedAt: null,
-                scheduledAt: null,
-                telegramMessageIds: [],
-                telegramMessageUrls: [],
-                sourceType: null,
-                sourceId: null,
-                lastError:
-                  'Telegram post was not found or no longer matches this record. It was moved to draft. Enter a valid Telegram post link manually, publish it again, or schedule it again.',
+                status: TelegramManagedPostStatus.PUBLISHED,
+                telegramRemoteStatus: post.telegramRemoteStatus,
+                lastError: null,
                 lastTelegramSyncedAt: new Date(),
                 lastTelegramSyncNote:
-                  'Published Telegram message was not found or did not match during sync.',
+                  'Published Telegram post was not confirmed during sync. Post was kept published.',
               },
             });
           });
@@ -2444,10 +2461,10 @@ export class TelegramChannelsService {
               postId: post.id,
               index: current,
               total: posts.length,
-              action: 'CONVERTED_TO_DRAFT',
+              action: 'PUBLISHED',
               success: true,
               status: 'success',
-              message: `${post.title}: published Telegram post not found or mismatched, moved to draft`,
+              message: `${post.title}: published Telegram post not found or mismatched, kept published`,
             } as unknown) as BulkActionResultItem,
             current,
             posts.length,
