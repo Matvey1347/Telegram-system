@@ -33,11 +33,41 @@ export const api = axios.create({
 
 export const API_MUTATION_EVENT = "telegram-system:api-mutation";
 
-type ApiMutationEventDetail = {
+export type ApiFeedbackMode = "automatic" | "managed" | "silent";
+
+export type ApiFeedbackConfig = {
+  mode?: ApiFeedbackMode;
+  operationId?: string;
+  title?: string;
+  loadingMessage?: string;
+  successMessage?: string;
+  errorMessage?: string;
+  icon?: {
+    emoji?: string | null;
+    imageUrl?: string | null;
+  };
+};
+
+export type StructuredApiErrorPayload = Partial<StructuredApiError> & {
+  message?: string;
+  code?: string;
+  statusCode?: number;
+  correlationId?: string;
+};
+
+export type ApiMutationEventDetail = {
   id: string;
   phase: "start" | "success" | "error";
+  title?: string;
   message?: string;
-  scope?: "page";
+  details?: string;
+  code?: string;
+  correlationId?: string;
+  icon?: {
+    emoji?: string | null;
+    imageUrl?: string | null;
+  };
+  mode?: ApiFeedbackMode;
 };
 
 function emitMutationEvent(detail: ApiMutationEventDetail) {
@@ -59,7 +89,33 @@ function successMessage(method?: string) {
   return "Saved successfully.";
 }
 
-function errorMessage(error: unknown) {
+function extractStructuredApiError(error: unknown): StructuredApiErrorPayload | null {
+  if (!axios.isAxiosError(error) || !error.response?.data) {
+    return null;
+  }
+  const payload = error.response.data as Partial<StructuredApiErrorPayload> & {
+    message?: string | string[];
+  };
+  const message = Array.isArray(payload.message)
+    ? payload.message.join("\n")
+    : typeof payload.message === "string"
+      ? payload.message
+      : undefined;
+  return {
+    message: message || "Request failed.",
+    details: payload.details ?? undefined,
+    ...(typeof payload.code === "string" ? { code: payload.code } : {}),
+    statusCode:
+      typeof payload.statusCode === "number"
+        ? payload.statusCode
+        : error.response.status,
+    ...(typeof payload.correlationId === "string"
+      ? { correlationId: payload.correlationId }
+      : {}),
+  };
+}
+
+function defaultErrorMessage(error: unknown) {
   if (!axios.isAxiosError(error)) {
     return "Something went wrong. Please try again.";
   }
@@ -78,6 +134,43 @@ function errorMessage(error: unknown) {
     return "The server could not complete this action. Please try again.";
   }
   return message;
+}
+
+function errorFeedback(error: unknown, fallback?: string) {
+  const structured = extractStructuredApiError(error);
+  const message =
+    structured?.message?.trim() || fallback || defaultErrorMessage(error);
+  const details =
+    typeof structured?.details === "string" ? structured.details : undefined;
+  const code = typeof structured?.code === "string" ? structured.code : undefined;
+  const correlationId =
+    typeof structured?.correlationId === "string"
+      ? structured.correlationId
+      : undefined;
+  return { message, details, code, correlationId };
+}
+
+type FeedbackAwareConfig = AxiosRequestConfig & {
+  feedback?: ApiFeedbackConfig;
+};
+
+function withFeedback(config: FeedbackAwareConfig): FeedbackAwareConfig {
+  return config;
+}
+
+const silentFeedbackConfig = withFeedback({
+  feedback: { mode: "silent" },
+});
+
+function managedFeedbackConfig(
+  feedback?: Omit<ApiFeedbackConfig, "mode">,
+): FeedbackAwareConfig {
+  return withFeedback({
+    feedback: {
+      mode: "managed",
+      ...feedback,
+    },
+  });
 }
 
 export type BulkProgressHandler = (
@@ -186,28 +279,32 @@ api.interceptors.request.use((config) => {
     config.headers["ngrok-skip-browser-warning"] = "true";
   }
   if (isMutationMethod(config.method)) {
-    if (
-      (
-        config as typeof config & {
-          skipGlobalMutationFeedback?: boolean;
-        }
-      ).skipGlobalMutationFeedback
-    ) {
+    const feedback = (config as FeedbackAwareConfig).feedback;
+    const mode = feedback?.mode || "automatic";
+    if (mode === "managed" || mode === "silent") {
       return config;
     }
-    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const requestId =
+      feedback?.operationId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     (
       config as typeof config & {
         mutationRequestId?: string;
-        mutationScope?: "page";
+        mutationFeedback?: ApiFeedbackConfig;
       }
     ).mutationRequestId = requestId;
     (
       config as typeof config & {
-        mutationScope?: "page";
+        mutationFeedback?: ApiFeedbackConfig;
       }
-    ).mutationScope = "page";
-    emitMutationEvent({ id: requestId, phase: "start", scope: "page" });
+    ).mutationFeedback = feedback;
+    emitMutationEvent({
+      id: requestId,
+      phase: "start",
+      title: feedback?.title,
+      message: feedback?.loadingMessage || "Waiting for the server…",
+      icon: feedback?.icon,
+      mode,
+    });
   }
   return config;
 });
@@ -219,17 +316,19 @@ api.interceptors.response.use(
         mutationRequestId?: string;
       }
     ).mutationRequestId;
-    const scope = (
+    const feedback = (
       response.config as typeof response.config & {
-        mutationScope?: "page";
+        mutationFeedback?: ApiFeedbackConfig;
       }
-    ).mutationScope;
+    ).mutationFeedback;
     if (requestId) {
       emitMutationEvent({
         id: requestId,
         phase: "success",
-        message: successMessage(response.config.method),
-        scope,
+        title: feedback?.title,
+        message: feedback?.successMessage || successMessage(response.config.method),
+        icon: feedback?.icon,
+        mode: feedback?.mode || "automatic",
       });
     }
     return response;
@@ -238,15 +337,21 @@ api.interceptors.response.use(
     const requestId = (
       error?.config as { mutationRequestId?: string } | undefined
     )?.mutationRequestId;
-    const scope = (
-      error?.config as { mutationScope?: "page" } | undefined
-    )?.mutationScope;
+    const feedback = (
+      error?.config as { mutationFeedback?: ApiFeedbackConfig } | undefined
+    )?.mutationFeedback;
     if (requestId) {
+      const normalizedError = errorFeedback(error, feedback?.errorMessage);
       emitMutationEvent({
         id: requestId,
         phase: "error",
-        message: errorMessage(error),
-        scope,
+        title: feedback?.title,
+        message: normalizedError.message,
+        details: normalizedError.details,
+        code: normalizedError.code,
+        correlationId: normalizedError.correlationId,
+        icon: feedback?.icon,
+        mode: feedback?.mode || "automatic",
       });
     }
     if (
@@ -1378,42 +1483,38 @@ export const iconsApi = {
       })
     ).data,
   get: async (id: string) => (await api.get<Icon>(`/icons/${id}`)).data,
-  upload: async (file: File) => {
+  upload: async (file: File): Promise<{ imageUrl: string }> => {
     const formData = new FormData();
     formData.append("file", file);
     return (
-      await api.post<{ imageUrl: string }>("/icons/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        skipGlobalMutationFeedback: true,
-      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+      await api.post<{ imageUrl: string }>(
+        "/icons/upload",
+        formData,
+        withFeedback({
+          headers: { "Content-Type": "multipart/form-data" },
+          feedback: { mode: "managed" },
+        }),
+      )
     ).data;
   },
   createCustom: async (payload: { name: string; imageUrl: string }) =>
     (
-      await api.post<Icon>("/icons/custom", payload, {
-        skipGlobalMutationFeedback: true,
-      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+      await api.post<Icon>("/icons/custom", payload, silentFeedbackConfig)
     ).data,
   createTemporaryImage: async (payload: {
     imageUrl: string;
     fileName?: string;
   }) =>
     (
-      await api.post<Icon>("/icons/temporary-image", payload, {
-        skipGlobalMutationFeedback: true,
-      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+      await api.post<Icon>("/icons/temporary-image", payload, silentFeedbackConfig)
     ).data,
   createEmoji: async (payload: { name: string; emoji: string }) =>
     (
-      await api.post<Icon>("/icons/emoji", payload, {
-        skipGlobalMutationFeedback: true,
-      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+      await api.post<Icon>("/icons/emoji", payload, silentFeedbackConfig)
     ).data,
   remove: async (id: string) =>
     (
-      await api.delete<{ success: boolean }>(`/icons/${id}`, {
-        skipGlobalMutationFeedback: true,
-      } as AxiosRequestConfig & { skipGlobalMutationFeedback: boolean })
+      await api.delete<{ success: boolean }>(`/icons/${id}`, silentFeedbackConfig)
     ).data,
 };
 
@@ -1427,11 +1528,7 @@ const crud = <T>(path: string) => ({
   remove: async (id: string) => (await api.delete<T>(`${path}/${id}`)).data,
 });
 
-const quietMutationConfig = {
-  skipGlobalMutationFeedback: true,
-} as AxiosRequestConfig & {
-  skipGlobalMutationFeedback: boolean;
-};
+const quietMutationConfig = silentFeedbackConfig;
 
 const quietCrud = <T>(path: string) => ({
   list: async () => (await api.get<T[]>(path)).data,
@@ -1558,11 +1655,7 @@ export const telegramChannelsApi = {
       await api.patch<TelegramChannel>(
         `/telegram-channels/${id}`,
         payload,
-        {
-          skipGlobalMutationFeedback: true,
-        } as AxiosRequestConfig & {
-          skipGlobalMutationFeedback: boolean;
-        },
+        silentFeedbackConfig,
       )
     ).data,
   import: async (input: string) =>
@@ -1712,13 +1805,7 @@ export const telegramChannelsApi = {
       await api.post<{ success: true }>(
         `/telegram-channels/${channelId}/managed-posts/reorder-sidebar`,
         { orderedItems },
-        background
-          ? ({
-              skipGlobalMutationFeedback: true,
-            } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   createManagedPost: async (
@@ -1737,9 +1824,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts`,
         payload,
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1760,9 +1845,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts/${postId}`,
         payload,
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1821,9 +1904,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/post-groups/${groupId}/posts`,
         { postIds },
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1836,9 +1917,7 @@ export const telegramChannelsApi = {
       await api.delete<PostGroup>(
         `/telegram-channels/post-groups/${groupId}/posts/${postId}`,
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1852,9 +1931,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/post-groups/${groupId}/reorder`,
         { orderedPostIds },
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1874,11 +1951,7 @@ export const telegramChannelsApi = {
           await api.post<BulkActionResult & { group: PostGroup }>(
             `/telegram-channels/post-groups/${groupId}/move-channel`,
             { targetTelegramChannelId },
-            background
-              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-                  skipGlobalMutationFeedback: boolean;
-                })
-              : undefined,
+            background ? silentFeedbackConfig : undefined,
           )
         ).data,
   publishPostGroup: async (
@@ -1901,11 +1974,7 @@ export const telegramChannelsApi = {
           await api.post<BulkActionResult>(
             `/telegram-channels/post-groups/${groupId}/publish-all`,
             payload,
-            background
-              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-                  skipGlobalMutationFeedback: boolean;
-                })
-              : undefined,
+            background ? silentFeedbackConfig : undefined,
           )
         ).data,
   resetPostGroupToDrafts: async (
@@ -1924,11 +1993,7 @@ export const telegramChannelsApi = {
             `/telegram-channels/post-groups/${groupId}/reset-drafts`,
             {},
             background
-              ? ({
-                  skipGlobalMutationFeedback: true,
-                } as AxiosRequestConfig & {
-                  skipGlobalMutationFeedback: boolean;
-                })
+              ? silentFeedbackConfig
               : undefined,
           )
         ).data,
@@ -1956,11 +2021,7 @@ export const telegramChannelsApi = {
           await api.post<BulkActionResult>(
             `/telegram-channels/post-groups/${groupId}/schedule-sequence`,
             payload,
-            background
-              ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-                  skipGlobalMutationFeedback: boolean;
-                })
-              : undefined,
+            background ? silentFeedbackConfig : undefined,
           )
         ).data,
   publishManagedPost: async (
@@ -1974,9 +2035,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts/${postId}/publish`,
         { longTextMode },
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,
@@ -1992,9 +2051,7 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts/${postId}/schedule`,
         { scheduledAt, longTextMode },
         background
-          ? ({ skipGlobalMutationFeedback: true } as AxiosRequestConfig & {
-              skipGlobalMutationFeedback: boolean;
-            })
+          ? silentFeedbackConfig
           : undefined,
       )
     ).data,

@@ -52,8 +52,6 @@ import {
   PageHeader,
   TimeInput,
   TooltipBubble,
-  ToastStack,
-  type ToastItem,
 } from "@/components/ui/primitives";
 import {
   currenciesApi,
@@ -67,6 +65,7 @@ import {
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import { scheduleProgressDismiss } from "@/lib/progress";
+import { invalidateTelegramChannelQueries } from "@/lib/telegram-query-invalidation";
 import { useAppToast } from "@/providers/toast-provider";
 
 function formatLocalDate(value?: string | Date | null) {
@@ -183,12 +182,11 @@ export default function TelegramChannelAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const queryClient = useQueryClient();
-  const { setProgress, clearProgress } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [todayIso] = useState(() => formatLocalDate(new Date()));
   const [thirtyDaysAgoIso] = useState(() =>
     formatLocalDate(new Date(Date.now() - 30 * 24 * 3600 * 1000)),
   );
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [syncScopeOpen, setSyncScopeOpen] = useState(false);
   const [syncStatusOpen, setSyncStatusOpen] = useState(false);
   const [rangeMode, setRangeMode] = useState<"30d" | "all" | "custom">("all");
@@ -214,19 +212,6 @@ export default function TelegramChannelAnalyticsPage() {
     stopCpa: "",
     timePosts: [],
   });
-
-  const pushToast = (
-    message: string,
-    tone: ToastItem["tone"] = "info",
-    durationMs = 3500,
-  ) => {
-    const toastId = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [...prev, { id: toastId, message, tone }]);
-    setTimeout(
-      () => setToasts((prev) => prev.filter((toast) => toast.id !== toastId)),
-      durationMs,
-    );
-  };
 
   const rangeParams = useMemo(() => {
     if (rangeMode === "all") return { from: "2000-01-01", to: todayIso };
@@ -374,26 +359,7 @@ export default function TelegramChannelAnalyticsPage() {
       }
     },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-analytics", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-posts", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-analytics-sources", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-financial-summary", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience-snapshots", id],
-      });
-      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
+      void invalidateTelegramChannelQueries(queryClient, id);
       setLastSyncResult(result);
       pushToast(summarizeSync(result), "success", 8000);
     },
@@ -956,12 +922,6 @@ export default function TelegramChannelAnalyticsPage() {
         isSyncing={syncMutation.isPending}
         lastSyncResult={lastSyncResult}
         onSelectSource={setSelectedSourceAccess}
-      />
-      <ToastStack
-        items={toasts}
-        onClose={(toastId) =>
-          setToasts((prev) => prev.filter((toast) => toast.id !== toastId))
-        }
       />
       <SourceAccessModal
         access={selectedSourceAccess}

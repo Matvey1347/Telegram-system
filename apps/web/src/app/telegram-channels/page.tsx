@@ -69,9 +69,7 @@ import {
   Textarea,
   TimeInput,
   TooltipBubble,
-  ToastStack,
   isValidTimeInputValue,
-  type ToastItem,
 } from "@/components/ui/primitives";
 import { useAppToast } from "@/providers/toast-provider";
 
@@ -1365,7 +1363,7 @@ export default function TelegramChannelsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { setProgress, clearProgress } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -1390,19 +1388,6 @@ export default function TelegramChannelsPage() {
     channel: TelegramChannel;
     analysis: TelegramChannelAdAnalysis;
   } | null>(null);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const pushToast = (
-    message: string,
-    tone: ToastItem["tone"] = "info",
-    durationMs = 3500,
-  ) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [...prev, { id, message, tone }]);
-    setTimeout(
-      () => setToasts((prev) => prev.filter((toast) => toast.id !== id)),
-      durationMs,
-    );
-  };
   const updateTabs = (next: {
     tab?: TelegramTab;
     channelFilter?: ChannelFilter;
@@ -2148,12 +2133,6 @@ export default function TelegramChannelsPage() {
           });
         }}
         label="Delete analysis"
-      />
-      <ToastStack
-        items={toasts}
-        onClose={(id) =>
-          setToasts((prev) => prev.filter((toast) => toast.id !== id))
-        }
       />
     </AppShell>
   );

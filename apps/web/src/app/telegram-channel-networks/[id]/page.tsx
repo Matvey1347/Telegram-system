@@ -16,8 +16,6 @@ import {
   Modal,
   PageHeader,
   Textarea,
-  ToastStack,
-  type ToastItem,
 } from "@/components/ui/primitives";
 import {
   telegramChannelNetworksApi,
@@ -26,6 +24,7 @@ import {
   type TelegramChannelNetworkChannelSummary,
   type TelegramChannelNetworkKpiStatus,
 } from "@/lib/api";
+import { useAppToast } from "@/providers/toast-provider";
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -71,19 +70,7 @@ export default function TelegramChannelNetworkDetailPage() {
   const queryClient = useQueryClient();
   const id = params.id;
   const [formOpen, setFormOpen] = useState(false);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const pushToast = (
-    message: string,
-    tone: ToastItem["tone"] = "info",
-    durationMs = 3500,
-  ) => {
-    const toastId = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [...prev, { id: toastId, message, tone }]);
-    setTimeout(
-      () => setToasts((prev) => prev.filter((toast) => toast.id !== toastId)),
-      durationMs,
-    );
-  };
+  const { pushToast } = useAppToast();
 
   const { data: network, isLoading, error } = useQuery({
     queryKey: ["telegram-channel-network", id],
@@ -211,12 +198,6 @@ export default function TelegramChannelNetworkDetailPage() {
         isSubmitting={updateMutation.isPending}
         onClose={() => setFormOpen(false)}
         onSubmit={(payload) => updateMutation.mutate(payload)}
-      />
-      <ToastStack
-        items={toasts}
-        onClose={(toastId) =>
-          setToasts((prev) => prev.filter((toast) => toast.id !== toastId))
-        }
       />
     </AppShell>
   );

@@ -3,6 +3,7 @@
 import {
   createContext,
   PropsWithChildren,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -12,11 +13,67 @@ import {
 import { ToastStack, type ToastItem } from "@/components/ui/primitives";
 import { API_MUTATION_EVENT } from "@/lib/api";
 
+type ToastTone = NonNullable<ToastItem["tone"]>;
+
+type ToastIcon = {
+  emoji?: string | null;
+  imageUrl?: string | null;
+};
+
+type OperationPhase = "loading" | "success" | "error" | "info";
+
+type OperationEntry = {
+  id: string;
+  title?: string;
+  message: string;
+  tone: ToastTone;
+  iconEmoji?: string;
+  iconUrl?: string;
+  progress?: { current: number; total: number };
+  details?: string;
+  createdAt: number;
+};
+
+type OperationStartInput = {
+  id: string;
+  title?: string;
+  message: string;
+  icon?: ToastIcon;
+  current?: number;
+  total?: number;
+};
+
+type OperationUpdateInput = {
+  title?: string;
+  message?: string;
+  icon?: ToastIcon;
+  current?: number;
+  total?: number;
+  details?: string;
+};
+
+type OperationResultInput = {
+  title?: string;
+  message: string;
+  details?: string;
+  code?: string;
+  correlationId?: string;
+  icon?: ToastIcon;
+};
+
+type OperationHandle = {
+  id: string;
+  update: (input: OperationUpdateInput) => void;
+  succeed: (input: OperationResultInput) => void;
+  fail: (input: OperationResultInput) => void;
+  dismiss: () => void;
+};
+
 type PushToast = (
   message: string,
-  tone?: ToastItem["tone"],
+  tone?: ToastTone,
   durationMs?: number,
-  icon?: { emoji?: string | null; imageUrl?: string | null },
+  icon?: ToastIcon,
 ) => void;
 
 export type AppProgress = {
@@ -33,289 +90,344 @@ export type AppProgress = {
   iconUrl?: string;
 };
 
+const SUCCESS_DISMISS_MS = 3200;
+const ERROR_DISMISS_MS = 8000;
+const INFO_DISMISS_MS = 4000;
+
+type ApiMutationEventDetail = {
+  id: string;
+  phase: "start" | "success" | "error";
+  title?: string;
+  message?: string;
+  details?: string;
+  code?: string;
+  correlationId?: string;
+  icon?: ToastIcon;
+  mode?: "automatic" | "managed" | "silent";
+};
+
 const ToastContext = createContext<{
   pushToast: PushToast;
+  startOperation: (input: OperationStartInput) => OperationHandle;
+  dismissOperation: (id: string) => void;
   setProgress: (progress: AppProgress | null) => void;
   clearProgress: (id?: string) => void;
 } | null>(null);
 
+function buildDetails({
+  details,
+  code,
+  correlationId,
+}: {
+  details?: string;
+  code?: string;
+  correlationId?: string;
+}) {
+  const parts = [
+    details?.trim(),
+    code ? `Code: ${code}` : undefined,
+    correlationId ? `Correlation ID: ${correlationId}` : undefined,
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
+function normalizeProgress(current?: number, total?: number) {
+  if (
+    typeof current !== "number" ||
+    typeof total !== "number" ||
+    !Number.isFinite(current) ||
+    !Number.isFinite(total) ||
+    total <= 0
+  ) {
+    return undefined;
+  }
+  return { current, total };
+}
+
 export function ToastProvider({ children }: PropsWithChildren) {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [mutationToasts, setMutationToasts] = useState<ToastItem[]>([]);
-  const [progressEntries, setProgressEntries] = useState<AppProgress[]>([]);
-  const lastManualSuccessToastAtRef = useRef(0);
-  const mutationDismissTimersRef = useRef<Map<string, number>>(new Map());
-  const mutationToastsRef = useRef<ToastItem[]>([]);
-  const recentGenericMutationSuccessRef = useRef<Map<string, number>>(
-    new Map(),
+  const [entries, setEntries] = useState<OperationEntry[]>([]);
+  const entriesRef = useRef<Map<string, OperationEntry>>(new Map());
+  const dismissTimersRef = useRef<Map<string, number>>(new Map());
+  const sequenceRef = useRef(0);
+
+  const clearDismissTimer = useCallback((id: string) => {
+    const timer = dismissTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      dismissTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const upsertEntry = useCallback(
+    (id: string, updater: (existing?: OperationEntry) => OperationEntry) => {
+      setEntries((current) => {
+        const existing = current.find((entry) => entry.id === id);
+        const nextEntry = updater(existing);
+        const next = current.filter((entry) => entry.id !== id);
+        next.push(nextEntry);
+        entriesRef.current.set(id, nextEntry);
+        return next;
+      });
+    },
+    [],
   );
-  const genericSuccessReplacementWindowMs = 10_000;
 
-  useEffect(() => {
-    mutationToastsRef.current = mutationToasts;
-  }, [mutationToasts]);
+  const dismissOperation = useCallback(
+    (id: string) => {
+      clearDismissTimer(id);
+      setEntries((current) => {
+        const next = current.filter((entry) => entry.id !== id);
+        entriesRef.current.delete(id);
+        return next;
+      });
+    },
+    [clearDismissTimer],
+  );
 
-  const pushToastInternal = (
-    message: string,
-    tone: ToastItem["tone"] = "info",
-    durationMs = 3500,
-    icon?: { emoji?: string | null; imageUrl?: string | null },
-  ) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [
-      ...prev,
-      {
+  const scheduleDismiss = useCallback(
+    (id: string, delayMs: number) => {
+      clearDismissTimer(id);
+      const timer = window.setTimeout(() => dismissOperation(id), delayMs);
+      dismissTimersRef.current.set(id, timer);
+    },
+    [clearDismissTimer, dismissOperation],
+  );
+
+  const transitionOperation = useCallback(
+    (
+      id: string,
+      phase: OperationPhase,
+      input: OperationUpdateInput & {
+        code?: string;
+        correlationId?: string;
+      },
+    ) => {
+      clearDismissTimer(id);
+      upsertEntry(id, (existing) => ({
         id,
+        createdAt: existing?.createdAt ?? Date.now(),
+        title: input.title ?? existing?.title,
+        message: input.message ?? existing?.message ?? "Working…",
+        tone:
+          phase === "loading"
+            ? "loading"
+            : phase === "success"
+              ? "success"
+              : phase === "error"
+                ? "error"
+                : "info",
+        iconEmoji: input.icon?.emoji ?? existing?.iconEmoji,
+        iconUrl: input.icon?.imageUrl ?? existing?.iconUrl,
+        progress: normalizeProgress(input.current, input.total) ?? existing?.progress,
+        details:
+          buildDetails({
+            details: input.details,
+            code: input.code,
+            correlationId: input.correlationId,
+          }) || existing?.details,
+      }));
+      if (phase === "success") scheduleDismiss(id, SUCCESS_DISMISS_MS);
+      if (phase === "error") scheduleDismiss(id, ERROR_DISMISS_MS);
+      if (phase === "info") scheduleDismiss(id, INFO_DISMISS_MS);
+    },
+    [clearDismissTimer, scheduleDismiss, upsertEntry],
+  );
+
+  const startOperation = useCallback(
+    (input: OperationStartInput): OperationHandle => {
+      transitionOperation(input.id, "loading", {
+        title: input.title,
+        message: input.message,
+        icon: input.icon,
+        current: input.current,
+        total: input.total,
+      });
+      return {
+        id: input.id,
+        update: (next) => transitionOperation(input.id, "loading", next),
+        succeed: (next) => transitionOperation(input.id, "success", next),
+        fail: (next) => transitionOperation(input.id, "error", next),
+        dismiss: () => dismissOperation(input.id),
+      };
+    },
+    [dismissOperation, transitionOperation],
+  );
+
+  const pushToast = useCallback<PushToast>(
+    (message, tone = "info", durationMs = INFO_DISMISS_MS, icon) => {
+      sequenceRef.current += 1;
+      const id = `toast:${sequenceRef.current}`;
+      upsertEntry(id, () => ({
+        id,
+        createdAt: Date.now(),
         message,
         tone,
         iconEmoji: icon?.emoji || undefined,
         iconUrl: icon?.imageUrl || undefined,
-      },
-    ]);
-    window.setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, durationMs);
-  };
+      }));
+      if (tone !== "loading") {
+        scheduleDismiss(id, durationMs);
+      }
+    },
+    [scheduleDismiss, upsertEntry],
+  );
 
-  const setProgress = (progress: AppProgress | null) => {
-    if (!progress) {
-      setProgressEntries([]);
-      return;
-    }
-    const progressId = progress.id || "default";
-    setProgressEntries((current) => {
-      const next = current.filter((entry) => (entry.id || "default") !== progressId);
-      return [...next, { ...progress, id: progressId }];
-    });
-  };
-
-  const clearProgress = (id?: string) => {
-    if (!id) {
-      setProgressEntries([]);
-      return;
-    }
-    setProgressEntries((current) =>
-      current.filter((entry) => (entry.id || "default") !== id),
-    );
-  };
-
-  const clearMutationDismissTimer = (id: string) => {
-    const timer = mutationDismissTimersRef.current.get(id);
-    if (timer) {
-      window.clearTimeout(timer);
-      mutationDismissTimersRef.current.delete(id);
-    }
-  };
-
-  const scheduleMutationToastDismiss = (id: string, durationMs: number) => {
-    clearMutationDismissTimer(id);
-    const timer = window.setTimeout(() => {
-      setMutationToasts((current) =>
-        current.filter((toast) => toast.id !== `mutation:${id}`),
-      );
-      recentGenericMutationSuccessRef.current.delete(`mutation:${id}`);
-      mutationDismissTimersRef.current.delete(id);
-    }, durationMs);
-    mutationDismissTimersRef.current.set(id, timer);
-  };
-
-  const isGenericMutationSuccessMessage = (message: string) =>
-    ["Saved successfully.", "Created successfully.", "Deleted successfully."].includes(
-      message,
-    );
-
-  const replaceRecentGenericMutationSuccessToast = (
-    message: string,
-    icon?: { emoji?: string | null; imageUrl?: string | null },
-  ) => {
-    const now = Date.now();
-    const target = [...mutationToastsRef.current]
-      .reverse()
-      .find((toast) => {
-        if (toast.tone !== "success" || typeof toast.id !== "string") {
-          return false;
-        }
-        const completedAt = recentGenericMutationSuccessRef.current.get(toast.id);
-        return Boolean(
-          completedAt && now - completedAt < genericSuccessReplacementWindowMs,
-        );
+  const setProgress = useCallback(
+    (progress: AppProgress | null) => {
+      if (!progress) {
+        [...entriesRef.current.keys()]
+          .filter((id) => id.startsWith("progress:"))
+          .forEach((id) => dismissOperation(id));
+        return;
+      }
+      const id = `progress:${progress.id || "default"}`;
+      const handle = startOperation({
+        id,
+        title: progress.title,
+        message: progress.message || "Working…",
+        icon: {
+          emoji: progress.iconEmoji,
+          imageUrl: progress.iconUrl,
+        },
+        current: progress.current,
+        total: progress.total,
       });
-    if (!target || typeof target.id !== "string") return false;
-    const mutationId = target.id.replace("mutation:", "");
-    setMutationToasts((current) =>
-      current.map((toast) =>
-        toast.id === target.id
-          ? {
-              ...toast,
-              title: undefined,
-              message,
-              iconEmoji: icon?.emoji || undefined,
-              iconUrl: icon?.imageUrl || undefined,
-            }
-          : toast,
-      ),
-    );
-    scheduleMutationToastDismiss(mutationId, 3000);
-    recentGenericMutationSuccessRef.current.delete(target.id);
-    return true;
-  };
+      if (progress.completed) {
+        handle.succeed({
+          title: progress.title,
+          message: progress.message || "Completed",
+          details: `${progress.successCount || 0} success · ${progress.failedCount || 0} failed · ${progress.skippedCount || 0} skipped`,
+          icon: {
+            emoji: progress.iconEmoji,
+            imageUrl: progress.iconUrl,
+          },
+        });
+        return;
+      }
+      handle.update({
+        title: progress.title,
+        message: progress.message || "Working…",
+        current: progress.current,
+        total: progress.total,
+        icon: {
+          emoji: progress.iconEmoji,
+          imageUrl: progress.iconUrl,
+        },
+      });
+    },
+    [dismissOperation, startOperation],
+  );
 
-  const value = useMemo<{
-    pushToast: PushToast;
-    setProgress: typeof setProgress;
-    clearProgress: typeof clearProgress;
-  }>(
-    () => ({
-      pushToast: (message, tone = "info", durationMs = 3500, icon) => {
-        if (tone === "success") {
-          lastManualSuccessToastAtRef.current = Date.now();
-          if (replaceRecentGenericMutationSuccessToast(message, icon)) {
-            return;
-          }
-        }
-        pushToastInternal(message, tone, durationMs, icon);
-      },
-      setProgress,
-      clearProgress,
-    }),
-    [],
+  const clearProgress = useCallback(
+    (id?: string) => {
+      if (!id) {
+        setProgress(null);
+        return;
+      }
+      dismissOperation(`progress:${id}`);
+    },
+    [dismissOperation, setProgress],
   );
 
   useEffect(() => {
     const handleMutation = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          id: string;
-          phase: "start" | "success" | "error";
-          message?: string;
-          scope?: "page";
-        }>
-      ).detail;
-      if (!detail?.id) return;
-      const toastId = `mutation:${detail.id}`;
+      const detail = (event as CustomEvent<ApiMutationEventDetail>).detail;
+      if (!detail?.id || detail.mode === "managed" || detail.mode === "silent") {
+        return;
+      }
       if (detail.phase === "start") {
-        clearMutationDismissTimer(detail.id);
-        setMutationToasts((current) => {
-          const next = current.filter((toast) => toast.id !== toastId);
-          return [
-            ...next,
-            {
-              id: toastId,
-              tone: "loading",
-              title: "Processing",
-              message: "Waiting for the server…",
-            },
-          ];
+        startOperation({
+          id: `mutation:${detail.id}`,
+          title: detail.title || "Processing",
+          message: detail.message || "Waiting for the server…",
+          icon: detail.icon,
         });
         return;
       }
-      if (!detail.message) {
-        setMutationToasts((current) =>
-          current.filter((toast) => toast.id !== toastId),
-        );
-        clearMutationDismissTimer(detail.id);
-        return;
-      }
-      const suppressSuccessToast =
-        detail.phase === "success" &&
-        Date.now() - lastManualSuccessToastAtRef.current < 10_000;
-      if (suppressSuccessToast) {
-        setMutationToasts((current) =>
-          current.filter((toast) => toast.id !== toastId),
-        );
-        clearMutationDismissTimer(detail.id);
-        return;
-      }
-      window.setTimeout(() => {
-        setMutationToasts((current) => {
-          const existing = current.find((toast) => toast.id === toastId);
-          const next = current.filter((toast) => toast.id !== toastId);
-          return [
-            ...next,
-            {
-              ...(existing || {}),
-              id: toastId,
-              tone: detail.phase === "success" ? "success" : "error",
-              title: undefined,
-              message: detail.message!,
-            },
-          ];
+      const handle = startOperation({
+        id: `mutation:${detail.id}`,
+        title: detail.title || "Processing",
+        message: detail.message || "Waiting for the server…",
+        icon: detail.icon,
+      });
+      if (detail.phase === "success") {
+        handle.succeed({
+          title: detail.title,
+          message: detail.message || "Saved successfully.",
+          details: detail.details,
+          code: detail.code,
+          correlationId: detail.correlationId,
+          icon: detail.icon,
         });
-        if (
-          detail.phase === "success" &&
-          isGenericMutationSuccessMessage(detail.message!)
-        ) {
-          recentGenericMutationSuccessRef.current.set(toastId, Date.now());
-        } else {
-          recentGenericMutationSuccessRef.current.delete(toastId);
-        }
-        scheduleMutationToastDismiss(
-          detail.id,
-          detail.phase === "success" ? 3000 : 6000,
-        );
-      }, detail.phase === "success" ? 120 : 0);
+        return;
+      }
+      handle.fail({
+        title: detail.title,
+        message: detail.message || "The operation could not be completed.",
+        details: detail.details,
+        code: detail.code,
+        correlationId: detail.correlationId,
+        icon: detail.icon,
+      });
     };
     window.addEventListener(API_MUTATION_EVENT, handleMutation);
     return () => {
       window.removeEventListener(API_MUTATION_EVENT, handleMutation);
-      mutationDismissTimersRef.current.forEach((timer) =>
-        window.clearTimeout(timer),
-      );
-      mutationDismissTimersRef.current.clear();
-      recentGenericMutationSuccessRef.current.clear();
+      dismissTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      dismissTimersRef.current.clear();
+      entriesRef.current.clear();
     };
-  }, [value]);
-  const systemToasts: ToastItem[] = [...mutationToasts];
-  progressEntries.forEach((progress) => {
-    const progressId = progress.id || "default";
-    systemToasts.push({
-      id: `progress:${progressId}`,
-      tone: progress.completed
-        ? progress.failedCount
-          ? "error"
-          : "success"
-        : "loading",
-      title: progress.title,
-      message: progress.message || "Waiting for the server…",
-      progress: { current: progress.current, total: progress.total },
-      details: progress.completed
-        ? `${progress.successCount || 0} success · ${progress.failedCount || 0} failed · ${progress.skippedCount || 0} skipped`
-        : undefined,
-      iconEmoji: progress.iconEmoji,
-      iconUrl: progress.iconUrl,
-    });
-  });
+  }, [startOperation]);
+
+  const items = useMemo<ToastItem[]>(
+    () =>
+      [...entries].sort((a, b) => a.createdAt - b.createdAt).map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        message: entry.message,
+        tone: entry.tone,
+        iconEmoji: entry.iconEmoji,
+        iconUrl: entry.iconUrl,
+        progress: entry.progress,
+        details: entry.details,
+      })),
+    [entries],
+  );
+
+  const value = useMemo(
+    () => ({
+      pushToast,
+      startOperation,
+      dismissOperation,
+      setProgress,
+      clearProgress,
+    }),
+    [clearProgress, dismissOperation, pushToast, setProgress, startOperation],
+  );
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <ToastStack
-        items={[...systemToasts, ...toasts]}
-        onClose={(id) => {
-          if (typeof id === "string" && id.startsWith("progress:")) {
-            clearProgress(id.replace("progress:", ""));
-          } else if (typeof id === "string" && id.startsWith("mutation:")) {
-            const mutationId = id.replace("mutation:", "");
-            clearMutationDismissTimer(mutationId);
-            recentGenericMutationSuccessRef.current.delete(id);
-            setMutationToasts((current) =>
-              current.filter((toast) => toast.id !== id),
-            );
-          } else if (typeof id === "number" && id >= 0) {
-            setToasts((prev) => prev.filter((toast) => toast.id !== id));
-          }
-        }}
-      />
+      <ToastStack items={items} onClose={(id) => dismissOperation(String(id))} />
     </ToastContext.Provider>
   );
 }
 
 export function useAppToast() {
   const context = useContext(ToastContext);
-
   if (!context) {
     throw new Error("useAppToast must be used within ToastProvider");
   }
-
   return context;
+}
+
+export function useOperationFeedback() {
+  const { startOperation, dismissOperation } = useAppToast();
+  return useMemo(
+    () => ({
+      start: startOperation,
+      dismiss: dismissOperation,
+    }),
+    [dismissOperation, startOperation],
+  );
 }

@@ -27,37 +27,16 @@ import {
   MasonryGrid,
   Modal,
   TooltipBubble,
-  ToastStack,
-  type ToastItem,
 } from "@/components/ui/primitives";
 import { useAppToast } from "@/providers/toast-provider";
+import { invalidateTelegramAccessQueries } from "@/lib/telegram-query-invalidation";
 
 function errorMessage(error: unknown, fallback: string) {
   const responseError = error as { response?: { data?: { message?: string } } };
   return responseError?.response?.data?.message || fallback;
 }
 
-function useToasts() {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const pushToast = (message: string, tone: ToastItem["tone"] = "info") => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((prev) => [...prev, { id, message, tone }]);
-    setTimeout(
-      () => setToasts((prev) => prev.filter((toast) => toast.id !== id)),
-      3500,
-    );
-  };
-  return { toasts, setToasts, pushToast };
-}
-
-function invalidateTelegramAccess(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: ["telegram-user-accounts"] });
-  qc.invalidateQueries({ queryKey: ["telegram-bots"] });
-  qc.invalidateQueries({ queryKey: ["telegram-source-channels"] });
-  qc.invalidateQueries({ queryKey: ["telegram-channel-sources"] });
-  qc.invalidateQueries({ queryKey: ["telegram-channel-analytics-sources"] });
-  qc.invalidateQueries({ queryKey: ["telegram-channels"] });
-}
+type ToastTone = "success" | "error" | "info" | "loading";
 
 export function MtprotoAccountsPanel({
   createOpen,
@@ -67,7 +46,7 @@ export function MtprotoAccountsPanel({
   onCreateClose: () => void;
 }) {
   const qc = useQueryClient();
-  const { setProgress, clearProgress } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [codeTarget, setCodeTarget] = useState<TelegramUserAccount | null>(
     null,
   );
@@ -78,7 +57,6 @@ export function MtprotoAccountsPanel({
     account: TelegramUserAccount;
     response: TelegramUserAccountSyncDialogsResponse;
   } | null>(null);
-  const { toasts, setToasts, pushToast } = useToasts();
   const { data = [], isLoading, error } = useQuery({
     queryKey: ["telegram-user-accounts"],
     queryFn: telegramUserAccountsApi.list,
@@ -88,7 +66,7 @@ export function MtprotoAccountsPanel({
     mutationFn: ({ id, phone }: { id: string; phone?: string }) =>
       telegramUserAccountsApi.startLogin(id, phone),
     onSuccess: (_response, variables) => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       setCodeTarget(
         data.find((account) => account.id === variables.id) || null,
       );
@@ -100,7 +78,7 @@ export function MtprotoAccountsPanel({
   const createMutation = useMutation({
     mutationFn: telegramUserAccountsApi.create,
     onSuccess: (account: TelegramUserAccount) => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       onCreateClose();
       startLoginMutation.mutate({ id: account.id });
     },
@@ -110,7 +88,7 @@ export function MtprotoAccountsPanel({
   const checkMutation = useMutation({
     mutationFn: (id: string) => telegramUserAccountsApi.check(id),
     onSuccess: () => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       pushToast("Account checked.", "success");
     },
     onError: (error: unknown) =>
@@ -165,7 +143,7 @@ export function MtprotoAccountsPanel({
       }
     },
     onSuccess: ({ accountId, response }) => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       const account = data.find((item) => item.id === accountId);
       if (account) setSyncReview({ account, response });
       pushToast(response.message || "Admin channels synced.", "success");
@@ -230,7 +208,7 @@ export function MtprotoAccountsPanel({
       }
     },
     onSuccess: (response) => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       setSyncReview(null);
       pushToast(response.message || "Channels added.", "success");
     },
@@ -240,7 +218,7 @@ export function MtprotoAccountsPanel({
   const deleteMutation = useMutation({
     mutationFn: (id: string) => telegramUserAccountsApi.remove(id),
     onSuccess: () => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       setDeleting(null);
       pushToast("Account deleted.", "success");
     },
@@ -354,7 +332,7 @@ export function MtprotoAccountsPanel({
           setCodeTarget(null);
         }}
         onDone={() => {
-          invalidateTelegramAccess(qc);
+          void invalidateTelegramAccessQueries(qc);
           setCodeTarget(null);
         }}
         pushToast={pushToast}
@@ -364,7 +342,7 @@ export function MtprotoAccountsPanel({
         account={passwordTarget}
         onClose={() => setPasswordTarget(null)}
         onDone={() => {
-          invalidateTelegramAccess(qc);
+          void invalidateTelegramAccessQueries(qc);
           setPasswordTarget(null);
         }}
         pushToast={pushToast}
@@ -389,12 +367,6 @@ export function MtprotoAccountsPanel({
           })
         }
       />
-      <ToastStack
-        items={toasts}
-        onClose={(id) =>
-          setToasts((prev) => prev.filter((toast) => toast.id !== id))
-        }
-      />
     </>
   );
 }
@@ -408,7 +380,7 @@ export function BotAccountsPanel({
 }) {
   const qc = useQueryClient();
   const [deleting, setDeleting] = useState<TelegramBot | null>(null);
-  const { toasts, setToasts, pushToast } = useToasts();
+  const { pushToast } = useAppToast();
   const { data = [], isLoading, error } = useQuery({
     queryKey: ["telegram-bots"],
     queryFn: telegramBotsApi.list,
@@ -416,7 +388,7 @@ export function BotAccountsPanel({
   const createMutation = useMutation({
     mutationFn: telegramBotsApi.create,
     onSuccess: () => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       onCreateClose();
       pushToast("Bot connected and channel access synced.", "success");
     },
@@ -426,7 +398,7 @@ export function BotAccountsPanel({
   const checkMutation = useMutation({
     mutationFn: (id: string) => telegramBotsApi.check(id),
     onSuccess: () => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       pushToast("Bot checked and channel access synced.", "success");
     },
     onError: (error: unknown) =>
@@ -435,7 +407,7 @@ export function BotAccountsPanel({
   const deleteMutation = useMutation({
     mutationFn: (id: string) => telegramBotsApi.remove(id),
     onSuccess: () => {
-      invalidateTelegramAccess(qc);
+      void invalidateTelegramAccessQueries(qc);
       setDeleting(null);
       pushToast("Bot deleted.", "success");
     },
@@ -503,12 +475,6 @@ export function BotAccountsPanel({
         onClose={() => setDeleting(null)}
         onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined}
         label="Delete"
-      />
-      <ToastStack
-        items={toasts}
-        onClose={(id) =>
-          setToasts((prev) => prev.filter((toast) => toast.id !== id))
-        }
       />
     </>
   );
@@ -1097,7 +1063,7 @@ function CodeModal({
   onClose: () => void;
   onDone: () => void;
   onNeedPassword: () => void;
-  pushToast: (message: string, tone?: ToastItem["tone"]) => void;
+  pushToast: (message: string, tone?: ToastTone) => void;
 }) {
   const {
     register,
@@ -1154,7 +1120,7 @@ function PasswordModal({
   account: TelegramUserAccount | null;
   onClose: () => void;
   onDone: () => void;
-  pushToast: (message: string, tone?: ToastItem["tone"]) => void;
+  pushToast: (message: string, tone?: ToastTone) => void;
 }) {
   const {
     register,
