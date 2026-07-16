@@ -1467,7 +1467,7 @@ export default function TelegramChannelsPage() {
         id: progressId,
         title: progressTitle,
         current: 0,
-        total: 4,
+        total: 5,
         message:
           mode === "refresh" ? "Starting refresh…" : "Starting import…",
       });
@@ -1487,8 +1487,8 @@ export default function TelegramChannelsPage() {
         setProgress({
           id: progressId,
           title: progressTitle,
-          current: 4,
-          total: 4,
+          current: 5,
+          total: 5,
           message: completedMessage,
           completed: true,
           successCount: 1,
@@ -1502,9 +1502,27 @@ export default function TelegramChannelsPage() {
         throw error;
       }
     },
-    onSuccess: (source: ImportedTelegramSource) => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
-      queryClient.invalidateQueries({ queryKey: ["advertising-people"] });
+    onSuccess: async (source: ImportedTelegramSource) => {
+      if (!isPersonSource(source)) {
+        queryClient.setQueryData<TelegramChannel[]>(
+          ["telegram-channels"],
+          (current) => {
+            const existing = current || [];
+            const withoutDuplicate = existing.filter(
+              (channel) => channel.id !== source.id,
+            );
+            return [source, ...withoutDuplicate];
+          },
+        );
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["telegram-channels"] }),
+        queryClient.invalidateQueries({ queryKey: ["advertising-people"] }),
+        queryClient.refetchQueries({
+          queryKey: ["telegram-channels"],
+          type: "active",
+        }),
+      ]);
       setImportOpen(false);
       if (isPersonSource(source)) {
         updateTabs({ tab: "accounts", accountFilter: "people" });
