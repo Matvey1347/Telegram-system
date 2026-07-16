@@ -116,6 +116,26 @@ function hasKpiSettings(channel?: TelegramChannel) {
   );
 }
 
+function channelAccessBadge(channel?: TelegramChannel | null) {
+  switch (channel?.accessMode) {
+    case "PUBLIC":
+      return "Public";
+    case "PRIVATE_JOIN_REQUEST":
+      return "Private · Join requests";
+    case "PRIVATE":
+    case "PRIVATE_INVITE":
+      return "Private";
+    default:
+      return "Unknown";
+  }
+}
+
+function channelSubtitle(channel?: TelegramChannel | null) {
+  const username = String(channel?.username || "").trim();
+  if (username) return username.startsWith("@") ? username : `@${username}`;
+  return channelAccessBadge(channel);
+}
+
 function dataQualityBadgeClass(status?: string | null) {
   if (status === "normal") return "border-emerald-700 text-emerald-200";
   if (status === "borderline") return "border-yellow-700 text-yellow-200";
@@ -329,7 +349,7 @@ export default function TelegramChannelAnalyticsPage() {
         id: progressId,
         title: progressTitle,
         current: 0,
-        total: 6,
+        total: 8,
         message: "Starting sync…",
         iconUrl: channel?.photoUrl || undefined,
       });
@@ -350,8 +370,8 @@ export default function TelegramChannelAnalyticsPage() {
         setProgress({
           id: progressId,
           title: progressTitle,
-          current: 6,
-          total: 6,
+          current: 8,
+          total: 8,
           message: "Channel sync completed",
           completed: true,
           successCount: 1,
@@ -746,7 +766,7 @@ export default function TelegramChannelAnalyticsPage() {
     <AppShell>
       <PageHeader
         title={data?.channel?.title || "Channel Analytics"}
-        subtitle={data?.channel?.username || "Analytics"}
+        subtitle={channelSubtitle(data?.channel)}
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <KpiSettingsControl
@@ -806,6 +826,11 @@ export default function TelegramChannelAnalyticsPage() {
           </div>
         }
       />
+      <div className="mt-3">
+        <span className="inline-flex rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-200">
+          {channelAccessBadge(data?.channel)}
+        </span>
+      </div>
       {isLoading ? <LoadingState /> : null}
       <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
         <div className="min-w-0 space-y-3">
@@ -3191,17 +3216,25 @@ function SnapshotItem({ label, value }: { label: string; value: ReactNode }) {
 }
 
 function summarizeSync(result: any) {
+  const status = result?.status || "success";
+  const steps = Array.isArray(result?.steps) ? result.steps : [];
   const historical = result?.historical || {};
   const publicInfo = result?.publicInfo || {};
   const posts = result?.postsMetricsSync || {};
   const olderPosts = result?.olderPostsBackfill || {};
   const stats = result?.channelStatsSync || {};
+  const managedPosts = result?.managedPostsSync || {};
   const importedLinks = toNumber(historical.imported);
   const updatedLinks = toNumber(historical.updated);
   const dailyRows = toNumber(historical.postsUpdated);
   const syncedPosts = toNumber(posts.syncedPosts);
   const olderSyncedPosts = toNumber(olderPosts.syncedPosts);
   const points = toNumber(stats.pointsUpserted);
+  const syncedManagedPosts = Array.isArray(managedPosts.posts)
+    ? managedPosts.posts.length
+    : 0;
+  const failedSteps = steps.filter((step: any) => step?.status === "failed");
+  const skippedSteps = steps.filter((step: any) => step?.status === "skipped");
   const period = formatStatsPeriod(
     stats.snapshot?.normalizedStats?.period,
     stats.snapshot?.normalizedStats?.graphs,
@@ -3222,7 +3255,22 @@ function summarizeSync(result: any) {
     : publicInfo.reason
       ? `Channel info: not updated (${publicInfo.reason}).`
       : "Channel info: refreshed.";
-  return `Sync completed.\n${publicText}\n${linkText}\n${postText}\n${statsText}`;
+  const managedPostsText = syncedManagedPosts
+    ? `Managed posts: refreshed ${syncedManagedPosts}.`
+    : "Managed posts: no changes returned.";
+  const statusText =
+    status === "partial"
+      ? "Sync completed partially."
+      : status === "failed"
+        ? "Sync failed."
+        : "Sync completed.";
+  const notes = [
+    failedSteps.length ? `Failed steps: ${failedSteps.length}.` : null,
+    skippedSteps.length ? `Skipped steps: ${skippedSteps.length}.` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${statusText}\n${publicText}\n${linkText}\n${postText}\n${statsText}\n${managedPostsText}${notes ? `\n${notes}` : ""}`;
 }
 
 function InfoTooltip({ tip, children }: { tip: string; children?: ReactNode }) {

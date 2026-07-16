@@ -17,8 +17,13 @@ describe('telegram import helpers', () => {
     ['https://t.me/channel_name/123', { type: 'username', username: 'channel_name', channelRef: '@channel_name' }],
     ['https://t.me/channel_name?foo=bar', { type: 'username', username: 'channel_name', channelRef: '@channel_name' }],
     ['https://t.me/+dtmYmT-l2Mo1Yzgy', { type: 'invite', inviteHash: 'dtmYmT-l2Mo1Yzgy', inviteLink: 'https://t.me/+dtmYmT-l2Mo1Yzgy' }],
+    ['http://t.me/+AbC_123-xyz/', { type: 'invite', inviteHash: 'AbC_123-xyz', inviteLink: 'https://t.me/+AbC_123-xyz' }],
+    [' https://telegram.me/+AbC_123-xyz?foo=bar ', { type: 'invite', inviteHash: 'AbC_123-xyz', inviteLink: 'https://t.me/+AbC_123-xyz' }],
     ['https://t.me/joinchat/dtmYmT-l2Mo1Yzgy', { type: 'invite', inviteHash: 'dtmYmT-l2Mo1Yzgy', inviteLink: 'https://t.me/+dtmYmT-l2Mo1Yzgy' }],
+    ['https://t.me/joinchat/AbC_123-xyz/?foo=bar', { type: 'invite', inviteHash: 'AbC_123-xyz', inviteLink: 'https://t.me/+AbC_123-xyz' }],
     ['tg://join?invite=dtmYmT-l2Mo1Yzgy', { type: 'invite', inviteHash: 'dtmYmT-l2Mo1Yzgy', inviteLink: 'https://t.me/+dtmYmT-l2Mo1Yzgy' }],
+    ['tg://join?invite=AbC_123-xyz&foo=bar', { type: 'invite', inviteHash: 'AbC_123-xyz', inviteLink: 'https://t.me/+AbC_123-xyz' }],
+    ['+AbC_123-xyz', { type: 'invite', inviteHash: 'AbC_123-xyz', inviteLink: 'https://t.me/+AbC_123-xyz' }],
     ['Смак Життя', { type: 'title', titleQuery: 'Смак Життя' }],
     ['  Смак   Життя  ', { type: 'title', titleQuery: 'Смак   Життя' }],
   ])('parses %s', (input, expected) => {

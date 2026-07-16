@@ -68,6 +68,14 @@ enum TelegramChannelDataType {
   OTHER
 }
 
+enum TelegramChannelAccessMode {
+  PUBLIC
+  PRIVATE
+  PRIVATE_INVITE
+  PRIVATE_JOIN_REQUEST
+  UNKNOWN
+}
+
 enum TelegramDataSourceStatus {
   SUCCESS
   PARTIAL
@@ -511,6 +519,10 @@ model TelegramChannel {
   title                     String
   username                  String?
   telegramChatId            String?
+  telegramAccessHash        String?
+  accessMode                TelegramChannelAccessMode @default(UNKNOWN)
+  requiresJoinRequest       Boolean  @default(false)
+  lastEntityResolvedAt      DateTime?
   inviteLink                String?
   description               String?
   language                  String?

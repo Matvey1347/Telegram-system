@@ -27,8 +27,16 @@ export type ResolvedTelegramEntity = {
   description: string | null;
   participantsCount: number | null;
   photoUrl: string | null;
+  telegramAccessHash?: string | null;
   inviteLink?: string | null;
   joinedByInvite?: boolean;
+  accessMode?:
+    | 'PUBLIC'
+    | 'PRIVATE'
+    | 'PRIVATE_INVITE'
+    | 'PRIVATE_JOIN_REQUEST'
+    | 'UNKNOWN';
+  requiresJoinRequest?: boolean;
 };
 
 export type TelegramTitleCandidate<T = unknown> = {

@@ -230,12 +230,126 @@ export class TelegramChannelsService {
     username: string | null;
     telegramChatId: string | null;
   }) {
+    if (channel.telegramChatId) return channel.telegramChatId;
     if (channel.username) {
       return channel.username.startsWith('@')
         ? channel.username
         : `@${channel.username}`;
     }
-    return channel.telegramChatId || null;
+    return null;
+  }
+
+  private mtprotoChannelReference(channel: {
+    username: string | null;
+    telegramChatId: string | null;
+    inviteLink?: string | null;
+    telegramAccessHash?: string | null;
+  }) {
+    return {
+      username: channel.username,
+      telegramChatId: channel.telegramChatId,
+      inviteLink: channel.inviteLink || null,
+      telegramAccessHash: channel.telegramAccessHash || null,
+    };
+  }
+
+  private fallbackAccessMode(channel: {
+    username?: string | null;
+    inviteLink?: string | null;
+    requiresJoinRequest?: boolean | null;
+  }):
+    | 'PUBLIC'
+    | 'PRIVATE'
+    | 'PRIVATE_INVITE'
+    | 'PRIVATE_JOIN_REQUEST'
+    | 'UNKNOWN' {
+    if (channel.username) return 'PUBLIC';
+    if (channel.requiresJoinRequest) return 'PRIVATE_JOIN_REQUEST';
+    if (channel.inviteLink) return 'PRIVATE_INVITE';
+    return 'UNKNOWN';
+  }
+
+  private channelIdentityPatch(info: ResolvedTelegramEntity) {
+    return {
+      title: info.title,
+      username: this.normalizeUsername(info.username),
+      telegramChatId: info.telegramChatId || null,
+      inviteLink: info.inviteLink || undefined,
+      description: info.description,
+      currentSubscribersCount: info.participantsCount,
+      photoUrl: info.photoUrl,
+      accessMode:
+        info.accessMode ||
+        this.fallbackAccessMode({
+          username: info.username,
+          inviteLink: info.inviteLink,
+          requiresJoinRequest: info.requiresJoinRequest,
+        }),
+      requiresJoinRequest: Boolean(info.requiresJoinRequest),
+      telegramAccessHash: info.telegramAccessHash || null,
+      lastEntityResolvedAt: new Date(),
+    };
+  }
+
+  private async persistResolvedChannelIdentity(
+    workspaceId: string,
+    channelId: string,
+    info?: ResolvedTelegramEntity | null,
+  ) {
+    if (!info || !info.telegramChatId) return null;
+    return this.prisma.telegramChannel.update({
+      where: { id: channelId, workspaceId },
+      data: this.channelIdentityPatch(info),
+    });
+  }
+
+  private syncStepSuccess(
+    step: string,
+    startedAt: number,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ) {
+    return {
+      step,
+      status: 'success' as const,
+      errorCode: null,
+      message,
+      durationMs: Date.now() - startedAt,
+      metadata: metadata || {},
+    };
+  }
+
+  private syncStepFailure(
+    step: string,
+    startedAt: number,
+    error: unknown,
+    errorCode: string,
+    fallbackMessage: string,
+  ) {
+    return {
+      step,
+      status: 'failed' as const,
+      errorCode,
+      message: error instanceof Error ? error.message : fallbackMessage,
+      durationMs: Date.now() - startedAt,
+      metadata: {},
+    };
+  }
+
+  private syncStepSkipped(
+    step: string,
+    startedAt: number,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ) {
+    return {
+      step,
+      status: 'skipped' as const,
+      errorCode: null,
+      message,
+      durationMs: Date.now() - startedAt,
+      metadata: metadata || {},
+    };
   }
 
   private normalizeUsername(value?: string | null) {
@@ -348,6 +462,16 @@ export class TelegramChannelsService {
     if (username) return `https://t.me/${username}/${messageId}`;
     const chatId = this.normalizeChatId(channel.telegramChatId);
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
+  }
+
+  private botChatId(channel: {
+    username: string | null;
+    telegramChatId: string | null;
+  }) {
+    const username = this.normalizeUsername(channel.username);
+    if (username) return `@${username}`;
+    const chatId = this.normalizeChatId(channel.telegramChatId);
+    return chatId ? `-100${chatId}` : null;
   }
 
   private primaryTelegramMessageId(params: {
@@ -1052,6 +1176,8 @@ export class TelegramChannelsService {
       workspaceId: string;
       username: string | null;
       telegramChatId: string | null;
+      inviteLink?: string | null;
+      telegramAccessHash?: string | null;
     };
     nextText: string;
   }) {
@@ -1084,8 +1210,8 @@ export class TelegramChannelsService {
       );
     }
 
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel has no Telegram reference');
 
     const resolvedText = await this.resolveInternalPostLinksForPublish(
@@ -1120,7 +1246,7 @@ export class TelegramChannelsService {
       );
       await this.mtprotoClient.editPostText({
         ...this.accountCredentials(account),
-        channelRef,
+        channel: channelReference,
         messageIds: post.telegramMessageIds,
         imageCount: post.imageUrls.length,
         publishMode: rendered.publishMode,
@@ -1144,7 +1270,7 @@ export class TelegramChannelsService {
       iv: bot.botTokenIv,
       authTag: bot.botTokenAuthTag,
     });
-    const chatId = channel.username ? `@${channel.username}` : channel.telegramChatId;
+    const chatId = this.botChatId(channel);
     if (!chatId) {
       throw new BadRequestException('Channel has no Telegram chat id');
     }
@@ -2257,8 +2383,8 @@ export class TelegramChannelsService {
     };
     if (!posts.length) return emptyResult;
     const account = await this.connectedAccount(workspaceId, channelId);
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel has no Telegram reference');
     const idsFromUrls = posts.flatMap((post) =>
       post.telegramMessageUrls.flatMap((url) => {
@@ -2281,7 +2407,7 @@ export class TelegramChannelsService {
     ];
     const remote = await this.mtprotoClient.getManagedPostMessages({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
       publishedMessageIds,
       scheduledMessageIds,
     });
@@ -3020,6 +3146,7 @@ export class TelegramChannelsService {
               workspaceId: true,
               username: true,
               telegramChatId: true,
+              inviteLink: true,
             },
           })
         : null;
@@ -3112,8 +3239,8 @@ export class TelegramChannelsService {
       throw new BadRequestException(
         'Scheduling requires a connected MTProto source with posting permission',
       );
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel has no Telegram reference');
     let previousScheduledMessageCancelled = false;
     try {
@@ -3144,14 +3271,14 @@ export class TelegramChannelsService {
         ) {
           await this.mtprotoClient.deleteScheduledPost({
             ...this.accountCredentials(account),
-            channelRef,
+            channel: channelReference,
             messageIds: post.telegramMessageIds,
           });
           previousScheduledMessageCancelled = true;
         }
         ids = await this.mtprotoClient.publishPost({
           ...this.accountCredentials(account),
-          channelRef,
+          channel: channelReference,
           html,
           textHtmlParts,
           captionHtml,
@@ -3170,9 +3297,10 @@ export class TelegramChannelsService {
           iv: bot.botTokenIv,
           authTag: bot.botTokenAuthTag,
         });
-        const chatId = channel.username
-          ? `@${channel.username}`
-          : channel.telegramChatId;
+        const chatId = this.botChatId(channel);
+        if (!chatId) {
+          throw new BadRequestException('Channel has no Telegram chat id');
+        }
         const call = async (method: string, body: Record<string, unknown>) => {
           const response = await fetch(
             `https://api.telegram.org/bot${token}/${method}`,
@@ -3372,14 +3500,14 @@ export class TelegramChannelsService {
       post.telegramChannelId,
       post.sourceId,
     );
-    const channelRef = this.channelRef(post.telegramChannel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(post.telegramChannel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException(
         'Scheduled post channel has no Telegram reference',
       );
     await this.mtprotoClient.deleteScheduledPost({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
       messageIds: post.telegramMessageIds,
     });
   }
@@ -4232,12 +4360,12 @@ export class TelegramChannelsService {
         channelId,
         post.sourceId,
       );
-      const channelRef = this.channelRef(post.telegramChannel);
-      if (!channelRef)
+      const channelReference = this.mtprotoChannelReference(post.telegramChannel);
+      if (!channelReference.telegramChatId && !channelReference.username)
         throw new BadRequestException('Channel has no Telegram reference');
       await this.mtprotoClient.deleteScheduledPost({
         ...this.accountCredentials(account),
-        channelRef,
+        channel: channelReference,
         messageIds: post.telegramMessageIds,
       });
     }
@@ -4504,16 +4632,13 @@ export class TelegramChannelsService {
     );
     const existing = this.pickCanonicalChannel(matchingChannels);
     const payload = {
-      title: info.title,
-      username,
-      telegramChatId,
-      inviteLink:
-        importInput.type === 'invite'
-          ? canonicalTelegramInviteLink(importInput.inviteHash)
-          : info.inviteLink || undefined,
-      description: info.description,
-      currentSubscribersCount: info.participantsCount,
-      photoUrl: info.photoUrl,
+      ...this.channelIdentityPatch({
+        ...info,
+        inviteLink:
+          importInput.type === 'invite'
+            ? canonicalTelegramInviteLink(importInput.inviteHash)
+            : info.inviteLink || undefined,
+      }),
       sourceType: 'telegram',
       lastPublicSyncedAt: new Date(),
     };
@@ -4611,7 +4736,7 @@ export class TelegramChannelsService {
     onProgress?: BulkProgressCallback,
   ) {
     const workspaceId = await this.workspace(userId);
-    const totalSteps = 6;
+    const totalSteps = 8;
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
@@ -4621,17 +4746,45 @@ export class TelegramChannelsService {
         TelegramChannelDataType.STATS,
       ),
     );
+    const steps: Array<{
+      step: string;
+      status: 'success' | 'failed' | 'skipped';
+      errorCode: string | null;
+      message: string;
+      durationMs: number;
+      metadata: Record<string, unknown>;
+    }> = [];
+
     await this.notifyTaskProgress(
       onProgress,
       1,
       totalSteps,
       'Refreshing public channel info',
     );
-    const publicInfo = await this.syncPublicChannelInfo(
-      workspaceId,
-      channelId,
-      account,
-    );
+    const publicInfoStartedAt = Date.now();
+    let publicInfo: any;
+    try {
+      publicInfo = await this.syncPublicChannelInfo(workspaceId, channelId, account);
+      steps.push(
+        this.syncStepSuccess(
+          'channel_info',
+          publicInfoStartedAt,
+          'Channel info refreshed',
+          { subscribersCount: publicInfo?.subscribersCount ?? null },
+        ),
+      );
+    } catch (error) {
+      steps.push(
+        this.syncStepFailure(
+          'channel_info',
+          publicInfoStartedAt,
+          error,
+          'CHANNEL_INFO_FAILED',
+          'Failed to refresh channel info',
+        ),
+      );
+      throw error;
+    }
     const postLimit = await this.postSyncLimitForChannel(channelId);
     await this.notifyTaskProgress(
       onProgress,
@@ -4639,66 +4792,227 @@ export class TelegramChannelsService {
       totalSteps,
       'Importing posts and invite links',
     );
-    const historical = await this.syncHistorical(userId, channelId, {
-      telegramUserAccountId: account.id,
-      syncInviteLinks: true,
-      syncPosts: true,
-      postLimit,
-    });
+    const historicalStartedAt = Date.now();
+    let historical: any;
+    try {
+      historical = await this.syncHistorical(userId, channelId, {
+        telegramUserAccountId: account.id,
+        syncInviteLinks: true,
+        syncPosts: true,
+        postLimit,
+      });
+      steps.push(
+        this.syncStepSuccess(
+          'historical_posts',
+          historicalStartedAt,
+          'Posts and invite links synced',
+          {
+            importedInviteLinks: historical?.imported ?? 0,
+            updatedInviteLinks: historical?.updated ?? 0,
+            postsUpdated: historical?.postsUpdated ?? 0,
+          },
+        ),
+      );
+    } catch (error) {
+      steps.push(
+        this.syncStepFailure(
+          'historical_posts',
+          historicalStartedAt,
+          error,
+          'HISTORICAL_SYNC_FAILED',
+          'Failed to sync historical Telegram data',
+        ),
+      );
+      throw error;
+    }
     await this.notifyTaskProgress(
       onProgress,
       3,
       totalSteps,
       'Updating post metrics',
     );
-    const postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
-      telegramUserAccountId: account.id,
-      postLimit,
-    });
+    const postsMetricsStartedAt = Date.now();
+    let postsMetricsSync: any;
+    try {
+      postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
+        telegramUserAccountId: account.id,
+        postLimit,
+      });
+      steps.push(
+        this.syncStepSuccess(
+          'post_metrics',
+          postsMetricsStartedAt,
+          'Post metrics synced',
+          { syncedPosts: postsMetricsSync?.syncedPosts ?? 0 },
+        ),
+      );
+    } catch (error) {
+      steps.push(
+        this.syncStepFailure(
+          'post_metrics',
+          postsMetricsStartedAt,
+          error,
+          'POST_METRICS_FAILED',
+          'Failed to sync post metrics',
+        ),
+      );
+      throw error;
+    }
     await this.notifyTaskProgress(
       onProgress,
       4,
       totalSteps,
       'Backfilling older post metrics',
     );
+    const olderPostsStartedAt = Date.now();
     const olderPostsBackfill =
-      await this.syncOlderPostsMetricsBackfillForWorkspace(
-        workspaceId,
-        channelId,
-        {
-          telegramUserAccountId: account.id,
-          maxPages:
-            postLimit === this.initialPostBackfillLimit
-              ? this.olderPostBackfillMaxPages
-              : 1,
-        },
-      );
+      await this.syncOlderPostsMetricsBackfillForWorkspace(workspaceId, channelId, {
+        telegramUserAccountId: account.id,
+        maxPages:
+          postLimit === this.initialPostBackfillLimit
+            ? this.olderPostBackfillMaxPages
+            : 1,
+      });
+    steps.push(
+      olderPostsBackfill?.syncedPosts
+        ? this.syncStepSuccess(
+            'older_post_backfill',
+            olderPostsStartedAt,
+            'Older post metrics backfilled',
+            {
+              syncedPosts: olderPostsBackfill.syncedPosts,
+              pagesFetched: olderPostsBackfill.pagesFetched ?? 0,
+            },
+          )
+        : this.syncStepSkipped(
+            'older_post_backfill',
+            olderPostsStartedAt,
+            'No older posts were available for backfill',
+          ),
+    );
     await this.notifyTaskProgress(
       onProgress,
       5,
       totalSteps,
       'Syncing channel stats',
     );
-    const channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
-      telegramUserAccountId: account.id,
-    });
+    const statsStartedAt = Date.now();
+    let channelStatsSync: any;
+    try {
+      channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
+        telegramUserAccountId: account.id,
+      });
+      const statsStatus =
+        channelStatsSync?.success === true
+          ? 'success'
+          : channelStatsSync?.snapshot?.normalizedStats?.status === 'available'
+            ? 'success'
+            : 'skipped';
+      steps.push(
+        statsStatus === 'success'
+          ? this.syncStepSuccess(
+              'broadcast_stats',
+              statsStartedAt,
+              'Broadcast stats synced',
+              { pointsUpserted: channelStatsSync?.pointsUpserted ?? 0 },
+            )
+          : this.syncStepSkipped(
+              'broadcast_stats',
+              statsStartedAt,
+              'Broadcast stats unavailable for this channel/source',
+              {
+                normalizedStatus:
+                  channelStatsSync?.snapshot?.normalizedStats?.status ?? null,
+              },
+            ),
+      );
+    } catch (error) {
+      steps.push(
+        this.syncStepFailure(
+          'broadcast_stats',
+          statsStartedAt,
+          error,
+          'BROADCAST_STATS_FAILED',
+          'Failed to sync broadcast stats',
+        ),
+      );
+    }
     await this.notifyTaskProgress(
       onProgress,
       6,
       totalSteps,
+      'Syncing managed posts',
+    );
+    const managedPostsStartedAt = Date.now();
+    let managedPostsSync: any = null;
+    try {
+      managedPostsSync = await this.syncManagedPosts(userId, channelId);
+      steps.push(
+        this.syncStepSuccess(
+          'managed_posts',
+          managedPostsStartedAt,
+          'Managed posts synced',
+          { syncedPosts: managedPostsSync?.posts?.length ?? 0 },
+        ),
+      );
+    } catch (error) {
+      steps.push(
+        this.syncStepSkipped(
+          'managed_posts',
+          managedPostsStartedAt,
+          error instanceof Error
+            ? error.message
+            : 'Managed post sync is not available',
+        ),
+      );
+    }
+    await this.notifyTaskProgress(
+      onProgress,
+      7,
+      totalSteps,
       'Saving audience snapshot',
     );
-    const audienceSnapshot = await this.createAudienceSnapshotSafely(
-      channelId,
-      'sync',
+    const audienceStartedAt = Date.now();
+    const audienceSnapshot = await this.createAudienceSnapshotSafely(channelId, 'sync');
+    steps.push(
+      audienceSnapshot
+        ? this.syncStepSuccess(
+            'audience_snapshot',
+            audienceStartedAt,
+            'Audience snapshot saved',
+          )
+        : this.syncStepSkipped(
+            'audience_snapshot',
+            audienceStartedAt,
+            'Audience snapshot was skipped',
+          ),
     );
+    await this.notifyTaskProgress(
+      onProgress,
+      8,
+      totalSteps,
+      'Finalizing sync status',
+    );
+    const requiredSteps = steps.filter((step) =>
+      ['channel_info', 'historical_posts', 'post_metrics'].includes(step.step),
+    );
+    const hasRequiredFailure = requiredSteps.some((step) => step.status === 'failed');
+    const hasOptionalFailure = steps.some((step) => step.status === 'failed');
+    const overallStatus = hasRequiredFailure
+      ? 'failed'
+      : hasOptionalFailure
+        ? 'partial'
+        : 'success';
     return {
+      status: overallStatus,
       source: 'mtproto',
+      steps,
       publicInfo,
       historical,
       postsMetricsSync,
       olderPostsBackfill,
       channelStatsSync,
+      managedPostsSync,
       audienceSnapshot,
     };
   }
@@ -4780,12 +5094,12 @@ export class TelegramChannelsService {
       where: { id: channelId, workspaceId, isActive: true },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
     const info = await this.mtprotoClient.getPublicChannelInfo({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
     });
     if (info.kind !== 'channel') {
       return {
@@ -4796,12 +5110,7 @@ export class TelegramChannelsService {
     const updated = await this.prisma.telegramChannel.update({
       where: { id: channelId },
       data: {
-        title: info.title,
-        username: this.normalizeUsername(info.username),
-        telegramChatId: info.telegramChatId || channel.telegramChatId,
-        description: info.description,
-        currentSubscribersCount: info.participantsCount,
-        photoUrl: info.photoUrl,
+        ...this.channelIdentityPatch(info),
         lastPublicSyncedAt: new Date(),
       },
     });
@@ -4838,14 +5147,21 @@ export class TelegramChannelsService {
       channelId,
       dto.telegramUserAccountId,
     );
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
     const historical = await this.mtprotoClient.getChannelHistorical({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
       postLimit: dto.postLimit || this.defaultPostSyncLimit,
     });
+    if (historical.channel) {
+      await this.persistResolvedChannelIdentity(
+        workspaceId,
+        channelId,
+        historical.channel,
+      );
+    }
     let imported = 0;
     let updated = 0;
     const affectedCampaignIds = new Set<string>();
@@ -4968,13 +5284,13 @@ export class TelegramChannelsService {
       channelId,
       dto.telegramUserAccountId,
     );
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
     try {
       const metrics = await this.mtprotoClient.getChannelPostsMetrics({
         ...this.accountCredentials(account),
-        channelRef,
+        channel: channelReference,
         postLimit: dto.postLimit || this.defaultPostSyncLimit,
       });
       await this.persistPostMetrics(workspaceId, channel.id, metrics);
@@ -5091,12 +5407,12 @@ export class TelegramChannelsService {
     if (!channel || !post) throw new NotFoundException('Telegram post not found');
     if (!post.hasMedia) throw new NotFoundException('Post has no media');
     const account = await this.connectedAccount(workspaceId, channelId);
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel has no Telegram reference');
     const media = await this.mtprotoClient.downloadChannelMessageMedia({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
       messageId: post.telegramMessageId,
     });
     if (!media) throw new NotFoundException('Telegram post media not found');
@@ -5784,8 +6100,8 @@ export class TelegramChannelsService {
       channelId,
       dto.telegramUserAccountId,
     );
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
 
     const oldestStored = await this.prisma.telegramPost.findFirst({
@@ -5805,7 +6121,7 @@ export class TelegramChannelsService {
     for (let page = 0; page < maxPages; page += 1) {
       const metrics = await this.mtprotoClient.getChannelPostsMetrics({
         ...this.accountCredentials(account),
-        channelRef,
+        channel: channelReference,
         postLimit: this.initialPostBackfillLimit,
         beforeMessageId,
       });
@@ -5916,12 +6232,12 @@ export class TelegramChannelsService {
       channelId,
       accountId,
     );
-    const channelRef = this.channelRef(channel);
-    if (!channelRef)
+    const channelReference = this.mtprotoChannelReference(channel);
+    if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
     const stats = await this.mtprotoClient.getBroadcastStats({
       ...this.accountCredentials(account),
-      channelRef,
+      channel: channelReference,
     });
     const currentSubscribersCount = channel.currentSubscribersCount ?? 0;
     const statsUnavailableBecauseChannelIsTooSmall =

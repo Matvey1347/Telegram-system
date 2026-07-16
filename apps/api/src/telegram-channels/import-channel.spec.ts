@@ -139,6 +139,57 @@ describe('TelegramChannelsService importChannel', () => {
     expect(tx.telegramChannel.update).toHaveBeenCalled();
   });
 
+  it('keeps the same channel row when a public channel becomes private', async () => {
+    mtprotoClient.getPublicChannelInfo.mockResolvedValue({
+      kind: 'channel',
+      telegramChatId: '123456',
+      title: 'Смак Життя',
+      username: null,
+      description: 'Now private',
+      participantsCount: 88,
+      photoUrl: null,
+      inviteLink: 'https://t.me/+AbC_123-xyz',
+      joinedByInvite: false,
+      accessMode: 'PRIVATE_JOIN_REQUEST',
+      requiresJoinRequest: true,
+      telegramAccessHash: '999',
+    });
+    jest.spyOn(service as never, 'findMatchingChannels' as never).mockResolvedValue([
+      {
+        id: 'channel-1',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        adminLinks: [{ id: 'admin-1' }],
+        username: 'smak_zhyttia',
+        telegramChatId: '123456',
+      },
+    ] as never);
+    const tx = {
+      telegramChannel: {
+        update: jest.fn().mockResolvedValue({ id: 'channel-1' }),
+      },
+    };
+    prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback(tx),
+    );
+
+    await service.importChannel('user-1', {
+      input: 'https://t.me/+AbC_123-xyz',
+    });
+
+    expect(tx.telegramChannel.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'channel-1' },
+        data: expect.objectContaining({
+          username: null,
+          telegramChatId: '123456',
+          accessMode: 'PRIVATE_JOIN_REQUEST',
+          requiresJoinRequest: true,
+          telegramAccessHash: '999',
+        }),
+      }),
+    );
+  });
+
   it('does not create a channel when resolution has no real telegramChatId', async () => {
     mtprotoClient.getPublicChannelInfo.mockResolvedValue({
       kind: 'channel',

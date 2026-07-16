@@ -84,6 +84,34 @@ function normalizeUsername(value?: string | null) {
     .trim();
 }
 
+function channelAccessBadge(channel: TelegramChannel) {
+  switch (channel.accessMode) {
+    case "PUBLIC":
+      return "Public";
+    case "PRIVATE_JOIN_REQUEST":
+      return "Private · Join requests";
+    case "PRIVATE":
+    case "PRIVATE_INVITE":
+      return "Private";
+    default:
+      return "Unknown";
+  }
+}
+
+function channelAccessBadgeClass(channel: TelegramChannel) {
+  switch (channel.accessMode) {
+    case "PUBLIC":
+      return "border-emerald-700/70 text-emerald-200";
+    case "PRIVATE_JOIN_REQUEST":
+      return "border-amber-700/70 text-amber-200";
+    case "PRIVATE":
+    case "PRIVATE_INVITE":
+      return "border-sky-700/70 text-sky-200";
+    default:
+      return "border-slate-700 text-slate-300";
+  }
+}
+
 function requestErrorMessage(error: unknown, fallback: string) {
   const responseError = error as { response?: { data?: { message?: string } } };
   return responseError?.response?.data?.message || fallback;
@@ -1683,7 +1711,7 @@ export default function TelegramChannelsPage() {
         id: progressId,
         title: `Sync ${channel.title}`,
         current: 0,
-        total: 6,
+        total: 8,
         message: "Starting sync…",
         iconUrl: channel.photoUrl || undefined,
       });
@@ -1704,8 +1732,8 @@ export default function TelegramChannelsPage() {
         setProgress({
           id: progressId,
           title: `Sync ${channel.title}`,
-          current: 6,
-          total: 6,
+          current: 8,
+          total: 8,
           message: "Channel sync completed",
           completed: true,
           successCount: 1,
@@ -1871,6 +1899,13 @@ export default function TelegramChannelsPage() {
                       />
                     }
                   />
+                  <div className="mb-2">
+                    <span
+                      className={`inline-flex rounded border px-2 py-0.5 text-xs ${channelAccessBadgeClass(channel)}`}
+                    >
+                      {channelAccessBadge(channel)}
+                    </span>
+                  </div>
                   {username ? (
                     <div className="space-y-1">
                       <p>
@@ -2823,6 +2858,9 @@ function NetworkChannelsPreview({
               <span className="block truncate text-xs font-medium leading-tight text-slate-200 group-hover:text-blue-200">
                 {title}
               </span>
+              <span className="block truncate text-[10px] leading-tight text-slate-500">
+                {channelAccessBadge(channel)}
+              </span>
               {username ? (
                 <span className="block truncate text-[10px] leading-tight text-slate-500">
                   @{username}
@@ -3013,6 +3051,9 @@ function ChannelSelectRow({
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold leading-tight text-slate-100">
           {channel.title}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-slate-500">
+          {channelAccessBadge(channel)}
         </p>
         {username ? (
           <p className="mt-0.5 truncate text-xs text-slate-400">{username}</p>

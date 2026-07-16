@@ -482,6 +482,15 @@ export type TelegramChannel = EntityAssignment & {
   title: string;
   username?: string;
   telegramChatId?: string;
+  telegramAccessHash?: string | null;
+  accessMode?:
+    | "PUBLIC"
+    | "PRIVATE"
+    | "PRIVATE_INVITE"
+    | "PRIVATE_JOIN_REQUEST"
+    | "UNKNOWN";
+  requiresJoinRequest?: boolean;
+  lastEntityResolvedAt?: string | null;
   inviteLink?: string;
   description?: string;
   language?: string;

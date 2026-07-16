@@ -11,6 +11,8 @@ describe('TelegramMtprotoClient import resolution', () => {
     invoke: jest.Mock;
     getEntity: jest.Mock;
     getDialogs: jest.Mock;
+    getInputEntity: jest.Mock;
+    getMessages: jest.Mock;
   };
 
   beforeEach(() => {
@@ -19,6 +21,8 @@ describe('TelegramMtprotoClient import resolution', () => {
       invoke: jest.fn(),
       getEntity: jest.fn(),
       getDialogs: jest.fn(),
+      getInputEntity: jest.fn(),
+      getMessages: jest.fn().mockResolvedValue([]),
     };
     jest
       .spyOn(client as never, 'createClient' as never)
@@ -265,6 +269,92 @@ describe('TelegramMtprotoClient import resolution', () => {
         titleQuery: 'Смак Життя',
       }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('resolves a private channel by dialog id when the stored username is stale', async () => {
+    const entity = new Api.Channel({
+      id: BigInt('9901'),
+      title: 'Private after rename',
+      accessHash: BigInt('445566'),
+      broadcast: true,
+      megagroup: false,
+      username: undefined,
+    });
+    fakeClient.getDialogs.mockResolvedValue([
+      { id: BigInt('9901'), title: 'Private after rename', entity },
+    ]);
+    fakeClient.getEntity.mockImplementation(async (ref: unknown) => {
+      if (ref === '@old_public_name') {
+        const error = new Error('USERNAME_NOT_OCCUPIED');
+        (error as Error & { errorMessage?: string }).errorMessage =
+          'USERNAME_NOT_OCCUPIED';
+        throw error;
+      }
+      if (ref instanceof Api.InputPeerChannel) {
+        return entity;
+      }
+      throw new Error(`Unexpected getEntity ref: ${String(ref)}`);
+    });
+    fakeClient.getInputEntity.mockResolvedValue(
+      new Api.InputPeerChannel({
+        channelId: BigInt('9901'),
+        accessHash: BigInt('445566'),
+      }),
+    );
+    fakeClient.invoke.mockImplementation((request: unknown) => {
+      if (request instanceof Api.channels.GetFullChannel) {
+        return { fullChat: { about: 'Still accessible', participantsCount: 19 } };
+      }
+      throw new Error('Unexpected invoke');
+    });
+
+    const result = await client.getChannelHistorical({
+      apiId: '1',
+      apiHash: 'hash',
+      session: 'session',
+      channel: {
+        username: 'old_public_name',
+        telegramChatId: '9901',
+        telegramAccessHash: '445566',
+        inviteLink: null,
+      },
+      postLimit: 1,
+    });
+
+    expect(fakeClient.getDialogs).toHaveBeenCalled();
+    expect(result.channel.username).toBeNull();
+    expect(result.channel.telegramChatId).toBe('9901');
+    expect(result.channel.resolvedBy).toBe('dialog-id');
+  });
+
+  it('does not resolve USER_ALREADY_PARTICIPANT invite conflicts by title guessing', async () => {
+    const invite = new Api.ChatInvite({
+      title: 'Duplicate title',
+      broadcast: true,
+      channel: true,
+      participantsCount: 11,
+    });
+    fakeClient.invoke.mockImplementation((request: unknown) => {
+      if (request instanceof Api.messages.CheckChatInvite) return invite;
+      if (request instanceof Api.messages.ImportChatInvite) {
+        const error = new Error('USER_ALREADY_PARTICIPANT');
+        (error as Error & { errorMessage?: string }).errorMessage =
+          'USER_ALREADY_PARTICIPANT';
+        throw error;
+      }
+      throw new Error('Unexpected invoke');
+    });
+    fakeClient.getDialogs.mockResolvedValue([]);
+
+    await expect(
+      client.getPublicChannelInfo({
+        apiId: '1',
+        apiHash: 'hash',
+        session: 'session',
+        channelRef: 'https://t.me/+duplicate_hash',
+        inviteHash: 'duplicate_hash',
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('returns suggestions for fuzzy title matches without auto-importing', async () => {
