@@ -39,6 +39,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { IconAvatar } from "@/components/icons/icon-avatar";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
+import { ChannelAccessBadge, telegramChannelAccessLabel } from "@/components/telegram/channel-access-badge";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
 import {
@@ -116,24 +117,10 @@ function hasKpiSettings(channel?: TelegramChannel) {
   );
 }
 
-function channelAccessBadge(channel?: TelegramChannel | null) {
-  switch (channel?.accessMode) {
-    case "PUBLIC":
-      return "Public";
-    case "PRIVATE_JOIN_REQUEST":
-      return "Private · Join requests";
-    case "PRIVATE":
-    case "PRIVATE_INVITE":
-      return "Private";
-    default:
-      return "Unknown";
-  }
-}
-
 function channelSubtitle(channel?: TelegramChannel | null) {
   const username = String(channel?.username || "").trim();
   if (username) return username.startsWith("@") ? username : `@${username}`;
-  return channelAccessBadge(channel);
+  return telegramChannelAccessLabel(channel?.accessMode);
 }
 
 function dataQualityBadgeClass(status?: string | null) {
@@ -827,9 +814,7 @@ export default function TelegramChannelAnalyticsPage() {
         }
       />
       <div className="mt-3">
-        <span className="inline-flex rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-200">
-          {channelAccessBadge(data?.channel)}
-        </span>
+        <ChannelAccessBadge accessMode={data?.channel?.accessMode} />
       </div>
       {isLoading ? <LoadingState /> : null}
       <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">

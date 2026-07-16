@@ -17,6 +17,7 @@ import {
 import { Controller, useForm } from "react-hook-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
+import { ChannelAccessBadge, telegramChannelAccessLabel } from "@/components/telegram/channel-access-badge";
 import {
   BotAccountsPanel,
   MtprotoAccountsPanel,
@@ -82,34 +83,6 @@ function normalizeUsername(value?: string | null) {
   return String(value || "")
     .replace(/^@/, "")
     .trim();
-}
-
-function channelAccessBadge(channel: TelegramChannel) {
-  switch (channel.accessMode) {
-    case "PUBLIC":
-      return "Public";
-    case "PRIVATE_JOIN_REQUEST":
-      return "Private · Join requests";
-    case "PRIVATE":
-    case "PRIVATE_INVITE":
-      return "Private";
-    default:
-      return "Unknown";
-  }
-}
-
-function channelAccessBadgeClass(channel: TelegramChannel) {
-  switch (channel.accessMode) {
-    case "PUBLIC":
-      return "border-emerald-700/70 text-emerald-200";
-    case "PRIVATE_JOIN_REQUEST":
-      return "border-amber-700/70 text-amber-200";
-    case "PRIVATE":
-    case "PRIVATE_INVITE":
-      return "border-sky-700/70 text-sky-200";
-    default:
-      return "border-slate-700 text-slate-300";
-  }
 }
 
 function requestErrorMessage(error: unknown, fallback: string) {
@@ -1900,11 +1873,7 @@ export default function TelegramChannelsPage() {
                     }
                   />
                   <div className="mb-2">
-                    <span
-                      className={`inline-flex rounded border px-2 py-0.5 text-xs ${channelAccessBadgeClass(channel)}`}
-                    >
-                      {channelAccessBadge(channel)}
-                    </span>
+                    <ChannelAccessBadge accessMode={channel.accessMode} />
                   </div>
                   {username ? (
                     <div className="space-y-1">
@@ -2859,7 +2828,7 @@ function NetworkChannelsPreview({
                 {title}
               </span>
               <span className="block truncate text-[10px] leading-tight text-slate-500">
-                {channelAccessBadge(channel)}
+                {telegramChannelAccessLabel(channel.accessMode)}
               </span>
               {username ? (
                 <span className="block truncate text-[10px] leading-tight text-slate-500">
@@ -3053,7 +3022,7 @@ function ChannelSelectRow({
           {channel.title}
         </p>
         <p className="mt-0.5 truncate text-xs text-slate-500">
-          {channelAccessBadge(channel)}
+          {telegramChannelAccessLabel(channel.accessMode)}
         </p>
         {username ? (
           <p className="mt-0.5 truncate text-xs text-slate-400">{username}</p>

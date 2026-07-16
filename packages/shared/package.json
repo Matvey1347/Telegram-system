@@ -9,7 +9,12 @@
     "./telegram-spoilers": "./src/telegram-spoilers.ts"
   },
   "scripts": {
-    "lint": "echo \"No lint configured for shared yet\"",
-    "build": "echo \"No build required for shared yet\""
+    "lint": "pnpm exec tsc --noEmit -p tsconfig.json",
+    "typecheck": "pnpm exec tsc --noEmit -p tsconfig.json",
+    "test": "echo \"No shared tests yet\"",
+    "build": "pnpm exec tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5"
   }
 }

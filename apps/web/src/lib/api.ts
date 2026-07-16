@@ -2,6 +2,10 @@ import axios, { type AxiosRequestConfig } from "axios";
 import type {
   BulkActionResult,
   BulkActionResultItem,
+  StreamEvent,
+  StructuredApiError,
+  SyncOperationResult,
+  TelegramChannelAccessMode,
 } from "@telegram-system/shared";
 import {
   clearAccessToken,
@@ -92,7 +96,7 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
   path: string,
   payload: unknown,
   onProgress: StreamProgressHandler<TItem>,
-) {
+): Promise<TResult> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/x-ndjson",
@@ -119,15 +123,7 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
   let completed: TResult | null = null;
   const consumeLine = (line: string) => {
     if (!line.trim()) return;
-    const event = JSON.parse(line) as
-      | {
-          type: "progress";
-          item: TItem;
-          current: number;
-          total: number;
-        }
-      | { type: "complete"; result: TResult }
-      | { type: "error"; message: string };
+    const event = JSON.parse(line) as StreamEvent<TResult, TItem>;
     if (event.type === "progress") {
       onProgress(event.item, event.current, event.total);
     } else if (event.type === "complete") {
@@ -146,7 +142,7 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
   }
   consumeLine(buffer);
   if (!completed) throw new Error("The bulk action stream ended unexpectedly");
-  return completed;
+  return completed as TResult;
 }
 
 async function streamBulkAction(
@@ -165,7 +161,7 @@ export async function streamProgressAction<TResult, TItem = { message?: string }
   path: string,
   payload: unknown,
   onProgress: StreamProgressHandler<TItem>,
-) {
+): Promise<TResult> {
   return streamAction<TResult, TItem>(path, payload, onProgress);
 }
 
@@ -483,12 +479,7 @@ export type TelegramChannel = EntityAssignment & {
   username?: string;
   telegramChatId?: string;
   telegramAccessHash?: string | null;
-  accessMode?:
-    | "PUBLIC"
-    | "PRIVATE"
-    | "PRIVATE_INVITE"
-    | "PRIVATE_JOIN_REQUEST"
-    | "UNKNOWN";
+  accessMode?: TelegramChannelAccessMode;
   requiresJoinRequest?: boolean;
   lastEntityResolvedAt?: string | null;
   inviteLink?: string;
@@ -547,6 +538,18 @@ export type TelegramChannel = EntityAssignment & {
     };
   };
 };
+
+export type TelegramSyncResult = SyncOperationResult & {
+  publicInfo?: Record<string, unknown>;
+  historical?: Record<string, unknown>;
+  postsMetricsSync?: Record<string, unknown>;
+  olderPostsBackfill?: Record<string, unknown>;
+  channelStatsSync?: Record<string, unknown>;
+  managedPostsSync?: Record<string, unknown> | null;
+  audienceSnapshot?: Record<string, unknown> | null;
+};
+
+export type ApiErrorPayload = StructuredApiError;
 export type TelegramPost = {
   id: string;
   telegramChannelId: string;
@@ -793,6 +796,7 @@ export type TelegramChannelNetworkMember = {
   name?: string;
   username?: string | null;
   photoUrl?: string | null;
+  accessMode?: TelegramChannelAccessMode;
   subscribersCount?: number | null;
   currentSubscribersCount?: number | null;
   activeSubscribersEstimate?: number | null;

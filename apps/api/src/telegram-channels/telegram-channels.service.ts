@@ -19,6 +19,8 @@ import ExcelJS from 'exceljs';
 import type {
   BulkActionResult,
   BulkActionResultItem,
+  SyncOperationResult,
+  SyncStepResult,
 } from '@telegram-system/shared';
 import { HTMLParser } from 'telegram/extensions/html';
 import { WorkspaceService } from '../common/workspace.service';
@@ -308,7 +310,7 @@ export class TelegramChannelsService {
     startedAt: number,
     message: string,
     metadata?: Record<string, unknown>,
-  ) {
+  ): SyncStepResult {
     return {
       step,
       status: 'success' as const,
@@ -325,7 +327,7 @@ export class TelegramChannelsService {
     error: unknown,
     errorCode: string,
     fallbackMessage: string,
-  ) {
+  ): SyncStepResult {
     return {
       step,
       status: 'failed' as const,
@@ -341,7 +343,7 @@ export class TelegramChannelsService {
     startedAt: number,
     message: string,
     metadata?: Record<string, unknown>,
-  ) {
+  ): SyncStepResult {
     return {
       step,
       status: 'skipped' as const,
@@ -4746,14 +4748,7 @@ export class TelegramChannelsService {
         TelegramChannelDataType.STATS,
       ),
     );
-    const steps: Array<{
-      step: string;
-      status: 'success' | 'failed' | 'skipped';
-      errorCode: string | null;
-      message: string;
-      durationMs: number;
-      metadata: Record<string, unknown>;
-    }> = [];
+    const steps: SyncStepResult[] = [];
 
     await this.notifyTaskProgress(
       onProgress,
@@ -5014,7 +5009,7 @@ export class TelegramChannelsService {
       channelStatsSync,
       managedPostsSync,
       audienceSnapshot,
-    };
+    } satisfies SyncOperationResult & Record<string, unknown>;
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
