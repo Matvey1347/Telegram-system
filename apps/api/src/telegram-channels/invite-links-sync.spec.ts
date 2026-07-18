@@ -159,6 +159,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 24,
       updated: 0,
       scope: 'ALL_ADMINS',
+      expectedTotalLinks: 24,
+      fetchedTotalLinks: 24,
+      missingTotalLinks: 0,
       warnings: [],
     });
     expect(prisma.telegramInviteLink.upsert).toHaveBeenCalledTimes(24);
@@ -265,6 +268,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 1,
       updated: 0,
       scope: 'ALL_ADMINS',
+      expectedTotalLinks: 1,
+      fetchedTotalLinks: 1,
+      missingTotalLinks: 0,
       warnings: [],
     });
     expect(prisma.telegramInviteLink.upsert).toHaveBeenCalledTimes(2);
@@ -352,6 +358,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 1,
       updated: 0,
       scope: 'ALL_ADMINS',
+      expectedTotalLinks: 1,
+      fetchedTotalLinks: 1,
+      missingTotalLinks: 0,
       warnings: [],
     });
     expect((service as any).telegramInviteLinkRequestedCountColumnAvailable).toBe(
@@ -429,6 +438,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 1,
       updated: 0,
       scope: 'ALL_ADMINS',
+      expectedTotalLinks: 1,
+      fetchedTotalLinks: 1,
+      missingTotalLinks: 0,
       warnings: [],
     });
     expect(prisma.telegramInviteLink.upsert).not.toHaveBeenCalled();
@@ -508,6 +520,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 11,
       updated: 0,
       scope: 'PARTIAL_ADMINS',
+      expectedTotalLinks: 24,
+      fetchedTotalLinks: 11,
+      missingTotalLinks: 13,
       warnings: [
         'Admin 6894032839 invite-link sync failed: Telegram admin 6894032839 could not be resolved as an input user.',
         'Admin 821695725 invite-link sync failed: Telegram admin 821695725 could not be resolved as an input user.',
@@ -523,6 +538,9 @@ describe('TelegramChannelsService invite link sync', () => {
         status: TelegramDataSourceStatus.PARTIAL,
         metadata: expect.objectContaining({
           scope: 'PARTIAL_ADMINS',
+          expectedTotalLinks: 24,
+          fetchedTotalLinks: 11,
+          missingTotalLinks: 13,
           activeLinksCount: 11,
           importedCount: 11,
           updatedCount: 0,
@@ -592,6 +610,9 @@ describe('TelegramChannelsService invite link sync', () => {
       imported: 1,
       updated: 0,
       scope: 'PARTIAL_ADMINS',
+      expectedTotalLinks: 24,
+      fetchedTotalLinks: 1,
+      missingTotalLinks: 23,
       warnings: [
         'Admin 6894032839 invite-link sync failed: Telegram admin 6894032839 could not be resolved as an input user.',
       ],

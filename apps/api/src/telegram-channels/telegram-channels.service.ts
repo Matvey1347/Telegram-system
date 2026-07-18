@@ -416,6 +416,22 @@ export class TelegramChannelsService {
     };
   }
 
+  private syncStepPartial(
+    step: string,
+    startedAt: number,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): SyncStepResult {
+    return {
+      step,
+      status: 'partial' as const,
+      errorCode: null,
+      message,
+      durationMs: Date.now() - startedAt,
+      metadata: metadata || {},
+    };
+  }
+
   private syncStepFailure(
     step: string,
     startedAt: number,
@@ -1103,6 +1119,11 @@ export class TelegramChannelsService {
       remote.scope === 'ALL_ADMINS'
         ? TelegramDataSourceStatus.SUCCESS
         : TelegramDataSourceStatus.PARTIAL;
+    const fetchedTotalLinks = remote.links.length;
+    const missingTotalLinks = Math.max(
+      0,
+      (remote.expectedTotalLinks ?? 0) - fetchedTotalLinks,
+    );
     await this.sourceAccessService.recordDataSource({
       workspaceId: params.workspaceId,
       channelId: params.channelId,
@@ -1114,6 +1135,9 @@ export class TelegramChannelsService {
       metadata: {
         scope: remote.scope,
         adminsCount: remote.admins.length,
+        expectedTotalLinks: remote.expectedTotalLinks,
+        fetchedTotalLinks,
+        missingTotalLinks,
         activeLinksCount: remote.links.filter((link) => !link.revoked).length,
         revokedLinksCount: remote.links.filter((link) => link.revoked).length,
         importedCount,
@@ -1128,6 +1152,9 @@ export class TelegramChannelsService {
       imported: importedCount,
       updated: updatedCount,
       scope: remote.scope,
+      expectedTotalLinks: remote.expectedTotalLinks,
+      fetchedTotalLinks,
+      missingTotalLinks,
       warnings: remote.warnings,
     };
   }
@@ -1138,6 +1165,9 @@ export class TelegramChannelsService {
     return (
       /Unknown arg(?:ument)? [`'"]requestedCount[`'"]/i.test(message) ||
       /column [`'"](?:TelegramInviteLink\.)?requestedCount\b.*does not exist(?: in the current database)?/i.test(
+        message,
+      ) ||
+      /column [`'"]requestedCount of relation TelegramInviteLink[`'"] does not exist/i.test(
         message,
       )
     );
@@ -1151,6 +1181,9 @@ export class TelegramChannelsService {
     }
     if (
       /column [`'"](?:TelegramInviteLink\.)?requestedCount\b.*does not exist(?: in the current database)?/i.test(
+        message,
+      ) ||
+      /column [`'"]requestedCount of relation TelegramInviteLink[`'"] does not exist/i.test(
         message,
       )
     ) {
@@ -1203,6 +1236,107 @@ export class TelegramChannelsService {
     links: T[],
   ): Array<T & { requestedCount: number }> {
     return links.map((link) => this.normalizeInviteLinkRequestedCount(link));
+  }
+
+  private inviteLinkRawWriteClient() {
+    return this.prisma as PrismaService & {
+      $queryRaw<T = unknown>(
+        query: TemplateStringsArray | Prisma.Sql,
+        ...values: unknown[]
+      ): Promise<T>;
+      $executeRaw?(
+        query: TemplateStringsArray | Prisma.Sql,
+        ...values: unknown[]
+      ): Promise<number>;
+    };
+  }
+
+  private inviteLinkLegacyColumnValue(column: string, value: unknown) {
+    if (column === 'creatorMatchSource') {
+      return value == null
+        ? Prisma.sql`NULL`
+        : Prisma.sql`CAST(${String(value)} AS "TelegramInviteLinkCreatorMatchSource")`;
+    }
+    return Prisma.sql`${value as never}`;
+  }
+
+  private async persistInviteLinkWithoutRequestedCountRaw(params: {
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+    existingId?: string;
+  }) {
+    const db = this.inviteLinkRawWriteClient();
+    const timestamp = new Date();
+
+    if (typeof db.$executeRaw !== 'function') {
+      if (params.existingId) {
+        return this.prisma.telegramInviteLink.update({
+          where: { id: params.existingId },
+          data: {
+            ...(params.update as Prisma.TelegramInviteLinkUncheckedUpdateInput),
+            updatedAt: timestamp,
+          },
+          select: this.inviteLinkSyncUpsertSelect,
+        });
+      }
+
+      return this.prisma.telegramInviteLink.create({
+        data: {
+          id: randomUUID(),
+          ...(params.create as Prisma.TelegramInviteLinkUncheckedCreateInput),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        select: this.inviteLinkSyncUpsertSelect,
+      });
+    }
+
+    if (params.existingId) {
+      const updateData = {
+        ...params.update,
+        updatedAt: timestamp,
+      };
+      const assignments = Object.entries(updateData).map(([column, value]) =>
+        Prisma.sql`${Prisma.raw(`"${column}"`)} = ${this.inviteLinkLegacyColumnValue(column, value)}`,
+      );
+
+      await db.$executeRaw(Prisma.sql`
+        UPDATE "TelegramInviteLink"
+        SET ${Prisma.join(assignments, ', ')}
+        WHERE "id" = ${params.existingId}
+      `);
+    } else {
+      const insertData = {
+        id: randomUUID(),
+        ...params.create,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const columns = Object.keys(insertData).map((column) => Prisma.raw(`"${column}"`));
+      const values = Object.entries(insertData).map(([column, value]) =>
+        this.inviteLinkLegacyColumnValue(column, value),
+      );
+
+      await db.$executeRaw(Prisma.sql`
+        INSERT INTO "TelegramInviteLink" (${Prisma.join(columns, ', ')})
+        VALUES (${Prisma.join(values, ', ')})
+      `);
+    }
+
+    const persisted = await this.prisma.telegramInviteLink.findFirst({
+      where: {
+        workspaceId: String(params.create.workspaceId),
+        telegramChannelId: String(params.create.telegramChannelId),
+        url: String(params.create.url),
+      },
+      select: this.inviteLinkSyncUpsertSelect,
+    });
+    if (!persisted) {
+      throw new InternalServerErrorException(
+        'Invite link was written via legacy path but could not be reloaded.',
+      );
+    }
+    return persisted;
   }
 
   private async findInviteLinksWithRequestedCountFallback(params: {
@@ -1290,16 +1424,16 @@ export class TelegramChannelsService {
     );
 
     if (params.existingId) {
-      return this.prisma.telegramInviteLink.update({
-        where: { id: params.existingId },
-        data: updateWithoutRequestedCount as never,
-        select: this.inviteLinkSyncUpsertSelect,
+      return this.persistInviteLinkWithoutRequestedCountRaw({
+        create: createWithoutRequestedCount,
+        update: updateWithoutRequestedCount,
+        existingId: params.existingId,
       });
     }
 
-    return this.prisma.telegramInviteLink.create({
-      data: createWithoutRequestedCount as never,
-      select: this.inviteLinkSyncUpsertSelect,
+    return this.persistInviteLinkWithoutRequestedCountRaw({
+      create: createWithoutRequestedCount,
+      update: updateWithoutRequestedCount,
     });
   }
 
@@ -5445,17 +5579,30 @@ export class TelegramChannelsService {
         syncPosts: true,
         postLimit,
       }, onProgress, { current: 2, total: totalSteps });
+      const historicalMetadata = {
+        importedInviteLinks: historical?.imported ?? 0,
+        updatedInviteLinks: historical?.updated ?? 0,
+        postsUpdated: historical?.postsUpdated ?? 0,
+        inviteLinksScope: historical?.inviteLinksScope ?? null,
+        inviteLinksExpectedTotal: historical?.inviteLinksExpectedTotal ?? null,
+        inviteLinksFetchedTotal: historical?.inviteLinksFetchedTotal ?? 0,
+        inviteLinksMissingTotal: historical?.inviteLinksMissingTotal ?? 0,
+        inviteLinkWarnings: historical?.inviteLinkWarnings ?? [],
+      };
       steps.push(
-        this.syncStepSuccess(
-          'historical_posts',
-          historicalStartedAt,
-          'Posts and invite links synced',
-          {
-            importedInviteLinks: historical?.imported ?? 0,
-            updatedInviteLinks: historical?.updated ?? 0,
-            postsUpdated: historical?.postsUpdated ?? 0,
-          },
-        ),
+        historical?.inviteLinksScope === 'PARTIAL_ADMINS'
+          ? this.syncStepPartial(
+              'historical_posts',
+              historicalStartedAt,
+              'Posts synced, but invite-link sync completed partially',
+              historicalMetadata,
+            )
+          : this.syncStepSuccess(
+              'historical_posts',
+              historicalStartedAt,
+              'Posts and invite links synced',
+              historicalMetadata,
+            ),
       );
     } catch (error) {
       steps.push(
@@ -5641,10 +5788,12 @@ export class TelegramChannelsService {
       ['channel_info', 'historical_posts', 'post_metrics'].includes(step.step),
     );
     const hasRequiredFailure = requiredSteps.some((step) => step.status === 'failed');
+    const hasRequiredPartial = requiredSteps.some((step) => step.status === 'partial');
     const hasOptionalFailure = steps.some((step) => step.status === 'failed');
+    const hasOptionalPartial = steps.some((step) => step.status === 'partial');
     const overallStatus = hasRequiredFailure
       ? 'failed'
-      : hasOptionalFailure
+      : hasRequiredPartial || hasOptionalFailure || hasOptionalPartial
         ? 'partial'
         : 'success';
     return {
@@ -5824,6 +5973,9 @@ export class TelegramChannelsService {
     }
     let imported = 0;
     let updated = 0;
+    let inviteResult:
+      | Awaited<ReturnType<TelegramChannelsService['syncChannelInviteLinks']>>
+      | null = null;
     if (dto.syncInviteLinks) {
       await this.notifyDetailedTaskProgress(
         onProgress,
@@ -5831,7 +5983,7 @@ export class TelegramChannelsService {
         progressStep.total,
         'Matching invite link creators and saving invite links',
       );
-      const inviteResult = await this.syncChannelInviteLinks({
+      inviteResult = await this.syncChannelInviteLinks({
         workspaceId,
         channelId,
         account,
@@ -5903,6 +6055,24 @@ export class TelegramChannelsService {
       imported,
       updated,
       postsUpdated,
+      inviteLinksScope: inviteResult?.scope ?? historical?.inviteLinksScope ?? null,
+      inviteLinksExpectedTotal:
+        inviteResult?.expectedTotalLinks ??
+        historical?.inviteLinksExpectedTotal ??
+        null,
+      inviteLinksFetchedTotal:
+        inviteResult?.fetchedTotalLinks ??
+        historical?.inviteLinksDetailed?.length ??
+        0,
+      inviteLinksMissingTotal:
+        inviteResult?.missingTotalLinks ??
+        Math.max(
+          0,
+          (historical?.inviteLinksExpectedTotal ?? 0) -
+            (historical?.inviteLinksDetailed?.length ?? 0),
+        ),
+      inviteLinkWarnings:
+        inviteResult?.warnings ?? historical?.inviteLinkWarnings ?? [],
       audienceSnapshot,
     };
   }

@@ -11,7 +11,7 @@ export type TelegramChannelAccessMode =
 
 export type SyncStepResult = {
   step: string;
-  status: Exclude<OperationStatus, "partial">;
+  status: OperationStatus;
   errorCode: string | null;
   message: string;
   durationMs: number;

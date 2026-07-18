@@ -1248,6 +1248,7 @@ function inviteLinksVisibility(source: TelegramChannelSourceAccess) {
 }
 
 function summarizeSync(result: any) {
+  const status = result?.status || "success";
   const historical = result?.historical || {};
   const publicInfo = result?.publicInfo || {};
   const posts = result?.postsMetricsSync || {};
@@ -1272,6 +1273,10 @@ function summarizeSync(result: any) {
     importedLinks || updatedLinks
       ? `Invite links: added ${importedLinks}, updated ${updatedLinks}.`
       : "Invite links: no new or changed links.";
+  const inviteGapText =
+    historical.inviteLinksScope === "PARTIAL_ADMINS"
+      ? `Invite links fetched ${toNumber(historical.inviteLinksFetchedTotal)} of ${toNumber(historical.inviteLinksExpectedTotal)} expected, missing ${toNumber(historical.inviteLinksMissingTotal)}.`
+      : null;
   const postText =
     dailyRows || syncedPosts || olderSyncedPosts
       ? `Posts: refreshed ${syncedPosts} post metrics, backfilled ${olderSyncedPosts} older posts, and ${dailyRows} daily rows.`
@@ -1279,7 +1284,16 @@ function summarizeSync(result: any) {
   const statsText = stats.success
     ? `Analytics: loaded ${points} chart points${period !== "-" ? ` for ${period}` : ""}.`
     : `Analytics: not updated${stats.snapshot?.normalizedStats?.status ? ` (${stats.snapshot.normalizedStats.status})` : ""}.`;
-  return `Sync completed.\n${publicText}\n${linkText}\n${postText}\n${statsText}`;
+  return [
+    status === "partial" ? "Sync completed partially." : "Sync completed.",
+    publicText,
+    linkText,
+    inviteGapText,
+    postText,
+    statsText,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatStatsPeriod(period: any, graphs?: Record<string, any>) {
@@ -1689,16 +1703,22 @@ export default function TelegramChannelsPage() {
             );
           },
         );
+        const partial = result?.status === "partial";
+        const failed = result?.status === "failed";
         setProgress({
           id: progressId,
           title: `Sync ${channel.title}`,
           current: 8,
           total: 8,
-          message: "Channel sync completed",
-          completed: true,
-          successCount: 1,
-          failedCount: 0,
-          skippedCount: 0,
+          message: failed
+            ? "Channel sync failed"
+            : partial
+              ? "Channel sync completed partially"
+              : "Channel sync completed",
+          completed: !failed,
+          successCount: failed ? 0 : partial ? 0 : 1,
+          failedCount: failed ? 1 : 0,
+          skippedCount: partial ? 1 : 0,
           iconUrl: channel.photoUrl || undefined,
         });
         scheduleProgressDismiss(clearProgress, progressId);
@@ -1711,7 +1731,11 @@ export default function TelegramChannelsPage() {
     onSuccess: ({ channelId, result }) => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
       queryClient.invalidateQueries({ queryKey: ["telegram-channel", channelId] });
-      pushToast(summarizeSync(result), "success", 8000);
+      pushToast(
+        summarizeSync(result),
+        result?.status === "partial" ? "info" : "success",
+        8000,
+      );
     },
     onError: (requestError: unknown) =>
       pushToast(requestErrorMessage(requestError, "Sync failed."), "error"),

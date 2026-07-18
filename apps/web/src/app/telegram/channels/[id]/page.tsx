@@ -364,16 +364,22 @@ export default function TelegramChannelAnalyticsPage() {
             );
           },
         );
+        const partial = result?.status === "partial";
+        const failed = result?.status === "failed";
         setProgress({
           id: progressId,
           title: progressTitle,
           current: 8,
           total: 8,
-          message: "Channel sync completed",
-          completed: true,
-          successCount: 1,
-          failedCount: 0,
-          skippedCount: 0,
+          message: failed
+            ? "Channel sync failed"
+            : partial
+              ? "Channel sync completed partially"
+              : "Channel sync completed",
+          completed: !failed,
+          successCount: failed ? 0 : partial ? 0 : 1,
+          failedCount: failed ? 1 : 0,
+          skippedCount: partial ? 1 : 0,
           iconUrl: channel?.photoUrl || undefined,
         });
         scheduleProgressDismiss(clearProgress, progressId);
@@ -386,7 +392,11 @@ export default function TelegramChannelAnalyticsPage() {
     onSuccess: (result) => {
       void invalidateTelegramChannelQueries(queryClient, id);
       setLastSyncResult(result);
-      pushToast(summarizeSync(result), "success", 8000);
+      pushToast(
+        summarizeSync(result),
+        result?.status === "partial" ? "info" : "success",
+        8000,
+      );
     },
     onError: (error: any) =>
       pushToast(error?.response?.data?.message || "Sync failed.", "error"),
@@ -3190,6 +3200,10 @@ function summarizeSync(result: any) {
     importedLinks || updatedLinks
       ? `Invite links: added ${importedLinks}, updated ${updatedLinks}.`
       : "Invite links: no new or changed links.";
+  const inviteGapText =
+    historical.inviteLinksScope === "PARTIAL_ADMINS"
+      ? `Invite links fetched ${toNumber(historical.inviteLinksFetchedTotal)} of ${toNumber(historical.inviteLinksExpectedTotal)} expected, missing ${toNumber(historical.inviteLinksMissingTotal)}.`
+      : null;
   const postText =
     dailyRows || syncedPosts || olderSyncedPosts
       ? `Posts: refreshed ${syncedPosts} post metrics, backfilled ${olderSyncedPosts} older posts, and ${dailyRows} daily rows.`
@@ -3212,6 +3226,7 @@ function summarizeSync(result: any) {
         ? "Sync failed."
         : "Sync completed.";
   const notes = [
+    inviteGapText,
     failedSteps.length ? `Failed steps: ${failedSteps.length}.` : null,
     skippedSteps.length ? `Skipped steps: ${skippedSteps.length}.` : null,
   ]

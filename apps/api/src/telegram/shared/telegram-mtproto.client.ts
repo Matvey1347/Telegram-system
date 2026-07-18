@@ -95,6 +95,14 @@ type InviteAdminSummary = TelegramInviteLinksResult['admins'][number];
 type InviteLinksProgressCallback = (
   item: TelegramChannelSyncProgressItem,
 ) => void | Promise<void>;
+type TelegramLongLike =
+  | bigint
+  | number
+  | string
+  | {
+      toString(): string;
+      constructor?: { name?: string };
+    };
 
 @Injectable()
 export class TelegramMtprotoClient {
@@ -168,12 +176,98 @@ export class TelegramMtprotoClient {
     }
   }
 
-  private entityAccessHash(entity: ImportableTelegramEntity) {
+  private isTelegramLongLike(value: unknown): value is TelegramLongLike {
+    if (value == null) return false;
+    if (typeof value === 'bigint') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value === 'string') return value.trim().length > 0;
+    return (
+      typeof value === 'object' &&
+      typeof (value as { toString?: unknown }).toString === 'function'
+    );
+  }
+
+  private telegramLongToString(value: unknown) {
+    if (!this.isTelegramLongLike(value)) return null;
+    const rendered = value.toString().trim();
+    return rendered ? rendered : null;
+  }
+
+  private entityAccessHashValue(entity: ImportableTelegramEntity) {
     const raw = (entity as { accessHash?: unknown }).accessHash;
-    if (typeof raw === 'bigint') return raw.toString();
-    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-    if (typeof raw === 'string' && raw.trim()) return raw.trim();
-    return null;
+    return this.isTelegramLongLike(raw) ? raw : null;
+  }
+
+  private entityAccessHash(entity: ImportableTelegramEntity) {
+    return this.telegramLongToString(this.entityAccessHashValue(entity));
+  }
+
+  private userSnapshotCompleteness(user: Api.User) {
+    return {
+      hasAccessHash: Boolean(this.entityAccessHashValue(user)),
+      isMin: Boolean(user.min),
+      hasUsername: Boolean(normalizeTelegramUsername(user.username)),
+      hasName: Boolean(user.firstName || user.lastName),
+      hasPhoto: Boolean(user.photo),
+      isDeleted: Boolean(user.deleted),
+    };
+  }
+
+  private choosePreferredUser(current: Api.User | null, incoming: Api.User) {
+    if (!current) return incoming;
+    const currentScore = this.userSnapshotCompleteness(current);
+    const incomingScore = this.userSnapshotCompleteness(incoming);
+
+    if (currentScore.hasAccessHash !== incomingScore.hasAccessHash) {
+      return incomingScore.hasAccessHash ? incoming : current;
+    }
+    if (currentScore.isMin !== incomingScore.isMin) {
+      return incomingScore.isMin ? current : incoming;
+    }
+    if (currentScore.isDeleted !== incomingScore.isDeleted) {
+      return incomingScore.isDeleted ? current : incoming;
+    }
+    if (currentScore.hasUsername !== incomingScore.hasUsername) {
+      return incomingScore.hasUsername ? incoming : current;
+    }
+    if (currentScore.hasName !== incomingScore.hasName) {
+      return incomingScore.hasName ? incoming : current;
+    }
+    if (currentScore.hasPhoto !== incomingScore.hasPhoto) {
+      return incomingScore.hasPhoto ? incoming : current;
+    }
+    return current;
+  }
+
+  private rememberKnownUser(
+    knownUsers: Map<string, Api.User>,
+    user: Api.User,
+    source: string,
+  ) {
+    const userId = String(user.id);
+    const previous = knownUsers.get(userId) ?? null;
+    const preferred = this.choosePreferredUser(previous, user);
+    knownUsers.set(userId, preferred);
+
+    if (preferred !== previous || !previous) {
+      this.logInviteSyncEvent('log', {
+        phase: 'invite_admin_catalog',
+        source,
+        adminId: userId,
+        username: normalizeTelegramUsername(preferred.username),
+        userClass: preferred.className,
+        min: Boolean(preferred.min),
+        bot: Boolean(preferred.bot),
+        deleted: Boolean(preferred.deleted),
+        self: Boolean(preferred.self),
+        hasAccessHash: Boolean(this.entityAccessHashValue(preferred)),
+        accessHashType:
+          typeof (preferred as { accessHash?: unknown }).accessHash,
+        accessHashCtor:
+          ((preferred as { accessHash?: { constructor?: { name?: string } } })
+            .accessHash?.constructor?.name as string | undefined) ?? null,
+      });
+    }
   }
 
   private isImportableTelegramEntity(
@@ -1827,6 +1921,8 @@ export class TelegramMtprotoClient {
     client: TelegramClient;
     user: Api.User;
     selfUserId: string | null;
+    channelTelegramId?: string | null;
+    connectedTelegramUserId?: string | null;
   }) {
     if (
       params.selfUserId &&
@@ -1835,18 +1931,28 @@ export class TelegramMtprotoClient {
       return new Api.InputUserSelf();
     }
 
-    const directAccessHash = this.entityAccessHash(params.user);
+    const directAccessHash = this.entityAccessHashValue(params.user);
     if (directAccessHash) {
       try {
-        return new Api.InputUser({
-          userId: String(params.user.id) as any,
+        const inputUser = new Api.InputUser({
+          userId: params.user.id,
           accessHash: directAccessHash as any,
         });
+        this.logInviteSyncEvent('log', {
+          phase: 'resolve_invite_admin',
+          channelTelegramId: params.channelTelegramId ?? null,
+          connectedTelegramUserId: params.connectedTelegramUserId ?? null,
+          adminId: String(params.user.id),
+          strategy: 'direct_access_hash',
+          inputUserClass: inputUser.className,
+        });
+        return inputUser;
       } catch {
         // Fall through to GramJS entity resolution.
       }
     }
 
+    const attemptErrors: Array<{ strategy: string; errorCode: string }> = [];
     const resolutionCandidates: unknown[] = [params.user];
     const username = normalizeTelegramUsername(params.user.username);
     if (username) {
@@ -1859,6 +1965,14 @@ export class TelegramMtprotoClient {
     );
 
     for (const candidate of resolutionCandidates) {
+      const strategy =
+        typeof candidate === 'string'
+          ? 'username'
+          : candidate instanceof Api.User
+            ? 'user_object'
+            : candidate instanceof Api.PeerUser
+              ? 'peer_user'
+              : 'unknown';
       try {
         const resolved = await this.withTimeout(
           params.client.getInputEntity(candidate as never),
@@ -1866,12 +1980,31 @@ export class TelegramMtprotoClient {
           'Telegram admin entity resolution',
         );
         if (this.isInputUser(resolved)) {
+          this.logInviteSyncEvent('log', {
+            phase: 'resolve_invite_admin',
+            channelTelegramId: params.channelTelegramId ?? null,
+            connectedTelegramUserId: params.connectedTelegramUserId ?? null,
+            adminId: String(params.user.id),
+            strategy,
+            inputUserClass: (resolved as { className?: string }).className ?? null,
+          });
           return resolved;
         }
-      } catch {
-        // Try the next candidate.
+      } catch (error) {
+        attemptErrors.push({
+          strategy,
+          errorCode: this.getTelegramErrorCode(error),
+        });
       }
     }
+
+    this.logInviteSyncEvent('warn', {
+      phase: 'resolve_invite_admin',
+      channelTelegramId: params.channelTelegramId ?? null,
+      connectedTelegramUserId: params.connectedTelegramUserId ?? null,
+      adminId: String(params.user.id),
+      errors: attemptErrors,
+    });
 
     throw new BadRequestException(
       `Telegram admin ${String(params.user.id)} could not be resolved as an input user.`,
@@ -1953,7 +2086,11 @@ export class TelegramMtprotoClient {
       const responseUsers = Array.isArray(response?.users) ? response.users : [];
       for (const user of responseUsers) {
         if (user instanceof Api.User) {
-          params.knownUsers.set(String(user.id), user);
+          this.rememberKnownUser(
+            params.knownUsers,
+            user,
+            `GetExportedChatInvites:${params.revoked ? 'revoked' : 'active'}`,
+          );
         }
       }
       const invites = Array.isArray(response?.invites) ? response.invites : [];
@@ -2034,11 +2171,11 @@ export class TelegramMtprotoClient {
     const users = Array.isArray(adminsResult?.users) ? adminsResult.users : [];
     for (const user of users) {
       if (user instanceof Api.User) {
-        knownUsers.set(String(user.id), user);
+        this.rememberKnownUser(knownUsers, user, 'GetAdminsWithInvites');
       }
     }
     if (selfUser) {
-      knownUsers.set(String(selfUser.id), selfUser);
+      this.rememberKnownUser(knownUsers, selfUser, 'getMe/GetFullUser');
     }
     const adminDirectoryUsers = await this.loadChannelInviteAdminsDirectory(
       client,
@@ -2046,7 +2183,7 @@ export class TelegramMtprotoClient {
       warnings,
     );
     for (const [userId, user] of adminDirectoryUsers.entries()) {
-      knownUsers.set(userId, user);
+      this.rememberKnownUser(knownUsers, user, 'GetParticipants');
     }
 
     const adminRows = Array.isArray(adminsResult?.admins)
@@ -2112,10 +2249,45 @@ export class TelegramMtprotoClient {
       }
 
       try {
+        this.logInviteSyncEvent('log', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          adminId: adminUserId,
+          username: normalizeTelegramUsername(adminUser.username),
+          userClass: adminUser.className,
+          min: Boolean(adminUser.min),
+          bot: Boolean(adminUser.bot),
+          deleted: Boolean(adminUser.deleted),
+          self: Boolean(adminUser.self),
+          hasAccessHash: Boolean(this.entityAccessHashValue(adminUser)),
+          accessHashType: typeof (adminUser as { accessHash?: unknown }).accessHash,
+          accessHashCtor:
+            ((adminUser as { accessHash?: { constructor?: { name?: string } } })
+              .accessHash?.constructor?.name as string | undefined) ?? null,
+          expectedActiveLinks: counts.active,
+          expectedRevokedLinks: counts.revoked,
+        });
         const inputUser = await this.resolveInviteAdminInputUser({
           client,
           user: adminUser,
           selfUserId: connectedTelegramUserId,
+          channelTelegramId,
+          connectedTelegramUserId,
+        });
+        this.logInviteSyncEvent('log', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          adminId: adminUserId,
+          resolutionStrategy:
+            inputUser instanceof Api.InputUserSelf
+              ? 'self'
+              : inputUser instanceof Api.InputUser
+                ? 'direct_input_user'
+                : ((inputUser as { className?: string }).className ?? 'unknown'),
+          inputUserClass:
+            (inputUser as { className?: string }).className ?? null,
         });
         const [activeLinks, revokedLinks] = await Promise.all([
           this.collectInviteLinksForAdmin({
@@ -2165,7 +2337,10 @@ export class TelegramMtprotoClient {
           adminId: adminUserId,
           activePagesLoaded: activeLinks.pagesLoaded,
           revokedPagesLoaded: revokedLinks.pagesLoaded,
+          activeLinksLoaded: activeLinks.links.length,
+          revokedLinksLoaded: revokedLinks.links.length,
           loadedLinks: activeLinks.links.length + revokedLinks.links.length,
+          totalUniqueLinks: linksByUrl.size,
         });
       } catch (error) {
         failedAdmins += 1;

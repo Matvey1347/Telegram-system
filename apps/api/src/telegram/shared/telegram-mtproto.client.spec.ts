@@ -3,6 +3,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { Api } from 'telegram';
+import { returnBigInt } from 'telegram/Helpers';
 import { TelegramMtprotoClient } from './telegram-mtproto.client';
 
 describe('TelegramMtprotoClient import resolution', () => {
@@ -649,6 +650,120 @@ describe('TelegramMtprotoClient import resolution', () => {
       creatorUsername: 'sasha_admin',
       requested: 1,
     });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('builds InputUser directly from a GramJS Integer accessHash without getInputEntity fallback', async () => {
+    const adminUser = new Api.User(({
+      id: returnBigInt('821695725') as any,
+      accessHash: returnBigInt('9876543210987654321') as any,
+      firstName: 'Sasha',
+      username: 'sasha_admin',
+    } as unknown) as any);
+
+    const inputUser = await (client as any).resolveInviteAdminInputUser({
+      client: fakeClient,
+      user: adminUser,
+      selfUserId: '100',
+    });
+
+    expect(inputUser).toBeInstanceOf(Api.InputUser);
+    expect(inputUser.userId?.constructor?.name).toBe('Integer');
+    expect(inputUser.accessHash?.constructor?.name).toBe('Integer');
+    expect(fakeClient.getInputEntity).not.toHaveBeenCalled();
+  });
+
+  it('keeps the fuller admin user when GetParticipants returns a min snapshot without access hash', async () => {
+    const channel = new Api.Channel(({
+      id: '7004' as any,
+      title: 'Invite Channel',
+      accessHash: '9004' as any,
+      broadcast: true,
+      megagroup: false,
+      username: 'invite_channel_4',
+    } as unknown) as any);
+    const selfUser = new Api.User(({
+      id: '100' as any,
+      accessHash: '1000' as any,
+      firstName: 'Owner',
+      username: 'owner_admin',
+      self: true,
+    } as unknown) as any);
+    const adminFromInvites = new Api.User(({
+      id: returnBigInt('821695725') as any,
+      accessHash: returnBigInt('9876543210987654321') as any,
+      firstName: 'Sasha',
+      username: 'sasha_admin',
+    } as unknown) as any);
+    const minAdminFromDirectory = new Api.User(({
+      id: returnBigInt('821695725') as any,
+      min: true,
+      firstName: 'Sasha',
+      username: 'sasha_admin',
+    } as unknown) as any);
+
+    fakeClient.getEntity.mockResolvedValue(channel);
+    fakeClient.getMe.mockResolvedValue(selfUser);
+    fakeClient.invoke.mockImplementation((request: unknown) => {
+      if (request instanceof Api.users.GetFullUser) {
+        return { users: [selfUser] };
+      }
+      if (request instanceof Api.messages.GetAdminsWithInvites) {
+        return {
+          admins: [{ adminId: '821695725', invitesCount: 1, revokedInvitesCount: 0 }],
+          users: [adminFromInvites],
+        };
+      }
+      if (request instanceof Api.channels.GetParticipants) {
+        return {
+          participants: [
+            new Api.ChannelParticipantAdmin({
+              userId: '821695725' as any,
+              promotedBy: '100' as any,
+              date: 1,
+              adminRights: new Api.ChatAdminRights({}),
+            }),
+          ],
+          users: [minAdminFromDirectory],
+        };
+      }
+      if (request instanceof Api.messages.GetExportedChatInvites) {
+        expect(request.adminId).toBeInstanceOf(Api.InputUser);
+        expect((request.adminId as Api.InputUser).accessHash?.constructor?.name).toBe(
+          'Integer',
+        );
+        return {
+          invites: [
+            {
+              link: 'https://t.me/+sasha_integer',
+              date: 1,
+              adminId: '821695725',
+              usage: 5,
+              requested: 0,
+              revoked: false,
+            },
+          ],
+          users: [adminFromInvites],
+        };
+      }
+      throw new Error('Unexpected invoke');
+    });
+
+    const result = await client.getAllChannelInviteLinks({
+      apiId: '1',
+      apiHash: 'hash',
+      session: 'session',
+      channelRef: '@invite_channel_4',
+    });
+
+    expect(result.scope).toBe('ALL_ADMINS');
+    expect(result.links).toEqual([
+      expect.objectContaining({
+        url: 'https://t.me/+sasha_integer',
+        telegramCreatorUserId: '821695725',
+        creatorUsername: 'sasha_admin',
+      }),
+    ]);
     expect(result.warnings).toEqual([]);
   });
 
