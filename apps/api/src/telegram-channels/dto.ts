@@ -147,7 +147,7 @@ export class ManagedPostLinkTargetsQueryDto {
 }
 
 export class SetManagedPostTelegramUrlDto {
-  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @IsString()
   telegramUrl!: string;
 }
 

@@ -131,6 +131,14 @@ function wantsNewTab(
   return event.metaKey || event.ctrlKey;
 }
 
+function isBrokenPublishedPost(post: TelegramManagedPost) {
+  return (
+    post.status === "PUBLISHED" &&
+    (["BROKEN", "MISSING"].includes(post.telegramRemoteStatus) ||
+      /link is broken/i.test(post.lastError || ""))
+  );
+}
+
 function parseTelegramMessageIdFromUrl(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -609,18 +617,26 @@ function TelegramPostWorkspace({
     post.assignedMember ?? null;
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
-  const isPublished = editing?.status === "PUBLISHED";
+  const liveEditingPost =
+    editing && posts.data
+      ? posts.data.find((post) => post.id === editing.id) || null
+      : null;
+  const editingMeta = liveEditingPost ?? editing;
+  const isPublished = editingMeta?.status === "PUBLISHED";
   const hasLockedTelegramMedia =
-    editing?.status === "PUBLISHED" || editing?.status === "SCHEDULED";
+    editingMeta?.status === "PUBLISHED" || editingMeta?.status === "SCHEDULED";
   const telegramPostUrl = (() => {
-    if (!editing || !["PUBLISHED", "SCHEDULED"].includes(editing.status)) {
+    if (!editingMeta || !["PUBLISHED", "SCHEDULED"].includes(editingMeta.status)) {
       return null;
     }
     const primaryMessageIndex =
-      editing.imageUrls.length > 1
-        ? Math.min(editing.imageUrls.length - 1, editing.telegramMessageIds.length - 1)
+      editingMeta.imageUrls.length > 1
+        ? Math.min(
+            editingMeta.imageUrls.length - 1,
+            editingMeta.telegramMessageIds.length - 1,
+          )
         : 0;
-    const messageId = editing.telegramMessageIds[primaryMessageIndex];
+    const messageId = editingMeta.telegramMessageIds[primaryMessageIndex];
     if (!messageId) return null;
     const chatId = channelTelegramChatId
       ?.trim()
@@ -628,25 +644,30 @@ function TelegramPostWorkspace({
       .replace(/^-/, "");
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
-  const displayedError = error || editing?.lastError || "";
+  const displayedError = error || editingMeta?.lastError || "";
   const canManageTelegramLink = Boolean(
-    editing &&
-      (editing.status === "SCHEDULED" ||
-        editing.status === "PUBLISHED" ||
-        editing.status === "FAILED" ||
-        ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus) ||
+    editingMeta &&
+      (editingMeta.status === "SCHEDULED" ||
+        editingMeta.status === "PUBLISHED" ||
+        editingMeta.status === "FAILED" ||
+        ["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
         /link is broken|Telegram link manually/i.test(displayedError)),
   );
   const telegramLinkBroken = Boolean(
-    editing && ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus),
+    editingMeta &&
+      (["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
+        /link is broken/i.test(displayedError)),
   );
   const storedTelegramMessageId = (() => {
-    if (!editing) return null;
+    if (!editingMeta) return null;
     const primaryMessageIndex =
-      editing.imageUrls.length > 1
-        ? Math.min(editing.imageUrls.length - 1, editing.telegramMessageIds.length - 1)
+      editingMeta.imageUrls.length > 1
+        ? Math.min(
+            editingMeta.imageUrls.length - 1,
+            editingMeta.telegramMessageIds.length - 1,
+          )
         : 0;
-    return editing.telegramMessageIds[primaryMessageIndex] || null;
+    return editingMeta.telegramMessageIds[primaryMessageIndex] || null;
   })();
   const enteredTelegramMessageId = parseTelegramMessageIdFromUrl(manualTelegramUrl);
   const telegramLinkIdMismatchHint =
@@ -656,6 +677,12 @@ function TelegramPostWorkspace({
     storedTelegramMessageId !== enteredTelegramMessageId
       ? `Possible issue: this post currently stores Telegram message ID ${storedTelegramMessageId}, but the link you entered points to message ID ${enteredTelegramMessageId}.`
       : null;
+  const publishedPostNeedsRepublish = Boolean(
+    editingMeta?.status === "PUBLISHED" && telegramLinkBroken,
+  );
+  const effectivePublishingMode: PublishingMode = publishedPostNeedsRepublish
+    ? "publish"
+    : mode;
   const outgoingInternalLinks = useMemo(() => {
     const grouped = new Map<
       string,
@@ -737,13 +764,16 @@ function TelegramPostWorkspace({
         .join(", ")}.`
     : "";
   const dependencyPublishBlocked =
-    mode !== "draft" && unresolvedInternalLinkTargets.length > 0;
+    effectivePublishingMode !== "draft" &&
+    unresolvedInternalLinkTargets.length > 0;
   const hasValidScheduleTime = isValidTimeInputValue(scheduleTime);
   const selectedTimePostId =
     channelTimePosts.find((timePost) => timePost.time === scheduleTime)?.id ||
     null;
   const internalLinkScheduledAt =
-    mode === "schedule" && scheduleDate && hasValidScheduleTime
+    effectivePublishingMode === "schedule" &&
+    scheduleDate &&
+    hasValidScheduleTime
       ? new Date(`${scheduleDate}T${scheduleTime}`).toISOString()
       : undefined;
   const editingIsSaving = Boolean(
@@ -769,19 +799,26 @@ function TelegramPostWorkspace({
           ? "Wait until image upload finishes."
           : !title.trim()
             ? "Internal title is required."
-            : mode !== "draft" && !text.trim() && !imageUrls.length
+            : effectivePublishingMode !== "draft" &&
+                !text.trim() &&
+                !imageUrls.length
               ? "Add Telegram text or at least one image before publishing."
-              : mode === "schedule" && (!scheduleDate || !scheduleTime)
+              : effectivePublishingMode === "schedule" &&
+                  (!scheduleDate || !scheduleTime)
                 ? "Publish date and time are required."
-                : mode === "schedule" && !hasValidScheduleTime
+                : effectivePublishingMode === "schedule" &&
+                    !hasValidScheduleTime
                   ? "Enter publish time in HH:MM format."
-                : "";
+                  : "";
   const visiblePosts = (posts.data || []).filter(
     (post) =>
       savingPostIds.includes(post.id) ||
       (statusTab === "DRAFT"
-        ? ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status)
-        : post.status === statusTab),
+        ? ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status) ||
+          isBrokenPublishedPost(post)
+        : statusTab === "PUBLISHED"
+          ? post.status === "PUBLISHED" && !isBrokenPublishedPost(post)
+          : post.status === statusTab),
   );
   const groupedVisiblePosts = useMemo(() => {
     const grouped = new Map<
@@ -1249,7 +1286,7 @@ function TelegramPostWorkspace({
   );
 
   const saveManualTelegramUrl = async () => {
-    if (!editing || !manualTelegramUrl.trim()) return;
+    if (!editing) return;
     setSavingTelegramUrl(true);
     setError("");
     try {
@@ -1258,7 +1295,10 @@ function TelegramPostWorkspace({
         editing.id,
         manualTelegramUrl.trim(),
       );
-      setEditing(post);
+      selectPost(post);
+      if (post.status === "DRAFT") {
+        changeStatusTab("DRAFT");
+      }
       setManualTelegramUrl(post.telegramMessageUrls[0] || "");
       setTelegramLinkModalOpen(false);
       await Promise.all([
@@ -1272,7 +1312,12 @@ function TelegramPostWorkspace({
           queryKey: ["post-groups", channelId],
         }),
       ]);
-      pushToast("Telegram post link saved.", "success");
+      pushToast(
+        post.telegramMessageUrls.length
+          ? "Telegram post link saved."
+          : "Telegram post link removed. Post returned to draft.",
+        "success",
+      );
     } catch (saveError) {
       setError(apiErrorMessage(saveError, "Could not save Telegram post link"));
     } finally {
@@ -1473,7 +1518,7 @@ function TelegramPostWorkspace({
 
   const run = () => {
     const editingPost = editing;
-    const saveMode = mode;
+    const saveMode = effectivePublishingMode;
     const saveTitle = title.trim();
     const saveGroupId = postGroupId;
     const saveIcon = iconRef.current;
@@ -1502,7 +1547,10 @@ function TelegramPostWorkspace({
       assignedMemberId ??
       (!editingPost && !memberSelectionTouched ? currentMemberId : null);
     if (selectedMemberId) payload.assignedMemberId = selectedMemberId;
-    const isPublishedEdit = editingPost?.status === "PUBLISHED";
+    const isPublishedEdit = editingMeta?.status === "PUBLISHED";
+    const shouldRepublishPublished = Boolean(
+      editingMeta?.status === "PUBLISHED" && telegramLinkBroken,
+    );
     const pendingId =
       editingPost?.id ||
       `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1568,7 +1616,14 @@ function TelegramPostWorkspace({
             true,
           );
         }
-        if (isPublishedEdit) {
+        if (shouldRepublishPublished) {
+          await telegramChannelsApi.publishManagedPost(
+            channelId,
+            post.id,
+            saveLongTextMode,
+            true,
+          );
+        } else if (isPublishedEdit) {
           // Published posts are updated in place by PATCH.
           // Never run the publish endpoint again after a Telegram text edit.
         } else if (saveMode === "publish") {
@@ -1591,7 +1646,9 @@ function TelegramPostWorkspace({
           ? await iconsApi.get(payload.icon).catch(() => null)
           : null;
         pushToast(
-          editingPost?.status === "PUBLISHED"
+          shouldRepublishPublished
+            ? `"${saveTitle}" published again with a fresh Telegram link.`
+            : editingMeta?.status === "PUBLISHED"
             ? `"${saveTitle}" updated in Telegram.`
             : saveMode === "publish"
             ? `"${saveTitle}" published.`
@@ -2204,7 +2261,9 @@ function TelegramPostWorkspace({
                 onClick={run}
                 disabled={!!publishDisabledReason || dependencyPublishBlocked}
               >
-                {isPublished
+                {publishedPostNeedsRepublish
+                  ? "Publish"
+                  : isPublished
                   ? "Update Telegram text"
                   : mode === "draft"
                     ? "Save draft"
@@ -2256,7 +2315,8 @@ function TelegramPostWorkspace({
                     label: "Drafts",
                     icon: FileText,
                     count: (posts.data || []).filter((post) =>
-                      ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status),
+                      ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status) ||
+                      isBrokenPublishedPost(post),
                     ).length,
                   },
                   {
@@ -2272,7 +2332,9 @@ function TelegramPostWorkspace({
                     label: "Published",
                     icon: CheckCircle2,
                     count: (posts.data || []).filter(
-                      (post) => post.status === "PUBLISHED",
+                      (post) =>
+                        post.status === "PUBLISHED" &&
+                        !isBrokenPublishedPost(post),
                     ).length,
                   },
                 ] as const
@@ -2662,7 +2724,7 @@ function TelegramPostWorkspace({
       >
         <div className="space-y-3">
           <p className="text-sm text-neutral-300">
-            Paste the Telegram post URL. Saving it attaches or replaces the local Telegram link for this managed post.
+            Paste the Telegram post URL. Saving it attaches or replaces the local Telegram link for this managed post. Clear the field to remove the link and return the post to draft.
           </p>
           <Input
             type="url"
@@ -2686,10 +2748,13 @@ function TelegramPostWorkspace({
             </Button>
             <Button
               type="button"
-              disabled={savingTelegramUrl || !manualTelegramUrl.trim()}
               onClick={saveManualTelegramUrl}
             >
-              {savingTelegramUrl ? "Saving…" : "Save link"}
+              {savingTelegramUrl
+                ? "Saving…"
+                : manualTelegramUrl.trim()
+                  ? "Save link"
+                  : "Remove link"}
             </Button>
           </div>
         </div>

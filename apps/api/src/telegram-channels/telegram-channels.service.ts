@@ -2758,7 +2758,37 @@ export class TelegramChannelsService {
       }),
     ]);
     if (!post || !channel) throw new NotFoundException('Managed post not found');
-    const parsed = parseTelegramPostUrl(telegramUrl);
+    const normalizedInput = telegramUrl.trim();
+    const currentPost = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+    });
+    if (!currentPost)
+      throw new NotFoundException('Managed post not found');
+    if (!normalizedInput) {
+      return this.prisma.$transaction(async (tx) => {
+        await this.createManagedPostRevision(tx, currentPost, 'before_manual_link');
+        return tx.telegramManagedPost.update({
+          where: { id: postId },
+          data: {
+            status: TelegramManagedPostStatus.DRAFT,
+            telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
+            telegramMessageIds: [],
+            telegramMessageUrls: [],
+            publishedAt: null,
+            scheduledAt: null,
+            sourceType: null,
+            sourceId: null,
+            publishMode: null,
+            lastError: null,
+            lastTelegramSyncedAt: new Date(),
+            lastTelegramSyncNote:
+              'Telegram link was removed manually. Post returned to draft.',
+          },
+          include: this.managedPostInclude,
+        });
+      });
+    }
+    const parsed = parseTelegramPostUrl(normalizedInput);
     if (!parsed) {
       throw new BadRequestException('Enter a valid https://t.me/... post URL');
     }
@@ -2779,11 +2809,6 @@ export class TelegramChannelsService {
         'Channel has no stable Telegram channel ID. Sync or re-import the channel first.',
       );
     }
-    const currentPost = await this.prisma.telegramManagedPost.findFirst({
-      where: { id: postId, workspaceId, telegramChannelId: channelId },
-    });
-    if (!currentPost)
-      throw new NotFoundException('Managed post not found');
     return this.prisma.$transaction(async (tx) => {
       await this.createManagedPostRevision(tx, currentPost, 'before_manual_link');
       return tx.telegramManagedPost.update({
@@ -3198,8 +3223,11 @@ export class TelegramChannelsService {
       assignedMemberId = resolved.assignedMemberId;
     }
     const nextText = dto.text ?? post.text ?? '';
+    const canEditPublishedTelegramText =
+      post.status === TelegramManagedPostStatus.PUBLISHED &&
+      post.telegramRemoteStatus === TelegramManagedPostRemoteStatus.PUBLISHED;
     const channel =
-      dto.text !== undefined && post.status === TelegramManagedPostStatus.PUBLISHED
+      dto.text !== undefined && canEditPublishedTelegramText
         ? await this.prisma.telegramChannel.findFirst({
             where: { id: channelId, workspaceId },
             select: {
@@ -3213,7 +3241,7 @@ export class TelegramChannelsService {
         : null;
     const telegramEdit =
       dto.text !== undefined &&
-      post.status === TelegramManagedPostStatus.PUBLISHED &&
+      canEditPublishedTelegramText &&
       channel
         ? await this.editManagedPostTextInTelegram({
             workspaceId,
