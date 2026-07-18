@@ -61,7 +61,10 @@ describe('TelegramChannelsService updateManagedPost', () => {
       $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
     };
     const mtprotoClient = {
-      editPostText: jest.fn().mockResolvedValue(undefined),
+      editPostText: jest.fn().mockResolvedValue({
+        updatedCount: 1,
+        unchangedCount: 0,
+      }),
     };
     const sourceAccessService = {
       sourcesForChannel: jest.fn().mockResolvedValue([
@@ -122,6 +125,125 @@ describe('TelegramChannelsService updateManagedPost', () => {
           sourceId: 'mtproto-1',
           sourceType: TelegramSourceType.MTPROTO,
           telegramMessageIds: ['34'],
+        }),
+      }),
+    );
+  });
+
+  it('treats Telegram MESSAGE_NOT_MODIFIED as a successful no-op update', async () => {
+    const post = {
+      id: 'post-2',
+      workspaceId: 'workspace',
+      telegramChannelId: 'channel',
+      title: 'Tech post',
+      text: 'Old text',
+      imageUrls: ['https://example.com/image.png'],
+      status: TelegramManagedPostStatus.PUBLISHED,
+      scheduledAt: null,
+      publishedAt: new Date('2026-07-10T10:00:00Z'),
+      telegramMessageIds: ['41', '42'],
+      telegramMessageUrls: ['https://t.me/c/3976683330/41'],
+      telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+      sourceId: 'mtproto-1',
+      sourceType: TelegramSourceType.MTPROTO,
+      publishMode: 'IMAGES_THEN_TEXT',
+      lastError: null,
+      lastTelegramSyncedAt: null,
+      lastTelegramSyncNote: null,
+      assignedMemberId: 'member-1',
+      icon: null,
+      groupId: null,
+      groupPosition: null,
+      sidebarPosition: null,
+      updatedAt: new Date('2026-07-18T10:00:00Z'),
+      createdAt: new Date('2026-07-10T10:00:00Z'),
+    };
+
+    const update = jest.fn().mockResolvedValue({});
+    const createRevision = jest.fn().mockResolvedValue({});
+    const prisma = {
+      telegramManagedPost: {
+        findFirst: jest.fn().mockResolvedValue(post),
+        update,
+      },
+      telegramChannel: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'channel',
+          workspaceId: 'workspace',
+          username: 'example',
+          telegramChatId: '-1003976683330',
+          inviteLink: null,
+        }),
+      },
+      telegramManagedPostRevision: {
+        create: createRevision,
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
+      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+    };
+    const mtprotoClient = {
+      editPostText: jest.fn().mockResolvedValue({
+        updatedCount: 0,
+        unchangedCount: 2,
+      }),
+    };
+    const sourceAccessService = {
+      sourcesForChannel: jest.fn().mockResolvedValue([
+        {
+          sourceId: 'mtproto-1',
+          sourceType: TelegramSourceType.MTPROTO,
+          permissions: { canEditMessages: true },
+        },
+      ]),
+    };
+    const service = new TelegramChannelsService(
+      prisma as never,
+      {
+        resolveWorkspaceIdForUser: jest.fn().mockResolvedValue('workspace'),
+        resolveAssignedMemberId: jest.fn().mockResolvedValue({
+          assignedMemberId: 'member-1',
+        }),
+      } as never,
+      {} as never,
+      mtprotoClient as never,
+      sourceAccessService as never,
+      {} as never,
+    );
+    service['connectedAccount'] = jest.fn().mockResolvedValue({
+      id: 'mtproto-1',
+    });
+    service['accountCredentials'] = jest.fn().mockReturnValue({
+      apiId: '1',
+      apiHash: 'hash',
+      session: 'session',
+    });
+    service['createManagedPostRevision'] = createRevision;
+    service['resolveInternalPostLinksForPublish'] = jest
+      .fn()
+      .mockResolvedValue('Unchanged rendered text');
+    service['renderManagedPostText'] = jest.fn().mockReturnValue({
+      html: 'Unchanged rendered text',
+      captionHtml: 'Same caption',
+      followupHtmlParts: ['Same followup'],
+      textHtmlParts: [],
+      publishMode: 'IMAGES_THEN_TEXT',
+    });
+
+    await expect(
+      service.updateManagedPost('user', 'channel', 'post-2', {
+        title: 'Tech post',
+        text: 'Unchanged rendered text',
+        assignedMemberId: 'member-1',
+      }),
+    ).resolves.toBeDefined();
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lastTelegramSyncNote: 'Telegram text already matched the live post.',
         }),
       }),
     );

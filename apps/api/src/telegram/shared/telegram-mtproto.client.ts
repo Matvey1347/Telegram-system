@@ -270,6 +270,15 @@ export class TelegramMtprotoClient {
     return { text, entities };
   }
 
+  private isMessageNotModifiedError(error: unknown) {
+    const message = String(
+      (error as { errorMessage?: string | null })?.errorMessage ||
+        (error as { message?: string | null })?.message ||
+        '',
+    ).toUpperCase();
+    return message.includes('MESSAGE_NOT_MODIFIED');
+  }
+
   private async sendTextMessageWithEntities(
     client: TelegramClient,
     entity: unknown,
@@ -302,14 +311,22 @@ export class TelegramMtprotoClient {
     html: string,
   ) {
     const { text, entities } = this.parseMtprotoHtml(html);
-    await client.invoke(
-      new Api.messages.EditMessage({
-        peer: await client.getInputEntity(peerRef as never),
-        id: Number(messageId),
-        message: text,
-        entities,
-      }),
-    );
+    try {
+      await client.invoke(
+        new Api.messages.EditMessage({
+          peer: await client.getInputEntity(peerRef as never),
+          id: Number(messageId),
+          message: text,
+          entities,
+        }),
+      );
+      return true;
+    } catch (error) {
+      if (this.isMessageNotModifiedError(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   private toJsonSafe(value: unknown): unknown {
@@ -1759,6 +1776,8 @@ export class TelegramMtprotoClient {
     textHtmlParts?: string[];
   }) {
     const client = await this.createClient(params);
+    let updatedCount = 0;
+    let unchangedCount = 0;
     try {
       const resolved = params.channel
         ? await this.resolveStoredChannel(client, params.channel)
@@ -1768,31 +1787,38 @@ export class TelegramMtprotoClient {
       const followupMessageIds = params.messageIds.slice(params.imageCount);
 
       if (params.imageCount > 0) {
-        await this.editMessageWithEntities(
+        const captionUpdated = await this.editMessageWithEntities(
           client,
           peerRef,
           mediaMessageIds[0],
           params.captionHtml ?? '',
         );
+        if (captionUpdated) updatedCount += 1;
+        else unchangedCount += 1;
         for (let index = 0; index < followupMessageIds.length; index += 1) {
-          await this.editMessageWithEntities(
+          const messageUpdated = await this.editMessageWithEntities(
             client,
             peerRef,
             followupMessageIds[index],
             params.followupHtmlParts?.[index] ?? '',
           );
+          if (messageUpdated) updatedCount += 1;
+          else unchangedCount += 1;
         }
-        return;
+        return { updatedCount, unchangedCount };
       }
 
       for (let index = 0; index < params.messageIds.length; index += 1) {
-        await this.editMessageWithEntities(
+        const messageUpdated = await this.editMessageWithEntities(
           client,
           peerRef,
           params.messageIds[index],
           params.textHtmlParts?.[index] ?? '',
         );
+        if (messageUpdated) updatedCount += 1;
+        else unchangedCount += 1;
       }
+      return { updatedCount, unchangedCount };
     } finally {
       await this.closeClient(client);
     }

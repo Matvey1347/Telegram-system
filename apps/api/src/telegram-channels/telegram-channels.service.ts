@@ -125,6 +125,11 @@ type ManagedPostSyncMessage = {
   groupedId: string | null;
 };
 
+type TelegramTextEditOutcome = {
+  updatedCount: number;
+  unchangedCount: number;
+};
+
 type ManagedPostRevisionSource = {
   id: string;
   workspaceId: string;
@@ -189,6 +194,22 @@ export class TelegramChannelsService {
 
   private workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
+  }
+
+  private telegramTextEditNote(result: TelegramTextEditOutcome) {
+    return result.updatedCount > 0
+      ? 'Text was edited in Telegram.'
+      : 'Telegram text already matched the live post.';
+  }
+
+  private isBotMessageNotModified(description?: string | null) {
+    const value = String(description || '').toLowerCase();
+    return (
+      value.includes('message is not modified') ||
+      value.includes(
+        'specified new message content and reply markup are exactly the same',
+      )
+    );
   }
 
   private async notifyTaskProgress(
@@ -1269,7 +1290,7 @@ export class TelegramChannelsService {
         channelId,
         source.sourceId,
       );
-      await this.mtprotoClient.editPostText({
+      const editResult = await this.mtprotoClient.editPostText({
         ...this.accountCredentials(account),
         channel: channelReference,
         messageIds: effectiveMessageIds,
@@ -1285,7 +1306,7 @@ export class TelegramChannelsService {
         telegramMessageIds: effectiveMessageIds,
         publishMode: rendered.publishMode,
         lastTelegramSyncedAt: new Date(),
-        lastTelegramSyncNote: 'Text was edited in Telegram.',
+        lastTelegramSyncNote: this.telegramTextEditNote(editResult),
       };
     }
 
@@ -1302,6 +1323,8 @@ export class TelegramChannelsService {
     if (!chatId) {
       throw new BadRequestException('Channel has no Telegram chat id');
     }
+    let updatedCount = 0;
+    let unchangedCount = 0;
     const call = async (method: string, body: Record<string, unknown>) => {
       const response = await fetch(
         `https://api.telegram.org/bot${token}/${method}`,
@@ -1316,10 +1339,16 @@ export class TelegramChannelsService {
         description?: string;
       };
       if (!response.ok || !payload.ok) {
+        if (this.isBotMessageNotModified(payload.description)) {
+          unchangedCount += 1;
+          return false;
+        }
         throw new BadRequestException(
           payload.description || 'Telegram Bot API edit failed',
         );
       }
+      updatedCount += 1;
+      return true;
     };
     const toBotFormattedText = (html: string) => {
       const [text, entities] = HTMLParser.parse(
@@ -1364,7 +1393,10 @@ export class TelegramChannelsService {
       telegramMessageIds: effectiveMessageIds,
       publishMode: rendered.publishMode,
       lastTelegramSyncedAt: new Date(),
-      lastTelegramSyncNote: 'Text was edited in Telegram.',
+      lastTelegramSyncNote: this.telegramTextEditNote({
+        updatedCount,
+        unchangedCount,
+      }),
     };
   }
 

@@ -1477,9 +1477,25 @@ function TelegramPostWorkspace({
       assignedMemberId ??
       (!editingPost && !memberSelectionTouched ? currentMemberId : null);
     if (selectedMemberId) payload.assignedMemberId = selectedMemberId;
+    const isPublishedEdit = editingPost?.status === "PUBLISHED";
     const pendingId =
       editingPost?.id ||
       `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const nextStatusTab: PostStatusTab = editingPost
+      ? editingPost.status === "PUBLISHED"
+        ? "PUBLISHED"
+        : editingPost.status === "SCHEDULED"
+          ? "SCHEDULED"
+          : saveMode === "schedule"
+            ? "SCHEDULED"
+            : saveMode === "publish"
+              ? "PUBLISHED"
+              : "DRAFT"
+      : saveMode === "schedule"
+        ? "SCHEDULED"
+        : saveMode === "publish"
+          ? "PUBLISHED"
+          : "DRAFT";
 
     if (editingPost) {
       setSavingPostIds((current) => [...new Set([...current, pendingId])]);
@@ -1497,13 +1513,7 @@ function TelegramPostWorkspace({
         ...current,
       ]);
     }
-    changeStatusTab(
-      saveMode === "schedule"
-        ? "SCHEDULED"
-        : saveMode === "publish"
-          ? "PUBLISHED"
-          : "DRAFT",
-    );
+    changeStatusTab(nextStatusTab);
     void (async () => {
       let savedPostId: string | null = null;
       try {
@@ -1533,7 +1543,10 @@ function TelegramPostWorkspace({
             true,
           );
         }
-        if (saveMode === "publish") {
+        if (isPublishedEdit) {
+          // Published posts are updated in place by PATCH.
+          // Never run the publish endpoint again after a Telegram text edit.
+        } else if (saveMode === "publish") {
           await telegramChannelsApi.publishManagedPost(
             channelId,
             post.id,
