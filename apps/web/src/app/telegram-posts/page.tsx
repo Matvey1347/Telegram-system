@@ -125,6 +125,25 @@ function localDateTimeParts(value: string | Date) {
   };
 }
 
+function parseTelegramMessageIdFromUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.toLowerCase() !== "t.me") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[0] === "c" && parts.length === 3 && /^\d+$/.test(parts[2])) {
+      return parts[2];
+    }
+    if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+      return parts[1];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function formatManagedPostRevisionReason(reason: string) {
   switch (reason) {
     case "before_update":
@@ -615,6 +634,22 @@ function TelegramPostWorkspace({
   const telegramLinkBroken = Boolean(
     editing && ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus),
   );
+  const storedTelegramMessageId = (() => {
+    if (!editing) return null;
+    const primaryMessageIndex =
+      editing.imageUrls.length > 1
+        ? Math.min(editing.imageUrls.length - 1, editing.telegramMessageIds.length - 1)
+        : 0;
+    return editing.telegramMessageIds[primaryMessageIndex] || null;
+  })();
+  const enteredTelegramMessageId = parseTelegramMessageIdFromUrl(manualTelegramUrl);
+  const telegramLinkIdMismatchHint =
+    telegramLinkModalOpen &&
+    storedTelegramMessageId &&
+    enteredTelegramMessageId &&
+    storedTelegramMessageId !== enteredTelegramMessageId
+      ? `Possible issue: this post currently stores Telegram message ID ${storedTelegramMessageId}, but the link you entered points to message ID ${enteredTelegramMessageId}.`
+      : null;
   const outgoingInternalLinks = useMemo(() => {
     const grouped = new Map<
       string,
@@ -2586,6 +2621,11 @@ function TelegramPostWorkspace({
             placeholder="https://t.me/c/123456/789"
             autoFocus
           />
+          {telegramLinkIdMismatchHint ? (
+            <div className="rounded-lg border border-amber-800/70 bg-amber-950/20 px-3 py-2 text-sm text-amber-100">
+              {telegramLinkIdMismatchHint}
+            </div>
+          ) : null}
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"

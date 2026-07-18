@@ -1170,6 +1170,7 @@ export class TelegramChannelsService {
       sourceType: TelegramSourceType | null;
       scheduledAt: Date | null;
       telegramMessageIds: string[];
+      telegramMessageUrls: string[];
     };
     channel: {
       id: string;
@@ -1188,7 +1189,18 @@ export class TelegramChannelsService {
     ) {
       return null;
     }
-    if (!post.sourceId || !post.sourceType || !post.telegramMessageIds.length) {
+
+    const effectiveMessageIds = post.telegramMessageIds.length
+      ? [...post.telegramMessageIds]
+      : [
+          ...new Set(
+            post.telegramMessageUrls.flatMap((url) => {
+              const parsed = parseTelegramPostUrl(url);
+              return parsed ? [parsed.messageId] : [];
+            }),
+          ),
+        ];
+    if (!effectiveMessageIds.length) {
       throw new BadRequestException(
         'This Telegram post cannot be updated because no Telegram message link is attached yet.',
       );
@@ -1198,12 +1210,25 @@ export class TelegramChannelsService {
       workspaceId,
       channelId,
     );
-    const source = sources.find(
-      (item) =>
-        item.sourceId === post.sourceId &&
-        item.sourceType === post.sourceType &&
-        item.permissions.canEditMessages,
-    );
+    const source =
+      (post.sourceId && post.sourceType
+        ? sources.find(
+            (item) =>
+              item.sourceId === post.sourceId &&
+              item.sourceType === post.sourceType &&
+              item.permissions.canEditMessages,
+          )
+        : undefined) ??
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.MTPROTO &&
+          item.permissions.canEditMessages,
+      ) ??
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.BOT &&
+          item.permissions.canEditMessages,
+      );
     if (!source) {
       throw new BadRequestException(
         'No connected Telegram source has permission to edit this post.',
@@ -1232,7 +1257,7 @@ export class TelegramChannelsService {
     const expectedMessageCount = post.imageUrls.length
       ? post.imageUrls.length + rendered.followupHtmlParts.length
       : rendered.textHtmlParts.length;
-    if (expectedMessageCount !== post.telegramMessageIds.length) {
+    if (expectedMessageCount !== effectiveMessageIds.length) {
       throw new BadRequestException(
         'Text update would change the number of Telegram messages. Keep the same message count or republish the post.',
       );
@@ -1247,7 +1272,7 @@ export class TelegramChannelsService {
       await this.mtprotoClient.editPostText({
         ...this.accountCredentials(account),
         channel: channelReference,
-        messageIds: post.telegramMessageIds,
+        messageIds: effectiveMessageIds,
         imageCount: post.imageUrls.length,
         publishMode: rendered.publishMode,
         captionHtml: rendered.captionHtml,
@@ -1255,6 +1280,9 @@ export class TelegramChannelsService {
         textHtmlParts: rendered.textHtmlParts,
       });
       return {
+        sourceId: source.sourceId,
+        sourceType: source.sourceType,
+        telegramMessageIds: effectiveMessageIds,
         publishMode: rendered.publishMode,
         lastTelegramSyncedAt: new Date(),
         lastTelegramSyncNote: 'Text was edited in Telegram.',
@@ -1307,14 +1335,14 @@ export class TelegramChannelsService {
     if (post.imageUrls.length) {
       const caption = toBotFormattedText(rendered.captionHtml);
       await call('editMessageCaption', {
-        message_id: Number(post.telegramMessageIds[0]),
+        message_id: Number(effectiveMessageIds[0]),
         caption: caption.text,
         caption_entities: caption.entities,
       });
       for (let index = 0; index < rendered.followupHtmlParts.length; index += 1) {
         const message = toBotFormattedText(rendered.followupHtmlParts[index]);
         await call('editMessageText', {
-          message_id: Number(post.telegramMessageIds[post.imageUrls.length + index]),
+          message_id: Number(effectiveMessageIds[post.imageUrls.length + index]),
           text: message.text,
           entities: message.entities,
         });
@@ -1323,7 +1351,7 @@ export class TelegramChannelsService {
       for (let index = 0; index < rendered.textHtmlParts.length; index += 1) {
         const message = toBotFormattedText(rendered.textHtmlParts[index]);
         await call('editMessageText', {
-          message_id: Number(post.telegramMessageIds[index]),
+          message_id: Number(effectiveMessageIds[index]),
           text: message.text,
           entities: message.entities,
         });
@@ -1331,6 +1359,9 @@ export class TelegramChannelsService {
     }
 
     return {
+      sourceId: source.sourceId,
+      sourceType: source.sourceType,
+      telegramMessageIds: effectiveMessageIds,
       publishMode: rendered.publishMode,
       lastTelegramSyncedAt: new Date(),
       lastTelegramSyncNote: 'Text was edited in Telegram.',
@@ -3171,6 +3202,9 @@ export class TelegramChannelsService {
           assignedMemberId,
           icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
           lastError: null,
+          sourceId: telegramEdit?.sourceId,
+          sourceType: telegramEdit?.sourceType,
+          telegramMessageIds: telegramEdit?.telegramMessageIds,
           publishMode: telegramEdit?.publishMode,
           lastTelegramSyncedAt: telegramEdit?.lastTelegramSyncedAt,
           lastTelegramSyncNote: telegramEdit?.lastTelegramSyncNote,
