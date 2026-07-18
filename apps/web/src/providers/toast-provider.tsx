@@ -79,8 +79,8 @@ type PushToast = (
 export type AppProgress = {
   id?: string;
   title: string;
-  current: number;
-  total: number;
+  current?: number;
+  total?: number;
   message?: string;
   completed?: boolean;
   successCount?: number;

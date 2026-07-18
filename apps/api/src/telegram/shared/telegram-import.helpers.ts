@@ -68,8 +68,22 @@ export function isTelegramUsername(value?: string | null) {
 }
 
 export function normalizeTelegramUsername(value?: string | null) {
-  const normalized = String(value || '').trim().replace(/^@/, '').toLowerCase();
-  return isTelegramUsername(normalized) ? normalized : null;
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const inviteUrlMatch = raw.match(
+    /^(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{3,31})\/?$/i,
+  );
+  const profileUrlMatch = raw.match(
+    /^tg:\/\/resolve\?domain=([A-Za-z][A-Za-z0-9_]{3,31})$/i,
+  );
+  const candidate = (
+    inviteUrlMatch?.[1] ||
+    profileUrlMatch?.[1] ||
+    raw.replace(/^@/, '')
+  )
+    .trim()
+    .toLowerCase();
+  return isTelegramUsername(candidate) ? candidate : null;
 }
 
 export function normalizeTelegramTitle(value: string) {

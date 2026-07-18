@@ -50,7 +50,7 @@ import {
   type TelegramManagedPost,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
-import { scheduleProgressDismiss } from "@/lib/progress";
+import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
 import {
   Button,
   ConfirmDeleteModal,
@@ -1676,15 +1676,17 @@ export default function TelegramChannelsPage() {
       try {
         const result = await syncTelegramChannelNowWithProgress(
           channel.id,
-          (item: { message?: string }, current, total) => {
-            setProgress({
-              id: progressId,
-              title: `Sync ${channel.title}`,
-              current,
-              total,
-              message: item.message || "Syncing channel…",
-              iconUrl: channel.photoUrl || undefined,
-            });
+          (item, current, total) => {
+            setProgress(
+              syncProgressToToast({
+                id: progressId,
+                title: `Sync ${channel.title}`,
+                item,
+                current,
+                total,
+                iconUrl: channel.photoUrl || undefined,
+              }),
+            );
           },
         );
         setProgress({

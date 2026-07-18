@@ -36,10 +36,10 @@ import {
   YAxis,
 } from "recharts";
 import { AppShell } from "@/components/layout/app-shell";
-import { IconAvatar } from "@/components/icons/icon-avatar";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import { ChannelAccessBadge, telegramChannelAccessLabel } from "@/components/telegram/channel-access-badge";
+import { InviteLinksTable } from "@/components/telegram/invite-links-table";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
 import {
@@ -62,9 +62,10 @@ import {
   type Icon,
   type TelegramChannel,
   type TelegramChannelAudienceSnapshot,
+  type TelegramInviteLink,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
-import { scheduleProgressDismiss } from "@/lib/progress";
+import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
 import { invalidateTelegramChannelQueries } from "@/lib/telegram-query-invalidation";
 import { useAppToast } from "@/providers/toast-provider";
 
@@ -76,6 +77,28 @@ function formatLocalDate(value?: string | Date | null) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatLocalDateTime(value?: string | Date | number | null) {
+  if (value == null) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+function toChartTimestamp(value: unknown) {
+  if (value == null) return null;
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue)) {
+    return numericValue > 100000000000 ? numericValue : numericValue * 1000;
+  }
+  const date = new Date(value as string | Date);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
 }
 
 function toNumber(value: unknown) {
@@ -328,15 +351,17 @@ export default function TelegramChannelAnalyticsPage() {
       try {
         const result = await syncTelegramChannelNowWithProgress(
           id,
-          (item: { message?: string }, current, total) => {
-            setProgress({
-              id: progressId,
-              title: progressTitle,
-              current,
-              total,
-              message: item.message || "Syncing channel…",
-              iconUrl: channel?.photoUrl || undefined,
-            });
+          (item, current, total) => {
+            setProgress(
+              syncProgressToToast({
+                id: progressId,
+                title: progressTitle,
+                item,
+                current,
+                total,
+                iconUrl: channel?.photoUrl || undefined,
+              }),
+            );
           },
         );
         setProgress({
@@ -1793,13 +1818,14 @@ function AudienceSnapshotsPanel({
 }) {
   const chartRows = snapshots
     .map((snapshot) => ({
-      label: formatLocalDate(snapshot.collectedAt),
+      timestamp: toChartTimestamp(snapshot.collectedAt),
       subscribersCount: snapshot.subscribersCount ?? null,
       activeSubscribersEstimate: snapshot.activeSubscribersEstimate ?? null,
     }))
     .filter(
       (row) =>
-        row.subscribersCount != null || row.activeSubscribersEstimate != null,
+        row.timestamp != null &&
+        (row.subscribersCount != null || row.activeSubscribersEstimate != null),
     );
   if (!chartRows.length) return null;
   return (
@@ -1811,9 +1837,17 @@ function AudienceSnapshotsPanel({
             margin={{ top: 8, right: 12, left: -12, bottom: 0 }}
           >
             <CartesianGrid stroke="#1e293b" strokeDasharray="4 4" />
-            <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+            <XAxis
+              dataKey="timestamp"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={(value) => formatLocalDate(value)}
+              tick={{ fill: "#94a3b8", fontSize: 12 }}
+              minTickGap={24}
+            />
             <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} width={48} />
             <Tooltip
+              labelFormatter={(value) => formatLocalDateTime(value)}
               contentStyle={{
                 background: "#020617",
                 border: "1px solid #334155",
@@ -2940,38 +2974,6 @@ function PostManualMetricsEditor({
   );
 }
 
-function InviteLinksTable({ links }: { links: any[] }) {
-  if (!links.length) return <EmptyState text="No invite links yet." />;
-  return (
-    <div className="space-y-2">
-      {links.map((link) => (
-        <div
-          key={link.id}
-          className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-medium">{link.name || "Invite link"}</p>
-              <p className="break-all text-slate-400">{link.url || "-"}</p>
-              {link.adCampaign?.title ? (
-                <p className="mt-1 text-xs text-slate-400">
-                  Campaign: {link.adCampaign.title}
-                </p>
-              ) : null}
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="text-lg font-semibold">
-                {formatNumber(link.joinedCount)}
-              </p>
-              <p className="text-xs text-slate-400">joined</p>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function CampaignsTable({
   campaigns,
   settings,
@@ -3347,7 +3349,7 @@ function toTelegramDateTime(value: unknown) {
 }
 
 type TelegramGraphChartData = {
-  rows: Array<Record<string, string | number>>;
+  rows: Array<Record<string, string | number> & { timestamp: number }>;
   series: Array<{ color: string; key: string; name: string; type: string }>;
 };
 
@@ -3380,17 +3382,18 @@ function normalizeStoredTelegramGraph(
     (point) => point.metric === metric,
   );
   if (!metricPoints.length) return null;
-  const rowsByDate = new Map<string, Record<string, string | number>>();
+  const rowsByDate = new Map<number, Record<string, string | number> & { timestamp: number }>();
   const seriesByKey = new Map<
     string,
     TelegramGraphChartData["series"][number]
   >();
 
   for (const point of metricPoints) {
-    const date = formatLocalDate(point.date);
-    const row = rowsByDate.get(date) || { label: date };
+    const timestamp = toChartTimestamp(point.date);
+    if (timestamp == null) continue;
+    const row = rowsByDate.get(timestamp) || { timestamp };
     row[String(point.series)] = toNumber(point.value);
-    rowsByDate.set(date, row);
+    rowsByDate.set(timestamp, row);
 
     if (!seriesByKey.has(String(point.series))) {
       seriesByKey.set(String(point.series), {
@@ -3407,7 +3410,7 @@ function normalizeStoredTelegramGraph(
 
   return {
     rows: Array.from(rowsByDate.entries())
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => left - right)
       .map(([, row]) => row),
     series: Array.from(seriesByKey.values()),
   };
@@ -3444,15 +3447,17 @@ function normalizeTelegramGraph(graph: any): TelegramGraphChartData | null {
     };
   });
   const rows = xColumn.slice(1).map((xValue, index) => {
-    const row: Record<string, string | number> = {
-      label: formatTelegramGraphLabel(xValue),
+    const timestamp = toChartTimestamp(xValue);
+    if (timestamp == null) return null;
+    const row: Record<string, string | number> & { timestamp: number } = {
+      timestamp,
     };
     for (const column of valueColumns) {
       const value = Number(column[index + 1]);
       if (Number.isFinite(value)) row[String(column[0])] = value;
     }
     return row;
-  });
+  }).filter((row): row is Record<string, string | number> & { timestamp: number } => row != null);
 
   return rows.length ? { rows, series } : null;
 }
@@ -3477,18 +3482,6 @@ function normalizeTelegramColor(value: unknown, fallback: string) {
   return match?.[0] || fallback;
 }
 
-function formatTelegramGraphLabel(value: string | number) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return String(value);
-  const milliseconds =
-    numericValue > 100000000000
-      ? numericValue
-      : numericValue > 1000000000
-        ? numericValue * 1000
-        : null;
-  return milliseconds ? formatLocalDate(new Date(milliseconds)) : String(value);
-}
-
 function MtprotoGraphChart({ chart }: { chart: TelegramGraphChartData }) {
   return (
     <div className="rounded-lg bg-slate-900/40 p-2">
@@ -3499,9 +3492,17 @@ function MtprotoGraphChart({ chart }: { chart: TelegramGraphChartData }) {
             margin={{ top: 8, right: 12, left: -16, bottom: 0 }}
           >
             <CartesianGrid stroke="#1e293b" strokeDasharray="4 4" />
-            <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+            <XAxis
+              dataKey="timestamp"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={(value) => formatLocalDate(value)}
+              tick={{ fill: "#94a3b8", fontSize: 12 }}
+              minTickGap={24}
+            />
             <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} width={42} />
             <Tooltip
+              labelFormatter={(value) => formatLocalDateTime(value)}
               contentStyle={{
                 background: "#020617",
                 border: "1px solid #334155",

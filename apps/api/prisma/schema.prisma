@@ -9,6 +9,7 @@ datasource db {
 enum WorkspaceRole {
   owner
   admin
+  MEDIA_BUYER
   member
 }
 
@@ -81,6 +82,13 @@ enum TelegramDataSourceStatus {
   PARTIAL
   FAILED
   SKIPPED
+}
+
+enum TelegramInviteLinkCreatorMatchSource {
+  TELEGRAM_USER_ID
+  MTPROTO_USERNAME
+  MEMBER_USERNAME
+  UNRESOLVED
 }
 
 enum AdvertisingSourceType {
@@ -334,11 +342,12 @@ model TelegramChannelDataSource {
 }
 
 model WorkspaceMember {
-  id           String        @id @default(cuid())
-  workspaceId  String
-  userId       String
-  role         WorkspaceRole @default(admin)
-  avatarIconId String?
+  id               String        @id @default(cuid())
+  workspaceId      String
+  userId           String
+  role             WorkspaceRole @default(admin)
+  avatarIconId     String?
+  telegramUsername String?
 
   workspace                         Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user                              User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -361,12 +370,14 @@ model WorkspaceMember {
   assignedTelegramManagedPosts      TelegramManagedPost[]            @relation("TelegramManagedPostAssignedMember")
   assignedTelegramManagedPostRevisions TelegramManagedPostRevision[] @relation("TelegramManagedPostRevisionAssignedMember")
   createdPostGroups                 PostGroup[]                      @relation("PostGroupCreatedByMember")
+  createdTelegramInviteLinks        TelegramInviteLink[]             @relation("TelegramInviteLinkCreatorMember")
   promptNotes                       PromptNote[]                     @relation("PromptNoteAssignedMember")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, userId])
+  @@unique([workspaceId, telegramUsername])
   @@unique([id, workspaceId])
 }
 
@@ -1009,26 +1020,40 @@ model AdCampaignTelegramChannelPlacement {
 }
 
 model TelegramInviteLink {
-  id                   String    @id @default(cuid())
-  workspaceId          String
-  telegramChannelId    String
-  adCampaignId         String?
-  name                 String
-  url                  String
-  telegramInviteLinkId String?
-  createdBy            String?
-  createsJoinRequest   Boolean?
-  expireDate           DateTime?
-  memberLimit          Int?
-  joinedCount          Int       @default(0)
-  isRevoked            Boolean   @default(false)
-  lastSyncedAt         DateTime?
+  id                     String                              @id @default(cuid())
+  workspaceId            String
+  telegramChannelId      String
+  adCampaignId           String?
+  name                   String
+  url                    String
+  telegramInviteLinkId   String?
+  createdBy              String?
+  createsJoinRequest     Boolean?
+  expireDate             DateTime?
+  memberLimit            Int?
+  joinedCount            Int                                 @default(0)
+  requestedCount         Int                                 @default(0)
+  isRevoked              Boolean                             @default(false)
+  lastSyncedAt           DateTime?
+  creatorTelegramUserId  String?
+  creatorUsername        String?
+  creatorFirstName       String?
+  creatorLastName        String?
+  creatorPhotoUrl        String?
+  creatorMemberId        String?
+  creatorMatchSource     TelegramInviteLinkCreatorMatchSource?
 
-  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
-  adCampaign      AdCampaign?     @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+  telegramChannel TelegramChannel  @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  adCampaign      AdCampaign?      @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+  creatorMember   WorkspaceMember? @relation("TelegramInviteLinkCreatorMember", fields: [creatorMemberId, workspaceId], references: [id, workspaceId], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, telegramChannelId, url])
+  @@index([workspaceId, creatorTelegramUserId])
+  @@index([workspaceId, creatorMemberId])
+  @@index([telegramChannelId, isRevoked])
 }
 
 model TelegramBotIntegration {

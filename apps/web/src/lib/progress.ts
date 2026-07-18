@@ -1,4 +1,5 @@
 import type { AppProgress } from "@/providers/toast-provider";
+import type { TelegramChannelSyncProgressItem } from "@telegram-system/shared";
 
 type ToastTone = "info" | "success" | "error" | "loading";
 
@@ -14,6 +15,57 @@ export function scheduleProgressDismiss(
   delayMs = 2800,
 ) {
   window.setTimeout(() => clearProgress(id), delayMs);
+}
+
+export function syncProgressToToast(params: {
+  id: string;
+  title: string;
+  iconUrl?: string;
+  item: TelegramChannelSyncProgressItem;
+  current: number;
+  total: number;
+}): AppProgress {
+  const { id, title, iconUrl, item, current, total } = params;
+  const stageProgress =
+    typeof item.stageTotal === "number" && item.stageTotal > 0
+      ? {
+          current: item.stageCurrent ?? 0,
+          total: item.stageTotal,
+        }
+      : {};
+
+  if (item.phase === "completed") {
+    return {
+      id,
+      title,
+      message: item.message,
+      completed: true,
+      successCount: 1,
+      failedCount: 0,
+      skippedCount: 0,
+      iconUrl,
+      ...stageProgress,
+    };
+  }
+
+  if (item.phase !== "sync_step") {
+    return {
+      id,
+      title,
+      message: item.message,
+      iconUrl,
+      ...stageProgress,
+    };
+  }
+
+  return {
+    id,
+    title,
+    current,
+    total,
+    message: item.message,
+    iconUrl,
+  };
 }
 
 export async function runProgressSequence<T>({

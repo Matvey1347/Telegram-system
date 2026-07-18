@@ -36,6 +36,9 @@ export async function invalidateTelegramChannelQueries(
       queryKey: ["telegram-channel-financial-summary", channelId],
     }),
     queryClient.invalidateQueries({
+      queryKey: ["channel-invite-links", channelId],
+    }),
+    queryClient.invalidateQueries({
       queryKey: ["telegram-channel-audience-snapshots", channelId],
     }),
     queryClient.invalidateQueries({

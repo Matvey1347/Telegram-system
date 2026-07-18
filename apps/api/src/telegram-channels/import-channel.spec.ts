@@ -56,7 +56,7 @@ describe('TelegramChannelsService importChannel', () => {
       );
     jest
       .spyOn(service as never, 'findMatchingChannels' as never)
-      .mockResolvedValue([]);
+      .mockResolvedValue([] as never);
     jest
       .spyOn(service as never, 'findOne' as never)
       .mockResolvedValue({ id: 'channel-1', title: 'Смак Життя' } as never);
@@ -159,11 +159,10 @@ describe('TelegramChannelsService importChannel', () => {
     jest.spyOn(service as never, 'findMatchingChannels' as never).mockResolvedValue([
       buildTelegramChannel({
         id: 'channel-1',
-        createdAt: new Date('2026-01-01T00:00:00Z'),
         adminLinks: [{ id: 'admin-1' }],
         username: 'smak_zhyttia',
         telegramChatId: '123456',
-      }),
+      } as never),
     ] as never);
     const tx = {
       telegramChannel: {

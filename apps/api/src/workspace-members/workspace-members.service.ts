@@ -4,15 +4,41 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { WorkspaceRole } from '@prisma/client';
+import {
+  Prisma,
+  WorkspaceRole,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateWorkspaceMemberDto, UpdateWorkspaceMemberDto } from './dto';
+import {
+  attributeInviteLinkCreator,
+  buildInviteLinkAttributionMaps,
+} from '../telegram/shared/telegram-invite-link-attribution';
+import { normalizeTelegramUsername } from '../telegram/shared/telegram-import.helpers';
 
 @Injectable()
 export class WorkspaceMembersService {
+  private readonly memberInclude = {
+    user: { select: { id: true, email: true, name: true } },
+    avatarIcon: true,
+    assignedTelegramUserAccounts: {
+      select: {
+        id: true,
+        label: true,
+        telegramUserId: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        photoUrl: true,
+        status: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    },
+  } satisfies Prisma.WorkspaceMemberInclude;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
@@ -30,6 +56,78 @@ export class WorkspaceMembersService {
     currentUserId: string,
   ) {
     return { ...row, isCurrentUser: row.userId === currentUserId };
+  }
+
+  private normalizeMemberUsername(input: string | null | undefined) {
+    if (input === undefined) return undefined;
+    if (input === null) return null;
+    const trimmed = String(input).trim();
+    if (!trimmed) return null;
+    return normalizeTelegramUsername(trimmed);
+  }
+
+  private async assertTelegramUsernameAvailable(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+    telegramUsername: string | null | undefined,
+    excludedMemberId?: string,
+  ) {
+    if (!telegramUsername) return;
+    const existing = await tx.workspaceMember.findFirst({
+      where: {
+        workspaceId,
+        telegramUsername,
+        id: excludedMemberId ? { not: excludedMemberId } : undefined,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(
+        'Telegram username is already assigned to another workspace member',
+      );
+    }
+  }
+
+  private async reattributeWorkspaceInviteLinksTx(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+  ) {
+    const [members, integrations, links] = await Promise.all([
+      tx.workspaceMember.findMany({
+        where: { workspaceId },
+        select: { id: true, telegramUsername: true },
+      }),
+      tx.telegramUserAccountIntegration.findMany({
+        where: { workspaceId },
+        select: { telegramUserId: true, username: true, assignedMemberId: true },
+      }),
+      tx.telegramInviteLink.findMany({
+        where: { workspaceId },
+        select: {
+          id: true,
+          creatorTelegramUserId: true,
+          creatorUsername: true,
+          creatorFirstName: true,
+          creatorLastName: true,
+          creatorPhotoUrl: true,
+        },
+      }),
+    ]);
+
+    const maps = buildInviteLinkAttributionMaps({ members, integrations });
+    await Promise.all(
+      links.map((link) => {
+        const attribution = attributeInviteLinkCreator(link, maps);
+        return tx.telegramInviteLink.update({
+          where: { id: link.id },
+          data: {
+            creatorMemberId: attribution.creatorMemberId,
+            creatorMatchSource: attribution.creatorMatchSource,
+            creatorUsername: attribution.creatorUsername,
+          },
+        });
+      }),
+    );
   }
 
   private async investmentTransactions(workspaceId: string) {
@@ -62,10 +160,7 @@ export class WorkspaceMembersService {
     const [rows, investments] = await Promise.all([
       this.prisma.workspaceMember.findMany({
         where: { workspaceId: membership.workspaceId },
-        include: {
-          user: { select: { id: true, email: true, name: true } },
-          avatarIcon: true,
-        },
+        include: this.memberInclude,
         orderBy: { createdAt: 'asc' },
       }),
       this.investmentTransactions(membership.workspaceId),
@@ -157,6 +252,7 @@ export class WorkspaceMembersService {
     const current = await this.requireManager(userId);
     const email = dto.email.toLowerCase().trim();
     const role = dto.role ?? WorkspaceRole.member;
+    const telegramUsername = this.normalizeMemberUsername(dto.telegramUsername);
 
     if (current.role === WorkspaceRole.admin && role !== WorkspaceRole.member) {
       throw new ForbiddenException('Admin can only add member role');
@@ -194,6 +290,11 @@ export class WorkspaceMembersService {
     });
     if (already)
       throw new ConflictException('User is already a member of this workspace');
+    await this.assertTelegramUsernameAvailable(
+      this.prisma,
+      current.workspaceId,
+      telegramUsername,
+    );
 
     const created = await this.prisma.workspaceMember.create({
       data: {
@@ -201,11 +302,9 @@ export class WorkspaceMembersService {
         userId: user.id,
         role,
         avatarIconId: dto.avatarIconId ?? null,
+        telegramUsername,
       },
-      include: {
-        user: { select: { id: true, email: true, name: true } },
-        avatarIcon: true,
-      },
+      include: this.memberInclude,
     });
 
     return {
@@ -224,6 +323,9 @@ export class WorkspaceMembersService {
       where: { id: memberId, workspaceId: current.workspaceId },
     });
     if (!member) throw new NotFoundException('Workspace member not found');
+    const nextTelegramUsername = this.normalizeMemberUsername(
+      dto.telegramUsername,
+    );
 
     if (current.role === WorkspaceRole.admin) {
       if (member.role !== WorkspaceRole.member) {
@@ -253,18 +355,100 @@ export class WorkspaceMembersService {
         throw new ForbiddenException('Cannot demote the last owner');
     }
     await this.assertAvatarIcon(current.workspaceId, dto.avatarIconId);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.assertTelegramUsernameAvailable(
+        tx,
+        current.workspaceId,
+        nextTelegramUsername,
+        member.id,
+      );
 
-    const updated = await this.prisma.workspaceMember.update({
-      where: { id: memberId },
-      data: {
-        role: dto.role,
-        avatarIconId:
-          dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
-      },
-      include: {
-        user: { select: { id: true, email: true, name: true } },
-        avatarIcon: true,
-      },
+      const requestedAccountIds = dto.telegramUserAccountIds
+        ? [...new Set(dto.telegramUserAccountIds)]
+        : undefined;
+      const currentAssignedAccounts = await tx.telegramUserAccountIntegration.findMany({
+        where: {
+          workspaceId: current.workspaceId,
+          assignedMemberId: member.id,
+        },
+        select: { id: true },
+      });
+
+      if (requestedAccountIds) {
+        const accounts = requestedAccountIds.length
+          ? await tx.telegramUserAccountIntegration.findMany({
+              where: {
+                workspaceId: current.workspaceId,
+                id: { in: requestedAccountIds },
+              },
+              select: { id: true, assignedMemberId: true },
+            })
+          : [];
+        if (accounts.length !== requestedAccountIds.length) {
+          throw new NotFoundException(
+            'One or more Telegram accounts were not found in this workspace',
+          );
+        }
+        const occupied = accounts.find(
+          (account) =>
+            account.assignedMemberId && account.assignedMemberId !== member.id,
+        );
+        if (occupied) {
+          throw new ConflictException(
+            'One or more Telegram accounts are already linked to another workspace member',
+          );
+        }
+        const currentAssignedIds = new Set(
+          currentAssignedAccounts.map((account) => account.id),
+        );
+        const requestedSet = new Set(requestedAccountIds);
+        const toAssign = requestedAccountIds.filter((id) => !currentAssignedIds.has(id));
+        const toUnassign = currentAssignedAccounts
+          .map((account) => account.id)
+          .filter((id) => !requestedSet.has(id));
+
+        if (toAssign.length) {
+          await tx.telegramUserAccountIntegration.updateMany({
+            where: {
+              workspaceId: current.workspaceId,
+              id: { in: toAssign },
+              assignedMemberId: null,
+            },
+            data: { assignedMemberId: member.id },
+          });
+        }
+        if (toUnassign.length) {
+          await tx.telegramUserAccountIntegration.updateMany({
+            where: {
+              workspaceId: current.workspaceId,
+              id: { in: toUnassign },
+              assignedMemberId: member.id,
+            },
+            data: { assignedMemberId: null },
+          });
+        }
+      }
+
+      const saved = await tx.workspaceMember.update({
+        where: { id: memberId },
+        data: {
+          role: dto.role,
+          avatarIconId:
+            dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
+          telegramUsername:
+            nextTelegramUsername === undefined ? undefined : nextTelegramUsername,
+        },
+        include: this.memberInclude,
+      });
+
+      if (
+        nextTelegramUsername !== undefined ||
+        dto.telegramUserAccountIds !== undefined
+      ) {
+        await this.reattributeWorkspaceInviteLinksTx(tx, current.workspaceId);
+      }
+
+      return saved;
     });
     return this.toResponse(updated, userId);
   }

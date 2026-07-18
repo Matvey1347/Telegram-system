@@ -5,6 +5,7 @@ import type {
   StreamEvent,
   StructuredApiError,
   SyncOperationResult,
+  TelegramChannelSyncProgressItem,
   TelegramChannelAccessMode,
 } from "@telegram-system/shared";
 import {
@@ -369,7 +370,7 @@ api.interceptors.response.use(
   },
 );
 
-export type WorkspaceRole = "owner" | "admin" | "member";
+export type WorkspaceRole = "owner" | "admin" | "MEDIA_BUYER" | "member";
 export type CurrencyDisplayMode = "code" | "symbol";
 export type IconType = "emoji" | "image";
 export type Icon = {
@@ -411,6 +412,23 @@ export type AccountMe = {
   createdAt: string;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
+  telegramUsername?: string | null;
+  assignedTelegramUserAccounts?: Array<{
+    id: string;
+    label: string;
+    telegramUserId?: string | null;
+    username?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    photoUrl?: string | null;
+    status:
+      | "pending"
+      | "needs_code"
+      | "needs_password"
+      | "connected"
+      | "error"
+      | "disabled";
+  }>;
   workspace: WorkspaceInfo;
 };
 export type WorkspaceMember = {
@@ -420,9 +438,26 @@ export type WorkspaceMember = {
   role: WorkspaceRole;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
+  telegramUsername?: string | null;
   createdAt: string;
   user: User;
   isCurrentUser: boolean;
+  assignedTelegramUserAccounts?: Array<{
+    id: string;
+    label: string;
+    telegramUserId?: string | null;
+    username?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    photoUrl?: string | null;
+    status:
+      | "pending"
+      | "needs_code"
+      | "needs_password"
+      | "connected"
+      | "error"
+      | "disabled";
+  }>;
   investmentSummary?: {
     isInvestor: boolean;
     totalInvestedPrimary: number;
@@ -989,6 +1024,7 @@ export type TelegramUserAccount = {
   lastCheckedAt?: string;
   lastSyncedAt?: string;
   isActive: boolean;
+  assignedMember?: WorkspaceMember | null;
 };
 export type TelegramBot = {
   id: string;
@@ -1097,10 +1133,28 @@ export type TelegramInviteLink = {
   name: string;
   url: string;
   joinedCount: number;
+  requestedCount: number;
   isRevoked: boolean;
   expireDate?: string;
   memberLimit?: number;
   createsJoinRequest?: boolean;
+  creatorTelegramUserId?: string | null;
+  creatorUsername?: string | null;
+  creatorFirstName?: string | null;
+  creatorLastName?: string | null;
+  creatorPhotoUrl?: string | null;
+  creatorMatchSource?:
+    | "TELEGRAM_USER_ID"
+    | "MTPROTO_USERNAME"
+    | "MEMBER_USERNAME"
+    | "UNRESOLVED"
+    | null;
+  creatorMember?: Pick<
+    WorkspaceMember,
+    "id" | "role" | "telegramUsername" | "avatarIcon"
+  > & {
+    user: Pick<User, "id" | "name">;
+  } | null;
   adCampaign?: AdCampaign;
 };
 export type Promo = {
@@ -1440,6 +1494,8 @@ export const accountApi = {
     name?: string;
     email?: string;
     avatarIconId?: string | null;
+    telegramUsername?: string | null;
+    telegramUserAccountIds?: string[];
   }) => (await api.patch<AccountMe>("/account/me", payload)).data,
   updatePassword: async (payload: {
     currentPassword: string;
@@ -2306,9 +2362,12 @@ export async function syncTelegramChannelNow(channelId: string) {
 
 export async function syncTelegramChannelNowWithProgress(
   channelId: string,
-  onProgress: StreamProgressHandler<{ message?: string }>,
+  onProgress: StreamProgressHandler<TelegramChannelSyncProgressItem>,
 ) {
-  return streamProgressAction<any, { message?: string }>(
+  return streamProgressAction<
+    SyncOperationResult & Record<string, unknown>,
+    TelegramChannelSyncProgressItem
+  >(
     `/telegram-channels/${channelId}/sync-now-stream`,
     {},
     onProgress,

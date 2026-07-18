@@ -47,6 +47,21 @@ export type StreamErrorEvent = {
   message: string;
 };
 
+export type TelegramChannelSyncProgressPhase =
+  | "sync_step"
+  | "discovering_invite_admins"
+  | "loading_invite_links"
+  | "saving_invite_links"
+  | "completed";
+
+export type TelegramChannelSyncProgressItem = {
+  phase: TelegramChannelSyncProgressPhase;
+  message: string;
+  stageCurrent?: number;
+  stageTotal?: number;
+  warnings?: string[];
+};
+
 export type StreamEvent<TResult, TItem = BulkActionResultItem> =
   | BulkProgressEvent<TItem>
   | StreamCompleteEvent<TResult>

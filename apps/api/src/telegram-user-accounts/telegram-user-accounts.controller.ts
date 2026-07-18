@@ -44,8 +44,10 @@ export class TelegramUserAccountsController {
         res.write(
           `${JSON.stringify({ type: 'progress', item, current, total })}\n`,
         );
+        (res as Response & { flush?: () => void }).flush?.();
       });
       res.write(`${JSON.stringify({ type: 'complete', result })}\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     } catch (error) {
       res.write(
         `${JSON.stringify({
@@ -53,6 +55,7 @@ export class TelegramUserAccountsController {
           message: error instanceof Error ? error.message : 'Action failed',
         })}\n`,
       );
+      (res as Response & { flush?: () => void }).flush?.();
     } finally {
       res.end();
     }

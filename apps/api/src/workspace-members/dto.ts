@@ -1,10 +1,12 @@
 import { WorkspaceRole } from '@prisma/client';
 import {
+  IsArray,
   IsEmail,
   IsEnum,
   IsOptional,
   IsString,
   MinLength,
+  ArrayUnique,
 } from 'class-validator';
 
 export class CreateWorkspaceMemberDto {
@@ -28,6 +30,10 @@ export class CreateWorkspaceMemberDto {
   @IsOptional()
   @IsString()
   avatarIconId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  telegramUsername?: string | null;
 }
 
 export class UpdateWorkspaceMemberDto {
@@ -38,4 +44,14 @@ export class UpdateWorkspaceMemberDto {
   @IsOptional()
   @IsString()
   avatarIconId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  telegramUsername?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  telegramUserAccountIds?: string[];
 }

@@ -63,8 +63,10 @@ export class TelegramChannelsController {
         res.write(
           `${JSON.stringify({ type: 'progress', item, current, total })}\n`,
         );
+        (res as Response & { flush?: () => void }).flush?.();
       });
       res.write(`${JSON.stringify({ type: 'complete', result })}\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     } catch (error) {
       res.write(
         `${JSON.stringify({
@@ -73,6 +75,7 @@ export class TelegramChannelsController {
             error instanceof Error ? error.message : 'Bulk action failed',
         })}\n`,
       );
+      (res as Response & { flush?: () => void }).flush?.();
     } finally {
       res.end();
     }

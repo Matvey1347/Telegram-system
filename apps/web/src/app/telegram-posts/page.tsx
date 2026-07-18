@@ -758,11 +758,6 @@ function TelegramPostWorkspace({
         !target.lastError,
     );
   });
-  const dependencyAlertTitle = unresolvedInternalLinkTargets.length
-    ? `To publish this post, publish or attach links for these linked posts first: ${unresolvedInternalLinkTargets
-        .map((target) => target.post?.title || target.id)
-        .join(", ")}.`
-    : "";
   const dependencyPublishBlocked =
     effectivePublishingMode !== "draft" &&
     unresolvedInternalLinkTargets.length > 0;
@@ -1932,10 +1927,7 @@ function TelegramPostWorkspace({
               />
             </FormField>
             {outgoingInternalLinks.length ? (
-              <div
-                className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200"
-                title={dependencyAlertTitle}
-              >
+              <div className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200">
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">

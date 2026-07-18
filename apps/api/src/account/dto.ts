@@ -1,4 +1,11 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  ArrayUnique,
+  IsArray,
+  IsEmail,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateMeDto {
   @IsOptional()
@@ -13,6 +20,16 @@ export class UpdateMeDto {
   @IsOptional()
   @IsString()
   avatarIconId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  telegramUsername?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  telegramUserAccountIds?: string[];
 }
 
 export class UpdatePasswordDto {

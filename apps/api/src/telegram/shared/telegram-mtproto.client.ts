@@ -20,6 +20,7 @@ import {
   type ResolvedTelegramEntity,
   type TelegramTitleCandidate,
 } from './telegram-import.helpers';
+import type { TelegramChannelSyncProgressItem } from '@telegram-system/shared';
 
 type ApiCredentials = { apiId: string; apiHash: string };
 type SessionParams = ApiCredentials & { session?: string };
@@ -57,11 +58,50 @@ type ResolvedStoredTelegramChannel = {
     resolvedBy: 'dialog-id' | 'stored-peer' | 'username' | 'invite-link';
   };
 };
+export type TelegramInviteLinksResult = {
+  scope: 'ALL_ADMINS' | 'PARTIAL_ADMINS';
+  expectedTotalLinks: number;
+  admins: Array<{
+    telegramUserId: string;
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    photoUrl: string | null;
+    activeLinksCount: number;
+    revokedLinksCount: number;
+  }>;
+  links: Array<{
+    url: string;
+    title: string | null;
+    telegramCreatorUserId: string;
+    creatorUsername: string | null;
+    creatorFirstName: string | null;
+    creatorLastName: string | null;
+    creatorPhotoUrl: string | null;
+    createdAt: Date | null;
+    startDate: Date | null;
+    expireDate: Date | null;
+    usageLimit: number | null;
+    usage: number;
+    requested: number;
+    requestNeeded: boolean;
+    permanent: boolean;
+    revoked: boolean;
+  }>;
+  warnings: string[];
+};
+
+type InviteAdminSummary = TelegramInviteLinksResult['admins'][number];
+type InviteLinksProgressCallback = (
+  item: TelegramChannelSyncProgressItem,
+) => void | Promise<void>;
 
 @Injectable()
 export class TelegramMtprotoClient {
   private readonly logger = new Logger(TelegramMtprotoClient.name);
   private readonly maxPostBackfillLimit = 10_000;
+  private readonly inviteLinksPageSize = 100;
+  private readonly maxInviteLinkPages = 200;
   private readonly defaultTelegramPaletteSize = 7;
   private readonly maxPublishImageBytes = 10 * 1024 * 1024;
   private readonly telegramResolveTimeoutMs = 20_000;
@@ -134,6 +174,36 @@ export class TelegramMtprotoClient {
     if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
     if (typeof raw === 'string' && raw.trim()) return raw.trim();
     return null;
+  }
+
+  private isImportableTelegramEntity(
+    entity: unknown,
+  ): entity is ImportableTelegramEntity {
+    return (
+      entity instanceof Api.User ||
+      entity instanceof Api.Channel ||
+      entity instanceof Api.Chat
+    );
+  }
+
+  private asImportableTelegramEntity(
+    entity: unknown,
+    context: string,
+  ): ImportableTelegramEntity {
+    if (this.isImportableTelegramEntity(entity)) {
+      return entity;
+    }
+    throw new BadRequestException(
+      `Telegram ${context} could not be resolved to a supported entity.`,
+    );
+  }
+
+  private isInputUser(entity: unknown): entity is Api.TypeInputUser {
+    return (
+      entity instanceof Api.InputUser ||
+      entity instanceof Api.InputUserFromMessage ||
+      entity instanceof Api.InputUserSelf
+    );
   }
 
   private inferAccessMode(params: {
@@ -610,16 +680,6 @@ export class TelegramMtprotoClient {
     if (typeof entity.id === 'bigint') return entity.id.toString();
     if (entity.id == null) return '';
     return String(entity.id);
-  }
-
-  private isImportableTelegramEntity(
-    entity: unknown,
-  ): entity is ImportableTelegramEntity {
-    return (
-      entity instanceof Api.User ||
-      entity instanceof Api.Channel ||
-      entity instanceof Api.Chat
-    );
   }
 
   private entityKind(entity: ImportableTelegramEntity): 'channel' | 'person' {
@@ -1523,6 +1583,7 @@ export class TelegramMtprotoClient {
     channelRef?: string;
     channel?: StoredTelegramChannelReference;
     postLimit?: number;
+    onInviteLinksProgress?: InviteLinksProgressCallback;
   }) {
     const client = await this.createClient(params);
     try {
@@ -1570,38 +1631,25 @@ export class TelegramMtprotoClient {
         dailyMap.set(date, existing);
       }
 
-      let inviteLinks: Array<{
-        url: string;
-        name?: string;
-        joinedCount?: number;
-        isRevoked?: boolean;
-      }> = [];
-      try {
-        const exported = await client.invoke(
-          new Api.messages.GetExportedChatInvites({
-            peer: entity as any,
-            adminId: new Api.InputUserSelf(),
-            offsetDate: 0,
-            offsetLink: '',
-            limit: 100,
-            revoked: false,
-          }),
-        );
-        inviteLinks = ((exported as any)?.invites || [])
-          .map((inv: any) => ({
-            url: String(inv?.link || ''),
-            name: inv?.title || null,
-            joinedCount: Number(inv?.usage || 0),
-            isRevoked: !!inv?.revoked,
-          }))
-          .filter((x: any) => !!x.url);
-      } catch {
-        inviteLinks = [];
-      }
+      const inviteLinksResult = await this.getAllChannelInviteLinksInternal(
+        client,
+        this.asImportableTelegramEntity(entity, 'channel'),
+        params.onInviteLinksProgress,
+      );
+      const inviteLinks = inviteLinksResult.links.map((inv) => ({
+        url: inv.url,
+        name: inv.title,
+        joinedCount: inv.usage,
+        isRevoked: inv.revoked,
+      }));
 
       return {
         channel: resolved?.channel,
         inviteLinks,
+        inviteLinksDetailed: inviteLinksResult.links,
+        inviteLinkWarnings: inviteLinksResult.warnings,
+        inviteLinksScope: inviteLinksResult.scope,
+        inviteLinksExpectedTotal: inviteLinksResult.expectedTotalLinks,
         dailyStats: Array.from(dailyMap.values()).sort((a, b) =>
           a.date.localeCompare(b.date),
         ),
@@ -1688,6 +1736,580 @@ export class TelegramMtprotoClient {
       };
     } finally {
       if (client) await this.closeClient(client);
+    }
+  }
+
+  private async getInviteAdminPhotoUrl(
+    client: TelegramClient,
+    user: Api.User,
+  ) {
+    return (
+      (await this.profilePhotoDataUrl(client, user)) ||
+      this.telegramPublicPhotoUrl(normalizeTelegramUsername(user.username))
+    );
+  }
+
+  private inviteAdminUserId(row: unknown) {
+    const record = row as Record<string, unknown> | null;
+    const value = record?.adminId ?? record?.userId ?? null;
+    if (typeof value === 'bigint') return value.toString();
+    if (value == null) return null;
+    return String(value);
+  }
+
+  private inviteAdminCounts(row: unknown) {
+    const record = row as Record<string, unknown> | null;
+    return {
+      active: Math.max(0, this.toFiniteNumber(record?.invitesCount) ?? 0),
+      revoked: Math.max(
+        0,
+        this.toFiniteNumber(record?.revokedInvitesCount) ?? 0,
+      ),
+    };
+  }
+
+  private logInviteSyncEvent(
+    level: 'log' | 'warn' | 'error',
+    payload: Record<string, unknown>,
+  ) {
+    this.logger[level](JSON.stringify(payload));
+  }
+
+  private async loadChannelInviteAdminsDirectory(
+    client: TelegramClient,
+    entity: ImportableTelegramEntity,
+    warnings: string[],
+  ) {
+    const usersById = new Map<string, Api.User>();
+    let offset = 0;
+    const limit = 200;
+
+    for (let page = 0; page < 10; page += 1) {
+      try {
+        const response = (await this.withTimeout(
+          client.invoke(
+            new Api.channels.GetParticipants({
+              channel: entity as any,
+              filter: new Api.ChannelParticipantsAdmins(),
+              offset,
+              limit,
+              hash: BigInt(0) as any,
+            }),
+          ),
+          this.telegramResolveTimeoutMs,
+          'Telegram channel admins request',
+        )) as any;
+        const users = Array.isArray(response?.users) ? response.users : [];
+        for (const user of users) {
+          if (user instanceof Api.User) {
+            usersById.set(String(user.id), user);
+          }
+        }
+        const participants = Array.isArray(response?.participants)
+          ? response.participants
+          : [];
+        if (!participants.length || participants.length < limit) {
+          break;
+        }
+        offset += participants.length;
+      } catch (error) {
+        warnings.push(
+          `Telegram admin directory lookup failed: ${this.getTelegramErrorCode(error)}`,
+        );
+        break;
+      }
+    }
+
+    return usersById;
+  }
+
+  private async resolveInviteAdminInputUser(params: {
+    client: TelegramClient;
+    user: Api.User;
+    selfUserId: string | null;
+  }) {
+    if (
+      params.selfUserId &&
+      String(params.user.id) === params.selfUserId
+    ) {
+      return new Api.InputUserSelf();
+    }
+
+    const directAccessHash = this.entityAccessHash(params.user);
+    if (directAccessHash) {
+      try {
+        return new Api.InputUser({
+          userId: String(params.user.id) as any,
+          accessHash: directAccessHash as any,
+        });
+      } catch {
+        // Fall through to GramJS entity resolution.
+      }
+    }
+
+    const resolutionCandidates: unknown[] = [params.user];
+    const username = normalizeTelegramUsername(params.user.username);
+    if (username) {
+      resolutionCandidates.push(`@${username}`);
+    }
+    resolutionCandidates.push(
+      new Api.PeerUser({
+        userId: String(params.user.id) as any,
+      }),
+    );
+
+    for (const candidate of resolutionCandidates) {
+      try {
+        const resolved = await this.withTimeout(
+          params.client.getInputEntity(candidate as never),
+          this.telegramResolveTimeoutMs,
+          'Telegram admin entity resolution',
+        );
+        if (this.isInputUser(resolved)) {
+          return resolved;
+        }
+      } catch {
+        // Try the next candidate.
+      }
+    }
+
+    throw new BadRequestException(
+      `Telegram admin ${String(params.user.id)} could not be resolved as an input user.`,
+    );
+  }
+
+  private async fetchInviteLinksPage(params: {
+    client: TelegramClient;
+    peer: ImportableTelegramEntity;
+    adminId: Api.TypeInputUser;
+    revoked: boolean;
+    offsetDate: number;
+    offsetLink: string;
+  }) {
+    return this.withTimeout(
+      params.client.invoke(
+        new Api.messages.GetExportedChatInvites({
+          peer: params.peer as any,
+          adminId: params.adminId,
+          offsetDate: params.offsetDate,
+          offsetLink: params.offsetLink,
+          limit: this.inviteLinksPageSize,
+          revoked: params.revoked,
+        }),
+      ),
+      this.telegramResolveTimeoutMs,
+      'Telegram exported chat invites request',
+    );
+  }
+
+  private async collectInviteLinksForAdmin(params: {
+    client: TelegramClient;
+    peer: ImportableTelegramEntity;
+    adminId: Api.TypeInputUser;
+    adminUser: Api.User;
+    knownUsers: Map<string, Api.User>;
+    revoked: boolean;
+    warnings: string[];
+    onInviteLinkLoaded?: (
+      link: TelegramInviteLinksResult['links'][number],
+    ) => void | Promise<void>;
+  }) {
+    const links: TelegramInviteLinksResult['links'] = [];
+    const seenUrls = new Set<string>();
+    let offsetDate = 0;
+    let offsetLink = '';
+    let previousCursor = '';
+    let pagesLoaded = 0;
+    const photoUrlCache = new Map<string, string | null>();
+
+    const creatorSnapshot = async (creator: Api.User | null, fallback: Api.User) => {
+      const user = creator ?? fallback;
+      const userId = String(user.id);
+      if (!photoUrlCache.has(userId)) {
+        photoUrlCache.set(
+          userId,
+          await this.getInviteAdminPhotoUrl(params.client, user),
+        );
+      }
+      return {
+        telegramCreatorUserId: userId,
+        creatorUsername: normalizeTelegramUsername(user.username),
+        creatorFirstName: user.firstName || null,
+        creatorLastName: user.lastName || null,
+        creatorPhotoUrl: photoUrlCache.get(userId) ?? null,
+      };
+    };
+
+    for (let page = 0; page < this.maxInviteLinkPages; page += 1) {
+      const response = (await this.fetchInviteLinksPage({
+        client: params.client,
+        peer: params.peer,
+        adminId: params.adminId,
+        revoked: params.revoked,
+        offsetDate,
+        offsetLink,
+      })) as any;
+      pagesLoaded += 1;
+      const responseUsers = Array.isArray(response?.users) ? response.users : [];
+      for (const user of responseUsers) {
+        if (user instanceof Api.User) {
+          params.knownUsers.set(String(user.id), user);
+        }
+      }
+      const invites = Array.isArray(response?.invites) ? response.invites : [];
+      if (!invites.length) break;
+
+      for (const invite of invites) {
+        const url = String(invite?.link || '').trim();
+        if (!url || seenUrls.has(url)) continue;
+        seenUrls.add(url);
+        const creatorTelegramUserId =
+          this.toBigInt(invite?.adminId)?.toString() ??
+          String(params.adminUser.id);
+        const creatorUser =
+          params.knownUsers.get(creatorTelegramUserId) ?? params.adminUser;
+        const snapshot = await creatorSnapshot(creatorUser, params.adminUser);
+        links.push({
+          url,
+          title: invite?.title || null,
+          ...snapshot,
+          createdAt: this.toTelegramDate(invite?.date),
+          startDate: this.toTelegramDate(invite?.startDate),
+          expireDate: this.toTelegramDate(invite?.expireDate),
+          usageLimit: this.toFiniteNumber(invite?.usageLimit),
+          usage: this.toFiniteNumber(invite?.usage) ?? 0,
+          requested: this.toFiniteNumber(invite?.requested) ?? 0,
+          requestNeeded: Boolean(invite?.requestNeeded),
+          permanent: Boolean(invite?.permanent),
+          revoked: Boolean(invite?.revoked),
+        });
+        await params.onInviteLinkLoaded?.(links[links.length - 1]!);
+      }
+
+      const lastInvite = invites[invites.length - 1];
+      const nextOffsetDate = this.toFiniteNumber(lastInvite?.date) ?? 0;
+      const nextOffsetLink = String(lastInvite?.link || '');
+      const nextCursor = `${nextOffsetDate}:${nextOffsetLink}`;
+      if (!nextOffsetLink || invites.length < this.inviteLinksPageSize) break;
+      if (nextCursor === previousCursor) {
+        params.warnings.push(
+          `Invite-link pagination stopped early for admin ${String(params.adminUser.id)} because Telegram returned the same cursor twice.`,
+        );
+        break;
+      }
+      previousCursor = nextCursor;
+      offsetDate = nextOffsetDate;
+      offsetLink = nextOffsetLink;
+    }
+
+    return { links, pagesLoaded };
+  }
+
+  private async getAllChannelInviteLinksInternal(
+    client: TelegramClient,
+    entity: ImportableTelegramEntity,
+    onProgress?: InviteLinksProgressCallback,
+  ): Promise<TelegramInviteLinksResult> {
+    const warnings: string[] = [];
+    const channelTelegramId = this.entityIdToString(entity) || 'unknown';
+    const selfUser = await this.getSelfUserWithDetails(
+      client,
+      (await this.withTimeout(
+        client.getMe(),
+        this.telegramResolveTimeoutMs,
+        'Telegram self lookup',
+      )) as Api.User,
+    );
+    const connectedTelegramUserId = selfUser ? String(selfUser.id) : null;
+    await onProgress?.({
+      phase: 'discovering_invite_admins',
+      message: 'Discovering invite-link creators',
+    });
+    const adminsResult = (await this.withTimeout(
+      client.invoke(new Api.messages.GetAdminsWithInvites({ peer: entity as any })),
+      this.telegramResolveTimeoutMs,
+      'Telegram admins with invites request',
+    )) as any;
+    const knownUsers = new Map<string, Api.User>();
+    const users = Array.isArray(adminsResult?.users) ? adminsResult.users : [];
+    for (const user of users) {
+      if (user instanceof Api.User) {
+        knownUsers.set(String(user.id), user);
+      }
+    }
+    if (selfUser) {
+      knownUsers.set(String(selfUser.id), selfUser);
+    }
+    const adminDirectoryUsers = await this.loadChannelInviteAdminsDirectory(
+      client,
+      entity,
+      warnings,
+    );
+    for (const [userId, user] of adminDirectoryUsers.entries()) {
+      knownUsers.set(userId, user);
+    }
+
+    const adminRows = Array.isArray(adminsResult?.admins)
+      ? adminsResult.admins
+      : [];
+    const expectedTotalLinks = adminRows.reduce((sum: number, row: unknown) => {
+      const counts = this.inviteAdminCounts(row);
+      return sum + counts.active + counts.revoked;
+    }, 0);
+    this.logInviteSyncEvent('log', {
+      phase: 'discovering_invite_admins',
+      channelTelegramId,
+      connectedTelegramUserId,
+      adminRows: adminRows.length,
+      expectedTotalLinks,
+    });
+    await onProgress?.({
+      phase: 'loading_invite_links',
+      message:
+        expectedTotalLinks > 0
+          ? `Loading invite links 0/${expectedTotalLinks}`
+          : 'Loading invite links',
+      stageCurrent: 0,
+      stageTotal: expectedTotalLinks,
+    });
+
+    const summaries: InviteAdminSummary[] = [];
+    const linksByUrl = new Map<string, TelegramInviteLinksResult['links'][number]>();
+    const failedAdminWarningPattern =
+      /^Admin .+ invite-link sync failed: /;
+    const fallbackAdminUser =
+      selfUser ?? knownUsers.values().next().value ?? null;
+    let failedAdmins = 0;
+    let attemptedAdmins = 0;
+    let loadedLinksCount = 0;
+
+    for (const row of adminRows) {
+      const adminUserId = this.inviteAdminUserId(row);
+      const counts = this.inviteAdminCounts(row);
+      const shouldFetch = counts.active > 0 || counts.revoked > 0;
+      const adminUser = adminUserId ? knownUsers.get(adminUserId) ?? null : null;
+
+      if (adminUser) {
+        summaries.push({
+          telegramUserId: adminUserId!,
+          username: normalizeTelegramUsername(adminUser.username),
+          firstName: adminUser.firstName || null,
+          lastName: adminUser.lastName || null,
+          photoUrl: await this.getInviteAdminPhotoUrl(client, adminUser),
+          activeLinksCount: counts.active,
+          revokedLinksCount: counts.revoked,
+        });
+      }
+
+      if (!shouldFetch) continue;
+      attemptedAdmins += 1;
+      if (!adminUserId || !adminUser) {
+        failedAdmins += 1;
+        warnings.push(
+          `Admin ${adminUserId || 'unknown'} could not be resolved from Telegram users payload.`,
+        );
+        continue;
+      }
+
+      try {
+        const inputUser = await this.resolveInviteAdminInputUser({
+          client,
+          user: adminUser,
+          selfUserId: connectedTelegramUserId,
+        });
+        const [activeLinks, revokedLinks] = await Promise.all([
+          this.collectInviteLinksForAdmin({
+            client,
+            peer: entity,
+            adminId: inputUser,
+            adminUser,
+            knownUsers,
+            revoked: false,
+            warnings,
+            onInviteLinkLoaded: async (link) => {
+              loadedLinksCount += 1;
+              await onProgress?.({
+                phase: 'loading_invite_links',
+                message: `Loading invite links ${loadedLinksCount}/${expectedTotalLinks}`,
+                stageCurrent: loadedLinksCount,
+                stageTotal: expectedTotalLinks,
+              });
+            },
+          }),
+          this.collectInviteLinksForAdmin({
+            client,
+            peer: entity,
+            adminId: inputUser,
+            adminUser,
+            knownUsers,
+            revoked: true,
+            warnings,
+            onInviteLinkLoaded: async () => {
+              loadedLinksCount += 1;
+              await onProgress?.({
+                phase: 'loading_invite_links',
+                message: `Loading invite links ${loadedLinksCount}/${expectedTotalLinks}`,
+                stageCurrent: loadedLinksCount,
+                stageTotal: expectedTotalLinks,
+              });
+            },
+          }),
+        ]);
+        for (const link of [...activeLinks.links, ...revokedLinks.links]) {
+          linksByUrl.set(link.url, link);
+        }
+        this.logInviteSyncEvent('log', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          adminId: adminUserId,
+          activePagesLoaded: activeLinks.pagesLoaded,
+          revokedPagesLoaded: revokedLinks.pagesLoaded,
+          loadedLinks: activeLinks.links.length + revokedLinks.links.length,
+        });
+      } catch (error) {
+        failedAdmins += 1;
+        const errorCode = this.getTelegramErrorCode(error);
+        warnings.push(
+          `Admin ${adminUserId} invite-link sync failed: ${errorCode}`,
+        );
+        this.logInviteSyncEvent('warn', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          adminId: adminUserId,
+          errorCode,
+        });
+      }
+    }
+
+    const shouldTryGlobalFallback =
+      expectedTotalLinks > linksByUrl.size &&
+      (failedAdmins > 0 || linksByUrl.size === 0) &&
+      fallbackAdminUser;
+    if (shouldTryGlobalFallback) {
+      this.logInviteSyncEvent('warn', {
+        phase: 'loading_invite_links',
+        channelTelegramId,
+        connectedTelegramUserId,
+        reason: 'global_input_user_empty_fallback',
+        loadedLinksCount,
+        expectedTotalLinks,
+        failedAdmins,
+      });
+      try {
+        const [activeLinks, revokedLinks] = await Promise.all([
+          this.collectInviteLinksForAdmin({
+            client,
+            peer: entity,
+            adminId: new Api.InputUserEmpty(),
+            adminUser: fallbackAdminUser,
+            knownUsers,
+            revoked: false,
+            warnings,
+            onInviteLinkLoaded: async (link) => {
+              if (linksByUrl.has(link.url)) return;
+              loadedLinksCount += 1;
+              await onProgress?.({
+                phase: 'loading_invite_links',
+                message: `Loading invite links ${Math.min(loadedLinksCount, expectedTotalLinks)}/${expectedTotalLinks}`,
+                stageCurrent: Math.min(loadedLinksCount, expectedTotalLinks),
+                stageTotal: expectedTotalLinks,
+              });
+            },
+          }),
+          this.collectInviteLinksForAdmin({
+            client,
+            peer: entity,
+            adminId: new Api.InputUserEmpty(),
+            adminUser: fallbackAdminUser,
+            knownUsers,
+            revoked: true,
+            warnings,
+            onInviteLinkLoaded: async (link) => {
+              if (linksByUrl.has(link.url)) return;
+              loadedLinksCount += 1;
+              await onProgress?.({
+                phase: 'loading_invite_links',
+                message: `Loading invite links ${Math.min(loadedLinksCount, expectedTotalLinks)}/${expectedTotalLinks}`,
+                stageCurrent: Math.min(loadedLinksCount, expectedTotalLinks),
+                stageTotal: expectedTotalLinks,
+              });
+            },
+          }),
+        ]);
+        for (const link of [...activeLinks.links, ...revokedLinks.links]) {
+          linksByUrl.set(link.url, link);
+        }
+        if (linksByUrl.size >= expectedTotalLinks) {
+          failedAdmins = 0;
+          for (let index = warnings.length - 1; index >= 0; index -= 1) {
+            if (failedAdminWarningPattern.test(warnings[index] || '')) {
+              warnings.splice(index, 1);
+            }
+          }
+        }
+        this.logInviteSyncEvent('log', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          fallback: 'global_input_user_empty',
+          activePagesLoaded: activeLinks.pagesLoaded,
+          revokedPagesLoaded: revokedLinks.pagesLoaded,
+          loadedLinks: activeLinks.links.length + revokedLinks.links.length,
+          totalUniqueLinks: linksByUrl.size,
+        });
+      } catch (error) {
+        const errorCode = this.getTelegramErrorCode(error);
+        warnings.push(`Global invite-link fallback failed: ${errorCode}`);
+        this.logInviteSyncEvent('warn', {
+          phase: 'loading_invite_links',
+          channelTelegramId,
+          connectedTelegramUserId,
+          fallback: 'global_input_user_empty',
+          errorCode,
+        });
+      }
+    }
+
+    if (attemptedAdmins > 0 && failedAdmins >= attemptedAdmins) {
+      throw new BadRequestException(
+        'Telegram invite-link sync failed for every expected administrator.',
+      );
+    }
+
+    return {
+      scope: failedAdmins > 0 ? 'PARTIAL_ADMINS' : 'ALL_ADMINS',
+      expectedTotalLinks,
+      admins: summaries,
+      links: [...linksByUrl.values()],
+      warnings,
+    };
+  }
+
+  async getAllChannelInviteLinks(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef?: string;
+    channel?: StoredTelegramChannelReference;
+    onProgress?: InviteLinksProgressCallback;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const resolved = params.channel
+        ? await this.resolveStoredChannel(client, params.channel)
+        : null;
+      const entity = resolved
+        ? resolved.entity
+        : await client.getEntity(params.channelRef as string);
+      return this.getAllChannelInviteLinksInternal(
+        client,
+        this.asImportableTelegramEntity(entity, 'channel'),
+        params.onProgress,
+      );
+    } finally {
+      await this.closeClient(client);
     }
   }
 
