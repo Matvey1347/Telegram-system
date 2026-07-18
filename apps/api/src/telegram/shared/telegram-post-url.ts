@@ -2,6 +2,28 @@ export type ParsedTelegramPostUrl =
   | { kind: 'public'; username: string; messageId: string }
   | { kind: 'private'; chatId: string; messageId: string };
 
+export function normalizeTelegramChannelId(
+  telegramChatId: string | null | undefined,
+) {
+  const raw = String(telegramChatId || '').trim();
+  if (!raw) return null;
+  const withoutPrefix = raw.startsWith('-100') ? raw.slice(4) : raw;
+  const normalized = withoutPrefix.startsWith('-')
+    ? withoutPrefix.slice(1)
+    : withoutPrefix;
+  return /^\d+$/.test(normalized) ? normalized : null;
+}
+
+export function buildStableTelegramPostUrl(params: {
+  telegramChatId: string | null | undefined;
+  messageId: string | null | undefined;
+}) {
+  const chatId = normalizeTelegramChannelId(params.telegramChatId);
+  const messageId = String(params.messageId || '').trim();
+  if (!chatId || !/^\d+$/.test(messageId)) return null;
+  return `https://t.me/c/${chatId}/${messageId}`;
+}
+
 export function parseTelegramPostUrl(
   value: string,
 ): ParsedTelegramPostUrl | null {

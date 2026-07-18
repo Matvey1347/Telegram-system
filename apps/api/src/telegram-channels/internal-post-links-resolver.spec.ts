@@ -39,6 +39,7 @@ describe('TelegramChannelsService internal post link resolver', () => {
         telegramRemoteStatus: 'NONE',
         lastError: null,
         scheduledAt: null,
+        imageUrls: [],
         telegramMessageIds: [],
         telegramMessageUrls: [],
         telegramChannel: { username: 'example', telegramChatId: null },
@@ -53,7 +54,7 @@ describe('TelegramChannelsService internal post link resolver', () => {
     ).rejects.toThrow('not published');
   });
 
-  it('resolves a published target to its primary Telegram URL', async () => {
+  it('resolves a public target to a stable private-style Telegram URL', async () => {
     const service = serviceWithTargets([
       {
         id: 'published',
@@ -62,12 +63,13 @@ describe('TelegramChannelsService internal post link resolver', () => {
         telegramRemoteStatus: 'PUBLISHED',
         lastError: null,
         scheduledAt: null,
-        telegramMessageIds: ['42', '43'],
-        telegramMessageUrls: [
-          'https://t.me/example/42',
-          'https://t.me/example/43',
-        ],
-        telegramChannel: { username: 'example', telegramChatId: null },
+        imageUrls: [],
+        telegramMessageIds: ['33'],
+        telegramMessageUrls: ['https://t.me/test_tg_system/33'],
+        telegramChannel: {
+          username: 'test_tg_system',
+          telegramChatId: '-1003976683330',
+        },
       },
     ]);
     await expect(
@@ -76,7 +78,128 @@ describe('TelegramChannelsService internal post link resolver', () => {
         'current',
         '[Published](tg-post:published)',
       ),
-    ).resolves.toBe('[Published](https://t.me/example/42)');
+    ).resolves.toBe('[Published](https://t.me/c/3976683330/33)');
+  });
+
+  it('resolves a private target to the same stable private-style Telegram URL', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'published',
+        title: 'Published target',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
+        scheduledAt: null,
+        imageUrls: [],
+        telegramMessageIds: ['33'],
+        telegramMessageUrls: [],
+        telegramChannel: {
+          username: null,
+          telegramChatId: '-1003976683330',
+        },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Published](tg-post:published)',
+      ),
+    ).resolves.toBe('[Published](https://t.me/c/3976683330/33)');
+  });
+
+  it('ignores cached public telegramMessageUrls for internal link resolution', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'published',
+        title: 'Published target',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
+        scheduledAt: null,
+        imageUrls: [],
+        telegramMessageIds: ['33'],
+        telegramMessageUrls: ['https://t.me/old_username/33'],
+        telegramChannel: {
+          username: 'new_test_tg_system',
+          telegramChatId: '-1003976683330',
+        },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Published](tg-post:published)',
+      ),
+    ).resolves.toBe('[Published](https://t.me/c/3976683330/33)');
+  });
+
+  it('keeps target message ids tied to the correct managed posts regardless of result ordering', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'post-b',
+        title: 'Post B',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
+        scheduledAt: null,
+        imageUrls: [],
+        telegramMessageIds: ['33'],
+        telegramMessageUrls: ['https://t.me/old_username/33'],
+        telegramChannel: { username: 'example', telegramChatId: '-1003976683330' },
+      },
+      {
+        id: 'post-a',
+        title: 'Post A',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
+        scheduledAt: null,
+        imageUrls: [],
+        telegramMessageIds: ['32'],
+        telegramMessageUrls: ['https://t.me/old_username/32'],
+        telegramChannel: { username: 'example', telegramChatId: '-1003976683330' },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[A](tg-post:post-a) [B](tg-post:post-b)',
+      ),
+    ).resolves.toBe(
+      '[A](https://t.me/c/3976683330/32) [B](https://t.me/c/3976683330/33)',
+    );
+  });
+
+  it('blocks publish when the target channel has no stable Telegram channel id', async () => {
+    const service = serviceWithTargets([
+      {
+        id: 'published',
+        title: 'Published target',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: 'PUBLISHED',
+        lastError: null,
+        scheduledAt: null,
+        imageUrls: [],
+        telegramMessageIds: ['33'],
+        telegramMessageUrls: ['https://t.me/test_tg_system/33'],
+        telegramChannel: {
+          username: 'test_tg_system',
+          telegramChatId: null,
+        },
+      },
+    ]);
+    await expect(
+      service['resolveInternalPostLinksForPublish'](
+        'workspace',
+        'current',
+        '[Published](tg-post:published)',
+      ),
+    ).rejects.toThrow(
+      'Target channel has no stable Telegram channel ID. Sync or re-import the channel.',
+    );
   });
 
   it('rejects a published target with a broken Telegram link', async () => {
@@ -88,9 +211,10 @@ describe('TelegramChannelsService internal post link resolver', () => {
         telegramRemoteStatus: 'BROKEN',
         lastError: 'Telegram post link is broken.',
         scheduledAt: null,
+        imageUrls: [],
         telegramMessageIds: ['42'],
         telegramMessageUrls: ['https://t.me/example/42'],
-        telegramChannel: { username: 'example', telegramChatId: null },
+        telegramChannel: { username: 'example', telegramChatId: '-1003976683330' },
       },
     ]);
     await expect(
@@ -102,7 +226,7 @@ describe('TelegramChannelsService internal post link resolver', () => {
     ).rejects.toThrow('broken Telegram link');
   });
 
-  it('resolves an earlier scheduled target while scheduling a later post', async () => {
+  it('resolves an earlier scheduled target to a stable url while scheduling a later post', async () => {
     const service = serviceWithTargets([
       {
         id: 'scheduled',
@@ -111,9 +235,10 @@ describe('TelegramChannelsService internal post link resolver', () => {
         telegramRemoteStatus: 'SCHEDULED',
         lastError: null,
         scheduledAt: new Date('2026-07-05T11:16:00.000Z'),
+        imageUrls: [],
         telegramMessageIds: ['42'],
         telegramMessageUrls: [],
-        telegramChannel: { username: '@example', telegramChatId: null },
+        telegramChannel: { username: '@example', telegramChatId: '-1003976683330' },
       },
     ]);
     await expect(
@@ -123,7 +248,7 @@ describe('TelegramChannelsService internal post link resolver', () => {
         '[Scheduled](tg-post:scheduled)',
         new Date('2026-07-06T11:16:00.000Z'),
       ),
-    ).resolves.toBe('[Scheduled](https://t.me/example/42)');
+    ).resolves.toBe('[Scheduled](https://t.me/c/3976683330/42)');
   });
 
   it('rejects a scheduled target that is not earlier', async () => {
@@ -135,9 +260,10 @@ describe('TelegramChannelsService internal post link resolver', () => {
         telegramRemoteStatus: 'SCHEDULED',
         lastError: null,
         scheduledAt: new Date('2026-07-07T11:16:00.000Z'),
+        imageUrls: [],
         telegramMessageIds: ['42'],
         telegramMessageUrls: [],
-        telegramChannel: { username: 'example', telegramChatId: null },
+        telegramChannel: { username: 'example', telegramChatId: '-1003976683330' },
       },
     ]);
     await expect(

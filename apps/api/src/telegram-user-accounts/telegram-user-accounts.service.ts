@@ -14,6 +14,7 @@ import { TokenEncryptionService } from '../common/security/token-encryption.serv
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
 import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
+import { normalizeTelegramChannelId } from '../telegram/shared/telegram-post-url';
 import {
   Confirm2faPasswordDto,
   ConfirmLoginCodeDto,
@@ -150,9 +151,7 @@ export class TelegramUserAccountsService {
   }
 
   private normalizeChatId(value: string | null | undefined) {
-    const digits = String(value || '').trim();
-    if (!digits) return null;
-    return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+    return normalizeTelegramChannelId(value);
   }
 
   private sourceDisplayName(account: {

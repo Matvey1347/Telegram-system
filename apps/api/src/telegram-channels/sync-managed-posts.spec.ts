@@ -163,4 +163,104 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       }),
     );
   });
+
+  it('keeps a published post healthy when remote text matches but the internal title is unrelated', async () => {
+    const { service, update } = setup(
+      {
+        id: 'published',
+        title: 'Pr 2',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        text: 'Real Telegram body text',
+        imageUrls: [],
+        publishMode: 'TEXT_ONLY',
+        scheduledAt: null,
+        publishedAt: new Date('2026-07-13T10:00:00Z'),
+        telegramMessageIds: ['77'],
+        telegramMessageUrls: ['https://t.me/c/123456/77'],
+      },
+      {
+        published: [
+          {
+            id: '77',
+            text: 'Real Telegram body text',
+            html: 'Real Telegram body text',
+            date: '2026-07-13T10:00:00.000Z',
+            hasMedia: false,
+          },
+        ],
+        recentPublished: [
+          {
+            id: '77',
+            text: 'Real Telegram body text',
+            html: 'Real Telegram body text',
+            date: '2026-07-13T10:00:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+    );
+
+    const result = await service.syncManagedPosts('user', 'channel');
+
+    expect(result.broken).toBe(0);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          lastError: null,
+        }),
+      }),
+    );
+  });
+
+  it('keeps a published code-block post healthy when visible Telegram text matches even if remote html shape differs', async () => {
+    const localText = '```\ncode block\ncode blockёcode block\ncode block\n```';
+    const visibleText = 'code block\ncode blockёcode block\ncode block';
+    const { service, update } = setup(
+      {
+        id: 'published',
+        title: 'цывуак',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        text: localText,
+        imageUrls: [],
+        publishMode: 'TEXT_ONLY',
+        scheduledAt: null,
+        publishedAt: new Date('2026-07-12T15:04:00Z'),
+        telegramMessageIds: ['29'],
+        telegramMessageUrls: ['https://t.me/c/3976683330/29'],
+      },
+      {
+        published: [
+          {
+            id: '29',
+            text: visibleText,
+            html: '<pre language=\"copy\">code block\ncode blockёcode block\ncode block</pre>',
+            date: '2026-07-12T15:04:00.000Z',
+            hasMedia: false,
+          },
+        ],
+        recentPublished: [
+          {
+            id: '29',
+            text: visibleText,
+            html: '<pre language=\"copy\">code block\ncode blockёcode block\ncode block</pre>',
+            date: '2026-07-12T15:04:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+    );
+
+    const result = await service.syncManagedPosts('user', 'channel');
+
+    expect(result.broken).toBe(0);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          lastError: null,
+        }),
+      }),
+    );
+  });
 });

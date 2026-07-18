@@ -93,6 +93,8 @@ type PostSidebarSection = {
 };
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 const POST_OPEN_CLICK_DELAY_MS = 180;
+const lastSelectedTelegramPostsChannelKey =
+  "telegram-posts:last-selected-channel";
 
 const postGroupPreferenceKey = (channelId: string) =>
   `telegram-posts-new-post-group:${channelId}`;
@@ -204,7 +206,7 @@ export default function TelegramPostsPage() {
         id: progressId,
         title: "Sync posts from Telegram",
         current: 0,
-        total: 1,
+        total: 0,
         message: "Starting post sync…",
         iconUrl: currentChannel.photoUrl || undefined,
       });
@@ -260,12 +262,52 @@ export default function TelegramPostsPage() {
     },
   });
   useEffect(() => {
-    if (!channelId && channel) {
-      router.replace(`${pathname}?channelId=${channel.id}`);
+    if (typeof window === "undefined" || !availableChannels.length) return;
+    const params = new URLSearchParams(searchParams.toString());
+    const savedChannelId = window.localStorage.getItem(
+      lastSelectedTelegramPostsChannelKey,
+    );
+    const savedChannelStillAvailable = savedChannelId
+      ? availableChannels.some((item) => item.id === savedChannelId)
+      : false;
+
+    if (channelId) {
+      const requestedChannelStillAvailable = availableChannels.some(
+        (item) => item.id === channelId,
+      );
+      if (requestedChannelStillAvailable) {
+        window.localStorage.setItem(
+          lastSelectedTelegramPostsChannelKey,
+          channelId,
+        );
+        return;
+      }
+
+      const fallbackChannelId = savedChannelStillAvailable
+        ? savedChannelId
+        : availableChannels[0]?.id;
+      if (!fallbackChannelId) return;
+      params.set("channelId", fallbackChannelId);
+      params.delete("postId");
+      router.replace(`${pathname}?${params.toString()}`);
+      return;
     }
-  }, [channel, channelId, pathname, router]);
+
+    const fallbackChannelId = savedChannelStillAvailable
+      ? savedChannelId
+      : availableChannels[0]?.id;
+    if (!fallbackChannelId) return;
+    params.set("channelId", fallbackChannelId);
+    router.replace(`${pathname}?${params.toString()}`);
+  }, [availableChannels, channelId, pathname, router, searchParams]);
 
   const navigateToChannel = (nextChannelId: string) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        lastSelectedTelegramPostsChannelKey,
+        nextChannelId,
+      );
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.set("channelId", nextChannelId);
     params.delete("postId");
@@ -546,11 +588,12 @@ function TelegramPostWorkspace({
     if (!editing || !["PUBLISHED", "SCHEDULED"].includes(editing.status)) {
       return null;
     }
-    if (editing.telegramMessageUrls[0]) return editing.telegramMessageUrls[0];
-    const messageId = editing.telegramMessageIds[0];
+    const primaryMessageIndex =
+      editing.imageUrls.length > 1
+        ? Math.min(editing.imageUrls.length - 1, editing.telegramMessageIds.length - 1)
+        : 0;
+    const messageId = editing.telegramMessageIds[primaryMessageIndex];
     if (!messageId) return null;
-    const username = channelUsername?.trim().replace(/^@/, "");
-    if (username) return `https://t.me/${username}/${messageId}`;
     const chatId = channelTelegramChatId
       ?.trim()
       .replace(/^-100/, "")
@@ -617,7 +660,8 @@ function TelegramPostWorkspace({
       const ready =
         target?.status === "PUBLISHED" &&
         target.telegramRemoteStatus === "PUBLISHED" &&
-        Boolean(target.telegramMessageUrls[0]) &&
+        target.telegramMessageIds.length > 0 &&
+        Boolean(channelTelegramChatId) &&
         !target.lastError;
       return ready ? null : { id: targetId, post: target };
     },
@@ -635,7 +679,8 @@ function TelegramPostWorkspace({
       target &&
         target.status === "PUBLISHED" &&
         target.telegramRemoteStatus === "PUBLISHED" &&
-        target.telegramMessageUrls[0] &&
+        target.telegramMessageIds.length > 0 &&
+        channelTelegramChatId &&
         !target.lastError,
     );
   });

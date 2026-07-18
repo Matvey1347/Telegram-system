@@ -8,6 +8,7 @@ import {
 import { Api, TelegramClient } from 'telegram';
 import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { HTMLParser } from 'telegram/extensions/html';
+import { normalizeTelegramChannelId } from './telegram-post-url';
 import { CustomFile } from 'telegram/client/uploads';
 import { StringSession } from 'telegram/sessions';
 import { telegramHtmlToMtprotoHtml } from './telegram-markup';
@@ -112,9 +113,7 @@ export class TelegramMtprotoClient {
   }
 
   private normalizeChatId(value?: string | null) {
-    const digits = String(value || '').trim();
-    if (!digits) return null;
-    return digits.replace(/^-100/, '').replace(/^-/, '') || null;
+    return normalizeTelegramChannelId(value);
   }
 
   private toBigInt(value: unknown) {
