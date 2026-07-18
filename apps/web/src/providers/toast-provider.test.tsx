@@ -113,6 +113,24 @@ function OperationHarness() {
       >
         Legacy progress
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          setProgress({
+            id: "progress-mixed",
+            title: "Sync channel",
+            current: 9,
+            total: 9,
+            message: "Channel sync completed",
+            completed: true,
+            successCount: 8,
+            failedCount: 1,
+            skippedCount: 0,
+          })
+        }
+      >
+        Legacy mixed complete
+      </button>
     </div>
   );
 }
@@ -261,5 +279,14 @@ describe("ToastProvider", () => {
 
     expect(await screen.findByText("Resolving Telegram entity")).toBeInTheDocument();
     expect(screen.getByText("2/4")).toBeInTheDocument();
+  });
+
+  it("keeps completed mixed progress as informational instead of success", async () => {
+    renderWithProviders(<OperationHarness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Legacy mixed complete" }));
+
+    expect(await screen.findByText("Channel sync completed")).toBeInTheDocument();
+    expect(screen.getByText("8 success · 1 failed · 0 skipped")).toBeInTheDocument();
   });
 });

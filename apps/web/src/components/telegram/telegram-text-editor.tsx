@@ -17,6 +17,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   iconsApi,
   telegramChannelsApi,
+  type TelegramManagedPost,
   type TelegramManagedPostLinkTarget,
 } from "@/lib/api";
 import { IconAvatar } from "@/components/icons/icon-avatar";
@@ -33,6 +34,7 @@ type TelegramTextEditorProps = {
   internalLinkScheduledAt?: string;
   highlightInternalLinkTargetId?: string | null;
   highlightRequestKey?: number;
+  availableInternalPosts?: TelegramManagedPost[];
 };
 
 type WrapAction = {
@@ -106,6 +108,7 @@ export function TelegramTextEditor({
   internalLinkScheduledAt,
   highlightInternalLinkTargetId,
   highlightRequestKey = 0,
+  availableInternalPosts,
 }: TelegramTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightedSelectionRef = useRef<{
@@ -125,6 +128,36 @@ export function TelegramTextEditor({
   );
   const [internalSearch, setInternalSearch] = useState("");
   const internalLinksEnabled = enableInternalPostLinks && Boolean(channelId);
+  const localLinkTargets = useCallback((): TelegramManagedPostLinkTarget[] => {
+    if (!availableInternalPosts?.length || !channelId) return [];
+    const normalizedSearch = internalSearch.trim().toLowerCase();
+    return availableInternalPosts
+      .filter((post) => post.telegramChannelId === channelId)
+      .filter((post) => post.id !== currentPostId)
+      .filter((post) =>
+        normalizedSearch
+          ? post.title.toLowerCase().includes(normalizedSearch)
+          : true,
+      )
+      .sort((left, right) => {
+        const updated = right.updatedAt.localeCompare(left.updatedAt);
+        return updated || left.title.localeCompare(right.title);
+      })
+      .slice(0, 30)
+      .map((post) => ({
+        id: post.id,
+        title: post.title,
+        icon: post.icon ?? null,
+        status: post.status,
+        telegramRemoteStatus: post.telegramRemoteStatus,
+        groupId: post.groupId ?? null,
+        groupTitle: post.group?.title ?? null,
+        telegramChannelId: post.telegramChannelId,
+        telegramChannelTitle: "",
+        publishedAt: post.publishedAt ?? null,
+        primaryTelegramMessageUrl: post.telegramMessageUrls[0] ?? null,
+      }));
+  }, [availableInternalPosts, channelId, currentPostId, internalSearch]);
   const linkTargets = useQuery({
     queryKey: [
       "telegram-managed-post-link-targets",
@@ -142,11 +175,18 @@ export function TelegramTextEditor({
         scheduledAt: internalLinkScheduledAt,
         limit: 30,
       }),
-    enabled: linkEditorOpen && linkMode === "internal" && internalLinksEnabled,
+    enabled:
+      !availableInternalPosts &&
+      linkEditorOpen &&
+      linkMode === "internal" &&
+      internalLinksEnabled,
   });
+  const effectiveLinkTargets = availableInternalPosts
+    ? localLinkTargets()
+    : (linkTargets.data || []);
   const targetIconIds = [
     ...new Set(
-      (linkTargets.data || [])
+      effectiveLinkTargets
         .map((target) => target.icon)
         .filter((iconId): iconId is string => Boolean(iconId)),
     ),
@@ -539,17 +579,17 @@ export function TelegramTextEditor({
                 className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
               />
               <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
-                {linkTargets.isLoading ? (
+                {!availableInternalPosts && linkTargets.isLoading ? (
                   <p className="px-2 py-3 text-xs text-neutral-400">
                     Loading posts…
                   </p>
                 ) : null}
-                {linkTargets.isError ? (
+                {!availableInternalPosts && linkTargets.isError ? (
                   <p className="px-2 py-3 text-xs text-red-400">
                     Could not load managed posts.
                   </p>
                 ) : null}
-                {linkTargets.data?.map((target) => (
+                {effectiveLinkTargets.map((target) => (
                   <button
                     key={target.id}
                     type="button"
@@ -597,7 +637,8 @@ export function TelegramTextEditor({
                     </span>
                   </button>
                 ))}
-                {!linkTargets.isLoading && !linkTargets.data?.length ? (
+                {(!availableInternalPosts && !linkTargets.isLoading && !effectiveLinkTargets.length) ||
+                (availableInternalPosts && !effectiveLinkTargets.length) ? (
                   <p className="px-2 py-3 text-xs text-neutral-500">
                     No matching posts.
                   </p>

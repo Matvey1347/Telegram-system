@@ -293,15 +293,33 @@ export function ToastProvider({ children }: PropsWithChildren) {
         total: progress.total,
       });
       if (progress.completed) {
-        handle.succeed({
+        const complete = progress.failedCount
+          ? handle.update
+          : handle.succeed;
+        complete({
           title: progress.title,
           message: progress.message || "Completed",
           details: `${progress.successCount || 0} success · ${progress.failedCount || 0} failed · ${progress.skippedCount || 0} skipped`,
-          icon: {
-            emoji: progress.iconEmoji,
-            imageUrl: progress.iconUrl,
-          },
+          ...(progress.failedCount
+            ? {}
+            : {
+                icon: {
+                  emoji: progress.iconEmoji,
+                  imageUrl: progress.iconUrl,
+                },
+              }),
         });
+        if (progress.failedCount) {
+          handle.update({
+            title: progress.title,
+            message: progress.message || "Completed",
+            details: `${progress.successCount || 0} success · ${progress.failedCount || 0} failed · ${progress.skippedCount || 0} skipped`,
+            icon: {
+              emoji: progress.iconEmoji,
+              imageUrl: progress.iconUrl,
+            },
+          });
+        }
         return;
       }
       handle.update({

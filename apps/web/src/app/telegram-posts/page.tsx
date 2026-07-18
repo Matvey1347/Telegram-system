@@ -224,6 +224,11 @@ export default function TelegramPostsPage() {
             });
           },
         );
+        const failedCount =
+          (result.broken || 0) +
+          (result.movedToDraft || 0) +
+          (result.missing || 0);
+        const successCount = Math.max(0, (result.checked || 0) - failedCount);
         setProgress({
           id: progressId,
           title: "Sync posts from Telegram",
@@ -231,9 +236,9 @@ export default function TelegramPostsPage() {
           total: result.checked || 0,
           message: "Post sync completed",
           completed: true,
-          successCount: result.updated || 0,
-          failedCount: result.broken || 0,
-          skippedCount: result.missing || 0,
+          successCount,
+          failedCount,
+          skippedCount: 0,
           iconUrl: currentChannel.photoUrl || undefined,
         });
         window.setTimeout(() => clearProgress(progressId), 2800);
@@ -255,10 +260,6 @@ export default function TelegramPostsPage() {
           queryKey: ["telegram-managed-post-link-targets", channel?.id],
         }),
       ]);
-      pushToast(
-        `Telegram sync: ${result.checked} checked, ${result.updated} updated, ${result.publishedEarly} published early, ${result.movedToDraft} moved to draft, ${result.broken} broken links.`,
-        result.broken || result.missing ? "error" : "success",
-      );
     },
   });
   useEffect(() => {
@@ -466,6 +467,7 @@ function TelegramPostWorkspace({
   const [error, setError] = useState("");
   const [manualTelegramUrl, setManualTelegramUrl] = useState("");
   const [savingTelegramUrl, setSavingTelegramUrl] = useState(false);
+  const [telegramLinkModalOpen, setTelegramLinkModalOpen] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(false);
@@ -482,6 +484,7 @@ function TelegramPostWorkspace({
   const sidebarReorderVersionRef = useRef(0);
   const sidebarReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const postOpenTimerRef = useRef<number | null>(null);
+  const telegramLinkClickTimerRef = useRef<number | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
     null,
@@ -601,13 +604,16 @@ function TelegramPostWorkspace({
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
   const displayedError = error || editing?.lastError || "";
-  const showManualTelegramUrlInput = Boolean(
+  const canManageTelegramLink = Boolean(
     editing &&
       (editing.status === "SCHEDULED" ||
         editing.status === "PUBLISHED" ||
         editing.status === "FAILED" ||
         ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus) ||
         /link is broken|Telegram link manually/i.test(displayedError)),
+  );
+  const telegramLinkBroken = Boolean(
+    editing && ["BROKEN", "MISSING"].includes(editing.telegramRemoteStatus),
   );
   const outgoingInternalLinks = useMemo(() => {
     const grouped = new Map<
@@ -1038,6 +1044,14 @@ function TelegramPostWorkspace({
   }, [channelId]);
 
   useEffect(() => {
+    return () => {
+      if (telegramLinkClickTimerRef.current) {
+        window.clearTimeout(telegramLinkClickTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const saved = window.localStorage.getItem(
       postGroupPreferenceKey(channelId),
     );
@@ -1146,6 +1160,7 @@ function TelegramPostWorkspace({
     }
     setError("");
     setManualTelegramUrl(post.telegramMessageUrls[0] || "");
+    setTelegramLinkModalOpen(false);
   };
 
   const restorePostRevision = useMutation({
@@ -1204,6 +1219,7 @@ function TelegramPostWorkspace({
       );
       setEditing(post);
       setManualTelegramUrl(post.telegramMessageUrls[0] || "");
+      setTelegramLinkModalOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: ["telegram-managed-posts", channelId],
@@ -1221,6 +1237,35 @@ function TelegramPostWorkspace({
     } finally {
       setSavingTelegramUrl(false);
     }
+  };
+
+  const openTelegramLinkModal = () => {
+    if (!editing || !canManageTelegramLink) return;
+    setManualTelegramUrl(editing.telegramMessageUrls[0] || telegramPostUrl || "");
+    setTelegramLinkModalOpen(true);
+  };
+
+  const handleTelegramLinkClick = () => {
+    if (telegramLinkClickTimerRef.current) {
+      window.clearTimeout(telegramLinkClickTimerRef.current);
+      telegramLinkClickTimerRef.current = null;
+    }
+    telegramLinkClickTimerRef.current = window.setTimeout(() => {
+      telegramLinkClickTimerRef.current = null;
+      if (telegramPostUrl) {
+        window.open(telegramPostUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (canManageTelegramLink) openTelegramLinkModal();
+    }, POST_OPEN_CLICK_DELAY_MS);
+  };
+
+  const handleTelegramLinkDoubleClick = () => {
+    if (telegramLinkClickTimerRef.current) {
+      window.clearTimeout(telegramLinkClickTimerRef.current);
+      telegramLinkClickTimerRef.current = null;
+    }
+    openTelegramLinkModal();
   };
 
   const toggleAllChannelPosts = () => {
@@ -1605,7 +1650,7 @@ function TelegramPostWorkspace({
             imageUrls={imageUrls}
             longTextMode={longTextMode}
           />
-          <Card className="relative min-w-0 space-y-3 overflow-hidden">
+          <Card className="relative min-w-0 space-y-3 overflow-visible">
             {editorIsSaving ? (
               <div className="absolute inset-0 z-40 flex items-center justify-center rounded-lg bg-black/55 backdrop-blur-[2px]">
                 <div className="flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-4 text-sm font-medium text-white shadow-2xl">
@@ -1650,28 +1695,34 @@ function TelegramPostWorkspace({
                       </span>
                     </button>
                   ) : null}
-                  {telegramPostUrl ? (
-                    <a
-                      href={telegramPostUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-700 px-2.5 text-xs font-medium text-blue-300 transition hover:border-blue-600 hover:bg-blue-950/30 hover:text-blue-200"
-                      title={
-                        editing?.status === "SCHEDULED"
-                          ? "Open scheduled post link in Telegram"
-                          : "Open post in Telegram"
-                      }
-                    >
-                      <ExternalLink size={13} />
-                      Open in Telegram
-                    </a>
-                  ) : null}
-                  {editing &&
-                  ["BROKEN", "MISSING"].includes(
-                    editing.telegramRemoteStatus,
-                  ) ? (
-                    <span className="rounded bg-red-950 px-2 py-1 text-[11px] font-medium text-red-300">
-                      Telegram link {editing.telegramRemoteStatus.toLowerCase()}
+                  {editing && canManageTelegramLink ? (
+                    <span className="relative inline-flex group">
+                      <button
+                        type="button"
+                        onClick={handleTelegramLinkClick}
+                        onDoubleClick={handleTelegramLinkDoubleClick}
+                        className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition ${
+                          telegramLinkBroken
+                            ? "border-red-700 bg-red-950/20 text-red-200 hover:border-red-600 hover:bg-red-950/35"
+                            : "border-neutral-700 text-blue-300 hover:border-blue-600 hover:bg-blue-950/30 hover:text-blue-200"
+                        }`}
+                      >
+                        {telegramLinkBroken ? (
+                          <AlertTriangle size={13} className="text-red-300" />
+                        ) : (
+                          <ExternalLink size={13} />
+                        )}
+                        Open in TG
+                      </button>
+                      <TooltipBubble
+                        side="top"
+                        align="center"
+                        className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        {telegramPostUrl
+                          ? "Click to open in Telegram. Double-click to set or replace the link."
+                          : "Double-click to set the Telegram link."}
+                      </TooltipBubble>
                     </span>
                   ) : null}
                 </div>
@@ -1747,6 +1798,7 @@ function TelegramPostWorkspace({
                 internalLinkScheduledAt={internalLinkScheduledAt}
                 highlightInternalLinkTargetId={highlightedInternalLinkTargetId}
                 highlightRequestKey={highlightRequestKey}
+                availableInternalPosts={posts.data || []}
               />
             </FormField>
             {outgoingInternalLinks.length ? (
@@ -1774,31 +1826,47 @@ function TelegramPostWorkspace({
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {unresolvedInternalLinkTargets.map((target) => (
-                            <button
-                              key={target.id}
-                              type="button"
-                              onClick={() => highlightInternalLinkTarget(target.id)}
-                              className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
-                            >
-                              {target.post?.icon ? (
-                                <PostIcon
-                                  iconId={target.post.icon}
-                                  label={target.post.title}
-                                  bare
-                                  size="xs"
-                                />
-                              ) : (
-                                <span aria-hidden="true">📝</span>
-                              )}
-                              <span>
-                                {target.post?.title || `Missing post ${target.id}`}
-                              </span>
-                              {target.post ? (
-                                <span className="text-amber-400/70">
-                                  {target.post.status.toLowerCase()}
+                            <span key={target.id} className="relative inline-flex group">
+                              <button
+                                type="button"
+                                onClick={() => highlightInternalLinkTarget(target.id)}
+                                onDoubleClick={() => {
+                                  if (target.post) openPost(target.post);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
+                              >
+                                {target.post?.icon ? (
+                                  <PostIcon
+                                    iconId={target.post.icon}
+                                    label={target.post.title}
+                                    bare
+                                    size="xs"
+                                  />
+                                ) : (
+                                  <span aria-hidden="true">📝</span>
+                                )}
+                                <span>
+                                  {target.post?.title || `Missing post ${target.id}`}
                                 </span>
-                              ) : null}
-                            </button>
+                                {target.post ? (
+                                  <span className="text-amber-400/70">
+                                    {target.post.status === "PUBLISHED" &&
+                                    (target.post.telegramRemoteStatus === "BROKEN" ||
+                                      target.post.telegramRemoteStatus === "MISSING" ||
+                                      target.post.lastError)
+                                      ? "link broken"
+                                      : target.post.status.toLowerCase()}
+                                  </span>
+                                ) : null}
+                              </button>
+                              <TooltipBubble
+                                side="top"
+                                align="center"
+                                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
+                              >
+                                Click to jump to this link in the text. Double-click to open the linked post.
+                              </TooltipBubble>
+                            </span>
                           ))}
                         </div>
                       </div>
@@ -1810,31 +1878,45 @@ function TelegramPostWorkspace({
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {resolvedInternalLinkTargets.map((target) => (
-                            <button
+                            <span
                               key={target.targetId}
-                              type="button"
-                              onClick={() =>
-                                highlightInternalLinkTarget(target.targetId)
-                              }
-                              className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/70 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-100 transition hover:border-emerald-600 hover:bg-emerald-900/30"
+                              className="relative inline-flex group"
                             >
-                              {target.target?.icon ? (
-                                <PostIcon
-                                  iconId={target.target.icon}
-                                  label={target.target.title}
-                                  bare
-                                  size="xs"
-                                />
-                              ) : (
-                                <span aria-hidden="true">📝</span>
-                              )}
-                              <span>
-                                {target.target?.title || target.targetId}
-                              </span>
-                              <span className="text-emerald-300/80">
-                                published
-                              </span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  highlightInternalLinkTarget(target.targetId)
+                                }
+                                onDoubleClick={() => {
+                                  if (target.target) openPost(target.target);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/70 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-100 transition hover:border-emerald-600 hover:bg-emerald-900/30"
+                              >
+                                {target.target?.icon ? (
+                                  <PostIcon
+                                    iconId={target.target.icon}
+                                    label={target.target.title}
+                                    bare
+                                    size="xs"
+                                  />
+                                ) : (
+                                  <span aria-hidden="true">📝</span>
+                                )}
+                                <span>
+                                  {target.target?.title || target.targetId}
+                                </span>
+                                <span className="text-emerald-300/80">
+                                  published
+                                </span>
+                              </button>
+                              <TooltipBubble
+                                side="top"
+                                align="center"
+                                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
+                              >
+                                Click to jump to this link in the text. Double-click to open the linked post.
+                              </TooltipBubble>
+                            </span>
                           ))}
                         </div>
                       </div>
@@ -1959,69 +2041,6 @@ function TelegramPostWorkspace({
                     </div>
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-            {displayedError ? (
-              <div className="rounded-lg border border-red-800/70 bg-red-950/25 px-3 py-2.5 text-sm text-red-200">
-                <div className="flex items-start gap-2">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="font-medium">Last publish error</p>
-                  <p className="mt-0.5 break-words text-red-300">
-                    {displayedError}
-                  </p>
-                </div>
-                </div>
-                {showManualTelegramUrlInput ? (
-                  <div className="mt-3 flex gap-2">
-                    <Input
-                      type="url"
-                      value={manualTelegramUrl}
-                      onChange={(event) =>
-                        setManualTelegramUrl(event.target.value)
-                      }
-                      placeholder="https://t.me/channel/123"
-                    />
-                    <Button
-                      type="button"
-                      disabled={
-                        savingTelegramUrl || !manualTelegramUrl.trim()
-                      }
-                      onClick={saveManualTelegramUrl}
-                    >
-                      {savingTelegramUrl ? "Saving…" : "Save link"}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {showManualTelegramUrlInput && !displayedError ? (
-              <div className="rounded-lg border border-amber-800/70 bg-amber-950/20 px-3 py-2.5 text-sm text-amber-100">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="font-medium">Telegram link</p>
-                    <p className="mt-0.5 text-amber-300">
-                      Paste a Telegram post URL manually to attach it locally.
-                      This also moves the post into published.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <Input
-                    type="url"
-                    value={manualTelegramUrl}
-                    onChange={(event) => setManualTelegramUrl(event.target.value)}
-                    placeholder="https://t.me/channel/123"
-                  />
-                  <Button
-                    type="button"
-                    disabled={savingTelegramUrl || !manualTelegramUrl.trim()}
-                    onClick={saveManualTelegramUrl}
-                  >
-                    {savingTelegramUrl ? "Saving…" : "Save link"}
-                  </Button>
-                </div>
               </div>
             ) : null}
             {editing ? (
@@ -2551,6 +2570,40 @@ function TelegramPostWorkspace({
           }}
         />
       ) : null}
+      <Modal
+        open={telegramLinkModalOpen}
+        onClose={() => setTelegramLinkModalOpen(false)}
+        title={telegramPostUrl ? "Replace Telegram link" : "Set Telegram link"}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-neutral-300">
+            Paste the Telegram post URL. Saving it attaches or replaces the local Telegram link for this managed post.
+          </p>
+          <Input
+            type="url"
+            value={manualTelegramUrl}
+            onChange={(event) => setManualTelegramUrl(event.target.value)}
+            placeholder="https://t.me/c/123456/789"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => setTelegramLinkModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={savingTelegramUrl || !manualTelegramUrl.trim()}
+              onClick={saveManualTelegramUrl}
+            >
+              {savingTelegramUrl ? "Saving…" : "Save link"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
       {editing && restorePreviewRevision ? (
         <Modal
           open
