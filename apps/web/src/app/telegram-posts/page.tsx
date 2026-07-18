@@ -125,6 +125,12 @@ function localDateTimeParts(value: string | Date) {
   };
 }
 
+function wantsNewTab(
+  event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
+) {
+  return event.metaKey || event.ctrlKey;
+}
+
 function parseTelegramMessageIdFromUrl(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -1365,6 +1371,25 @@ function TelegramPostWorkspace({
     onPostSelect(post.id);
   };
 
+  const openPostInNewTab = (post: TelegramManagedPost) => {
+    window.open(
+      `/telegram-posts?channelId=${channelId}&postId=${post.id}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
+  const openPostWithModifier = (
+    post: TelegramManagedPost,
+    event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
+  ) => {
+    if (wantsNewTab(event)) {
+      openPostInNewTab(post);
+      return;
+    }
+    openPost(post);
+  };
+
   const highlightInternalLinkTarget = (targetId: string) => {
     setHighlightedInternalLinkTargetId(targetId);
     setHighlightRequestKey((current) => current + 1);
@@ -1878,8 +1903,10 @@ function TelegramPostWorkspace({
                               <button
                                 type="button"
                                 onClick={() => highlightInternalLinkTarget(target.id)}
-                                onDoubleClick={() => {
-                                  if (target.post) openPost(target.post);
+                                onDoubleClick={(event) => {
+                                  if (target.post) {
+                                    openPostWithModifier(target.post, event);
+                                  }
                                 }}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
                               >
@@ -1912,7 +1939,7 @@ function TelegramPostWorkspace({
                                 align="center"
                                 className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
                               >
-                                Click to jump to this link in the text. Double-click to open the linked post.
+                                Click to jump to this link in the text. Double-click to open the linked post. Cmd/Ctrl-click opens it in a new tab.
                               </TooltipBubble>
                             </span>
                           ))}
@@ -1935,8 +1962,10 @@ function TelegramPostWorkspace({
                                 onClick={() =>
                                   highlightInternalLinkTarget(target.targetId)
                                 }
-                                onDoubleClick={() => {
-                                  if (target.target) openPost(target.target);
+                                onDoubleClick={(event) => {
+                                  if (target.target) {
+                                    openPostWithModifier(target.target, event);
+                                  }
                                 }}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/70 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-100 transition hover:border-emerald-600 hover:bg-emerald-900/30"
                               >
@@ -1962,7 +1991,7 @@ function TelegramPostWorkspace({
                                 align="center"
                                 className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
                               >
-                                Click to jump to this link in the text. Double-click to open the linked post.
+                                Click to jump to this link in the text. Double-click to open the linked post. Cmd/Ctrl-click opens it in a new tab.
                               </TooltipBubble>
                             </span>
                           ))}
@@ -2205,6 +2234,9 @@ function TelegramPostWorkspace({
                   setUsageModalOpen(false);
                   openPost(post);
                 }}
+                onOpenPostInNewTab={(post) => {
+                  openPostInNewTab(post);
+                }}
               />
             ) : null}
           </Card>
@@ -2400,6 +2432,11 @@ function TelegramPostWorkspace({
                                   role="button"
                                   tabIndex={0}
                                   onClick={(event) => {
+                                    if (wantsNewTab(event)) {
+                                      cancelScheduledPostOpen();
+                                      openPostInNewTab(post);
+                                      return;
+                                    }
                                     if (event.shiftKey || event.detail > 1) {
                                       cancelScheduledPostOpen();
                                       togglePostSelected(post.id);
@@ -4691,11 +4728,13 @@ function PostUsageModal({
   usages,
   onClose,
   onOpenPost,
+  onOpenPostInNewTab,
 }: {
   post: TelegramManagedPost;
   usages: TelegramManagedPost[];
   onClose: () => void;
   onOpenPost: (post: TelegramManagedPost) => void;
+  onOpenPostInNewTab: (post: TelegramManagedPost) => void;
 }) {
   return (
     <Modal open onClose={onClose} title={`Used in posts`} allowOverflow>
@@ -4721,7 +4760,13 @@ function PostUsageModal({
               <button
                 key={usagePost.id}
                 type="button"
-                onClick={() => onOpenPost(usagePost)}
+                onClick={(event) => {
+                  if (wantsNewTab(event)) {
+                    onOpenPostInNewTab(usagePost);
+                    return;
+                  }
+                  onOpenPost(usagePost);
+                }}
                 className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
               >
                 {usagePost.icon ? (
