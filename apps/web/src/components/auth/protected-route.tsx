@@ -52,12 +52,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!mounted) return;
 
-    if (pathname === '/register') {
-      router.replace('/login');
-      return;
-    }
-
-    if (pathname === '/login') {
+    if (isAuthPage) {
       if (!isLoading && token && isAuthenticated) {
         router.replace(consumeAuthReturnTo(getAuthRedirectParam()));
       }
@@ -86,11 +81,7 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
     return <FullScreenLoader />;
   }
 
-  if (pathname === '/register') {
-    return <FullScreenLoader />;
-  }
-
-  if (pathname === '/login') {
+  if (isAuthPage) {
     if (token && (isLoading || isAuthenticated) && !hasConnectionIssue) {
       return <FullScreenLoader />;
     }
