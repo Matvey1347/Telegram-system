@@ -27,7 +27,8 @@ export type SyncOperationResult = {
 export type StructuredApiError = {
   code: string;
   message: string;
-  details?: Record<string, unknown> | null;
+  details?: Record<string, unknown> | string | null;
+  correlationId?: string;
 };
 
 export type BulkProgressEvent<TItem = BulkActionResultItem> = {
@@ -45,6 +46,7 @@ export type StreamCompleteEvent<TResult> = {
 export type StreamErrorEvent = {
   type: "error";
   message: string;
+  correlationId?: string;
 };
 
 export type TelegramChannelSyncProgressPhase =

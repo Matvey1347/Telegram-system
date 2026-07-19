@@ -9,7 +9,7 @@ import { renderWithProviders } from "@/test/render-with-providers";
 
 function OperationHarness() {
   const operation = useOperationFeedback();
-  const { setProgress } = useAppToast();
+  const { pushToast, setProgress } = useAppToast();
   let primaryHandle: ReturnType<typeof operation.start> | null = null;
   let firstHandle: ReturnType<typeof operation.start> | null = null;
   let secondHandle: ReturnType<typeof operation.start> | null = null;
@@ -130,6 +130,21 @@ function OperationHarness() {
         }
       >
         Legacy mixed complete
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          pushToast(
+            "Unable to connect to the server. Please try again later.",
+            "error",
+          );
+          pushToast(
+            "Unable to connect to the server. Please try again later.",
+            "error",
+          );
+        }}
+      >
+        Duplicate toast
       </button>
     </div>
   );
@@ -288,5 +303,22 @@ describe("ToastProvider", () => {
 
     expect(await screen.findByText("Channel sync completed")).toBeInTheDocument();
     expect(screen.getByText("8 success · 1 failed · 0 skipped")).toBeInTheDocument();
+  });
+
+  it("deduplicates identical toasts fired within a short window", async () => {
+    renderWithProviders(<OperationHarness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate toast" }));
+
+    expect(
+      await screen.findByText(
+        "Unable to connect to the server. Please try again later.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        "Unable to connect to the server. Please try again later.",
+      ),
+    ).toHaveLength(1);
   });
 });

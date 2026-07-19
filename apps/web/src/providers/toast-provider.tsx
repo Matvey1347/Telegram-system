@@ -93,6 +93,7 @@ export type AppProgress = {
 const SUCCESS_DISMISS_MS = 3200;
 const ERROR_DISMISS_MS = 8000;
 const INFO_DISMISS_MS = 4000;
+const TOAST_DEDUPE_WINDOW_MS = 5000;
 
 type ApiMutationEventDetail = {
   id: string;
@@ -148,6 +149,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
   const [entries, setEntries] = useState<OperationEntry[]>([]);
   const entriesRef = useRef<Map<string, OperationEntry>>(new Map());
   const dismissTimersRef = useRef<Map<string, number>>(new Map());
+  const recentToastRef = useRef<Map<string, number>>(new Map());
   const sequenceRef = useRef(0);
 
   const clearDismissTimer = useCallback((id: string) => {
@@ -255,6 +257,20 @@ export function ToastProvider({ children }: PropsWithChildren) {
 
   const pushToast = useCallback<PushToast>(
     (message, tone = "info", durationMs = INFO_DISMISS_MS, icon) => {
+      const key = `${tone}:${message.trim()}`;
+      const now = Date.now();
+      const previous = recentToastRef.current.get(key);
+      if (previous && now - previous < TOAST_DEDUPE_WINDOW_MS) {
+        return;
+      }
+      recentToastRef.current.set(key, now);
+
+      for (const [entryKey, createdAt] of recentToastRef.current.entries()) {
+        if (now - createdAt > TOAST_DEDUPE_WINDOW_MS) {
+          recentToastRef.current.delete(entryKey);
+        }
+      }
+
       sequenceRef.current += 1;
       const id = `toast:${sequenceRef.current}`;
       upsertEntry(id, () => ({

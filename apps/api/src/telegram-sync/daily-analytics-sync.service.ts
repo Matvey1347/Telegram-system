@@ -3,6 +3,7 @@ import { AdCampaignAnalyticsService } from '../ad-campaigns/ad-campaign-analytic
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramChannelAnalyticsService } from '../telegram-channels/telegram-channel-analytics.service';
 import { TelegramChannelsService } from '../telegram-channels/telegram-channels.service';
+import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 
 @Injectable()
 export class DailyAnalyticsSyncService {
@@ -13,10 +14,23 @@ export class DailyAnalyticsSyncService {
     private telegramChannelsService: TelegramChannelsService,
     private telegramChannelAnalyticsService: TelegramChannelAnalyticsService,
     private adCampaignAnalyticsService: AdCampaignAnalyticsService,
+    private readonly applicationLogger: ApplicationLoggerService = ({
+      info: () => undefined,
+      writeStructured: () => undefined,
+    } as unknown) as ApplicationLoggerService,
   ) {}
 
   async runDailyAnalyticsSync(options: { workspaceId?: string; source?: 'cron' | 'manual' } = {}) {
     const source = options.source || 'cron';
+    const startedAt = Date.now();
+    this.applicationLogger.info({
+      kind: 'cron',
+      source: DailyAnalyticsSyncService.name,
+      event: 'daily_analytics.sync.started',
+      message: `Daily analytics sync started from ${source}.`,
+      workspaceId: options.workspaceId ?? null,
+      metadata: options as Record<string, unknown>,
+    });
     const run = await (this.prisma as any).dailyAnalyticsSyncRun.create({
       data: {
         workspaceId: options.workspaceId || null,
@@ -105,7 +119,7 @@ export class DailyAnalyticsSyncService {
       }
 
       const status = errorsCount > 0 ? 'partial_failed' : 'success';
-      return (this.prisma as any).dailyAnalyticsSyncRun.update({
+      const result = await (this.prisma as any).dailyAnalyticsSyncRun.update({
         where: { id: run.id },
         data: {
           status,
@@ -117,10 +131,20 @@ export class DailyAnalyticsSyncService {
           errorMessage: errors.slice(0, 5).join('\n') || null,
         },
       });
+      this.applicationLogger.info({
+        kind: 'cron',
+        source: DailyAnalyticsSyncService.name,
+        event: 'daily_analytics.sync.completed',
+        message: `Daily analytics sync finished with status ${status}.`,
+        workspaceId: options.workspaceId ?? null,
+        durationMs: Date.now() - startedAt,
+        metadata: result as Record<string, unknown>,
+      });
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
       this.logger.error(`Daily analytics sync failed: ${message}`);
-      return (this.prisma as any).dailyAnalyticsSyncRun.update({
+      const result = await (this.prisma as any).dailyAnalyticsSyncRun.update({
         where: { id: run.id },
         data: {
           status: 'failed',
@@ -132,6 +156,19 @@ export class DailyAnalyticsSyncService {
           errorMessage: message,
         },
       });
+      this.applicationLogger.writeStructured({
+        level: 'error',
+        kind: 'cron',
+        source: DailyAnalyticsSyncService.name,
+        event: 'daily_analytics.sync.failed',
+        message,
+        workspaceId: options.workspaceId ?? null,
+        durationMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : 'Error',
+        stack: error instanceof Error ? error.stack || null : null,
+        metadata: result as Record<string, unknown>,
+      });
+      return result;
     }
   }
 }

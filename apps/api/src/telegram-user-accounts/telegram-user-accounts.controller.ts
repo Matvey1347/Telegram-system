@@ -22,43 +22,31 @@ import {
   UpdateTelegramUserAccountDto,
 } from './dto';
 import { TelegramUserAccountsService } from './telegram-user-accounts.service';
+import { StreamResponseService } from '../common/stream/stream-response.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('telegram-user-accounts')
 export class TelegramUserAccountsController {
-  constructor(private readonly service: TelegramUserAccountsService) {}
+  constructor(
+    private readonly service: TelegramUserAccountsService,
+    private readonly streamResponse: StreamResponseService,
+  ) {}
 
   private async streamAction(
     res: Response,
     action: (
-      onProgress: (item: { message: string }, current: number, total: number) => void,
+      onProgress: (
+        item: { message: string },
+        current: number,
+        total: number,
+      ) => void,
     ) => Promise<unknown>,
+    eventPrefix: string,
   ) {
-    res.status(200);
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-    try {
-      const result = await action((item, current, total) => {
-        res.write(
-          `${JSON.stringify({ type: 'progress', item, current, total })}\n`,
-        );
-        (res as Response & { flush?: () => void }).flush?.();
-      });
-      res.write(`${JSON.stringify({ type: 'complete', result })}\n`);
-      (res as Response & { flush?: () => void }).flush?.();
-    } catch (error) {
-      res.write(
-        `${JSON.stringify({
-          type: 'error',
-          message: error instanceof Error ? error.message : 'Action failed',
-        })}\n`,
-      );
-      (res as Response & { flush?: () => void }).flush?.();
-    } finally {
-      res.end();
-    }
+    return this.streamResponse.stream(res, {
+      eventPrefix,
+      action,
+    });
   }
 
   @Get() findAll(@CurrentUser() user: JwtUser) {
@@ -128,8 +116,10 @@ export class TelegramUserAccountsController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    return this.streamAction(res, (onProgress) =>
-      this.service.syncDialogs(user.sub, id, onProgress),
+    return this.streamAction(
+      res,
+      (onProgress) => this.service.syncDialogs(user.sub, id, onProgress),
+      'telegram_user_account.sync_dialogs_stream',
     );
   }
   @Post(':id/channels/import') importChannels(
@@ -145,8 +135,10 @@ export class TelegramUserAccountsController {
     @Body() dto: ImportUserAccountChannelsDto,
     @Res() res: Response,
   ) {
-    return this.streamAction(res, (onProgress) =>
-      this.service.importChannels(user.sub, id, dto, onProgress),
+    return this.streamAction(
+      res,
+      (onProgress) => this.service.importChannels(user.sub, id, dto, onProgress),
+      'telegram_user_account.import_channels_stream',
     );
   }
 }

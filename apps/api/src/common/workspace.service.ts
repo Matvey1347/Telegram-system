@@ -9,6 +9,7 @@ import { REQUEST } from '@nestjs/core';
 import { WorkspaceRole } from '@prisma/client';
 import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { RequestContextService } from './request-context/request-context.service';
 
 @Injectable({ scope: Scope.REQUEST })
 export class WorkspaceService {
@@ -33,6 +34,7 @@ export class WorkspaceService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly requestContext: RequestContextService,
     @Inject(REQUEST) private readonly request: Request,
   ) {}
 
@@ -100,13 +102,17 @@ export class WorkspaceService {
     }
 
     return {
-        ...membership,
+      ...membership,
       workspace: membership.workspace,
     };
   }
 
   async resolveWorkspaceIdForUser(userId: string): Promise<string> {
     const membership = await this.resolveWorkspaceMembershipForUser(userId);
+    this.requestContext.set({
+      userId,
+      workspaceId: membership.workspaceId,
+    });
     return membership.workspaceId;
   }
 
@@ -116,6 +122,10 @@ export class WorkspaceService {
   ) {
     const currentMembership =
       await this.resolveWorkspaceMembershipForUser(userId);
+    this.requestContext.set({
+      userId,
+      workspaceId: currentMembership.workspaceId,
+    });
     const canAssignOthers =
       currentMembership.role === WorkspaceRole.owner ||
       currentMembership.role === WorkspaceRole.admin;
@@ -166,6 +176,10 @@ export class WorkspaceService {
 
   async requireWorkspaceRole(userId: string, allowedRoles: WorkspaceRole[]) {
     const membership = await this.resolveWorkspaceMembershipForUser(userId);
+    this.requestContext.set({
+      userId,
+      workspaceId: membership.workspaceId,
+    });
     if (!allowedRoles.includes(membership.role)) {
       throw new ForbiddenException('Insufficient workspace role');
     }
@@ -174,6 +188,10 @@ export class WorkspaceService {
 
   async ensureCanAccessWorkspaceEntity(userId: string, workspaceId: string) {
     const membership = await this.resolveWorkspaceMembershipForUser(userId);
+    this.requestContext.set({
+      userId,
+      workspaceId: membership.workspaceId,
+    });
     if (membership.workspaceId !== workspaceId) {
       throw new ForbiddenException('Access denied for this workspace');
     }

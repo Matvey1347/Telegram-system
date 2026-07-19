@@ -147,9 +147,9 @@ describe('TelegramMtprotoClient publishPost', () => {
           'content-length': '11',
         }),
         arrayBuffer: async () => Buffer.from('avif-binary'),
-      } as Response);
+      } as unknown as Response);
 
-    const file = await (client as never).downloadPublishImage(
+    const file = await (client as any).downloadPublishImage(
       'https://example.com/post-image.avif',
       0,
     );
@@ -180,9 +180,9 @@ describe('TelegramMtprotoClient publishPost', () => {
           'content-length': '11',
         }),
         arrayBuffer: async () => Buffer.from('avif-binary'),
-      } as Response);
+      } as unknown as Response);
 
-    const file = await (client as never).downloadPublishImage(
+    const file = await (client as any).downloadPublishImage(
       'https://example.com/post-image.avif',
       0,
     );

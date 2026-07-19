@@ -131,6 +131,22 @@ enum TelegramManagedPostRemoteStatus {
   UNKNOWN
 }
 
+enum ApplicationLogLevel {
+  debug
+  info
+  warn
+  error
+}
+
+enum ApplicationLogKind {
+  http
+  application
+  integration
+  cron
+  client
+  audit
+}
+
 model User {
   id                             String                           @id @default(cuid())
   email                          String                           @unique
@@ -151,6 +167,7 @@ model User {
   createdAdCampaigns             AdCampaign[]                     @relation("AdCampaignCreatedBy")
   createdAdHypotheses            AdHypothesis[]                   @relation("AdHypothesisCreatedBy")
   createdTelegramChannelNetworks TelegramChannelNetwork[]         @relation("TelegramChannelNetworkCreatedBy")
+  applicationLogs                ApplicationLog[]
   createdAt                      DateTime                         @default(now())
   updatedAt                      DateTime                         @updatedAt
 }
@@ -194,6 +211,7 @@ model Workspace {
   transactionCategories            TransactionCategory[]
   icons                            Icon[]
   promptNotes                      PromptNote[]
+  applicationLogs                  ApplicationLog[]
   avatarIcon                       Icon?                             @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
@@ -999,6 +1017,44 @@ model DailyAnalyticsSyncRun {
   @@index([workspaceId, startedAt])
   @@index([status])
   @@index([source])
+}
+
+model ApplicationLog {
+  id            String              @id @default(cuid())
+  workspaceId   String?
+  userId        String?
+  level         ApplicationLogLevel
+  kind          ApplicationLogKind
+  environment   String
+  service       String
+  source        String?
+  event         String
+  message       String
+  correlationId String?
+  requestId     String?
+  method        String?
+  endpoint      String?
+  path          String?
+  statusCode    Int?
+  durationMs    Int?
+  errorName     String?
+  errorCode     String?
+  stack         String?
+  metadata      Json?
+  createdAt     DateTime            @default(now())
+  expiresAt     DateTime?
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([level, createdAt])
+  @@index([kind, createdAt])
+  @@index([source, createdAt])
+  @@index([event, createdAt])
+  @@index([correlationId])
+  @@index([statusCode, createdAt])
+  @@index([expiresAt])
 }
 
 model AdCampaignAdvertisingChannel {

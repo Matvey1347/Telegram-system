@@ -25,6 +25,7 @@ import {
 } from './dto';
 import { ConfigService } from '@nestjs/config';
 import { TelegramChannelsService } from '../telegram-channels/telegram-channels.service';
+import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 
 type ProgressCallback = (
   item: { message: string },
@@ -44,6 +45,10 @@ export class TelegramUserAccountsService {
     private readonly sourceAccessService: TelegramSourceAccessService,
     private readonly configService: ConfigService,
     private readonly telegramChannelsService: TelegramChannelsService,
+    private readonly applicationLogger: ApplicationLoggerService = ({
+      info: () => undefined,
+      writeStructured: () => undefined,
+    } as unknown) as ApplicationLoggerService,
   ) {}
 
   private async notifyProgress(

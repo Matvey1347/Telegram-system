@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 import {
   CreateCurrencyRateDto,
   UpdateCurrencySettingsDto,
@@ -51,6 +52,10 @@ export class CurrenciesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
+    private readonly applicationLogger: ApplicationLoggerService = ({
+      info: () => undefined,
+      writeStructured: () => undefined,
+    } as unknown) as ApplicationLoggerService,
   ) {}
 
   async getSettings(userId: string) {
@@ -167,6 +172,14 @@ export class CurrenciesService {
       );
       return { success: true, updated };
     } catch {
+      this.applicationLogger.writeStructured({
+        level: 'warn',
+        kind: 'integration',
+        source: CurrenciesService.name,
+        event: 'currencies.sync.failed',
+        message: `Currency sync failed for workspace ${workspaceId}.`,
+        workspaceId,
+      });
       throw new BadGatewayException(
         'Failed to sync exchange rates. Manual rates remain available.',
       );
@@ -209,6 +222,14 @@ export class CurrenciesService {
         this.logger.warn(
           `Daily auto-sync failed for workspace ${workspace.id}: ${(error as Error).message}`,
         );
+        this.applicationLogger.writeStructured({
+          level: 'warn',
+          kind: 'cron',
+          source: CurrenciesService.name,
+          event: 'currencies.workspace_sync.failed',
+          message: `Daily auto-sync failed for workspace ${workspace.id}: ${(error as Error).message}`,
+          workspaceId: workspace.id,
+        });
       }
     }
 

@@ -29,6 +29,7 @@ import {
   inviteLinkAttributedSubscribers,
   sumInviteLinkAttributedSubscribers,
 } from '../common/analytics/invite-link-metrics';
+import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -261,6 +262,10 @@ export class TelegramChannelsService {
     private mtprotoClient: TelegramMtprotoClient,
     private sourceAccessService: TelegramSourceAccessService,
     private analyticsService: TelegramChannelAnalyticsService,
+    private readonly applicationLogger: ApplicationLoggerService = ({
+      info: () => undefined,
+      writeStructured: () => undefined,
+    } as unknown) as ApplicationLoggerService,
   ) {}
 
   private workspace(userId: string) {
@@ -5785,6 +5790,7 @@ export class TelegramChannelsService {
     dto: SyncNowDto = {},
     onProgress?: BulkProgressCallback,
   ) {
+    const startedAt = Date.now();
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const selection = this.resolveSyncSelection(
@@ -5811,6 +5817,19 @@ export class TelegramChannelsService {
           TelegramChannelDataType.STATS,
         )),
     );
+    this.applicationLogger.info({
+      kind: 'integration',
+      source: TelegramChannelsService.name,
+      event: 'telegram.sync.started',
+      message: `Telegram sync started for channel ${channelId}.`,
+      workspaceId,
+      userId,
+      metadata: {
+        channelId,
+        sourceAccountId: account.id,
+        selection,
+      },
+    });
     const steps: SyncStepResult[] = [];
     let progressStep = 0;
     const nextProgressStep = () => {
@@ -6141,7 +6160,7 @@ export class TelegramChannelsService {
       : hasRequiredPartial || hasOptionalFailure || hasOptionalPartial
         ? 'partial'
         : 'success';
-    return {
+    const result = {
       status: overallStatus,
       source: 'mtproto',
       steps,
@@ -6153,6 +6172,28 @@ export class TelegramChannelsService {
       managedPostsSync,
       audienceSnapshot,
     } satisfies SyncOperationResult & Record<string, unknown>;
+    this.applicationLogger.info({
+      level:
+        overallStatus === 'failed'
+          ? 'error'
+          : overallStatus === 'partial'
+            ? 'warn'
+            : 'info',
+      kind: 'integration',
+      source: TelegramChannelsService.name,
+      event:
+        overallStatus === 'failed'
+          ? 'telegram.sync.failed'
+          : overallStatus === 'partial'
+            ? 'telegram.sync.partial'
+            : 'telegram.sync.completed',
+      message: `Telegram sync finished with status ${overallStatus}.`,
+      workspaceId,
+      userId,
+      durationMs: Date.now() - startedAt,
+      metadata: { channelId, sourceAccountId: account.id, steps },
+    });
+    return result;
   }
 
   async deepSync(userId: string, channelId: string, dto: DeepSyncDto) {
@@ -6544,6 +6585,7 @@ export class TelegramChannelsService {
     onProgress?: BulkProgressCallback,
     progressStep = { current: 3, total: 8 },
   ) {
+    const startedAt = Date.now();
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { id: channelId, workspaceId, isActive: true },
     });
@@ -6595,15 +6637,42 @@ export class TelegramChannelsService {
         channelId,
         'sync',
       );
-      return {
+      const result = {
         source: 'mtproto',
         syncedPosts: metrics.length,
         audienceSnapshot,
       };
+      this.applicationLogger.info({
+        kind: 'integration',
+        source: TelegramChannelsService.name,
+        event: 'telegram.post_metrics_sync.completed',
+        message: `Post metrics synced for channel ${channelId}.`,
+        workspaceId,
+        durationMs: Date.now() - startedAt,
+        metadata: {
+          channelId,
+          sourceAccountId: account.id,
+          syncedPosts: metrics.length,
+        },
+      });
+      return result;
     } catch (error) {
       this.logger.error(
         `MTProto post metrics sync failed for channel=${channelId}: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
+      this.applicationLogger.writeStructured({
+        level: 'error',
+        kind: 'integration',
+        source: TelegramChannelsService.name,
+        event: 'telegram.post_metrics_sync.failed',
+        message:
+          error instanceof Error ? error.message : 'Failed to sync channel post metrics',
+        workspaceId,
+        durationMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : 'Error',
+        stack: error instanceof Error ? error.stack || null : null,
+        metadata: { channelId, sourceAccountId: account.id },
+      });
       throw new InternalServerErrorException(
         'Failed to sync channel post metrics',
       );
@@ -7520,6 +7589,7 @@ export class TelegramChannelsService {
     channelId: string,
     accountId: string,
   ) {
+    const startedAt = Date.now();
     const channel = await this.prisma.telegramChannel.findFirst({
       where: { id: channelId, workspaceId, isActive: true },
     });
@@ -7626,13 +7696,34 @@ export class TelegramChannelsService {
       channelId,
       'sync',
     );
-    return {
+    const result = {
       source: 'mtproto',
       success: stats.normalized.status === 'available',
       snapshot,
       pointsUpserted: points.length,
       audienceSnapshot,
     };
+    this.applicationLogger.info({
+      level: result.success ? 'info' : 'warn',
+      kind: 'integration',
+      source: TelegramChannelsService.name,
+      event: result.success
+        ? 'telegram.broadcast_stats_sync.completed'
+        : 'telegram.broadcast_stats_sync.skipped',
+      message: result.success
+        ? `Broadcast stats synced for channel ${channelId}.`
+        : `Broadcast stats unavailable for channel ${channelId}.`,
+      workspaceId,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        channelId,
+        sourceAccountId: account.id,
+        pointsUpserted: points.length,
+        normalizedStatus: stats.normalized.status,
+        warnings: stats.warnings,
+      },
+    });
+    return result;
   }
 
   private extractBroadcastStatsPoints(

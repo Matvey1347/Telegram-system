@@ -19,6 +19,7 @@ import { CustomSelect } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { IconAvatar } from '@/components/icons/icon-avatar';
 import {
+  Bug,
   ArrowRightLeft,
   ChevronDown,
   ChevronRight,
@@ -42,31 +43,6 @@ import {
 } from 'lucide-react';
 
 const dashboardItem = { label: 'Dashboard', href: '/', icon: Gauge } as const;
-
-const groups = [
-  {
-    key: 'finance',
-    label: 'Finance',
-    icon: Landmark,
-    children: [
-      { label: 'Accounts', href: '/accounts', icon: CreditCard },
-      { label: 'Transactions', href: '/transactions', icon: ReceiptText },
-      { label: 'Categories', href: '/categories', icon: FolderTree },
-      { label: 'Transfers', href: '/transfers', icon: ArrowRightLeft },
-      { label: 'Currencies', href: '/currencies', icon: Coins },
-    ],
-  },
-  {
-    key: 'telegram',
-    label: 'Telegram',
-    icon: MessageCircle,
-    children: [
-      { label: 'Telegram', href: '/telegram-channels', icon: RadioTower },
-      { label: 'Posts', href: '/telegram-posts', icon: Send },
-      { label: 'Ads', href: '/ad-campaigns', icon: Target },
-    ],
-  },
-] as const;
 
 export function AppShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
@@ -264,6 +240,39 @@ export function AppShell({ children }: PropsWithChildren) {
     pathname === '/settings' || pathname === '/workspace-members';
   const dashboardActive = pathname === '/';
   const activeWorkspaceId = selectedWorkspaceId || workspaces?.[0]?.id || '';
+  const activeWorkspace = (workspaces ?? []).find(
+    (workspace) => workspace.id === activeWorkspaceId,
+  );
+  const canViewSystemLogs =
+    activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const groups = useMemo(
+    () =>
+      [
+        {
+          key: "finance",
+          label: "Finance",
+          icon: Landmark,
+          children: [
+            { label: "Accounts", href: "/accounts", icon: CreditCard },
+            { label: "Transactions", href: "/transactions", icon: ReceiptText },
+            { label: "Categories", href: "/categories", icon: FolderTree },
+            { label: "Transfers", href: "/transfers", icon: ArrowRightLeft },
+            { label: "Currencies", href: "/currencies", icon: Coins },
+          ],
+        },
+        {
+          key: "telegram",
+          label: "Telegram",
+          icon: MessageCircle,
+          children: [
+            { label: "Telegram", href: "/telegram-channels", icon: RadioTower },
+            { label: "Posts", href: "/telegram-posts", icon: Send },
+            { label: "Ads", href: "/ad-campaigns", icon: Target },
+          ],
+        },
+      ] as const,
+    [],
+  );
 
   const groupActiveMap = useMemo(() => {
     const map: Record<string, boolean> = {};
@@ -439,6 +448,20 @@ export function AppShell({ children }: PropsWithChildren) {
               </div>
             );
           })}
+
+          {canViewSystemLogs ? (
+            <Link
+              href="/system-logs"
+              className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+                pathname === '/system-logs'
+                  ? 'bg-neutral-800 text-white'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'
+              }`}
+            >
+              <Bug size={16} />
+              System Logs
+            </Link>
+          ) : null}
 
           <Link href="/settings" className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${settingsActive ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}>
             <Settings size={16} />

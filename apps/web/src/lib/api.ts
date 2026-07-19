@@ -1,5 +1,11 @@
 import axios, { type AxiosRequestConfig } from "axios";
 import type {
+  ApplicationLog,
+  ApplicationLogsDeleteResult,
+  ApplicationLogsFilterOptions,
+  ApplicationLogsListResult,
+  ApplicationLogsQuery,
+  ClientApplicationLogPayload,
   BulkActionResult,
   BulkActionResultItem,
   StreamEvent,
@@ -31,6 +37,19 @@ export const api = axios.create({
   baseURL: resolveApiBaseUrl(),
   withCredentials: true,
 });
+
+let lastCorrelationId: string | null = null;
+
+function createCorrelationId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function getLastCorrelationId() {
+  return lastCorrelationId;
+}
 
 export const API_MUTATION_EVENT = "telegram-system:api-mutation";
 
@@ -191,9 +210,12 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
   payload: unknown,
   onProgress: StreamProgressHandler<TItem>,
 ): Promise<TResult> {
+  const correlationId = createCorrelationId();
+  lastCorrelationId = correlationId;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/x-ndjson",
+    "X-Correlation-Id": correlationId,
   };
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -209,7 +231,19 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
   });
   if (!response.ok || !response.body) {
     const body = await response.text();
-    throw new Error(body || `Request failed with status ${response.status}`);
+    try {
+      const parsed = JSON.parse(body) as {
+        message?: string;
+        correlationId?: string;
+      };
+      const error = new Error(
+        parsed.message || `Request failed with status ${response.status}`,
+      ) as Error & { correlationId?: string };
+      error.correlationId = parsed.correlationId;
+      throw error;
+    } catch {
+      throw new Error(body || `Request failed with status ${response.status}`);
+    }
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -223,7 +257,11 @@ async function streamAction<TResult, TItem = BulkActionResultItem>(
     } else if (event.type === "complete") {
       completed = event.result;
     } else {
-      throw new Error(event.message);
+      const error = new Error(event.message) as Error & {
+        correlationId?: string;
+      };
+      error.correlationId = event.correlationId;
+      throw error;
     }
   };
   while (true) {
@@ -270,6 +308,9 @@ export function isApiNetworkError(error: unknown) {
 }
 
 api.interceptors.request.use((config) => {
+  const correlationId = createCorrelationId();
+  lastCorrelationId = correlationId;
+  config.headers["X-Correlation-Id"] = correlationId;
   const token = getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (typeof window !== "undefined") {
@@ -1513,6 +1554,39 @@ export const authApi = {
     workspaceName?: string;
   }) => (await api.post<AuthResponse>("/auth/register", payload)).data,
   me: async () => (await api.get<MeResponse>("/auth/me")).data,
+};
+
+export const applicationLogsApi = {
+  list: async (query: ApplicationLogsQuery = {}) =>
+    (
+      await api.get<ApplicationLogsListResult>("/application-logs", {
+        params: query,
+        paramsSerializer: {
+          serialize: (params) => {
+            const search = new URLSearchParams();
+            for (const [key, rawValue] of Object.entries(params)) {
+              if (rawValue == null || rawValue === "") continue;
+              if (Array.isArray(rawValue)) {
+                if (!rawValue.length) continue;
+                search.set(key, rawValue.join(","));
+                continue;
+              }
+              search.set(key, String(rawValue));
+            }
+            return search.toString();
+          },
+        },
+      })
+    ).data,
+  detail: async (id: string) =>
+    (await api.get<ApplicationLog>(`/application-logs/${id}`)).data,
+  filterOptions: async () =>
+    (await api.get<ApplicationLogsFilterOptions>("/application-logs/filter-options"))
+      .data,
+  clear: async () =>
+    (await api.delete<ApplicationLogsDeleteResult>("/application-logs")).data,
+  createClientLog: async (payload: ClientApplicationLogPayload) =>
+    (await api.post("/application-logs/client", payload, silentFeedbackConfig)).data,
 };
 
 export const accountApi = {

@@ -1,5 +1,5 @@
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AccountsModule } from './accounts/accounts.module';
@@ -29,6 +29,10 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
 import { IconsModule } from './icons/icons.module';
 import { ResponseCacheInterceptor } from './common/response-cache.interceptor';
 import { PromptNotesModule } from './prompt-notes/prompt-notes.module';
+import { RequestContextModule } from './common/request-context/request-context.module';
+import { RequestContextMiddleware } from './common/request-context/request-context.middleware';
+import { ApplicationLogsModule } from './application-logs/application-logs.module';
+import { StreamModule } from './common/stream/stream.module';
 
 @Module({
   imports: [
@@ -37,8 +41,11 @@ import { PromptNotesModule } from './prompt-notes/prompt-notes.module';
       envFilePath: ['../../.env', '.env'],
     }),
     ScheduleModule.forRoot(),
+    RequestContextModule,
+    StreamModule,
     PrismaModule,
     CommonModule,
+    ApplicationLogsModule,
     AuthModule,
     AccountsModule,
     ExchangeRatesModule,
@@ -66,4 +73,8 @@ import { PromptNotesModule } from './prompt-notes/prompt-notes.module';
   controllers: [AppController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ResponseCacheInterceptor }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}
