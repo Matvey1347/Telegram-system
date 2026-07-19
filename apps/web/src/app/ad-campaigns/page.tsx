@@ -228,31 +228,21 @@ export default function AdCampaignsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['promos'] });
       qc.invalidateQueries({ queryKey: ['channel-promos'] });
-      setPromoFormOpen(false);
-      pushToast('Promo created.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to create promo.'), 'error'),
   });
   const updatePromoMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Partial<Promo> }) => promosApi.update(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['promos'] });
       qc.invalidateQueries({ queryKey: ['channel-promos'] });
-      setEditingPromo(null);
-      setPromoFormOpen(false);
-      pushToast('Promo updated.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update promo.'), 'error'),
   });
   const deletePromoMutation = useMutation({
     mutationFn: (id: string) => promosApi.remove(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['promos'] });
       qc.invalidateQueries({ queryKey: ['channel-promos'] });
-      setDeletingPromo(null);
-      pushToast('Promo deleted.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to delete promo.'), 'error'),
   });
 
   const campaigns = data ?? [];
@@ -437,7 +427,37 @@ export default function AdCampaignsPage() {
         }
       }}
     />
-    <PromoModal open={promoFormOpen} title={editingPromo ? 'Edit Promo' : 'Create Promo'} initial={editingPromo ?? undefined} onClose={() => { setPromoFormOpen(false); setEditingPromo(null); }} onSubmit={(payload) => editingPromo ? updatePromoMutation.mutate({ id: editingPromo.id, payload }) : createPromoMutation.mutate(payload)} channels={ownTelegramChannels} />
+    <PromoModal
+      open={promoFormOpen}
+      title={editingPromo ? 'Edit Promo' : 'Create Promo'}
+      initial={editingPromo ?? undefined}
+      onClose={() => { setPromoFormOpen(false); setEditingPromo(null); }}
+      onSubmit={async (payload) => {
+        const currentPromo = editingPromo;
+        setPromoFormOpen(false);
+        setEditingPromo(null);
+        const operation = startOperation({
+          id: `promo-${currentPromo ? `update:${currentPromo.id}` : 'create'}:${Date.now()}`,
+          title: 'Processing',
+          message: currentPromo ? 'Saving promo...' : 'Creating promo...',
+        });
+        try {
+          if (currentPromo) {
+            await updatePromoMutation.mutateAsync({ id: currentPromo.id, payload });
+            operation.succeed({ title: 'Success', message: 'Promo updated.' });
+          } else {
+            await createPromoMutation.mutateAsync(payload);
+            operation.succeed({ title: 'Success', message: 'Promo created.' });
+          }
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, currentPromo ? 'Failed to update promo.' : 'Failed to create promo.'),
+          });
+        }
+      }}
+      channels={ownTelegramChannels}
+    />
     <PromoPreviewModal promo={previewPromo} onClose={() => setPreviewPromo(null)} />
     <HypothesisFormModal
       open={hypothesisFormOpen}
@@ -481,7 +501,31 @@ export default function AdCampaignsPage() {
       label="Archive"
     />
     <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis ? deleteHypothesisMutation.mutateAsync(deletingHypothesis.id) : undefined} label="Delete" />
-    <ConfirmDeleteModal open={!!deletingPromo} entityName={deletingPromo?.title ?? 'promo'} onClose={() => setDeletingPromo(null)} onConfirm={() => deletingPromo ? deletePromoMutation.mutateAsync(deletingPromo.id) : undefined} label="Delete" />
+    <ConfirmDeleteModal
+      open={!!deletingPromo}
+      entityName={deletingPromo?.title ?? 'promo'}
+      onClose={() => setDeletingPromo(null)}
+      onConfirm={async () => {
+        if (!deletingPromo) return;
+        const promoId = deletingPromo.id;
+        setDeletingPromo(null);
+        const operation = startOperation({
+          id: `promo-delete:${promoId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Deleting promo...',
+        });
+        try {
+          await deletePromoMutation.mutateAsync(promoId);
+          operation.succeed({ title: 'Success', message: 'Promo deleted.' });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to delete promo.'),
+          });
+        }
+      }}
+      label="Delete"
+    />
   </AppShell>;
 }
 

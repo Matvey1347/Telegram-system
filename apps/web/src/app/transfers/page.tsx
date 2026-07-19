@@ -12,7 +12,6 @@ import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
 import { formatRate } from '@/lib/money';
 import { useAppToast } from '@/providers/toast-provider';
-import { pushFinanceMutationToast } from '@/lib/finance-mutation-toast';
 
 type Values = { fromAccountId: string; toAccountId: string; fromAmount: number; toAmount: number; date: string; description?: string };
 
@@ -43,7 +42,7 @@ function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null
 
 export default function TransfersPage() {
   const qc = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { startOperation } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Transfer | null>(null);
   const [deleting, setDeleting] = useState<Transfer | null>(null);
@@ -57,32 +56,20 @@ export default function TransfersPage() {
   });
   const createMutation = useMutation({
     mutationFn: transfersApi.create,
-    onSuccess: (created) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transfers'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      pushFinanceMutationToast(pushToast, {
-        action: 'created',
-        entityLabel: 'Transfer',
-        name: `${created.fromAccount?.name ?? nameOf(created.fromAccountId)} -> ${created.toAccount?.name ?? nameOf(created.toAccountId)}`,
-        icon: accountOf(created.fromAccountId)?.icon ?? created.fromAccount?.icon ?? null,
-      });
     },
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transfersApi.update(id, payload),
-    onSuccess: (updated) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transfers'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      pushFinanceMutationToast(pushToast, {
-        action: 'updated',
-        entityLabel: 'Transfer',
-        name: `${updated.fromAccount?.name ?? nameOf(updated.fromAccountId)} -> ${updated.toAccount?.name ?? nameOf(updated.toAccountId)}`,
-        icon: accountOf(updated.fromAccountId)?.icon ?? updated.fromAccount?.icon ?? null,
-      });
     },
   });
   const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
-  const deleteMutation = useMutation({ mutationFn: (id: string) => transfersApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
+  const deleteMutation = useMutation({ mutationFn: (id: string) => transfersApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transfers'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); } });
   const nameOf = (id: string) => accounts?.find((a) => a.id === id)?.name ?? id;
   const accountOf = (id: string) => accounts?.find((a) => a.id === id);
   const setFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value }));
@@ -121,9 +108,97 @@ export default function TransfersPage() {
       </div>
     ) : null}
     {!isLoading && !error && !data?.length ? <EmptyState text="No transfers" /> : null}
-    <TransferModal open={createOpen} title="Create Transfer" onClose={() => { createMutation.reset(); setCreateOpen(false); }} accounts={accounts ?? []} error={createMutation.error} onSubmit={(v) => { createMutation.reset(); setCreateOpen(false); createMutation.mutate(v); }} />
-    <TransferModal open={!!editing} title="Edit Transfer" onClose={() => { updateMutation.reset(); setEditing(null); }} accounts={accounts ?? []} initial={editing ?? undefined} error={updateMutation.error} onSubmit={(v) => { if (!editing) return; updateMutation.reset(); setEditing(null); updateMutation.mutate({ id: editing.id, payload: v }); }} />
-    <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${nameOf(deleting.fromAccountId)} -> ${nameOf(deleting.toAccountId)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} />
+    <TransferModal
+      open={createOpen}
+      title="Create Transfer"
+      onClose={() => { createMutation.reset(); setCreateOpen(false); }}
+      accounts={accounts ?? []}
+      error={createMutation.error}
+      onSubmit={async (v) => {
+        createMutation.reset();
+        setCreateOpen(false);
+        const fromName = nameOf(v.fromAccountId);
+        const toName = nameOf(v.toAccountId);
+        const operation = startOperation({
+          id: `transfer-create:${Date.now()}`,
+          title: 'Processing',
+          message: 'Creating transfer...',
+        });
+        try {
+          await createMutation.mutateAsync(v);
+          operation.succeed({
+            title: 'Success',
+            message: `Transfer created: ${fromName} -> ${toName}`,
+          });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to create transfer'),
+          });
+        }
+      }}
+    />
+    <TransferModal
+      open={!!editing}
+      title="Edit Transfer"
+      onClose={() => { updateMutation.reset(); setEditing(null); }}
+      accounts={accounts ?? []}
+      initial={editing ?? undefined}
+      error={updateMutation.error}
+      onSubmit={async (v) => {
+        if (!editing) return;
+        updateMutation.reset();
+        const transferId = editing.id;
+        const fromName = nameOf(v.fromAccountId);
+        const toName = nameOf(v.toAccountId);
+        setEditing(null);
+        const operation = startOperation({
+          id: `transfer-update:${transferId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Saving transfer...',
+        });
+        try {
+          await updateMutation.mutateAsync({ id: transferId, payload: v });
+          operation.succeed({
+            title: 'Success',
+            message: `Transfer updated: ${fromName} -> ${toName}`,
+          });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to save transfer'),
+          });
+        }
+      }}
+    />
+    <ConfirmDeleteModal
+      open={!!deleting}
+      entityName={deleting ? `${nameOf(deleting.fromAccountId)} -> ${nameOf(deleting.toAccountId)}` : ''}
+      onClose={() => setDeleting(null)}
+      onConfirm={async () => {
+        if (!deleting) return;
+        const transferId = deleting.id;
+        const name = `${nameOf(deleting.fromAccountId)} -> ${nameOf(deleting.toAccountId)}`;
+        setDeleting(null);
+        const operation = startOperation({
+          id: `transfer-delete:${transferId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Deleting transfer...',
+        });
+        try {
+          await deleteMutation.mutateAsync(transferId);
+          operation.succeed({
+            title: 'Success',
+            message: `Transfer deleted: ${name}`,
+          });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to delete transfer'),
+          });
+        }
+      }}
+    />
   </AppShell>;
 }
 

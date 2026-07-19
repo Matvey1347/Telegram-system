@@ -12,7 +12,6 @@ import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState
 import { IconPicker } from '@/components/icons/icon-picker';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { useAppToast } from '@/providers/toast-provider';
-import { pushFinanceMutationToast } from '@/lib/finance-mutation-toast';
 
 type Values = { accountId: string; type: 'income' | 'expense'; amount: number; categoryId: string; memberId?: string; description?: string; date: string; iconId?: string | null };
 
@@ -41,7 +40,7 @@ function memberOptionProps(member: WorkspaceMember) {
 
 export default function TransactionsPage() {
   const qc = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { startOperation } = useAppToast();
   const searchParams = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
@@ -58,34 +57,22 @@ export default function TransactionsPage() {
   const { data: filterCategories } = useQuery({ queryKey: ['transaction-categories', filters.type], queryFn: () => transactionCategoriesApi.list(filters.type === 'income' ? 'income' : 'expense'), enabled: filters.type === 'income' || filters.type === 'expense' });
   const createMutation = useMutation({
     mutationFn: transactionsApi.create,
-    onSuccess: (created) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      pushFinanceMutationToast(pushToast, {
-        action: 'created',
-        entityLabel: 'Transaction',
-        name: getTransactionTitle(created),
-        icon: created.icon,
-      });
     },
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Record<string, unknown> }) => transactionsApi.update(id, payload),
-    onSuccess: (updated) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      pushFinanceMutationToast(pushToast, {
-        action: 'updated',
-        entityLabel: 'Transaction',
-        name: getTransactionTitle(updated),
-        icon: updated.icon,
-      });
     },
   });
   const updateTransactionIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionsApi.update(id, { iconId }), onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }) });
   const updateAccountIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => accountsApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
   const updateCategoryIconMutation = useMutation({ mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) => transactionCategoriesApi.update(id, { iconId }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transaction-categories'] }); qc.invalidateQueries({ queryKey: ['transaction-categories-admin'] }); qc.invalidateQueries({ queryKey: ['transactions'] }); } });
-  const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); setDeleting(null); } });
+  const deleteMutation = useMutation({ mutationFn: (id: string) => transactionsApi.remove(id), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); } });
 
   useEffect(() => {
     const nextSearch = searchParams.get('search') || '';
@@ -161,9 +148,93 @@ export default function TransactionsPage() {
       </div>
     ) : null}
     {!isLoading && !error && !data?.length ? <EmptyState text="No transactions" /> : null}
-    <TransactionModal open={createOpen} title="Create Transaction" onClose={() => setCreateOpen(false)} members={members ?? []} accounts={accounts ?? []} onSubmit={(v) => { setCreateOpen(false); createMutation.mutate({ ...v, amount: Number(v.amount), memberId: v.memberId || undefined }); }} />
-    <TransactionModal open={!!editing} title="Edit Transaction" onClose={() => setEditing(null)} members={members ?? []} accounts={accounts ?? []} initial={editing ?? undefined} onSubmit={(v) => { if (!editing) return; setEditing(null); updateMutation.mutate({ id: editing.id, payload: { ...v, amount: Number(v.amount), memberId: v.memberId || undefined } }); }} />
-    <ConfirmDeleteModal open={!!deleting} entityName={deleting ? `${deleting.type} ${Number(deleting.amount).toFixed(2)}` : ''} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} />
+    <TransactionModal
+      open={createOpen}
+      title="Create Transaction"
+      onClose={() => setCreateOpen(false)}
+      members={members ?? []}
+      accounts={accounts ?? []}
+      onSubmit={async (v) => {
+        setCreateOpen(false);
+        const payload = { ...v, amount: Number(v.amount), memberId: v.memberId || undefined };
+        const operation = startOperation({
+          id: `transaction-create:${Date.now()}`,
+          title: 'Processing',
+          message: 'Creating transaction...',
+        });
+        try {
+          await createMutation.mutateAsync(payload);
+          operation.succeed({
+            title: 'Success',
+            message: `Transaction created: ${payload.description?.trim() || 'Transaction'}`,
+          });
+        } catch (error: unknown) {
+          operation.fail({
+            title: 'Error',
+            message: error instanceof Error ? error.message : 'Failed to create transaction',
+          });
+        }
+      }}
+    />
+    <TransactionModal
+      open={!!editing}
+      title="Edit Transaction"
+      onClose={() => setEditing(null)}
+      members={members ?? []}
+      accounts={accounts ?? []}
+      initial={editing ?? undefined}
+      onSubmit={async (v) => {
+        if (!editing) return;
+        const transactionId = editing.id;
+        const payload = { ...v, amount: Number(v.amount), memberId: v.memberId || undefined };
+        setEditing(null);
+        const operation = startOperation({
+          id: `transaction-update:${transactionId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Saving transaction...',
+        });
+        try {
+          await updateMutation.mutateAsync({ id: transactionId, payload });
+          operation.succeed({
+            title: 'Success',
+            message: `Transaction updated: ${payload.description?.trim() || 'Transaction'}`,
+          });
+        } catch (error: unknown) {
+          operation.fail({
+            title: 'Error',
+            message: error instanceof Error ? error.message : 'Failed to save transaction',
+          });
+        }
+      }}
+    />
+    <ConfirmDeleteModal
+      open={!!deleting}
+      entityName={deleting ? `${deleting.type} ${Number(deleting.amount).toFixed(2)}` : ''}
+      onClose={() => setDeleting(null)}
+      onConfirm={async () => {
+        if (!deleting) return;
+        const transactionId = deleting.id;
+        const name = getTransactionTitle(deleting);
+        setDeleting(null);
+        const operation = startOperation({
+          id: `transaction-delete:${transactionId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Deleting transaction...',
+        });
+        try {
+          await deleteMutation.mutateAsync(transactionId);
+          operation.succeed({
+            title: 'Success',
+            message: `Transaction deleted: ${name}`,
+          });
+        } catch (error: unknown) {
+          operation.fail({
+            title: 'Error',
+            message: error instanceof Error ? error.message : 'Failed to delete transaction',
+          });
+        }
+      }}
+    />
   </AppShell>;
 }
 

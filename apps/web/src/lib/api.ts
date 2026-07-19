@@ -2379,7 +2379,7 @@ export const telegramBotsApi = {
     ).data,
 };
 export const promosApi = {
-  ...crud<Promo>("/promos"),
+  ...quietCrud<Promo>("/promos"),
   list: async (params?: { telegramChannelId?: string }) =>
     (await api.get<Promo[]>("/promos", { params })).data,
   uploadImage: async (file: File) => {
