@@ -477,6 +477,7 @@ export type WorkspaceMember = {
   workspaceId: string;
   userId: string;
   role: WorkspaceRole;
+  isHidden?: boolean;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
   telegramUsername?: string | null;

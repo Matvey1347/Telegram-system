@@ -145,6 +145,30 @@ export class WorkspaceMembersService {
     });
   }
 
+  private buildInvestmentSummary(
+    memberId: string,
+    isHidden: boolean,
+    byMember: Map<string, { total: number; count: number }>,
+    workspaceTotal: number,
+  ) {
+    if (isHidden) {
+      return {
+        isInvestor: false,
+        totalInvestedPrimary: 0,
+        investmentSharePercent: 0,
+        investmentsCount: 0,
+      };
+    }
+    const totals = byMember.get(memberId);
+    return {
+      isInvestor: (totals?.total ?? 0) > 0,
+      totalInvestedPrimary: totals?.total ?? 0,
+      investmentSharePercent:
+        workspaceTotal > 0 ? (((totals?.total ?? 0) / workspaceTotal) * 100) : 0,
+      investmentsCount: totals?.count ?? 0,
+    };
+  }
+
   private async assertAvatarIcon(workspaceId: string, avatarIconId?: string | null) {
     if (avatarIconId === undefined || avatarIconId === null) return;
     const icon = await this.prisma.icon.findFirst({
@@ -174,22 +198,22 @@ export class WorkspaceMembersService {
       prev.count += 1;
       byMember.set(memberId, prev);
     }
-    const workspaceTotal = [...byMember.values()].reduce(
-      (acc, v) => acc + v.total,
+    const visibleMemberIds = new Set(
+      rows.filter((row) => !row.isHidden).map((row) => row.id),
+    );
+    const workspaceTotal = [...byMember.entries()].reduce(
+      (acc, [memberId, v]) => (visibleMemberIds.has(memberId) ? acc + v.total : acc),
       0,
     );
 
     return rows.map((row) => ({
       ...this.toResponse(row, userId),
-      investmentSummary: {
-        isInvestor: (byMember.get(row.id)?.total ?? 0) > 0,
-        totalInvestedPrimary: byMember.get(row.id)?.total ?? 0,
-        investmentSharePercent:
-          workspaceTotal > 0
-            ? ((byMember.get(row.id)?.total ?? 0) / workspaceTotal) * 100
-            : 0,
-        investmentsCount: byMember.get(row.id)?.count ?? 0,
-      },
+      investmentSummary: this.buildInvestmentSummary(
+        row.id,
+        Boolean(row.isHidden),
+        byMember,
+        workspaceTotal,
+      ),
     }));
   }
 
@@ -233,9 +257,14 @@ export class WorkspaceMembersService {
       byMember.set(memberId, prev);
     }
 
-    const total = [...byMember.values()].reduce((acc, v) => acc + v.total, 0);
+    const visibleMembers = members.filter((member) => !member.isHidden);
+    const visibleMemberIds = new Set(visibleMembers.map((member) => member.id));
+    const total = [...byMember.entries()].reduce(
+      (acc, [memberId, item]) => (visibleMemberIds.has(memberId) ? acc + item.total : acc),
+      0,
+    );
 
-    return members
+    return visibleMembers
       .filter((m) => byMember.has(m.id))
       .map((member) => {
         const item = byMember.get(member.id)!;
@@ -433,6 +462,7 @@ export class WorkspaceMembersService {
         where: { id: memberId },
         data: {
           role: dto.role,
+          isHidden: dto.isHidden,
           avatarIconId:
             dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
           telegramUsername:

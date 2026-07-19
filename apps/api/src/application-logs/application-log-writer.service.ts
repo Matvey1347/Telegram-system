@@ -57,7 +57,7 @@ export class ApplicationLogWriterService
 
   onModuleInit() {
     this.flushTimer = setInterval(() => {
-      void this.flush();
+      void this.flush(true);
     }, this.flushIntervalMs);
     this.flushTimer.unref?.();
   }

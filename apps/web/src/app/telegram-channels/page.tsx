@@ -1934,8 +1934,12 @@ export default function TelegramChannelsPage() {
     () => (channels || []).filter(isOwnChannel),
     [channels],
   );
-  const isLoading = channelsLoading || peopleLoading;
-  const error = channelsError || peopleError;
+  const hasLoadedChannels = Boolean(channels?.[0]);
+  const hasLoadedPeople = Boolean(people?.[0]);
+  const channelsInitialLoading = channelsLoading && !hasLoadedChannels;
+  const channelsInitialError = Boolean(channelsError) && !hasLoadedChannels;
+  const peopleInitialLoading = peopleLoading && !hasLoadedPeople;
+  const peopleInitialError = Boolean(peopleError) && !hasLoadedPeople;
   const emptyText =
     channelFilter === "own" ? "No own channels" : "No external channels";
   const handleExport = async (channelIds: string[]) => {
@@ -2046,8 +2050,8 @@ export default function TelegramChannelsPage() {
               </button>
             ))}
           </div>
-          {isLoading ? <LoadingState /> : null}
-          {error ? (
+          {channelsInitialLoading ? <LoadingState /> : null}
+          {channelsInitialError ? (
             <div className="text-red-300">Failed to load channels</div>
           ) : null}
           <MasonryGrid>
@@ -2166,7 +2170,7 @@ export default function TelegramChannelsPage() {
               );
             })}
           </MasonryGrid>
-          {!isLoading && !error && !filteredChannels.length ? (
+          {!channelsInitialLoading && !channelsInitialError && !filteredChannels.length ? (
             <EmptyState text={emptyText} />
           ) : null}
         </>
@@ -2207,8 +2211,8 @@ export default function TelegramChannelsPage() {
           ) : null}
           {accountFilter === "people" ? (
             <>
-              {isLoading ? <LoadingState /> : null}
-              {error ? (
+              {peopleInitialLoading ? <LoadingState /> : null}
+              {peopleInitialError ? (
                 <div className="text-red-300">Failed to load people</div>
               ) : null}
               <MasonryGrid>
@@ -2234,7 +2238,7 @@ export default function TelegramChannelsPage() {
                   );
                 })}
               </MasonryGrid>
-              {!isLoading && !error && !(people || []).length ? (
+              {!peopleInitialLoading && !peopleInitialError && !(people || []).length ? (
                 <EmptyState text="No people" />
               ) : null}
             </>

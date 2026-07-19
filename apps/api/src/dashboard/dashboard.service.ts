@@ -67,7 +67,14 @@ export class DashboardService {
         select: { primaryCurrency: true, secondaryCurrency: true },
       }),
       this.prisma.account.findMany({
-        where: { workspaceId, isActive: true },
+        where: {
+          workspaceId,
+          isActive: true,
+          OR: [
+            { assignedMemberId: null },
+            { assignedMember: { isHidden: false } },
+          ],
+        },
         include: {
           assignedMember: WorkspaceService.assignedMemberInclude,
           icon: {

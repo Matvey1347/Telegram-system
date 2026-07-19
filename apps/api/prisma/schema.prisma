@@ -364,6 +364,7 @@ model WorkspaceMember {
   workspaceId      String
   userId           String
   role             WorkspaceRole @default(admin)
+  isHidden         Boolean       @default(false)
   avatarIconId     String?
   telegramUsername String?
 

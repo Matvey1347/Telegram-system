@@ -130,7 +130,14 @@ export class AccountsService {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     const accounts = await this.prisma.account.findMany({
-      where: { workspaceId, assignedMemberId: query.assignedMemberId || undefined },
+      where: {
+        workspaceId,
+        assignedMemberId: query.assignedMemberId || undefined,
+        OR: [
+          { assignedMemberId: null },
+          { assignedMember: { isHidden: false } },
+        ],
+      },
       include: {
         assignedMember: WorkspaceService.assignedMemberInclude,
         createdByUser: WorkspaceService.createdByUserInclude,

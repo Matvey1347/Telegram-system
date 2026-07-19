@@ -1,6 +1,7 @@
 import { WorkspaceRole } from '@prisma/client';
 import {
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsOptional,
@@ -40,6 +41,10 @@ export class UpdateWorkspaceMemberDto {
   @IsOptional()
   @IsEnum(WorkspaceRole)
   role?: WorkspaceRole;
+
+  @IsOptional()
+  @IsBoolean()
+  isHidden?: boolean;
 
   @IsOptional()
   @IsString()

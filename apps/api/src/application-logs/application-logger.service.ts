@@ -41,13 +41,28 @@ const LOG_LEVEL_PRIORITY: Record<ApplicationLogLevel, number> = {
   error: 3,
 };
 
+function normalizeMinimumLevel(
+  value: string | undefined,
+): ApplicationLogLevel {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'all') return 'debug';
+  if (normalized === 'debug') return 'debug';
+  if (normalized === 'info') return 'info';
+  if (normalized === 'warn') return 'warn';
+  if (normalized === 'error') return 'error';
+  return 'info';
+}
+
 @Injectable()
 export class ApplicationLoggerService
   extends ConsoleLogger
   implements LoggerService
 {
-  private readonly minimumLevel = (process.env.APP_LOG_MIN_LEVEL ||
-    'info') as ApplicationLogLevel;
+  private readonly minimumLevel = normalizeMinimumLevel(
+    process.env.APP_LOG_MIN_LEVEL,
+  );
 
   constructor(
     private readonly writer: ApplicationLogWriterService,

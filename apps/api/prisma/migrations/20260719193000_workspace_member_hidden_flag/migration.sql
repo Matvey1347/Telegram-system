@@ -1,0 +1,2 @@
+ALTER TABLE "WorkspaceMember"
+ADD COLUMN "isHidden" BOOLEAN NOT NULL DEFAULT false;

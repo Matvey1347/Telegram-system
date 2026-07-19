@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Camera, Pencil, ShieldCheck } from 'lucide-react';
+import { Camera, Eye, EyeOff, Pencil, ShieldCheck } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
@@ -122,6 +122,7 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
       id: string;
       payload: {
         role?: WorkspaceRole;
+        isHidden?: boolean;
         avatarIconId?: string | null;
         telegramUsername?: string | null;
         telegramUserAccountIds?: string[];
@@ -216,6 +217,7 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
                   <h3 className="truncate text-lg font-semibold text-white">{member.user.name}</h3>
                   {member.isCurrentUser ? <span className="rounded-full border border-blue-400/20 bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-200">You</span> : null}
                   <RoleBadge role={member.role} />
+                  {member.isHidden ? <span className="rounded-full border border-neutral-600 bg-neutral-900/80 px-2 py-0.5 text-xs font-medium text-neutral-300">Hidden in finance</span> : null}
                 </div>
                 <p className="mt-1 truncate text-sm text-neutral-400">{member.user.email}</p>
                 {member.telegramUsername ? <p className="mt-2 text-xs text-neutral-300">@{member.telegramUsername}</p> : null}
@@ -223,22 +225,21 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
-                <p className="text-xs text-neutral-500">Total Invested</p>
-                {hasInvestments ? (
+            {hasInvestments ? (
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
+                  <p className="text-xs text-neutral-500">Total Invested</p>
                   <MoneyStack amount={member.investmentSummary?.totalInvestedPrimary ?? 0} currency={primaryCurrency} settings={settings} rates={rates} mainClassName="font-semibold text-white" />
-                ) : (
-                  <p className="mt-1 text-sm font-semibold text-neutral-300">$ 0.00</p>
-                )}
+                </div>
+                <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
+                  <p className="text-xs text-neutral-500">Investment Share</p>
+                  <p className="mt-1 text-sm font-semibold text-white">{Number(member.investmentSummary?.investmentSharePercent ?? 0).toFixed(2)}%</p>
+                </div>
               </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
-                <p className="text-xs text-neutral-500">Investment Share</p>
-                <p className="mt-1 text-sm font-semibold text-white">{Number(member.investmentSummary?.investmentSharePercent ?? 0).toFixed(2)}%</p>
-              </div>
-            </div>
+            ) : null}
 
             {member.isCurrentUser ? <p className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-xs text-neutral-400">Manage your personal info in My Profile.</p> : null}
+            {member.isHidden ? <p className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-xs text-neutral-400">Finance accounts assigned to this member are hidden from finance lists and dashboard balances. Transactions remain visible.</p> : null}
 
             {canManageMember ? <div className="mt-4 flex gap-2">
               <div className="min-w-0 flex-1">
@@ -251,6 +252,15 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
               </div>
               <Button variant="secondary" type="button" onClick={() => setEditingMember(member)} className="px-3">
                 <Pencil size={14} />
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => updateMutation.mutate({ id: member.id, payload: { isHidden: !member.isHidden } })}
+                className="px-3"
+                title={member.isHidden ? 'Show member in finance' : 'Hide member from finance'}
+              >
+                {member.isHidden ? <Eye size={14} /> : <EyeOff size={14} />}
               </Button>
               {canRemove(member) ? (
                 <IconButton
