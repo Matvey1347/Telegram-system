@@ -20,8 +20,16 @@ export class AdCampaignAnalyticsInputDto {
 export class CreateAdCampaignDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString() telegramChannelId!: string;
-  @IsString() promoId!: string;
-  @IsString() telegramInviteLinkId!: string;
+  @IsOptional() @IsString() promoId?: string;
+  @IsOptional() @IsString() telegramInviteLinkId?: string;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  promoIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  inviteLinkIds?: string[];
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -50,6 +58,14 @@ export class UpdateAdCampaignDto {
   @IsOptional() @IsString() telegramChannelId?: string;
   @IsOptional() @IsString() promoId?: string;
   @IsOptional() @IsString() telegramInviteLinkId?: string;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  promoIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  inviteLinkIds?: string[];
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

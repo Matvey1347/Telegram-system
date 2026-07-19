@@ -1314,11 +1314,16 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   status?: string;
   telegramChannelId: string;
   ownTelegramChannelId?: string;
-  promoId: string;
-  telegramInviteLinkId?: string;
+  promoId?: string | null;
+  promoIds?: string[];
+  telegramInviteLinkId?: string | null;
+  inviteLinkIds?: string[];
   accountId?: string;
   telegramChannel?: TelegramChannel;
   promo?: Promo | null;
+  promos?: Promo[];
+  telegramInviteLink?: TelegramInviteLink | null;
+  inviteLinks?: TelegramInviteLink[];
   advertisingChannels: Array<TelegramChannel | AdvertisingChannel>;
   price: number;
   costAmount?: number;
@@ -1335,6 +1340,8 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   sourcePostUrl?: string | null;
   notes?: string;
   isMixedAttribution?: boolean;
+  assignedMemberId?: string | null;
+  assignedMember?: WorkspaceMember | null;
   hypothesisLinks?: AdCampaignHypothesisLink[];
   analytics?: {
     joinedCount: number;
@@ -2389,7 +2396,7 @@ export const advertisingChannelsApi = crud<AdvertisingChannel>(
   "/advertising-channels",
 );
 export const adCampaignsApi = {
-  ...crud<AdCampaign>("/ad-campaigns"),
+  ...quietCrud<AdCampaign>("/ad-campaigns"),
   list: async (params?: { telegramChannelId?: string }) =>
     (await api.get<AdCampaign[]>("/ad-campaigns", { params })).data,
   updateAnalyticsInput: async (id: string, payload: AdCampaignAnalyticsInput) =>

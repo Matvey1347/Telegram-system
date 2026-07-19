@@ -823,13 +823,27 @@ model Promo {
   assignedMember  WorkspaceMember? @relation("PromoAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser   User?            @relation("PromoCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
-  adCampaigns AdCampaign[]
+  primaryAdCampaigns AdCampaign[]    @relation("AdCampaignPrimaryPromo")
+  campaignLinks      AdCampaignPromo[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, assignedMemberId])
   @@index([iconId])
+}
+
+model AdCampaignPromo {
+  id           String   @id @default(cuid())
+  adCampaignId String
+  promoId      String
+  createdAt    DateTime @default(now())
+
+  adCampaign AdCampaign @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+  promo      Promo      @relation(fields: [promoId], references: [id], onDelete: Cascade)
+
+  @@unique([adCampaignId, promoId])
+  @@index([promoId])
 }
 
 model AdvertisingSource {
@@ -938,7 +952,7 @@ model AdCampaign {
   workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel   TelegramChannel    @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   advertisingSource AdvertisingSource? @relation(fields: [advertisingSourceId], references: [id], onDelete: SetNull)
-  promo             Promo?             @relation(fields: [promoId], references: [id], onDelete: SetNull)
+  promo             Promo?             @relation("AdCampaignPrimaryPromo", fields: [promoId], references: [id], onDelete: SetNull)
   account           Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
   assignedMember    WorkspaceMember?   @relation("AdCampaignAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser     User?              @relation("AdCampaignCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -947,6 +961,7 @@ model AdCampaign {
   advertisingChannels         AdCampaignAdvertisingChannel[]
   advertisingTelegramChannels AdCampaignTelegramChannelPlacement[]
   hypothesisLinks             AdHypothesisCampaign[]
+  promos                      AdCampaignPromo[]
 
   inviteLinks TelegramInviteLink[]
 

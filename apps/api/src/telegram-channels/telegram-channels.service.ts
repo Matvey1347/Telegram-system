@@ -7798,6 +7798,10 @@ export class TelegramChannelsService {
     await this.findOne(userId, channelId);
     return this.prisma.promo.findMany({
       where: { workspaceId, telegramChannelId: channelId },
+      include: {
+        icon: true,
+        telegramChannel: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

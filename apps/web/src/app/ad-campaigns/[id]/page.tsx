@@ -126,7 +126,8 @@ export default function AdCampaignDetailPage() {
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <InfoRow label="Invite link" value={(campaign as any).telegramInviteLink?.name || campaign.telegramInviteLinkId || '-'} />
+                  <InfoRow label="Promos" value={campaign.promos?.length ? campaign.promos.map((promo) => promo.title).join(', ') : campaign.promo?.title || '-'} />
+                  <InfoRow label="Invite links" value={campaign.inviteLinks?.length ? campaign.inviteLinks.map((inviteLink) => inviteLink.name).join(', ') : (campaign as any).telegramInviteLink?.name || campaign.telegramInviteLinkId || '-'} />
                   <InfoRow label="Attribution" value={campaign.isMixedAttribution ? 'Mixed' : 'Clean'} />
                 </div>
               </div>

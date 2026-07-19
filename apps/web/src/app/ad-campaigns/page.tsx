@@ -2,11 +2,13 @@
 
 import type { MouseEventHandler } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { IconAvatar } from '@/components/icons/icon-avatar';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
+import { MemberSelect } from '@/components/workspace/member-select';
 import { TelegramImageUpload } from '@/components/telegram/telegram-image-upload';
 import { TelegramPostPreview } from '@/components/telegram/telegram-post-preview';
 import { TelegramTextEditor } from '@/components/telegram/telegram-text-editor';
@@ -20,7 +22,6 @@ import {
   iconsApi,
   promosApi,
   telegramChannelsApi,
-  telegramSyncApi,
   workspacesApi,
   type Account,
   type AdCampaign,
@@ -28,23 +29,35 @@ import {
   type AdHypothesis,
   type Promo,
   type TelegramChannel,
+  type TelegramInviteLink,
 } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
-import { CircleHelp, RefreshCw } from 'lucide-react';
+import { CircleHelp } from 'lucide-react';
 import { accountDisplayName } from '@/lib/account-display';
 
 type CampaignValues = {
   telegramChannelId: string;
-  promoId: string;
-  telegramInviteLinkId: string;
+  assignedMemberId?: string | null;
+  promoIds: string[];
+  inviteLinkIds: string[];
   advertisingChannelIds: string[];
   price: number;
   accountId: string;
   date?: string;
   notes?: string;
+};
+
+type CampaignSelectOption = {
+  value: string;
+  label: string;
+  iconUrl?: string;
+  iconEmoji?: string;
+  iconFallback?: string;
+  description?: string;
+  searchText?: string;
 };
 
 type AdCampaignsViewMode = 'campaigns' | 'promos' | 'hypotheses';
@@ -86,7 +99,7 @@ function accountSelectOption(account: Account) {
 
 export default function AdCampaignsPage() {
   const qc = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { pushToast, startOperation } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [deleting, setDeleting] = useState<any | null>(null);
@@ -96,13 +109,13 @@ export default function AdCampaignsPage() {
   const [sort, setSort] = useState('date_desc');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
   const [hypothesisFormOpen, setHypothesisFormOpen] = useState(false);
   const [editingHypothesis, setEditingHypothesis] = useState<AdHypothesis | null>(null);
   const [deletingHypothesis, setDeletingHypothesis] = useState<AdHypothesis | null>(null);
   const [promoFormOpen, setPromoFormOpen] = useState(false);
   const [editingPromo, setEditingPromo] = useState<Promo | null>(null);
   const [deletingPromo, setDeletingPromo] = useState<Promo | null>(null);
+  const [previewPromo, setPreviewPromo] = useState<Promo | null>(null);
 
   const { data: workspace } = useQuery({ queryKey: ['workspace-selected'], queryFn: workspacesApi.selected });
   const { data: currencySettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
@@ -120,10 +133,6 @@ export default function AdCampaignsPage() {
   const { data: performance } = useQuery({
     queryKey: ['ad-campaigns-performance', channelFilter],
     queryFn: () => adCampaignsApi.performanceSummary(channelFilter ? { channelId: channelFilter } : undefined),
-  });
-  const { data: syncRuns } = useQuery({
-    queryKey: ['daily-analytics-runs'],
-    queryFn: () => telegramSyncApi.dailyAnalyticsRuns(8),
   });
   const { data: hypotheses = [], isLoading: hypothesesLoading, error: hypothesesError } = useQuery({
     queryKey: ['ad-hypotheses'],
@@ -145,39 +154,19 @@ export default function AdCampaignsPage() {
     mutationFn: adCampaignsApi.create,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setCreateOpen(false);
-      pushToast('Campaign created.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to create campaign.'), 'error'),
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: any) => adCampaignsApi.update(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setEditing(null);
-      pushToast('Campaign updated.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update campaign.'), 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => adCampaignsApi.remove(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setDeleting(null);
-      pushToast('Campaign archived.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to archive campaign.'), 'error'),
-  });
-  const syncMutation = useMutation({
-    mutationFn: telegramSyncApi.runDailyAnalytics,
-    onSuccess: (run) => {
-      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      qc.invalidateQueries({ queryKey: ['ad-campaigns-performance'] });
-      qc.invalidateQueries({ queryKey: ['daily-analytics-runs'] });
-      const summary = describeSyncRun(run);
-      pushToast(summary.short, run.status === 'success' ? 'success' : run.status === 'failed' ? 'error' : 'info');
-    },
-    onError: (error) => pushToast(getErrorMessage(error, 'Daily analytics sync failed.'), 'error'),
   });
   const excludeMutation = useMutation({
     mutationFn: ({ id, excludeFromAnalytics }: { id: string; excludeFromAnalytics: boolean }) =>
@@ -279,29 +268,6 @@ export default function AdCampaignsPage() {
 
   return <AppShell><PageHeader title="Ads" subtitle="Promos, campaigns, hypotheses and performance" action={
     <div className="flex items-center gap-2">
-      {viewMode === 'campaigns' ? (
-        <>
-          <Button
-            type="button"
-            variant="secondary"
-            className="inline-flex items-center gap-2"
-            disabled={syncMutation.isPending}
-            onClick={() => syncMutation.mutate()}
-          >
-            <RefreshCw size={16} className={syncMutation.isPending ? "animate-spin" : ""} />
-            {syncMutation.isPending ? 'Syncing...' : 'Sync'}
-          </Button>
-          <button
-            type="button"
-            title="Analytics details"
-            aria-label="Analytics details"
-            onClick={() => setSyncDetailsOpen(true)}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
-          >
-            <CircleHelp size={22} />
-          </button>
-        </>
-      ) : null}
       <Button onClick={openCreateForCurrentView}>{viewMode === 'hypotheses' ? 'Create hypothesis' : viewMode === 'promos' ? 'Create promo' : 'Create campaign'}</Button>
     </div>
   } />
@@ -371,11 +337,12 @@ export default function AdCampaignsPage() {
       <CampaignsTable
         campaigns={visibleCampaigns}
         moneySettings={moneySettings}
-        rates={rates}
-        onEdit={setEditing}
-        onDelete={setDeleting}
-        onToggleExclude={(campaign, excludeFromAnalytics) => excludeMutation.mutate({ id: campaign.id, excludeFromAnalytics })}
-      />
+      rates={rates}
+      onEdit={setEditing}
+      onDelete={setDeleting}
+      onToggleExclude={(campaign, excludeFromAnalytics) => excludeMutation.mutate({ id: campaign.id, excludeFromAnalytics })}
+      onOpenPromo={setPreviewPromo}
+    />
     ) : null}
     {viewMode === 'campaigns' && !isLoading && !error && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
 
@@ -406,9 +373,57 @@ export default function AdCampaignsPage() {
       />
     ) : null}
 
-    <CampaignModal open={createOpen} title="Create Campaign" channels={channels ?? []} onClose={() => setCreateOpen(false)} onSubmit={(v: any) => createMutation.mutate(v)} />
-    <CampaignModal open={!!editing} title="Edit Campaign" channels={channels ?? []} initial={editing ?? undefined} onClose={() => setEditing(null)} onSubmit={(v: any) => editing && updateMutation.mutate({ id: editing.id, payload: v })} />
+    <CampaignModal
+      open={createOpen}
+      title="Create Campaign"
+      channels={channels ?? []}
+      onClose={() => setCreateOpen(false)}
+      onSubmit={async (v: any) => {
+        setCreateOpen(false);
+        const operation = startOperation({
+          id: `campaign-create:${Date.now()}`,
+          title: 'Processing',
+          message: 'Creating campaign...',
+        });
+        try {
+          await createMutation.mutateAsync(v);
+          operation.succeed({ title: 'Success', message: 'Campaign created.' });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to create campaign.'),
+          });
+        }
+      }}
+    />
+    <CampaignModal
+      open={!!editing}
+      title="Edit Campaign"
+      channels={channels ?? []}
+      initial={editing ?? undefined}
+      onClose={() => setEditing(null)}
+      onSubmit={async (v: any) => {
+        if (!editing) return;
+        const campaignId = editing.id;
+        setEditing(null);
+        const operation = startOperation({
+          id: `campaign-update:${campaignId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Saving campaign...',
+        });
+        try {
+          await updateMutation.mutateAsync({ id: campaignId, payload: v });
+          operation.succeed({ title: 'Success', message: 'Campaign updated.' });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to update campaign.'),
+          });
+        }
+      }}
+    />
     <PromoModal open={promoFormOpen} title={editingPromo ? 'Edit Promo' : 'Create Promo'} initial={editingPromo ?? undefined} onClose={() => { setPromoFormOpen(false); setEditingPromo(null); }} onSubmit={(payload) => editingPromo ? updatePromoMutation.mutate({ id: editingPromo.id, payload }) : createPromoMutation.mutate(payload)} channels={ownTelegramChannels} />
+    <PromoPreviewModal promo={previewPromo} onClose={() => setPreviewPromo(null)} />
     <HypothesisFormModal
       open={hypothesisFormOpen}
       hypothesis={editingHypothesis}
@@ -425,8 +440,31 @@ export default function AdCampaignsPage() {
         else createHypothesisMutation.mutate(payload);
       }}
     />
-    <SyncDetailsModal open={syncDetailsOpen} onClose={() => setSyncDetailsOpen(false)} performance={performance} syncRuns={syncRuns || []} hasCampaigns={campaigns.length > 0} />
-    <ConfirmDeleteModal open={!!deleting} entityName={deleting?.title ?? 'campaign'} onClose={() => setDeleting(null)} onConfirm={() => deleting ? deleteMutation.mutateAsync(deleting.id) : undefined} label="Archive" />
+    <ConfirmDeleteModal
+      open={!!deleting}
+      entityName={deleting?.title ?? 'campaign'}
+      onClose={() => setDeleting(null)}
+      onConfirm={async () => {
+        if (!deleting) return;
+        const deletingId = deleting.id;
+        setDeleting(null);
+        const operation = startOperation({
+          id: `campaign-delete:${deletingId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Archiving campaign...',
+        });
+        try {
+          await deleteMutation.mutateAsync(deletingId);
+          operation.succeed({ title: 'Success', message: 'Campaign archived.' });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to archive campaign.'),
+          });
+        }
+      }}
+      label="Archive"
+    />
     <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis ? deleteHypothesisMutation.mutateAsync(deletingHypothesis.id) : undefined} label="Delete" />
     <ConfirmDeleteModal open={!!deletingPromo} entityName={deletingPromo?.title ?? 'promo'} onClose={() => setDeletingPromo(null)} onConfirm={() => deletingPromo ? deletePromoMutation.mutateAsync(deletingPromo.id) : undefined} label="Delete" />
   </AppShell>;
@@ -577,6 +615,7 @@ function CampaignsTable({
   onEdit,
   onDelete,
   onToggleExclude,
+  onOpenPromo,
 }: {
   campaigns: any[];
   moneySettings: any;
@@ -584,25 +623,14 @@ function CampaignsTable({
   onEdit: (campaign: any) => void;
   onDelete: (campaign: any) => void;
   onToggleExclude: (campaign: any, excludeFromAnalytics: boolean) => void;
+  onOpenPromo: (promo: Promo) => void;
 }) {
-  const [promoTooltip, setPromoTooltip] = useState<{
-    promo: Promo;
-    left: number;
-    top: number;
-  } | null>(null);
   const [kpiTooltip, setKpiTooltip] = useState<{
     channel: TelegramChannel;
     left: number;
     top: number;
   } | null>(null);
 
-  const showPromoTooltip = (promo: Promo, element: HTMLElement) => {
-    const rect = element.getBoundingClientRect();
-    const width = 320;
-    const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
-    const top = Math.min(rect.bottom + 10, Math.max(16, window.innerHeight - 260));
-    setPromoTooltip({ promo, left, top });
-  };
   const showKpiTooltip = (channel: TelegramChannel | undefined, element: HTMLElement) => {
     if (!channel) return;
     const rect = element.getBoundingClientRect();
@@ -615,19 +643,22 @@ function CampaignsTable({
   return (
     <>
       <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
-        <table className="w-full min-w-[1160px] table-fixed text-left text-sm">
+        <table className="w-full min-w-[1120px] table-fixed text-left text-sm">
           <colgroup>
-            <col className="w-[390px]" />
-            <col className="w-[280px]" />
-            <col className="w-[160px]" />
-            <col className="w-[190px]" />
+            <col className="w-[420px]" />
+            <col className="w-[360px]" />
+            <col className="w-[180px]" />
             <col className="w-[140px]" />
           </colgroup>
           <thead className="bg-slate-950 text-xs uppercase text-neutral-400">
             <tr>
               <th className="px-4 py-3 font-medium">Campaign</th>
-              <th className="px-4 py-3 font-medium">Performance</th>
-              <th className="px-4 py-3 font-medium">Analytics</th>
+              <th className="px-4 py-3 font-medium" title="Hover a campaign performance card to see this channel's KPI ranges.">
+                <span className="inline-flex items-center gap-1">
+                  Performance
+                  <CircleHelp size={13} className="text-slate-500" />
+                </span>
+              </th>
               <th className="px-4 py-3 font-medium">Hypotheses</th>
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
@@ -642,27 +673,23 @@ function CampaignsTable({
               const costPerJoined = joined > 0 ? cost / joined : null;
               const primaryCostPerJoined = joined > 0 ? primaryCost / joined : null;
               const metrics = campaignMetrics(campaign);
-              const analyticsWarning = campaign.adDataQualityWarning || campaignMissingAnalyticsMessage(campaign);
               const kpiStatus = effectiveCampaignKpiStatus(campaign, primaryCostPerJoined, costPerJoined);
               return (
                 <tr key={campaign.id} className={`align-top text-slate-200 transition-colors hover:bg-neutral-900 ${index % 2 ? 'bg-neutral-950' : 'bg-black'}`}>
                   <td className="px-4 py-4">
                     <div className="min-w-0 space-y-3">
-                      <div className="truncate font-semibold text-white">
-                        <CampaignTitleWithPromo
-                          campaign={campaign}
-                          onPromoEnter={showPromoTooltip}
-                          onPromoLeave={() => setPromoTooltip(null)}
-                        />
-                      </div>
+                      <div className="truncate font-semibold text-white">{displayCampaignTitleWithDate(campaign)}</div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                         <SourceChip source={campaign.telegramChannel} fallback="-" compact />
                       </div>
+                      <PromoList promos={campaign.promos || (campaign.promo ? [campaign.promo] : [])} onOpenPromo={onOpenPromo} />
+                      <InviteLinkList inviteLinks={campaign.inviteLinks || []} />
                       <SourceList sources={campaign.advertisingChannels || []} />
                     </div>
                   </td>
                   <td className="px-4 py-4">
                     <PerformanceCell
+                      campaign={campaign}
                       cost={cost}
                       currency={campaign.currency}
                       primaryCost={primaryCost}
@@ -674,21 +701,10 @@ function CampaignsTable({
                       moneySettings={moneySettings}
                       rates={rates}
                       kpiStatus={kpiStatus}
+                      metrics={metrics}
+                      onShowKpiTooltip={showKpiTooltip}
+                      onHideKpiTooltip={() => setKpiTooltip(null)}
                     />
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex flex-wrap gap-1">
-                      <KpiStatusBadge
-                        status={kpiStatus}
-                        onMouseEnter={(event) => showKpiTooltip(campaign.telegramChannel, event.currentTarget)}
-                        onMouseLeave={() => setKpiTooltip(null)}
-                      />
-                      {metrics.length ? metrics.slice(0, 3).map((metric) => (
-                        <span key={metric.label} className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300">{metric.label}: {metric.value}</span>
-                      )) : (
-                        <span className="rounded border border-amber-700 px-2 py-0.5 text-xs text-amber-200" title={analyticsWarning || undefined}>Missing</span>
-                      )}
-                    </div>
                   </td>
                   <td className="px-4 py-4">
                     <HypothesisLinks links={campaign.hypothesisLinks || []} />
@@ -708,81 +724,13 @@ function CampaignsTable({
           </tbody>
         </table>
       </div>
-      {promoTooltip ? <PromoTooltip promo={promoTooltip.promo} left={promoTooltip.left} top={promoTooltip.top} /> : null}
       {kpiTooltip ? <KpiTooltip channel={kpiTooltip.channel} left={kpiTooltip.left} top={kpiTooltip.top} /> : null}
     </>
   );
 }
 
-function CampaignTitleWithPromo({
-  campaign,
-  onPromoEnter,
-  onPromoLeave,
-}: {
-  campaign: AdCampaign;
-  onPromoEnter: (promo: Promo, element: HTMLElement) => void;
-  onPromoLeave: () => void;
-}) {
-  const title = displayCampaignTitleWithDate(campaign);
-  const promo = campaign.promo;
-  const promoTitle = String(promo?.title || '').trim();
-  const canPreviewPromo = Boolean(promo && (promo.imageData || promo.text));
-
-  if (!promo || !promoTitle || !canPreviewPromo) return <>{title}</>;
-
-  const promoSegment = promoTitleSegment(title, promoTitle);
-  const index = title.indexOf(promoSegment);
-  if (index < 0) return <>{title}</>;
-
-  const before = title.slice(0, index);
-  const after = title.slice(index + promoSegment.length);
-
-  return (
-    <>
-      {before}
-      <span
-        className="cursor-help text-sky-200 decoration-sky-400/70 decoration-dotted underline-offset-4 hover:underline"
-        onMouseEnter={(event) => onPromoEnter(promo, event.currentTarget)}
-        onMouseLeave={onPromoLeave}
-      >
-        {promoSegment}
-      </span>
-      {after}
-    </>
-  );
-}
-
-function promoTitleSegment(title: string, promoTitle: string) {
-  if (title.includes(promoTitle)) return promoTitle;
-
-  const parts = title.split('|').map((part) => part.trim());
-  const startsWithDate = /^\d{4}-\d{2}-\d{2}$/.test(parts[0] || '');
-  if (startsWithDate && parts.length >= 3) return parts[2];
-  if (!startsWithDate && parts.length >= 2) return parts[1];
-
-  return promoTitle;
-}
-
-function PromoTooltip({ promo, left, top }: { promo: Promo; left: number; top: number }) {
-  return (
-    <div
-      className="fixed z-[80] w-[320px] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-950 shadow-2xl"
-      style={{ left, top }}
-    >
-      {promo.imageData ? (
-        <div className="flex justify-center bg-neutral-900 p-2">
-          <img src={promo.imageData} alt="" className="max-h-36 max-w-full rounded-lg object-contain" />
-        </div>
-      ) : null}
-      <div className="space-y-2 p-3">
-        <div className="font-semibold text-white">{promo.title}</div>
-        {promo.text ? <p className="line-clamp-5 whitespace-pre-wrap text-sm leading-snug text-neutral-300">{promo.text}</p> : null}
-      </div>
-    </div>
-  );
-}
-
 function PerformanceCell({
+  campaign,
   cost,
   currency,
   primaryCost,
@@ -794,7 +742,11 @@ function PerformanceCell({
   moneySettings,
   rates,
   kpiStatus,
+  metrics,
+  onShowKpiTooltip,
+  onHideKpiTooltip,
 }: {
+  campaign: AdCampaign;
   cost: number;
   currency: string;
   primaryCost: number;
@@ -806,25 +758,54 @@ function PerformanceCell({
   moneySettings: any;
   rates: any[] | undefined;
   kpiStatus: AdCampaignKpiStatus;
+  metrics: Array<{ label: string; value: string }>;
+  onShowKpiTooltip: (channel: TelegramChannel | undefined, element: HTMLElement) => void;
+  onHideKpiTooltip: () => void;
 }) {
   const kpiTextClass = kpiMetricTextClass(kpiStatus);
+  const cardClass = performanceCardClass(kpiStatus);
+  const shouldShowKpiTooltip = kpiStatus === 'good' || kpiStatus === 'acceptable' || kpiStatus === 'bad';
   return (
-    <div className="grid grid-cols-[minmax(90px,1fr)_minmax(70px,0.7fr)_minmax(80px,0.8fr)] gap-3">
-      <div>
-        <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Spend</p>
-        <MoneyStack amount={cost} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCost} mainClassName="font-semibold leading-snug text-white" subClassName="text-xs leading-snug text-slate-500" />
+    <div className={`rounded-xl border p-3 ${cardClass}`}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <KpiStatusBadge
+          status={kpiStatus}
+          onMouseEnter={(event) => {
+            if (!shouldShowKpiTooltip) return;
+            onShowKpiTooltip(campaign.telegramChannel, event.currentTarget);
+          }}
+          onMouseLeave={() => {
+            if (!shouldShowKpiTooltip) return;
+            onHideKpiTooltip();
+          }}
+        />
       </div>
-      <div>
-        <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Joined</p>
-        <p className={`font-semibold leading-snug ${kpiTextClass}`}>{formatMetric(joined)}</p>
-        <p className="text-xs leading-snug text-slate-500">Net {formatMetric(net)}{left > 0 ? ` / left ${formatMetric(left)}` : ''}</p>
+      <div className="grid grid-cols-[minmax(90px,1fr)_minmax(70px,0.7fr)_minmax(80px,0.8fr)] gap-3">
+        <div>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Spend</p>
+          <MoneyStack amount={cost} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCost} mainClassName="font-semibold leading-snug text-white" subClassName="text-xs leading-snug text-slate-500" />
+        </div>
+        <div>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Joined</p>
+          <p className={`font-semibold leading-snug ${kpiTextClass}`}>{formatMetric(joined)}</p>
+          <p className="text-xs leading-snug text-slate-500">Net {formatMetric(net)}{left > 0 ? ` / left ${formatMetric(left)}` : ''}</p>
+        </div>
+        <div>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">CPA</p>
+          {costPerJoined !== null ? (
+            <MoneyStack amount={costPerJoined} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCostPerJoined} mainClassName={`font-semibold leading-snug ${kpiTextClass}`} subClassName="text-xs leading-snug text-slate-500" />
+          ) : <p className="text-slate-500">-</p>}
+        </div>
       </div>
-      <div>
-        <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">CPA</p>
-        {costPerJoined !== null ? (
-          <MoneyStack amount={costPerJoined} currency={currency} settings={moneySettings} rates={rates} amountInPrimary={primaryCostPerJoined} mainClassName={`font-semibold leading-snug ${kpiTextClass}`} subClassName="text-xs leading-snug text-slate-500" />
-        ) : <p className="text-slate-500">-</p>}
-      </div>
+      {metrics.length ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {metrics.slice(0, 4).map((metric) => (
+            <span key={metric.label} className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-xs text-slate-200">
+              {metric.label}: {metric.value}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -834,6 +815,62 @@ function kpiMetricTextClass(status?: AdCampaignKpiStatus | null) {
   if (status === 'acceptable') return 'text-yellow-200';
   if (status === 'bad') return 'text-rose-200';
   return 'text-white';
+}
+
+function performanceCardClass(status?: AdCampaignKpiStatus | null) {
+  if (status === 'good') return 'border-emerald-700/70 bg-emerald-950/20';
+  if (status === 'acceptable') return 'border-yellow-700/70 bg-yellow-950/20';
+  if (status === 'bad') return 'border-rose-700/70 bg-rose-950/20';
+  return 'border-slate-800 bg-slate-950/40';
+}
+
+function PromoList({ promos, onOpenPromo }: { promos: Promo[]; onOpenPromo: (promo: Promo) => void }) {
+  if (!promos.length) return null;
+  return (
+    <div className="flex max-w-full flex-wrap gap-1.5">
+      {promos.map((promo) => (
+        <button
+          key={promo.id}
+          type="button"
+          onClick={() => onOpenPromo(promo)}
+          className="inline-flex max-w-[240px] items-center gap-1.5 rounded-full border border-blue-800 bg-blue-950/30 px-2.5 py-1 text-xs text-blue-100 transition-colors hover:bg-blue-950/50"
+        >
+          <PromoVisual promo={promo} />
+          <span className="truncate">{promo.title}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PromoVisual({ promo }: { promo: Promo }) {
+  if (promo.icon?.imageUrl) {
+    return <img src={promo.icon.imageUrl} alt="" className="h-4 w-4 rounded-full object-cover" />;
+  }
+  if (promo.icon?.emoji) {
+    return <span className="inline-flex h-4 w-4 items-center justify-center text-[13px] leading-none">{promo.icon.emoji}</span>;
+  }
+  return null;
+}
+
+function InviteLinkList({ inviteLinks }: { inviteLinks: TelegramInviteLink[] }) {
+  if (!inviteLinks.length) return null;
+  const visible = inviteLinks.slice(0, 3);
+  const hidden = inviteLinks.slice(3);
+  return (
+    <div className="flex max-w-full flex-wrap gap-1.5">
+      {visible.map((inviteLink) => (
+        <span key={inviteLink.id} className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-amber-800 bg-amber-950/20 px-2 py-1 text-xs text-amber-100">
+          <span className="truncate">{inviteLink.name}</span>
+        </span>
+      ))}
+      {hidden.length ? (
+        <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-400" title={hidden.map((inviteLink) => inviteLink.name).join(', ')}>
+          +{hidden.length}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function SourceChip({ source, fallback, compact = false }: { source: any; fallback?: string; compact?: boolean }) {
@@ -881,32 +918,6 @@ function hasValue(value: unknown) {
   return value != null && Number.isFinite(Number(value));
 }
 
-function hasUsefulPerformanceSummary(performance?: any) {
-  if (!performance) return false;
-  return [
-    performance.totalNewSubscribers,
-    performance.totalActiveSubscribersFromAd,
-    performance.normalDataCount,
-    performance.suspiciousCount,
-    performance.anomalousCount,
-    performance.pollutedCount,
-  ].some((value) => Number(value || 0) > 0) ||
-    [
-      performance.avgCpa,
-      performance.avgActiveCpa,
-      performance.avgActiveRate,
-      performance.avgRetention7d,
-    ].some(hasValue);
-}
-
-function campaignPlacementAgeDays(campaign: any) {
-  const value = campaign?.placementDate || campaign?.startedAt || campaign?.createdAt;
-  if (!value) return null;
-  const placedAt = new Date(value);
-  if (Number.isNaN(placedAt.getTime())) return null;
-  return Math.floor((Date.now() - placedAt.getTime()) / 86_400_000);
-}
-
 function campaignMetrics(campaign: any) {
   const metrics = [
     { label: 'New subs', value: campaign?.newSubscribers, format: (value: unknown) => formatMetric(value) },
@@ -919,65 +930,6 @@ function campaignMetrics(campaign: any) {
   return metrics
     .filter((metric) => hasValue(metric.value))
     .map((metric) => ({ label: metric.label, value: metric.format(metric.value) }));
-}
-
-function campaignMissingAnalyticsMessage(campaign: any) {
-  if (campaignMetrics(campaign).length > 0) return null;
-  const ageDays = campaignPlacementAgeDays(campaign);
-  if (ageDays != null && ageDays >= 7) {
-    return 'Analytics snapshots were not captured when this older campaign ran, so 24h/7d subscriber and view changes cannot be reconstructed now.';
-  }
-  if (ageDays != null && ageDays >= 1) {
-    return 'Analytics snapshots are missing for this campaign. Run sync after connecting the channel analytics account; some early-window metrics may already be unavailable.';
-  }
-  return 'Analytics will appear after the next daily sync captures enough channel data.';
-}
-
-function syncStatusClass(status?: string | null) {
-  if (status === 'success') return 'border-emerald-700 bg-emerald-950/30 text-emerald-200';
-  if (status === 'partial_failed') return 'border-amber-700 bg-amber-950/30 text-amber-200';
-  if (status === 'failed') return 'border-rose-700 bg-rose-950/30 text-rose-200';
-  if (status === 'running') return 'border-blue-700 bg-blue-950/30 text-blue-200';
-  return 'border-slate-700 bg-slate-950/30 text-slate-300';
-}
-
-function syncStatusLabel(status?: string | null) {
-  if (status === 'success') return 'Synced';
-  if (status === 'partial_failed') return 'Partially synced';
-  if (status === 'failed') return 'Failed';
-  if (status === 'running') return 'Running';
-  return 'Unknown';
-}
-
-function describeSyncRun(run: any) {
-  if (!run) return { short: 'No sync has been run yet.', detail: '' };
-  if (run.status === 'success') {
-    return { short: 'Daily analytics synced.', detail: `Updated ${run.channelsProcessed} channels and ${run.campaignsProcessed} campaigns.` };
-  }
-  if (run.status === 'partial_failed') {
-    const accountErrors = String(run.errorMessage || '').includes('No connected Telegram user account selected');
-    return {
-      short: 'Daily analytics partially synced.',
-      detail: accountErrors
-        ? 'Some channels were skipped because no connected Telegram account is linked for MTProto analytics.'
-        : `${run.errorsCount} item(s) could not be synced. Processed data was still saved.`,
-    };
-  }
-  if (run.status === 'failed') {
-    return { short: 'Daily analytics sync failed.', detail: readableSyncError(run.errorMessage) };
-  }
-  if (run.status === 'running') {
-    return { short: 'Daily analytics sync is running.', detail: 'Refresh shortly to see the result.' };
-  }
-  return { short: `Daily analytics status: ${run.status || 'unknown'}.`, detail: readableSyncError(run.errorMessage) };
-}
-
-function readableSyncError(message?: string | null) {
-  if (!message) return 'No additional details.';
-  if (message.includes('No connected Telegram user account selected')) {
-    return 'Connect or link a Telegram user account to the affected channels, then run sync again.';
-  }
-  return message.split('\n')[0] || 'No additional details.';
 }
 
 function kpiStatusClass(status?: AdCampaignKpiStatus | null) {
@@ -1012,7 +964,7 @@ function KpiStatusBadge({
 }) {
   return (
     <span
-      className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiStatusClass(status)} ${onMouseEnter ? 'cursor-help' : ''}`}
+      className={`inline-flex rounded border px-2 py-0.5 text-xs ${kpiStatusClass(status)} ${status && status !== 'unknown' && onMouseEnter ? 'cursor-help' : ''}`}
       title={kpiStatusTitle(status)}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -1055,26 +1007,6 @@ function formatKpiRange(from?: number | string | null, to?: number | string | nu
   if (fromValue != null) return `${formatMetric(fromValue, 2)}+`;
   if (toValue != null) return `≤${formatMetric(toValue, 2)}`;
   return '-';
-}
-
-function SyncRunSummary({ run, compact = false, inline = false }: { run: any; compact?: boolean; inline?: boolean }) {
-  const summary = describeSyncRun(run);
-  if (inline) {
-    return (
-      <>
-        <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${syncStatusClass(run.status)}`}>{syncStatusLabel(run.status)}</span>
-        <span className="text-slate-400">{summary.detail}</span>
-        <span className="text-slate-500">{run.source}</span>
-      </>
-    );
-  }
-  return (
-    <div className={compact ? 'mt-2' : 'mt-1'}>
-      <span className={`inline-flex rounded border px-2 py-0.5 text-xs ${syncStatusClass(run.status)}`}>{syncStatusLabel(run.status)}</span>
-      <p className={`${compact ? 'mt-2' : 'mt-1'} text-xs text-slate-400`}>{summary.detail}</p>
-      {!compact ? <p className="mt-1 text-xs text-slate-500">{run.source}</p> : null}
-    </div>
-  );
 }
 
 function hypothesisStatusClass(status?: string) {
@@ -1361,6 +1293,46 @@ function PromoModal({
   );
 }
 
+function PromoPreviewModal({ promo, onClose }: { promo: Promo | null; onClose: () => void }) {
+  return (
+    <Modal open={Boolean(promo)} onClose={onClose} title={promo?.title || 'Promo preview'} size="xl">
+      {promo ? (
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
+          <TelegramPostPreview
+            channelTitle={promo.telegramChannel?.title || 'Telegram channel'}
+            channelPhotoUrl={promo.telegramChannel?.photoUrl}
+            text={promo.text || ''}
+            imageUrls={promo.imageData ? [promo.imageData] : []}
+          />
+          <Card className="space-y-4">
+            <div className="flex items-center gap-3">
+              <PromoVisual promo={promo} />
+              <div>
+                <h3 className="text-lg font-semibold text-white">{promo.title}</h3>
+                {promo.telegramChannel ? <p className="text-sm text-slate-400">{promo.telegramChannel.title}</p> : null}
+              </div>
+            </div>
+            {promo.text ? (
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Text</p>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm whitespace-pre-wrap text-slate-200">
+                  {promo.text}
+                </div>
+              </div>
+            ) : null}
+            {promo.imageData ? (
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Image</p>
+                <img src={promo.imageData} alt="" className="max-h-[320px] rounded-lg border border-slate-800 object-contain" />
+              </div>
+            ) : null}
+          </Card>
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 function HypothesisFormModal({
   open,
   hypothesis,
@@ -1480,48 +1452,6 @@ function CampaignSelectRow({
   );
 }
 
-function SyncDetailsModal({ open, onClose, performance, syncRuns, hasCampaigns }: { open: boolean; onClose: () => void; performance: any; syncRuns: any[]; hasCampaigns: boolean }) {
-  const latestSync = performance?.lastDailyAnalyticsSync || syncRuns?.[0];
-  return (
-    <Modal open={open} onClose={onClose} title="Analytics sync details">
-      <div className="space-y-4">
-        {hasCampaigns && !hasUsefulPerformanceSummary(performance) ? (
-          <div className="rounded-lg border border-amber-700 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
-            Performance metrics are hidden because these campaigns do not have captured analytics snapshots yet. For older placements, 24h and 7d subscriber/view changes cannot be reconstructed retroactively.
-          </div>
-        ) : null}
-        <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3">
-          <p className="text-sm font-medium text-slate-200">Latest run</p>
-          {latestSync ? (
-            <div className="mt-2 space-y-2 text-sm">
-              <p className="text-slate-400">{new Date(latestSync.startedAt).toLocaleString()}</p>
-              <SyncRunSummary run={latestSync} />
-              <p className="text-xs text-slate-500">Channels {latestSync.channelsProcessed} · Campaigns {latestSync.campaignsProcessed} · Snapshots {latestSync.snapshotsCreated ?? 0}</p>
-            </div>
-          ) : <p className="mt-2 text-sm text-slate-400">No sync has been run yet.</p>}
-        </div>
-        {syncRuns.length ? (
-          <div>
-            <p className="mb-2 text-sm font-medium text-slate-200">Recent runs</p>
-            <div className="space-y-2">
-              {syncRuns.map((run) => (
-                <div key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-200">{new Date(run.startedAt).toLocaleString()}</span>
-                    <span className={`rounded border px-2 py-0.5 text-xs ${syncStatusClass(run.status)}`}>{syncStatusLabel(run.status)}</span>
-                    <span className="text-xs text-slate-500">{run.source}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400">{describeSyncRun(run).detail}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </Modal>
-  );
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   const responseMessage = (error as any)?.response?.data?.message;
   if (Array.isArray(responseMessage)) return responseMessage.join(', ');
@@ -1540,24 +1470,164 @@ function normalizeAdvertisingSelectionValue(value: unknown): string {
   return `channel:${raw}`;
 }
 
-function MultiChannelSelect({ value, onChange, options }: { value: string[]; onChange: (v: string[]) => void; options: any[] }) {
+function MultiValueSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  options: CampaignSelectOption[];
+  placeholder: string;
+}) {
   const [open, setOpen] = useState(false);
-  const selectedIds = new Set((value || []).map(normalizeAdvertisingSelectionValue).filter(Boolean));
-  const selected = options.filter((o) => selectedIds.has(o.selectionId));
+  const [search, setSearch] = useState('');
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [menuStyle, setMenuStyle] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const selectedIds = new Set(value || []);
+  const selected = options.filter((option) => selectedIds.has(option.value));
+  const filteredOptions = options.filter((option) =>
+    `${option.label} ${option.description || ''} ${option.searchText || ''}`
+      .toLocaleLowerCase()
+      .includes(search.trim().toLocaleLowerCase()),
+  );
 
-  const toggle = (selectionId: string) => {
-    if (selectedIds.has(selectionId)) onChange(value.filter((x) => normalizeAdvertisingSelectionValue(x) !== selectionId));
-    else onChange([...value, selectionId]);
+  useEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const viewportPadding = 16;
+      const width = Math.min(
+        Math.max(rect.width, 280),
+        window.innerWidth - viewportPadding * 2,
+      );
+      const left = Math.min(
+        Math.max(viewportPadding, rect.left),
+        window.innerWidth - width - viewportPadding,
+      );
+      const estimatedHeight = 360;
+      const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+      const showAbove =
+        spaceBelow < 220 && rect.top > estimatedHeight + viewportPadding;
+      setMenuStyle({
+        left,
+        width,
+        top: showAbove
+          ? Math.max(viewportPadding, rect.top - estimatedHeight - 8)
+          : Math.min(window.innerHeight - estimatedHeight - viewportPadding, rect.bottom + 8),
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open]);
+
+  const toggle = (optionValue: string) => {
+    if (selectedIds.has(optionValue)) onChange(value.filter((item) => item !== optionValue));
+    else onChange([...value, optionValue]);
   };
 
   return (
-    <div className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-h-11 w-full flex-wrap items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white">
-        {selected.length ? selected.map((s) => <span key={s.selectionId} className="inline-flex items-center gap-1 rounded-full border border-neutral-600 px-2 py-0.5 text-xs">{s.photoUrl || s.imageUrl ? <img src={s.photoUrl || s.imageUrl} className="h-4 w-4 rounded-full" alt="" /> : null}{s.title || s.name}</span>) : <span className="text-neutral-400">Select sources</span>}
+    <div ref={rootRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => {
+          setOpen((current) => {
+            if (current) setSearch('');
+            return !current;
+          });
+        }}
+        className="flex min-h-11 w-full flex-wrap items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white"
+      >
+        {selected.length ? selected.map((option) => (
+          <span key={option.value} className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-neutral-600 px-2 py-0.5 text-xs">
+            <SelectOptionVisual option={option} />
+            <span className="truncate">{option.label}</span>
+          </span>
+        )) : <span className="text-neutral-400">{placeholder}</span>}
       </button>
-      {open ? <div className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 p-1">{options.map((o) => <button type="button" key={o.selectionId} onClick={() => toggle(o.selectionId)} className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800">{o.photoUrl || o.imageUrl ? <img src={o.photoUrl || o.imageUrl} className="h-5 w-5 rounded-full" alt="" /> : <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-600 text-[10px]">{String(o.title || o.name || '?').slice(0, 1).toUpperCase()}</span>}<span className="flex-1">{o.title || o.name}</span><span className="text-xs text-neutral-500">{o.label}</span><span>{selectedIds.has(o.selectionId) ? '✓' : ''}</span></button>)}</div> : null}
+      {open && menuStyle
+        ? createPortal(
+            <div className="fixed inset-0 z-[180]">
+              <button
+                type="button"
+                aria-label="Close select"
+                className="absolute inset-0 cursor-default bg-transparent"
+                onClick={() => {
+                  setOpen(false);
+                  setSearch('');
+                }}
+              />
+              <div
+                className="absolute overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl"
+                style={{
+                  top: menuStyle.top,
+                  left: menuStyle.left,
+                  width: menuStyle.width,
+                  maxHeight: 360,
+                }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="border-b border-neutral-800 p-2">
+                  <Input
+                    autoFocus
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setOpen(false);
+                        setSearch('');
+                      }
+                    }}
+                    placeholder="Search..."
+                    className="bg-neutral-950"
+                  />
+                </div>
+                <div className="max-h-[300px] overflow-auto p-1">
+                  {filteredOptions.map((option) => (
+                    <button type="button" key={option.value} onClick={() => toggle(option.value)} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800">
+                      <SelectOptionVisual option={option} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{option.label}</span>
+                        {option.description ? <span className="block truncate text-xs text-neutral-500">{option.description}</span> : null}
+                      </span>
+                      <span className="text-blue-300">{selectedIds.has(option.value) ? '✓' : ''}</span>
+                    </button>
+                  ))}
+                  {!filteredOptions.length ? <p className="px-3 py-3 text-center text-sm text-neutral-500">No options found</p> : null}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
+}
+
+function SelectOptionVisual({ option }: { option: CampaignSelectOption }) {
+  if (option.iconUrl) {
+    return <img src={option.iconUrl} className="h-5 w-5 shrink-0 rounded-full object-cover" alt="" />;
+  }
+  if (option.iconEmoji) {
+    return <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-[15px] leading-none">{option.iconEmoji}</span>;
+  }
+  return null;
 }
 
 function isOwnTelegramChannel(channel: any) {
@@ -1588,22 +1658,27 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
   const mapInitialValues = (row?: any): CampaignValues => row
     ? {
         telegramChannelId: row.telegramChannelId ?? '',
-        promoId: row.promoId ?? '',
-        telegramInviteLinkId: row.telegramInviteLinkId ?? '',
+        assignedMemberId: row.assignedMemberId ?? row.assignedMember?.id ?? null,
+        promoIds: Array.isArray(row.promoIds) ? row.promoIds : row.promoId ? [row.promoId] : [],
+        inviteLinkIds: Array.isArray(row.inviteLinkIds) ? row.inviteLinkIds : row.telegramInviteLinkId ? [row.telegramInviteLinkId] : [],
         advertisingChannelIds: campaignAdvertisingSources(row).map(advertisingSelectionId).filter(Boolean),
         price: Number(row.price ?? row.costAmount ?? 0),
         accountId: row.accountId ?? '',
         date: toInputDate(row.placementDate || row.startedAt),
         notes: row.notes ?? '',
       }
-    : { telegramChannelId: '', promoId: '', telegramInviteLinkId: '', advertisingChannelIds: [], price: 0, accountId: '', date: formatLocalDate(new Date()), notes: '' };
+    : { telegramChannelId: '', assignedMemberId: null, promoIds: [], inviteLinkIds: [], advertisingChannelIds: [], price: 0, accountId: '', date: formatLocalDate(new Date()), notes: '' };
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<CampaignValues>({ defaultValues: mapInitialValues(initial) });
   const selectedChannelId = watch('telegramChannelId');
+  const selectedPromoIds = watch('promoIds') || [];
+  const selectedInviteLinkIds = watch('inviteLinkIds') || [];
   const selectedAdChannels = watch('advertisingChannelIds') || [];
 
   useEffect(() => {
     register('advertisingChannelIds');
+    register('promoIds');
+    register('inviteLinkIds');
   }, [register]);
 
   useEffect(() => {
@@ -1625,44 +1700,95 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
 
   const availablePromos = useMemo(() => promos ?? [], [promos]);
   const ownTelegramChannels = useMemo(() => (channels || []).filter(isOwnTelegramChannel), [channels]);
+  const promoOptions = useMemo(() => availablePromos.map((promo: Promo) => ({
+    value: promo.id,
+    label: promo.title,
+    iconUrl: promo.icon?.imageUrl ?? undefined,
+    iconEmoji: promo.icon?.emoji ?? undefined,
+    iconFallback: promo.title,
+    description: promo.telegramChannel?.title,
+    searchText: promo.text,
+  })), [availablePromos]);
+  const inviteLinkOptions = useMemo(() => (inviteLinks || []).map((inviteLink: TelegramInviteLink) => ({
+    value: inviteLink.id,
+    label: inviteLink.name,
+    iconUrl:
+      inviteLink.creatorMember?.avatarIcon?.imageUrl ??
+      inviteLink.creatorPhotoUrl ??
+      undefined,
+    iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
+    iconFallback:
+      inviteLink.creatorMember?.user?.name ??
+      inviteLink.creatorFirstName ??
+      inviteLink.creatorUsername ??
+      inviteLink.name,
+    description:
+      inviteLink.creatorMember?.user?.name ||
+      inviteLink.creatorUsername
+        ? `${inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername} · ${inviteLink.url}`
+        : inviteLink.url,
+  })), [inviteLinks]);
   const advertisingSources = useMemo(() => [
     ...(people || []).map((person: any) => ({
-      ...person,
-      selectionId: person.selectionId || `source:${person.id}`,
-      title: person.title || person.name,
-      label: 'Person',
+      value: person.selectionId || `source:${person.id}`,
+      label: person.title || person.name,
+      iconUrl: person.imageUrl ?? undefined,
+      iconFallback: person.title || person.name,
+      description: 'Person',
+      searchText: `${person.telegramUsername || ''} ${person.contactInfo || ''}`,
     })),
     ...(channels || [])
       .filter((channel: any) => channel.id !== selectedChannelId)
       .map((channel: any) => {
         const isOwn = isOwnTelegramChannel(channel);
         return {
-          ...channel,
-          selectionId: `channel:${channel.id}`,
-          label: isOwn ? 'Own channel' : 'External channel',
+          value: `channel:${channel.id}`,
+          label: channel.title,
+          iconUrl: channel.photoUrl ?? undefined,
+          iconFallback: channel.title,
+          description: isOwn ? 'Own channel' : 'External channel',
+          searchText: channel.username || '',
         };
       }),
   ], [channels, people, selectedChannelId]);
 
   return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit((v: any) => {
-    onSubmit({ ...v, price: Number(v.price), advertisingChannelIds: v.advertisingChannelIds || [] });
+    onSubmit({
+      ...v,
+      assignedMemberId: v.assignedMemberId || null,
+      promoIds: v.promoIds || [],
+      inviteLinkIds: v.inviteLinkIds || [],
+      price: Number(v.price),
+      advertisingChannelIds: v.advertisingChannelIds || [],
+    });
   })}>
     <FormField label="Own Telegram Channel" required error={errors.telegramChannelId ? 'Required field' : undefined}>
       <CustomSelect
         value={watch('telegramChannelId')}
-        onChange={(v) => { setValue('telegramChannelId', v, { shouldValidate: true, shouldDirty: true }); setValue('promoId', ''); setValue('telegramInviteLinkId', ''); }}
+        onChange={(v) => {
+          setValue('telegramChannelId', v, { shouldValidate: true, shouldDirty: true });
+          setValue('promoIds', [], { shouldDirty: true, shouldValidate: true });
+          setValue('inviteLinkIds', [], { shouldDirty: true, shouldValidate: true });
+        }}
         placeholder="Select"
-        options={ownTelegramChannels.map((x: any) => ({ value: x.id, label: x.title, iconUrl: x.photoUrl }))}
+        options={ownTelegramChannels.map((x: any) => ({ value: x.id, label: x.title, iconUrl: x.photoUrl, iconFallback: x.title }))}
       />
     </FormField>
-    <FormField label="Promo / Invite Link" required error={errors.promoId ? 'Required field' : undefined}>
-      <CustomSelect value={watch('promoId')} onChange={(v) => setValue('promoId', v, { shouldValidate: true, shouldDirty: true })} placeholder="Select promo" options={availablePromos.map((x: any) => ({ value: x.id, label: x.title }))} />
+    <FormField label="Member">
+      <MemberSelect
+        value={watch('assignedMemberId') ?? null}
+        onChange={(assignedMemberId) => setValue('assignedMemberId', assignedMemberId || null, { shouldDirty: true })}
+        defaultToCurrent={!initial}
+      />
     </FormField>
-    <FormField label="Invite Link" required error={errors.telegramInviteLinkId ? 'Required field' : undefined}>
-      <CustomSelect value={watch('telegramInviteLinkId')} onChange={(v) => setValue('telegramInviteLinkId', v, { shouldValidate: true, shouldDirty: true })} placeholder="Select invite link" options={(inviteLinks || []).map((x: any) => ({ value: x.id, label: x.name }))} />
+    <FormField label="Promos">
+      <MultiValueSelect value={selectedPromoIds} onChange={(next) => setValue('promoIds', next, { shouldValidate: true, shouldDirty: true })} options={promoOptions} placeholder="Select promos" />
     </FormField>
-    <FormField label="Advertising Sources" required error={errors.advertisingChannelIds ? 'Required field' : undefined}>
-      <MultiChannelSelect value={selectedAdChannels.filter((id) => id !== `channel:${selectedChannelId}` && id !== selectedChannelId)} onChange={(next) => setValue('advertisingChannelIds', next, { shouldValidate: true, shouldDirty: true })} options={advertisingSources} />
+    <FormField label="Invite Links">
+      <MultiValueSelect value={selectedInviteLinkIds} onChange={(next) => setValue('inviteLinkIds', next, { shouldValidate: true, shouldDirty: true })} options={inviteLinkOptions} placeholder="Select invite links" />
+    </FormField>
+    <FormField label="Advertising Sources">
+      <MultiValueSelect value={selectedAdChannels.filter((id) => id !== `channel:${selectedChannelId}` && id !== selectedChannelId)} onChange={(next) => setValue('advertisingChannelIds', next, { shouldValidate: true, shouldDirty: true })} options={advertisingSources} placeholder="Select sources" />
     </FormField>
     <FormField label="Cost amount" required error={errors.price ? 'Required field' : undefined}><Input type="number" step="0.01" {...register('price', { valueAsNumber: true, required: true })} /></FormField>
     <FormField label="Account" required error={errors.accountId ? 'Required field' : undefined}>
@@ -1677,8 +1803,6 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     </FormField>
     <FormField label="Notes"><Textarea {...register('notes')} /></FormField>
     <input type="hidden" {...register('telegramChannelId', { required: true })} />
-    <input type="hidden" {...register('promoId', { required: true })} />
-    <input type="hidden" {...register('telegramInviteLinkId', { required: true })} />
     <input type="hidden" {...register('accountId', { required: true })} />
     <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div>
   </form></Modal>;
