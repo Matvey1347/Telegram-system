@@ -3,6 +3,7 @@
 import type { MouseEventHandler } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { IconAvatar } from '@/components/icons/icon-avatar';
@@ -99,6 +100,7 @@ function accountSelectOption(account: Account) {
 
 export default function AdCampaignsPage() {
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
   const { pushToast, startOperation } = useAppToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -144,11 +146,24 @@ export default function AdCampaignsPage() {
   });
 
   useEffect(() => {
+    const requestedViewMode = searchParams.get('view');
+    if (requestedViewMode === 'campaigns' || requestedViewMode === 'promos' || requestedViewMode === 'hypotheses') {
+      setViewMode(requestedViewMode);
+      return;
+    }
     const savedViewMode = window.localStorage.getItem(AD_CAMPAIGNS_VIEW_MODE_STORAGE_KEY);
     if (savedViewMode === 'campaigns' || savedViewMode === 'promos' || savedViewMode === 'hypotheses') {
       setViewMode(savedViewMode);
     }
-  }, []);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const requestedPromoId = searchParams.get('promoId');
+    if (viewMode !== 'promos' || !requestedPromoId || !promos?.length) return;
+    const requestedPromo = promos.find((promo) => promo.id === requestedPromoId);
+    if (!requestedPromo) return;
+    setPreviewPromo((current) => current?.id === requestedPromo.id ? current : requestedPromo);
+  }, [promos, searchParams, viewMode]);
 
   const createMutation = useMutation({
     mutationFn: adCampaignsApi.create,
@@ -680,10 +695,13 @@ function CampaignsTable({
                     <div className="min-w-0 space-y-3">
                       <div className="truncate font-semibold text-white">{displayCampaignTitleWithDate(campaign)}</div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                        <SourceChip source={campaign.telegramChannel} fallback="-" compact />
+                        <SourceChip source={campaign.telegramChannel} fallback="-" compact href={campaign.telegramChannel?.id ? `/telegram/channels/${campaign.telegramChannel.id}` : undefined} title={campaign.telegramChannel?.title ? `Own Telegram channel: ${campaign.telegramChannel.title}\nClick to open this channel.\nCtrl/Cmd + click opens it in a new tab.` : undefined} />
+                        {campaign.assignedMember ? <MemberChip member={campaign.assignedMember} /> : null}
                       </div>
-                      <PromoList promos={campaign.promos || (campaign.promo ? [campaign.promo] : [])} onOpenPromo={onOpenPromo} />
-                      <InviteLinkList inviteLinks={campaign.inviteLinks || []} />
+                      <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                        <PromoList promos={campaign.promos || (campaign.promo ? [campaign.promo] : [])} onOpenPromo={onOpenPromo} inline />
+                        <InviteLinkList inviteLinks={campaign.inviteLinks || []} inline />
+                      </div>
                       <SourceList sources={campaign.advertisingChannels || []} />
                     </div>
                   </td>
@@ -824,23 +842,45 @@ function performanceCardClass(status?: AdCampaignKpiStatus | null) {
   return 'border-slate-800 bg-slate-950/40';
 }
 
-function PromoList({ promos, onOpenPromo }: { promos: Promo[]; onOpenPromo: (promo: Promo) => void }) {
+function PromoList({ promos, onOpenPromo, inline = false }: { promos: Promo[]; onOpenPromo: (promo: Promo) => void; inline?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   if (!promos.length) return null;
-  return (
-    <div className="flex max-w-full flex-wrap gap-1.5">
-      {promos.map((promo) => (
+  const visible = expanded ? promos : promos.slice(0, 3);
+  const hiddenCount = Math.max(0, promos.length - visible.length);
+  const content = (
+    <>
+      {visible.map((promo) => (
         <button
           key={promo.id}
           type="button"
-          onClick={() => onOpenPromo(promo)}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey) {
+              window.open(`/ad-campaigns?view=promos&promoId=${promo.id}`, '_blank', 'noopener,noreferrer');
+              return;
+            }
+            onOpenPromo(promo);
+          }}
+          title={`Promo: ${promo.title}\nClick to open its preview modal.\nCtrl/Cmd + click opens it in a new tab.`}
           className="inline-flex max-w-[240px] items-center gap-1.5 rounded-full border border-blue-800 bg-blue-950/30 px-2.5 py-1 text-xs text-blue-100 transition-colors hover:bg-blue-950/50"
         >
           <PromoVisual promo={promo} />
           <span className="truncate">{promo.title}</span>
         </button>
       ))}
-    </div>
+      {hiddenCount ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+          title={`Show ${hiddenCount} more promos`}
+        >
+          +{hiddenCount}
+        </button>
+      ) : null}
+    </>
   );
+  if (inline) return content;
+  return <div className="flex max-w-full flex-wrap gap-1.5">{content}</div>;
 }
 
 function PromoVisual({ promo }: { promo: Promo }) {
@@ -853,64 +893,138 @@ function PromoVisual({ promo }: { promo: Promo }) {
   return null;
 }
 
-function InviteLinkList({ inviteLinks }: { inviteLinks: TelegramInviteLink[] }) {
+function InviteLinkList({ inviteLinks, inline = false }: { inviteLinks: TelegramInviteLink[]; inline?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   if (!inviteLinks.length) return null;
-  const visible = inviteLinks.slice(0, 3);
-  const hidden = inviteLinks.slice(3);
+  const visible = expanded ? inviteLinks : inviteLinks.slice(0, 3);
+  const hiddenCount = Math.max(0, inviteLinks.length - visible.length);
+  const content = (
+    <>
+      {visible.map((inviteLink) => (
+        <a
+          key={inviteLink.id}
+          href={inviteLink.url}
+          title={`Invite link: ${inviteLink.name}\nClick to open the invite link.\nCtrl/Cmd + click opens it in a new tab.`}
+          className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-amber-800 bg-amber-950/20 px-2 py-1 text-xs text-amber-100 transition-colors hover:bg-amber-950/35"
+        >
+          <span className="truncate">{inviteLink.name}</span>
+        </a>
+      ))}
+      {hiddenCount ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+          title={`Show ${hiddenCount} more invite links`}
+        >
+          +{hiddenCount}
+        </button>
+      ) : null}
+    </>
+  );
+  if (inline) return content;
+  return <div className="flex max-w-full flex-wrap gap-1.5">{content}</div>;
+}
+
+function SourceChip({ source, fallback, compact = false, href, title }: { source: any; fallback?: string; compact?: boolean; href?: string; title?: string }) {
+  const label = source?.title || source?.name || fallback || '-';
+  const content = (
+    <>
+      {source?.photoUrl || source?.imageUrl ? <img src={source.photoUrl || source.imageUrl} alt="" className={`${compact ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 rounded-full object-cover`} /> : <span className={`${compact ? 'h-4 w-4' : 'h-5 w-5'} inline-flex shrink-0 items-center justify-center rounded-full border border-slate-700 text-[10px] text-slate-400`}>{String(label).slice(0, 1).toUpperCase()}</span>}
+      <span className="truncate">{label}</span>
+    </>
+  );
+  if (!href) {
+    return (
+      <span className={`inline-flex items-center gap-2 ${compact ? 'max-w-[200px]' : 'max-w-[220px]'}`} title={title}>
+        {content}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      title={title}
+      className={`inline-flex items-center gap-2 transition-colors hover:text-white ${compact ? 'max-w-[200px]' : 'max-w-[220px]'}`}
+    >
+      {content}
+    </a>
+  );
+}
+
+function SourceList({ sources }: { sources: any[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!sources.length) return null;
+  const visible = expanded ? sources : sources.slice(0, 3);
+  const hiddenCount = Math.max(0, sources.length - visible.length);
   return (
     <div className="flex max-w-full flex-wrap gap-1.5">
-      {visible.map((inviteLink) => (
-        <span key={inviteLink.id} className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-amber-800 bg-amber-950/20 px-2 py-1 text-xs text-amber-100">
-          <span className="truncate">{inviteLink.name}</span>
-        </span>
+      {visible.map((source) => (
+        <a
+          key={source.selectionId || source.id}
+          href={source.selectionId?.startsWith('source:') ? '/advertising-channels' : source.id ? `/telegram/channels/${source.id}` : '/advertising-channels'}
+          title={`${source.selectionId?.startsWith('source:') ? 'Advertising source' : 'Telegram channel source'}: ${source.title || source.name}\nClick to open it.\nCtrl/Cmd + click opens it in a new tab.`}
+          className="inline-flex max-w-[260px] items-center gap-1.5 rounded-full bg-slate-900 px-2 py-1 text-xs text-slate-200 ring-1 ring-slate-800 transition-colors hover:bg-slate-800"
+        >
+          {source.photoUrl || source.imageUrl ? <img src={source.photoUrl || source.imageUrl} alt="" className="h-4 w-4 rounded-full object-cover" /> : null}
+          <span className="truncate">{source.title || source.name}</span>
+        </a>
       ))}
-      {hidden.length ? (
-        <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-400" title={hidden.map((inviteLink) => inviteLink.name).join(', ')}>
-          +{hidden.length}
-        </span>
+      {hiddenCount ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+          title={`Show ${hiddenCount} more sources`}
+        >
+          +{hiddenCount}
+        </button>
       ) : null}
     </div>
   );
 }
 
-function SourceChip({ source, fallback, compact = false }: { source: any; fallback?: string; compact?: boolean }) {
-  const label = source?.title || source?.name || fallback || '-';
-  return (
-    <span className={`inline-flex items-center gap-2 ${compact ? 'max-w-[200px]' : 'max-w-[220px]'}`}>
-      {source?.photoUrl || source?.imageUrl ? <img src={source.photoUrl || source.imageUrl} alt="" className={`${compact ? 'h-4 w-4' : 'h-5 w-5'} shrink-0 rounded-full object-cover`} /> : <span className={`${compact ? 'h-4 w-4' : 'h-5 w-5'} inline-flex shrink-0 items-center justify-center rounded-full border border-slate-700 text-[10px] text-slate-400`}>{String(label).slice(0, 1).toUpperCase()}</span>}
-      <span className="truncate">{label}</span>
-    </span>
-  );
-}
-
-function SourceList({ sources }: { sources: any[] }) {
-  if (!sources.length) return <span className="text-slate-500">-</span>;
-  const visible = sources.slice(0, 2);
-  const hidden = sources.slice(2);
-  return (
-    <div className="flex max-w-full flex-wrap gap-1.5">
-      {visible.map((source) => (
-        <span key={source.selectionId || source.id} className="inline-flex max-w-[260px] items-center gap-1.5 rounded-full bg-slate-900 px-2 py-1 text-xs text-slate-200 ring-1 ring-slate-800">
-          {source.photoUrl || source.imageUrl ? <img src={source.photoUrl || source.imageUrl} alt="" className="h-4 w-4 rounded-full object-cover" /> : null}
-          <span className="truncate">{source.title || source.name}</span>
-        </span>
-      ))}
-      {hidden.length ? <span className="rounded-full border border-slate-700 px-2 py-1 text-xs text-slate-400" title={hidden.map((source) => source.title || source.name).join(', ')}>+{hidden.length}</span> : null}
-    </div>
-  );
-}
-
 function HypothesisLinks({ links }: { links: any[] }) {
+  const [expanded, setExpanded] = useState(false);
   if (!links.length) return <span className="text-slate-500">-</span>;
+  const visible = expanded ? links : links.slice(0, 2);
+  const hiddenCount = Math.max(0, links.length - visible.length);
   return (
     <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
-      {links.slice(0, 2).map((link) => (
+      {visible.map((link) => (
         <span key={link.hypothesis.id} className={`inline-flex min-w-0 max-w-full rounded-full border px-2 py-0.5 text-xs ${hypothesisStatusClass(link.hypothesis.status)}`}>
           <span className="truncate">{link.hypothesis.name}</span>
         </span>
       ))}
-      {links.length > 2 ? <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">+{links.length - 2}</span> : null}
+      {hiddenCount ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+          title={`Show ${hiddenCount} more hypotheses`}
+        >
+          +{hiddenCount}
+        </button>
+      ) : null}
     </div>
+  );
+}
+
+function MemberChip({ member }: { member: NonNullable<AdCampaign['assignedMember']> }) {
+  const label = member.user?.name || 'Member';
+  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
+  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  return (
+    <a
+      href="/workspace-members"
+      title={`Assigned member: ${label}\nClick to open workspace members.\nCtrl/Cmd + click opens it in a new tab.`}
+      className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-900/70 px-2 py-1 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+    >
+      {avatarImageUrl ? <img src={avatarImageUrl} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" /> : null}
+      {!avatarImageUrl && avatarEmoji ? <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-[12px] leading-none">{avatarEmoji}</span> : null}
+      {!avatarImageUrl && !avatarEmoji ? <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-slate-600 text-[10px] text-slate-400">{label.slice(0, 1).toUpperCase()}</span> : null}
+      <span className="truncate">{label}</span>
+    </a>
   );
 }
 
