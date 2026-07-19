@@ -43,14 +43,15 @@ describe("InviteLinksTable", () => {
     render(<InviteLinksTable links={links} />);
 
     expect(screen.getByText(/Created by Owner Admin/)).toBeInTheDocument();
-    expect(screen.getByText("@owner_admin")).toBeInTheDocument();
-    expect(screen.getByText("Unlinked Telegram admin")).toBeInTheDocument();
-    expect(screen.getByText("@sasha_admin")).toBeInTheDocument();
+    expect(screen.getByText(/Created by Sasha Admin/)).toBeInTheDocument();
+    expect(screen.getByText("https://t.me/+owner_link")).toBeInTheDocument();
+    expect(screen.getByText("https://t.me/+sasha_link")).toBeInTheDocument();
     expect(screen.getByText("11")).toBeInTheDocument();
     expect(screen.getByText("13")).toBeInTheDocument();
     expect(screen.getByText("4")).toBeInTheDocument();
-    expect(screen.getByText("pending requests")).toBeInTheDocument();
+    expect(screen.getAllByText("pending requests")).toHaveLength(2);
     expect(screen.getByText("Revoked")).toBeInTheDocument();
+    expect(screen.queryByText("Join requests")).not.toBeInTheDocument();
   });
 
   it("hides empty imported mtproto placeholders but keeps ones with requests", () => {

@@ -17,13 +17,6 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-const WORKSPACE_ROLE_LABELS = {
-  owner: "Owner",
-  admin: "Admin",
-  MEDIA_BUYER: "Media buyer",
-  member: "Member",
-} as const;
-
 export function InviteLinksTable({ links }: { links: TelegramInviteLink[] }) {
   const visibleLinks = links.filter((link) => {
     const totalAttributed =
@@ -38,12 +31,12 @@ export function InviteLinksTable({ links }: { links: TelegramInviteLink[] }) {
       {visibleLinks.map((link) => (
         <div
           key={link.id}
-          className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm"
+          className="rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-2 text-sm"
         >
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <p className="font-medium">{link.name || "Invite link"}</p>
-              <div className="mt-2 flex items-start gap-3">
+              <div className="mt-1.5 flex items-center gap-2.5">
                 {link.creatorMember ? (
                   <IconAvatar
                     icon={link.creatorMember.avatarIcon}
@@ -63,7 +56,7 @@ export function InviteLinksTable({ links }: { links: TelegramInviteLink[] }) {
                   />
                 )}
                 <div className="min-w-0">
-                  <p className="text-xs text-slate-400">
+                  <p className="truncate text-xs text-slate-400">
                     Created by{" "}
                     {link.creatorMember?.user.name ||
                       [link.creatorFirstName, link.creatorLastName]
@@ -73,59 +66,41 @@ export function InviteLinksTable({ links }: { links: TelegramInviteLink[] }) {
                         ? `@${link.creatorUsername}`
                         : "Telegram admin")}
                   </p>
-                  {link.creatorMember ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-200">
-                        {WORKSPACE_ROLE_LABELS[link.creatorMember.role]}
-                      </span>
-                      {link.creatorMember.telegramUsername ? (
-                        <span className="text-slate-400">
-                          @{link.creatorMember.telegramUsername}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-2 py-0.5 text-amber-200">
-                        Unlinked Telegram admin
-                      </span>
-                      {link.creatorUsername ? (
-                        <span className="text-slate-400">
-                          @{link.creatorUsername}
-                        </span>
-                      ) : null}
-                    </div>
-                  )}
                 </div>
               </div>
-              <p className="mt-2 break-all text-slate-400">{link.url || "-"}</p>
+              <p className="mt-1.5 break-all text-sm text-slate-400">
+                {link.url || "-"}
+              </p>
               {link.adCampaign?.title ? (
                 <p className="mt-1 text-xs text-slate-400">
                   Campaign: {link.adCampaign.title}
                 </p>
               ) : null}
             </div>
-            <div className="shrink-0 text-right">
-              <p className="text-lg font-semibold">{formatNumber(link.joinedCount)}</p>
-              <p className="text-xs text-slate-400">joined</p>
-              {link.requestedCount > 0 ? (
-                <>
-                  <p className="mt-2 text-sm font-medium text-amber-200">
+            <div className="shrink-0">
+              <div className="flex items-center gap-4 text-right">
+                <div>
+                  <p className="text-base font-semibold leading-none">
+                    {formatNumber(link.joinedCount)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">joined</p>
+                </div>
+                <div>
+                  <p className="text-base font-semibold leading-none text-amber-200">
                     {formatNumber(link.requestedCount)}
                   </p>
-                  <p className="text-xs text-slate-400">pending requests</p>
-                </>
-              ) : null}
-              <p
-                className={`mt-2 text-xs ${
-                  link.isRevoked ? "text-rose-300" : "text-emerald-300"
-                }`}
-              >
-                {link.isRevoked ? "Revoked" : "Active"}
-              </p>
-              {link.createsJoinRequest ? (
-                <p className="mt-1 text-xs text-slate-500">Join requests</p>
-              ) : null}
+                  <p className="mt-0.5 whitespace-nowrap text-[11px] text-slate-400">
+                    pending requests
+                  </p>
+                </div>
+                <p
+                  className={`whitespace-nowrap text-xs font-medium ${
+                    link.isRevoked ? "text-rose-300" : "text-emerald-300"
+                  }`}
+                >
+                  {link.isRevoked ? "Revoked" : "Active"}
+                </p>
+              </div>
             </div>
           </div>
         </div>

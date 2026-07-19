@@ -5,6 +5,12 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { execFile as execFileCallback } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import sharp from 'sharp';
 import { Api, TelegramClient } from 'telegram';
 import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { HTMLParser } from 'telegram/extensions/html';
@@ -117,6 +123,8 @@ type InviteLinkLoadedCallback = (
   expectedTotal: number,
   warnings: string[],
 ) => void | Promise<void>;
+
+const execFile = promisify(execFileCallback);
 type TelegramLongLike =
   | bigint
   | number
@@ -136,6 +144,10 @@ export class TelegramMtprotoClient {
   private readonly maxPublishImageBytes = 10 * 1024 * 1024;
   private readonly telegramResolveTimeoutMs = 20_000;
   private readonly telegramMetadataTimeoutMs = 10_000;
+  private readonly publishableTelegramPhotoTypes = new Set([
+    'image/jpeg',
+    'image/png',
+  ]);
   private readonly broadcastStatsGraphFields: Array<{
     normalized: BroadcastStatsGraphField;
     raw: string[];
@@ -2594,21 +2606,32 @@ export class TelegramMtprotoClient {
         : undefined;
       const messageIds: string[] = [];
       if (params.imageUrls.length) {
-        const caption = this.parseMtprotoHtml(
-          params.captionHtml ?? params.html,
-        );
+        const captionSourceHtml = params.captionHtml ?? params.html;
+        const caption = this.parseMtprotoHtml(captionSourceHtml);
         const files = await Promise.all(
           params.imageUrls.map((url, index) =>
             this.downloadPublishImage(url, index),
           ),
         );
-        const result = await client.sendFile(entity, {
-          file: files.length === 1 ? files[0] : files,
-          caption: caption.text,
-          formattingEntities: caption.entities,
-          parseMode: false,
-          scheduleDate: schedule,
-        });
+        const result =
+          files.length > 1
+            ? await client.sendFile(entity, {
+                file: files,
+                // GramJS album uploads ignore formattingEntities, so provide
+                // MTProto-compatible HTML and let the library parse it itself.
+                caption: captionSourceHtml
+                  ? [telegramHtmlToMtprotoHtml(captionSourceHtml)]
+                  : [''],
+                parseMode: 'html',
+                scheduleDate: schedule,
+              })
+            : await client.sendFile(entity, {
+                file: files[0],
+                caption: caption.text,
+                formattingEntities: caption.entities,
+                parseMode: false,
+                scheduleDate: schedule,
+              });
         const messages = Array.isArray(result) ? result : [result];
         for (const message of messages) {
           if (message?.id != null) messageIds.push(String(message.id));
@@ -2746,20 +2769,94 @@ export class TelegramMtprotoClient {
       throw new Error(`Image ${index + 1} is larger than 10 MB`);
     }
 
+    const normalized = await this.normalizePublishImageBuffer(
+      buffer,
+      contentType,
+      index,
+    );
+
     const extensionByType: Record<string, string> = {
       'image/jpeg': 'jpg',
       'image/png': 'png',
+    };
+    const extension = extensionByType[normalized.contentType] || 'jpg';
+    return new CustomFile(
+      `telegram-post-${index + 1}.${extension}`,
+      normalized.buffer.length,
+      '',
+      normalized.buffer,
+    );
+  }
+
+  private async normalizePublishImageBuffer(
+    buffer: Buffer,
+    contentType: string,
+    index: number,
+  ) {
+    if (this.publishableTelegramPhotoTypes.has(contentType)) {
+      return { buffer, contentType };
+    }
+
+    try {
+      const converted = await sharp(buffer, { animated: true })
+        .rotate()
+        .jpeg({ quality: 92, mozjpeg: true })
+        .toBuffer();
+      if (!converted.length) {
+        throw new Error('empty_conversion');
+      }
+      if (converted.length > this.maxPublishImageBytes) {
+        throw new Error('converted_too_large');
+      }
+      return { buffer: converted, contentType: 'image/jpeg' as const };
+    } catch (error) {
+      const converted = await this.convertImageBufferWithSips(
+        buffer,
+        contentType,
+      ).catch(() => null);
+      if (converted) {
+        if (converted.length > this.maxPublishImageBytes) {
+          throw new Error(
+            `Image ${index + 1} could not be converted for Telegram (converted image is larger than 10 MB)`,
+          );
+        }
+        return { buffer: converted, contentType: 'image/jpeg' as const };
+      }
+      const reason =
+        error instanceof Error && error.message === 'converted_too_large'
+          ? 'converted image is larger than 10 MB'
+          : 'unsupported or corrupted format';
+      throw new Error(
+        `Image ${index + 1} could not be converted for Telegram (${reason})`,
+      );
+    }
+  }
+
+  private async convertImageBufferWithSips(
+    buffer: Buffer,
+    contentType: string,
+  ) {
+    const extensionByType: Record<string, string> = {
+      'image/avif': 'avif',
+      'image/heic': 'heic',
+      'image/heif': 'heif',
       'image/webp': 'webp',
       'image/gif': 'gif',
       'image/bmp': 'bmp',
+      'image/tiff': 'tiff',
     };
-    const extension = extensionByType[contentType] || 'jpg';
-    return new CustomFile(
-      `telegram-post-${index + 1}.${extension}`,
-      buffer.length,
-      '',
-      buffer,
-    );
+    const extension = extensionByType[contentType] || 'img';
+    const tempDir = await mkdtemp(join(tmpdir(), 'telegram-publish-image-'));
+    const inputPath = join(tempDir, `input.${extension}`);
+    const outputPath = join(tempDir, 'output.jpg');
+
+    try {
+      await writeFile(inputPath, buffer);
+      await execFile('sips', ['-s', 'format', 'jpeg', inputPath, '--out', outputPath]);
+      return await readFile(outputPath);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   async deleteScheduledPost(params: {
