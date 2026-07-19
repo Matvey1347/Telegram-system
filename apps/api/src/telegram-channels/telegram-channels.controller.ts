@@ -35,6 +35,7 @@ import {
   ScheduleTelegramManagedPostDto,
   SetManagedPostTelegramUrlDto,
   PublishTelegramManagedPostDto,
+  SyncNowDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
@@ -447,16 +448,18 @@ export class TelegramChannelsController {
   @Post(':id/sync-now') syncNow(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
+    @Body() dto: SyncNowDto,
   ) {
-    return this.service.syncNow(user.sub, id);
+    return this.service.syncNow(user.sub, id, dto);
   }
   @Post(':id/sync-now-stream') syncNowStream(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
+    @Body() dto: SyncNowDto,
     @Res() res: Response,
   ) {
     return this.streamBulkAction(res, (onProgress) =>
-      this.service.syncNow(user.sub, id, onProgress as never),
+      this.service.syncNow(user.sub, id, dto, onProgress as never),
     );
   }
   @Post(':id/sync/historical') syncHistorical(

@@ -3,6 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  inviteLinkAttributedSubscribers,
+  sumInviteLinkAttributedSubscribers,
+} from '../common/analytics/invite-link-metrics';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAdHypothesisDto } from './dto/create-ad-hypothesis.dto';
@@ -67,13 +71,13 @@ export class AdHypothesesService {
       telegramChannel: {
         include: {
           inviteLinks: {
-            select: { id: true, joinedCount: true },
+            select: { id: true, joinedCount: true, requestedCount: true },
           },
         },
       },
       promo: true,
       inviteLinks: {
-        select: { id: true, joinedCount: true },
+        select: { id: true, joinedCount: true, requestedCount: true },
       },
       advertisingTelegramChannels: {
         include: {
@@ -136,17 +140,14 @@ export class AdHypothesesService {
         : []),
     ];
     const selectedLink = inviteLinks.find((link: any) => link.id === selectedLinkId);
-    return this.nullableNumber(selectedLink?.joinedCount);
+    return selectedLink ? inviteLinkAttributedSubscribers(selectedLink) : null;
   }
 
   private campaignJoined(campaign: any) {
     const selectedLinkJoined = this.selectedInviteLinkJoined(campaign);
     if (selectedLinkJoined != null) return selectedLinkJoined;
     const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
-      ? campaign.inviteLinks.reduce(
-          (sum: number, link: any) => sum + Number(link.joinedCount || 0),
-          0,
-        )
+      ? sumInviteLinkAttributedSubscribers(campaign.inviteLinks)
       : null;
     if (inviteLinksJoined != null && inviteLinksJoined > 0) {
       return inviteLinksJoined;

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { sumInviteLinkAttributedSubscribers } from '../common/analytics/invite-link-metrics';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -101,7 +102,7 @@ export class DashboardService {
       this.prisma.adCampaign.findMany({
         where: { workspaceId },
         include: {
-          inviteLinks: { select: { joinedCount: true } },
+          inviteLinks: { select: { joinedCount: true, requestedCount: true } },
           telegramChannel: {
             select: {
               id: true,
@@ -169,11 +170,14 @@ export class DashboardService {
     const selectedInviteLinks = selectedInviteLinkIds.length
       ? await this.prisma.telegramInviteLink.findMany({
           where: { workspaceId, id: { in: selectedInviteLinkIds } },
-          select: { id: true, joinedCount: true },
+          select: { id: true, joinedCount: true, requestedCount: true },
         })
       : [];
     const selectedInviteLinksById = new Map(
-      selectedInviteLinks.map((link) => [link.id, Number(link.joinedCount || 0)]),
+      selectedInviteLinks.map((link) => [
+        link.id,
+        sumInviteLinkAttributedSubscribers([link]),
+      ]),
     );
     const campaignJoinedCount = (campaign: any) => {
       const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
@@ -181,10 +185,7 @@ export class DashboardService {
         return Number(selectedInviteLinksById.get(selectedLinkId) || 0);
       }
 
-      const linkedJoined = campaign.inviteLinks.reduce(
-        (sum, link) => sum + Number(link.joinedCount || 0),
-        0,
-      );
+      const linkedJoined = sumInviteLinkAttributedSubscribers(campaign.inviteLinks);
       return Math.max(Number(campaign.joinedCount || 0), linkedJoined);
     };
     const campaignsWithMtprotoMetrics = campaigns.map((campaign) => {

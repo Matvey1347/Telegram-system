@@ -52,6 +52,39 @@ describe("InviteLinksTable", () => {
     expect(screen.getByText("pending requests")).toBeInTheDocument();
     expect(screen.getByText("Revoked")).toBeInTheDocument();
   });
+
+  it("hides empty imported mtproto placeholders but keeps ones with requests", () => {
+    const links: TelegramInviteLink[] = [
+      {
+        id: "link-hidden",
+        telegramChannelId: "channel-1",
+        name: "Imported MTProto link",
+        url: "https://t.me/+hidden",
+        joinedCount: 0,
+        requestedCount: 0,
+        isRevoked: false,
+        createsJoinRequest: false,
+        creatorMember: null,
+      },
+      {
+        id: "link-visible",
+        telegramChannelId: "channel-1",
+        name: "Imported MTProto link",
+        url: "https://t.me/+visible",
+        joinedCount: 0,
+        requestedCount: 2,
+        isRevoked: false,
+        createsJoinRequest: true,
+        creatorMember: null,
+      },
+    ];
+
+    render(<InviteLinksTable links={links} />);
+
+    expect(screen.queryByText("https://t.me/+hidden")).not.toBeInTheDocument();
+    expect(screen.getByText("https://t.me/+visible")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
 });
 
 describe("syncProgressToToast", () => {

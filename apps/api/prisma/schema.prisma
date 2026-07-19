@@ -561,6 +561,14 @@ model TelegramChannel {
   photoUrl           String?
   sourceType         String?   @default("telegram")
   lastPublicSyncedAt DateTime?
+  syncIncludePublicInfo       Boolean @default(true)
+  syncIncludeInviteLinks      Boolean @default(true)
+  syncIncludeHistoricalPosts  Boolean @default(true)
+  syncIncludePostMetrics      Boolean @default(true)
+  syncIncludeOlderPosts       Boolean @default(true)
+  syncIncludeChannelStats     Boolean @default(true)
+  syncIncludeManagedPosts     Boolean @default(true)
+  syncIncludeAudienceSnapshot Boolean @default(true)
 
   workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assignedMember WorkspaceMember? @relation("TelegramChannelAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)

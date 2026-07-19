@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { sumInviteLinkAttributedSubscribers } from '../common/analytics/invite-link-metrics';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateAdvertisingSourceDto, UpdateAdvertisingSourceDto } from './dto';
@@ -142,12 +143,7 @@ export class AdvertisingSourcesService {
     );
     const totalJoined = clean.reduce(
       (sum, placement) =>
-        sum +
-        placement.adCampaign.inviteLinks.reduce(
-          (linkSum: number, link: { joinedCount: number }) =>
-            linkSum + link.joinedCount,
-          0,
-        ),
+        sum + sumInviteLinkAttributedSubscribers(placement.adCampaign.inviteLinks),
       0,
     );
 

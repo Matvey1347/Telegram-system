@@ -92,8 +92,30 @@ export type TelegramInviteLinksResult = {
 };
 
 type InviteAdminSummary = TelegramInviteLinksResult['admins'][number];
+type ExportedInvitePayload = {
+  link?: unknown;
+  adminId?: unknown;
+  title?: unknown;
+  date?: unknown;
+  startDate?: unknown;
+  expireDate?: unknown;
+  usageLimit?: unknown;
+  usage?: unknown;
+  requested?: unknown;
+  requestNeeded?: unknown;
+  permanent?: unknown;
+  revoked?: unknown;
+  invite?: unknown;
+  newInvite?: unknown;
+};
 type InviteLinksProgressCallback = (
   item: TelegramChannelSyncProgressItem,
+) => void | Promise<void>;
+type InviteLinkLoadedCallback = (
+  link: TelegramInviteLinksResult['links'][number],
+  loadedCount: number,
+  expectedTotal: number,
+  warnings: string[],
 ) => void | Promise<void>;
 type TelegramLongLike =
   | bigint
@@ -162,6 +184,32 @@ export class TelegramMtprotoClient {
 
   private normalizeChatId(value?: string | null) {
     return normalizeTelegramChannelId(value);
+  }
+
+  private unwrapExportedChatInvite(invite: unknown): ExportedInvitePayload | null {
+    if (!invite || typeof invite !== 'object') {
+      return null;
+    }
+
+    const raw = invite as ExportedInvitePayload;
+
+    if (typeof raw.link === 'string' && raw.link.trim()) {
+      return raw;
+    }
+
+    const nestedCandidates = [raw.newInvite, raw.invite];
+    for (const candidate of nestedCandidates) {
+      if (
+        candidate &&
+        typeof candidate === 'object' &&
+        typeof (candidate as { link?: unknown }).link === 'string' &&
+        String((candidate as { link?: unknown }).link || '').trim()
+      ) {
+        return candidate as ExportedInvitePayload;
+      }
+    }
+
+    return raw;
   }
 
   private toBigInt(value: unknown) {
@@ -1678,6 +1726,7 @@ export class TelegramMtprotoClient {
     channel?: StoredTelegramChannelReference;
     postLimit?: number;
     onInviteLinksProgress?: InviteLinksProgressCallback;
+    onInviteLinkLoaded?: InviteLinkLoadedCallback;
   }) {
     const client = await this.createClient(params);
     try {
@@ -1729,6 +1778,7 @@ export class TelegramMtprotoClient {
         client,
         this.asImportableTelegramEntity(entity, 'channel'),
         params.onInviteLinksProgress,
+        params.onInviteLinkLoaded,
       );
       const inviteLinks = inviteLinksResult.links.map((inv) => ({
         url: inv.url,
@@ -2097,28 +2147,33 @@ export class TelegramMtprotoClient {
       if (!invites.length) break;
 
       for (const invite of invites) {
-        const url = String(invite?.link || '').trim();
+        const resolvedInvite = this.unwrapExportedChatInvite(invite);
+        const url = String(resolvedInvite?.link || '').trim();
         if (!url || seenUrls.has(url)) continue;
         seenUrls.add(url);
         const creatorTelegramUserId =
-          this.toBigInt(invite?.adminId)?.toString() ??
+          this.toBigInt(resolvedInvite?.adminId)?.toString() ??
           String(params.adminUser.id);
         const creatorUser =
           params.knownUsers.get(creatorTelegramUserId) ?? params.adminUser;
         const snapshot = await creatorSnapshot(creatorUser, params.adminUser);
         links.push({
           url,
-          title: invite?.title || null,
+          title:
+            typeof resolvedInvite?.title === 'string' &&
+            resolvedInvite.title.trim()
+              ? resolvedInvite.title
+              : null,
           ...snapshot,
-          createdAt: this.toTelegramDate(invite?.date),
-          startDate: this.toTelegramDate(invite?.startDate),
-          expireDate: this.toTelegramDate(invite?.expireDate),
-          usageLimit: this.toFiniteNumber(invite?.usageLimit),
-          usage: this.toFiniteNumber(invite?.usage) ?? 0,
-          requested: this.toFiniteNumber(invite?.requested) ?? 0,
-          requestNeeded: Boolean(invite?.requestNeeded),
-          permanent: Boolean(invite?.permanent),
-          revoked: Boolean(invite?.revoked),
+          createdAt: this.toTelegramDate(resolvedInvite?.date),
+          startDate: this.toTelegramDate(resolvedInvite?.startDate),
+          expireDate: this.toTelegramDate(resolvedInvite?.expireDate),
+          usageLimit: this.toFiniteNumber(resolvedInvite?.usageLimit),
+          usage: this.toFiniteNumber(resolvedInvite?.usage) ?? 0,
+          requested: this.toFiniteNumber(resolvedInvite?.requested) ?? 0,
+          requestNeeded: Boolean(resolvedInvite?.requestNeeded),
+          permanent: Boolean(resolvedInvite?.permanent),
+          revoked: Boolean(resolvedInvite?.revoked),
         });
         await params.onInviteLinkLoaded?.(links[links.length - 1]!);
       }
@@ -2146,6 +2201,7 @@ export class TelegramMtprotoClient {
     client: TelegramClient,
     entity: ImportableTelegramEntity,
     onProgress?: InviteLinksProgressCallback,
+    onInviteLinkLoaded?: InviteLinkLoadedCallback,
   ): Promise<TelegramInviteLinksResult> {
     const warnings: string[] = [];
     const channelTelegramId = this.entityIdToString(entity) || 'unknown';
@@ -2306,6 +2362,12 @@ export class TelegramMtprotoClient {
                 stageCurrent: loadedLinksCount,
                 stageTotal: expectedTotalLinks,
               });
+              await onInviteLinkLoaded?.(
+                link,
+                loadedLinksCount,
+                expectedTotalLinks,
+                warnings,
+              );
             },
           }),
           this.collectInviteLinksForAdmin({
@@ -2316,7 +2378,7 @@ export class TelegramMtprotoClient {
             knownUsers,
             revoked: true,
             warnings,
-            onInviteLinkLoaded: async () => {
+            onInviteLinkLoaded: async (link) => {
               loadedLinksCount += 1;
               await onProgress?.({
                 phase: 'loading_invite_links',
@@ -2324,6 +2386,12 @@ export class TelegramMtprotoClient {
                 stageCurrent: loadedLinksCount,
                 stageTotal: expectedTotalLinks,
               });
+              await onInviteLinkLoaded?.(
+                link,
+                loadedLinksCount,
+                expectedTotalLinks,
+                warnings,
+              );
             },
           }),
         ]);
@@ -2391,6 +2459,12 @@ export class TelegramMtprotoClient {
                 stageCurrent: Math.min(loadedLinksCount, expectedTotalLinks),
                 stageTotal: expectedTotalLinks,
               });
+              await onInviteLinkLoaded?.(
+                link,
+                Math.min(loadedLinksCount, expectedTotalLinks),
+                expectedTotalLinks,
+                warnings,
+              );
             },
           }),
           this.collectInviteLinksForAdmin({
@@ -2410,6 +2484,12 @@ export class TelegramMtprotoClient {
                 stageCurrent: Math.min(loadedLinksCount, expectedTotalLinks),
                 stageTotal: expectedTotalLinks,
               });
+              await onInviteLinkLoaded?.(
+                link,
+                Math.min(loadedLinksCount, expectedTotalLinks),
+                expectedTotalLinks,
+                warnings,
+              );
             },
           }),
         ]);

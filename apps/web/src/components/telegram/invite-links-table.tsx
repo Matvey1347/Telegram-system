@@ -25,11 +25,17 @@ const WORKSPACE_ROLE_LABELS = {
 } as const;
 
 export function InviteLinksTable({ links }: { links: TelegramInviteLink[] }) {
-  if (!links.length) return <EmptyState text="No invite links yet." />;
+  const visibleLinks = links.filter((link) => {
+    const totalAttributed =
+      Number(link.joinedCount || 0) + Number(link.requestedCount || 0);
+    return link.name !== "Imported MTProto link" || totalAttributed > 0;
+  });
+
+  if (!visibleLinks.length) return <EmptyState text="No invite links yet." />;
 
   return (
     <div className="space-y-2">
-      {links.map((link) => (
+      {visibleLinks.map((link) => (
         <div
           key={link.id}
           className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm"

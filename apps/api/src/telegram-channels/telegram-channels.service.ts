@@ -25,6 +25,10 @@ import type {
   TelegramChannelSyncProgressItem,
 } from '@telegram-system/shared';
 import { HTMLParser } from 'telegram/extensions/html';
+import {
+  inviteLinkAttributedSubscribers,
+  sumInviteLinkAttributedSubscribers,
+} from '../common/analytics/invite-link-metrics';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,6 +56,7 @@ import {
   SchedulePostGroupSequenceDto,
   ScheduleTelegramManagedPostDto,
   PublishTelegramManagedPostDto,
+  SyncNowDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
@@ -100,6 +105,17 @@ type BulkProgressCallback = (
   current: number,
   total: number,
 ) => void | Promise<void>;
+
+type TelegramChannelSyncSelection = {
+  syncIncludePublicInfo: boolean;
+  syncIncludeInviteLinks: boolean;
+  syncIncludeHistoricalPosts: boolean;
+  syncIncludePostMetrics: boolean;
+  syncIncludeOlderPosts: boolean;
+  syncIncludeChannelStats: boolean;
+  syncIncludeManagedPosts: boolean;
+  syncIncludeAudienceSnapshot: boolean;
+};
 
 const TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS = 50;
 
@@ -231,6 +247,12 @@ export class TelegramChannelsService {
   private telegramInviteLinkRequestedCountSupported: boolean | null = null;
   private telegramInviteLinkRequestedCountColumnAvailable: boolean | null =
     null;
+  private ensureTelegramInviteLinkRequestedCountColumnPromise:
+    | Promise<boolean>
+    | null = null;
+  private telegramChannelSyncScopeColumnsAvailable: boolean | null = null;
+  private ensureTelegramChannelSyncScopeColumnsPromise: Promise<void> | null =
+    null;
 
   constructor(
     private prisma: PrismaService,
@@ -243,6 +265,48 @@ export class TelegramChannelsService {
 
   private workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
+  }
+
+  private isMissingTelegramChannelSyncScopeColumn(error: unknown) {
+    const message =
+      error instanceof Error ? error.message : String(error || '');
+    return (
+      /column [`'"](?:TelegramChannel\.)?syncInclude[A-Za-z]+\b.*does not exist(?: in the current database)?/i.test(
+        message,
+      ) ||
+      /column [`'"]syncInclude[A-Za-z]+ of relation TelegramChannel[`'"] does not exist/i.test(
+        message,
+      )
+    );
+  }
+
+  private async ensureTelegramChannelSyncScopeColumnsAvailable() {
+    if (this.telegramChannelSyncScopeColumnsAvailable === true) return;
+    if (this.ensureTelegramChannelSyncScopeColumnsPromise) {
+      return this.ensureTelegramChannelSyncScopeColumnsPromise;
+    }
+    this.ensureTelegramChannelSyncScopeColumnsPromise = (async () => {
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramChannel"
+        ADD COLUMN IF NOT EXISTS "syncIncludePublicInfo" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeInviteLinks" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeHistoricalPosts" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludePostMetrics" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeOlderPosts" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeChannelStats" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeManagedPosts" BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS "syncIncludeAudienceSnapshot" BOOLEAN NOT NULL DEFAULT true
+      `);
+      this.telegramChannelSyncScopeColumnsAvailable = true;
+      this.logger.warn(
+        'TelegramChannel sync-scope columns were missing in the database and were created automatically for compatibility.',
+      );
+    })();
+    try {
+      await this.ensureTelegramChannelSyncScopeColumnsPromise;
+    } finally {
+      this.ensureTelegramChannelSyncScopeColumnsPromise = null;
+    }
   }
 
   private telegramTextEditNote(result: TelegramTextEditOutcome) {
@@ -463,6 +527,63 @@ export class TelegramChannelsService {
       durationMs: Date.now() - startedAt,
       metadata: metadata || {},
     };
+  }
+
+  private channelSyncSelection(channel: Partial<TelegramChannelSyncSelection>) {
+    return {
+      syncIncludePublicInfo: channel.syncIncludePublicInfo ?? true,
+      syncIncludeInviteLinks: channel.syncIncludeInviteLinks ?? true,
+      syncIncludeHistoricalPosts: channel.syncIncludeHistoricalPosts ?? true,
+      syncIncludePostMetrics: channel.syncIncludePostMetrics ?? true,
+      syncIncludeOlderPosts: channel.syncIncludeOlderPosts ?? true,
+      syncIncludeChannelStats: channel.syncIncludeChannelStats ?? true,
+      syncIncludeManagedPosts: channel.syncIncludeManagedPosts ?? true,
+      syncIncludeAudienceSnapshot: channel.syncIncludeAudienceSnapshot ?? true,
+    } satisfies TelegramChannelSyncSelection;
+  }
+
+  private resolveSyncSelection(
+    channel: Partial<TelegramChannelSyncSelection>,
+    dto?: SyncNowDto,
+  ) {
+    const stored = this.channelSyncSelection(channel);
+    return {
+      syncIncludePublicInfo:
+        dto?.syncIncludePublicInfo ?? stored.syncIncludePublicInfo,
+      syncIncludeInviteLinks:
+        dto?.syncIncludeInviteLinks ?? stored.syncIncludeInviteLinks,
+      syncIncludeHistoricalPosts:
+        dto?.syncIncludeHistoricalPosts ?? stored.syncIncludeHistoricalPosts,
+      syncIncludePostMetrics:
+        dto?.syncIncludePostMetrics ?? stored.syncIncludePostMetrics,
+      syncIncludeOlderPosts:
+        dto?.syncIncludeOlderPosts ?? stored.syncIncludeOlderPosts,
+      syncIncludeChannelStats:
+        dto?.syncIncludeChannelStats ?? stored.syncIncludeChannelStats,
+      syncIncludeManagedPosts:
+        dto?.syncIncludeManagedPosts ?? stored.syncIncludeManagedPosts,
+      syncIncludeAudienceSnapshot:
+        dto?.syncIncludeAudienceSnapshot ?? stored.syncIncludeAudienceSnapshot,
+    } satisfies TelegramChannelSyncSelection;
+  }
+
+  private syncSelectionHasAnyEnabled(selection: TelegramChannelSyncSelection) {
+    return Object.values(selection).some(Boolean);
+  }
+
+  private syncSelectionTotalSteps(selection: TelegramChannelSyncSelection) {
+    const includesHistorical =
+      selection.syncIncludeInviteLinks || selection.syncIncludeHistoricalPosts;
+    return (
+      Number(selection.syncIncludePublicInfo) +
+      Number(includesHistorical) +
+      Number(selection.syncIncludePostMetrics) +
+      Number(selection.syncIncludeOlderPosts) +
+      Number(selection.syncIncludeChannelStats) +
+      Number(selection.syncIncludeManagedPosts) +
+      Number(selection.syncIncludeAudienceSnapshot) +
+      1
+    );
   }
 
   private normalizeUsername(value?: string | null) {
@@ -906,6 +1027,189 @@ export class TelegramChannelsService {
     return buildInviteLinkAttributionMaps({ members, integrations });
   }
 
+  private async persistInviteLinkFromRemote(params: {
+    workspaceId: string;
+    channelId: string;
+    link: TelegramInviteLinksResult['links'][number];
+    maps: Awaited<ReturnType<TelegramChannelsService['buildInviteAttributionMaps']>>;
+    processedCount: number;
+    totalLinks: number;
+    warnings: string[];
+    onProgress?: BulkProgressCallback;
+    progressStep: { current: number; total: number };
+  }) {
+    const attribution = attributeInviteLinkCreator(
+      {
+        creatorTelegramUserId: params.link.telegramCreatorUserId,
+        creatorUsername: params.link.creatorUsername,
+        creatorFirstName: params.link.creatorFirstName,
+        creatorLastName: params.link.creatorLastName,
+        creatorPhotoUrl: params.link.creatorPhotoUrl,
+      },
+      params.maps,
+    );
+    const existing = await this.prisma.telegramInviteLink.findUnique({
+      where: {
+        workspaceId_telegramChannelId_url: {
+          workspaceId: params.workspaceId,
+          telegramChannelId: params.channelId,
+          url: params.link.url,
+        },
+      },
+      select: this.inviteLinkSyncExistingSelect,
+    });
+    const payload = {
+      name: params.link.title || existing?.name || 'Imported MTProto link',
+      telegramInviteLinkId: params.link.url,
+      createdBy:
+        existing?.createdBy ||
+        [params.link.creatorFirstName, params.link.creatorLastName]
+          .filter(Boolean)
+          .join(' ') ||
+        attribution.creatorUsername ||
+        null,
+      createsJoinRequest: params.link.requestNeeded,
+      expireDate: params.link.expireDate,
+      memberLimit: params.link.usageLimit,
+      joinedCount: params.link.usage,
+      requestedCount: params.link.requested,
+      isRevoked: params.link.revoked,
+      lastSyncedAt: new Date(),
+      creatorTelegramUserId: params.link.telegramCreatorUserId,
+      creatorUsername: attribution.creatorUsername,
+      creatorFirstName: params.link.creatorFirstName,
+      creatorLastName: params.link.creatorLastName,
+      creatorPhotoUrl: params.link.creatorPhotoUrl,
+      creatorMemberId: attribution.creatorMemberId,
+      creatorMatchSource: attribution.creatorMatchSource,
+    };
+
+    const upserted = await this.upsertInviteLinkWithRequestedCountFallback({
+      workspaceId: params.workspaceId,
+      channelId: params.channelId,
+      url: params.link.url,
+      existingId: existing?.id,
+      create: {
+        workspaceId: params.workspaceId,
+        telegramChannelId: params.channelId,
+        url: params.link.url,
+        ...payload,
+      },
+      update: payload,
+    });
+
+    await this.notifyInviteLinksProgress(
+      params.onProgress,
+      params.progressStep.current,
+      params.progressStep.total,
+      {
+        phase: 'saving_invite_links',
+        message: `Saving invite links ${params.processedCount}/${params.totalLinks}`,
+        stageCurrent: params.processedCount,
+        stageTotal: params.totalLinks,
+        warnings: params.warnings,
+      },
+    );
+
+    return {
+      existing,
+      upserted,
+      matchedMember: Boolean(attribution.creatorMemberId),
+      unresolved:
+        attribution.creatorMatchSource ===
+        TelegramInviteLinkCreatorMatchSource.UNRESOLVED,
+    };
+  }
+
+  private async finalizeInviteLinkSync(params: {
+    workspaceId: string;
+    channelId: string;
+    account: {
+      id: string;
+      label: string;
+      username: string | null;
+      firstName: string | null;
+      phoneMasked?: string | null;
+    };
+    remote: TelegramInviteLinksResult;
+    importedCount: number;
+    updatedCount: number;
+    matchedMembersCount: number;
+    unresolvedCreatorsCount: number;
+    affectedCampaignIds: Set<string>;
+    onProgress?: BulkProgressCallback;
+    progressStep: { current: number; total: number };
+  }) {
+    const campaignIds = [...params.affectedCampaignIds];
+    if (campaignIds.length) {
+      await this.notifyDetailedTaskProgress(
+        params.onProgress,
+        params.progressStep.current,
+        params.progressStep.total,
+        `Recalculating metrics for ${campaignIds.length} affected campaigns`,
+      );
+    }
+    for (const [index, campaignId] of campaignIds.entries()) {
+      await this.recalculateCampaignMetricsById(campaignId);
+      const processedCampaigns = index + 1;
+      if (
+        processedCampaigns === campaignIds.length ||
+        processedCampaigns === 1 ||
+        processedCampaigns % 10 === 0
+      ) {
+        await this.notifyDetailedTaskProgress(
+          params.onProgress,
+          params.progressStep.current,
+          params.progressStep.total,
+          `Recalculated ${processedCampaigns}/${campaignIds.length} affected campaigns`,
+        );
+      }
+    }
+
+    const status =
+      params.remote.scope === 'ALL_ADMINS'
+        ? TelegramDataSourceStatus.SUCCESS
+        : TelegramDataSourceStatus.PARTIAL;
+    const fetchedTotalLinks = params.remote.links.length;
+    const missingTotalLinks = Math.max(
+      0,
+      (params.remote.expectedTotalLinks ?? 0) - fetchedTotalLinks,
+    );
+    await this.sourceAccessService.recordDataSource({
+      workspaceId: params.workspaceId,
+      channelId: params.channelId,
+      sourceId: params.account.id,
+      sourceType: TelegramSourceType.MTPROTO,
+      dataType: TelegramChannelDataType.INVITE_LINKS,
+      status,
+      sourceDisplayName: this.sourceDisplayName(params.account),
+      metadata: {
+        scope: params.remote.scope,
+        adminsCount: params.remote.admins.length,
+        expectedTotalLinks: params.remote.expectedTotalLinks,
+        fetchedTotalLinks,
+        missingTotalLinks,
+        activeLinksCount: params.remote.links.filter((link) => !link.revoked).length,
+        revokedLinksCount: params.remote.links.filter((link) => link.revoked).length,
+        importedCount: params.importedCount,
+        updatedCount: params.updatedCount,
+        matchedMembersCount: params.matchedMembersCount,
+        unresolvedCreatorsCount: params.unresolvedCreatorsCount,
+        warnings: params.remote.warnings,
+      },
+    });
+
+    return {
+      imported: params.importedCount,
+      updated: params.updatedCount,
+      scope: params.remote.scope,
+      expectedTotalLinks: params.remote.expectedTotalLinks,
+      fetchedTotalLinks,
+      missingTotalLinks,
+      warnings: params.remote.warnings,
+    };
+  }
+
   async reattributeWorkspaceInviteLinks(workspaceId: string) {
     const maps = await this.buildInviteAttributionMaps(workspaceId);
     const links = await this.prisma.telegramInviteLink.findMany({
@@ -1002,161 +1306,45 @@ export class TelegramChannelsService {
     );
 
     for (const [index, link] of remote.links.entries()) {
-      const attribution = attributeInviteLinkCreator(
-        {
-          creatorTelegramUserId: link.telegramCreatorUserId,
-          creatorUsername: link.creatorUsername,
-          creatorFirstName: link.creatorFirstName,
-          creatorLastName: link.creatorLastName,
-          creatorPhotoUrl: link.creatorPhotoUrl,
-        },
-        maps,
-      );
-      if (attribution.creatorMemberId) matchedMembersCount += 1;
-      if (
-        attribution.creatorMatchSource ===
-        TelegramInviteLinkCreatorMatchSource.UNRESOLVED
-      ) {
-        unresolvedCreatorsCount += 1;
-      }
-      const existing = await this.prisma.telegramInviteLink.findUnique({
-        where: {
-          workspaceId_telegramChannelId_url: {
-            workspaceId: params.workspaceId,
-            telegramChannelId: params.channelId,
-            url: link.url,
-          },
-        },
-        select: this.inviteLinkSyncExistingSelect,
-      });
-      const payload = {
-        name: link.title || existing?.name || 'Imported MTProto link',
-        telegramInviteLinkId: link.url,
-        createdBy:
-          existing?.createdBy ||
-          [link.creatorFirstName, link.creatorLastName].filter(Boolean).join(' ') ||
-          attribution.creatorUsername ||
-          null,
-        createsJoinRequest: link.requestNeeded,
-        expireDate: link.expireDate,
-        memberLimit: link.usageLimit,
-        joinedCount: link.usage,
-        requestedCount: link.requested,
-        isRevoked: link.revoked,
-        lastSyncedAt: new Date(),
-        creatorTelegramUserId: link.telegramCreatorUserId,
-        creatorUsername: attribution.creatorUsername,
-        creatorFirstName: link.creatorFirstName,
-        creatorLastName: link.creatorLastName,
-        creatorPhotoUrl: link.creatorPhotoUrl,
-        creatorMemberId: attribution.creatorMemberId,
-        creatorMatchSource: attribution.creatorMatchSource,
-      };
-
-      const upserted = await this.upsertInviteLinkWithRequestedCountFallback({
+      const persisted = await this.persistInviteLinkFromRemote({
         workspaceId: params.workspaceId,
         channelId: params.channelId,
-        url: link.url,
-        existingId: existing?.id,
-        create: {
-          workspaceId: params.workspaceId,
-          telegramChannelId: params.channelId,
-          url: link.url,
-          ...payload,
-        },
-        update: payload,
+        link,
+        maps,
+        processedCount: index + 1,
+        totalLinks,
+        warnings: remote.warnings,
+        onProgress: params.onProgress,
+        progressStep,
       });
-      if (existing) {
+      if (persisted.matchedMember) matchedMembersCount += 1;
+      if (persisted.unresolved) unresolvedCreatorsCount += 1;
+      if (persisted.existing) {
         updatedCount += 1;
-        if (existing.adCampaignId) affectedCampaignIds.add(existing.adCampaignId);
+        if (persisted.existing.adCampaignId) {
+          affectedCampaignIds.add(persisted.existing.adCampaignId);
+        }
       } else {
         importedCount += 1;
       }
-
-      const processedCount = index + 1;
-      if (upserted.adCampaignId) affectedCampaignIds.add(upserted.adCampaignId);
-      await this.notifyInviteLinksProgress(
-        params.onProgress,
-        progressStep.current,
-        progressStep.total,
-        {
-          phase: 'saving_invite_links',
-          message: `Saving invite links ${processedCount}/${totalLinks}`,
-          stageCurrent: processedCount,
-          stageTotal: totalLinks,
-          warnings: remote.warnings,
-        },
-      );
-    }
-
-    const campaignIds = [...affectedCampaignIds];
-    if (campaignIds.length) {
-      await this.notifyDetailedTaskProgress(
-        params.onProgress,
-        progressStep.current,
-        progressStep.total,
-        `Recalculating metrics for ${campaignIds.length} affected campaigns`,
-      );
-    }
-    for (const [index, campaignId] of campaignIds.entries()) {
-      await this.recalculateCampaignMetricsById(campaignId);
-      const processedCampaigns = index + 1;
-      if (
-        processedCampaigns === campaignIds.length ||
-        processedCampaigns === 1 ||
-        processedCampaigns % 10 === 0
-      ) {
-        await this.notifyDetailedTaskProgress(
-          params.onProgress,
-          progressStep.current,
-          progressStep.total,
-          `Recalculated ${processedCampaigns}/${campaignIds.length} affected campaigns`,
-        );
+      if (persisted.upserted.adCampaignId) {
+        affectedCampaignIds.add(persisted.upserted.adCampaignId);
       }
     }
 
-    const status =
-      remote.scope === 'ALL_ADMINS'
-        ? TelegramDataSourceStatus.SUCCESS
-        : TelegramDataSourceStatus.PARTIAL;
-    const fetchedTotalLinks = remote.links.length;
-    const missingTotalLinks = Math.max(
-      0,
-      (remote.expectedTotalLinks ?? 0) - fetchedTotalLinks,
-    );
-    await this.sourceAccessService.recordDataSource({
+    return this.finalizeInviteLinkSync({
       workspaceId: params.workspaceId,
       channelId: params.channelId,
-      sourceId: params.account.id,
-      sourceType: TelegramSourceType.MTPROTO,
-      dataType: TelegramChannelDataType.INVITE_LINKS,
-      status,
-      sourceDisplayName: this.sourceDisplayName(params.account),
-      metadata: {
-        scope: remote.scope,
-        adminsCount: remote.admins.length,
-        expectedTotalLinks: remote.expectedTotalLinks,
-        fetchedTotalLinks,
-        missingTotalLinks,
-        activeLinksCount: remote.links.filter((link) => !link.revoked).length,
-        revokedLinksCount: remote.links.filter((link) => link.revoked).length,
-        importedCount,
-        updatedCount,
-        matchedMembersCount,
-        unresolvedCreatorsCount,
-        warnings: remote.warnings,
-      },
+      account: params.account,
+      remote,
+      importedCount,
+      updatedCount,
+      matchedMembersCount,
+      unresolvedCreatorsCount,
+      affectedCampaignIds,
+      onProgress: params.onProgress,
+      progressStep,
     });
-
-    return {
-      imported: importedCount,
-      updated: updatedCount,
-      scope: remote.scope,
-      expectedTotalLinks: remote.expectedTotalLinks,
-      fetchedTotalLinks,
-      missingTotalLinks,
-      warnings: remote.warnings,
-    };
   }
 
   private isRequestedCountUnsupportedPrismaError(error: unknown) {
@@ -1203,6 +1391,38 @@ export class TelegramChannelsService {
       inviteLinkModel?.fields.some((field) => field.name === 'requestedCount'),
     );
     return this.telegramInviteLinkRequestedCountSupported;
+  }
+
+  private async ensureTelegramInviteLinkRequestedCountColumnAvailable() {
+    if (!this.supportsTelegramInviteLinkRequestedCount()) {
+      return false;
+    }
+    if (this.telegramInviteLinkRequestedCountColumnAvailable === true) {
+      return true;
+    }
+    if (this.ensureTelegramInviteLinkRequestedCountColumnPromise) {
+      return this.ensureTelegramInviteLinkRequestedCountColumnPromise;
+    }
+    this.ensureTelegramInviteLinkRequestedCountColumnPromise = (async () => {
+      if (typeof this.prisma.$executeRawUnsafe !== 'function') {
+        return false;
+      }
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramInviteLink"
+        ADD COLUMN IF NOT EXISTS "requestedCount" INTEGER NOT NULL DEFAULT 0
+      `);
+      this.telegramInviteLinkRequestedCountColumnAvailable = true;
+      this.logger.warn(
+        'TelegramInviteLink.requestedCount column was missing and was created automatically for compatibility.',
+      );
+      return true;
+    })();
+    try {
+      await this.ensureTelegramInviteLinkRequestedCountColumnPromise;
+    } finally {
+      this.ensureTelegramInviteLinkRequestedCountColumnPromise = null;
+    }
+    return Boolean(this.telegramInviteLinkRequestedCountColumnAvailable);
   }
 
   private canWriteTelegramInviteLinkRequestedCount() {
@@ -1367,10 +1587,9 @@ export class TelegramChannelsService {
         throw error;
       }
       this.telegramInviteLinkRequestedCountColumnAvailable = false;
-      this.logger.warn(
-        `Invite-link read is retrying without requestedCount for workspace=${params.workspaceId} reason=${reason}`,
-      );
-      return run(false);
+      const repaired =
+        await this.ensureTelegramInviteLinkRequestedCountColumnAvailable();
+      return repaired ? run(true) : run(false);
     }
   }
 
@@ -1399,10 +1618,9 @@ export class TelegramChannelsService {
         throw error;
       }
       this.telegramInviteLinkRequestedCountColumnAvailable = false;
-      this.logger.warn(
-        `Invite-link update is retrying without requestedCount for id=${String(params.where.id || 'unknown')} reason=${reason}`,
-      );
-      return run(false);
+      const repaired =
+        await this.ensureTelegramInviteLinkRequestedCountColumnAvailable();
+      return repaired ? run(true) : run(false);
     }
   }
 
@@ -1470,6 +1688,22 @@ export class TelegramChannelsService {
       const reason = this.requestedCountCompatibilityReason(error);
       if (reason === 'database_column_missing') {
         this.telegramInviteLinkRequestedCountColumnAvailable = false;
+        const repaired =
+          await this.ensureTelegramInviteLinkRequestedCountColumnAvailable();
+        if (repaired) {
+          return this.prisma.telegramInviteLink.upsert({
+            where: {
+              workspaceId_telegramChannelId_url: {
+                workspaceId: params.workspaceId,
+                telegramChannelId: params.channelId,
+                url: params.url,
+              },
+            },
+            create: params.create as never,
+            update: params.update as never,
+            select: this.inviteLinkSyncUpsertSelect,
+          });
+        }
         return this.persistInviteLinkWithoutRequestedCount(params);
       }
 
@@ -2330,38 +2564,48 @@ export class TelegramChannelsService {
 
   async findAll(userId: string) {
     const workspaceId = await this.workspace(userId);
-    const channels = await this.prisma.telegramChannel.findMany({
-      where: { workspaceId, isActive: true },
-      include: {
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        adAnalyses: {
-          orderBy: { analyzedAt: 'desc' },
-          take: 1,
-          include: {
-            assignedMember: WorkspaceService.assignedMemberInclude,
+    const loadChannels = () =>
+      this.prisma.telegramChannel.findMany({
+        where: { workspaceId, isActive: true },
+        include: {
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          adAnalyses: {
+            orderBy: { analyzedAt: 'desc' },
+            take: 1,
+            include: {
+              assignedMember: WorkspaceService.assignedMemberInclude,
+            },
+          },
+          _count: { select: { adAnalyses: true } },
+          adminLinks: { include: { telegramUserAccountIntegration: true } },
+          sourceAccesses: { select: { id: true, canPostMessages: true } },
+          audienceSnapshots: {
+            orderBy: { collectedAt: 'desc' },
+            take: 1,
+            select: {
+              subscribersCount: true,
+              activeSubscribersEstimate: true,
+              viewRate: true,
+              dataQuality: true,
+              dataQualityReason: true,
+              hasExternalTrafficAnomaly: true,
+              hasSubscriberBasePollution: true,
+              postsWindow: true,
+            },
           },
         },
-        _count: { select: { adAnalyses: true } },
-        adminLinks: { include: { telegramUserAccountIntegration: true } },
-        sourceAccesses: { select: { id: true, canPostMessages: true } },
-        audienceSnapshots: {
-          orderBy: { collectedAt: 'desc' },
-          take: 1,
-          select: {
-            subscribersCount: true,
-            activeSubscribersEstimate: true,
-            viewRate: true,
-            dataQuality: true,
-            dataQualityReason: true,
-            hasExternalTrafficAnomaly: true,
-            hasSubscriberBasePollution: true,
-            postsWindow: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      });
+    let channels;
+    try {
+      channels = await loadChannels();
+    } catch (error) {
+      if (!this.isMissingTelegramChannelSyncScopeColumn(error)) throw error;
+      this.telegramChannelSyncScopeColumnsAvailable = false;
+      await this.ensureTelegramChannelSyncScopeColumnsAvailable();
+      channels = await loadChannels();
+    }
 
     if (!channels.length) return channels;
 
@@ -2373,11 +2617,18 @@ export class TelegramChannelsService {
           telegramChannelId: { in: channelIds },
           excludeFromAnalytics: false,
         },
-        include: { inviteLinks: { select: { joinedCount: true } } },
+        include: {
+          inviteLinks: { select: { joinedCount: true, requestedCount: true } },
+        },
       }),
       this.prisma.telegramInviteLink.findMany({
         where: { workspaceId, telegramChannelId: { in: channelIds } },
-        select: { id: true, telegramChannelId: true, joinedCount: true },
+        select: {
+          id: true,
+          telegramChannelId: true,
+          joinedCount: true,
+          requestedCount: true,
+        },
       }),
       this.timePostsByChannelIds(channelIds),
     ]);
@@ -2426,7 +2677,7 @@ export class TelegramChannelsService {
       const selectedInviteLinks = new Map(
         channelInviteLinks.map((link) => [
           link.id,
-          Number(link.joinedCount || 0),
+          inviteLinkAttributedSubscribers(link),
         ]),
       );
       const totalAdSpend = channelCampaigns.reduce(
@@ -2442,9 +2693,8 @@ export class TelegramChannelsService {
             return sum + Number(selectedInviteLinks.get(selectedLinkId) || 0);
           }
           const campaignJoined = Number(campaign.joinedCount || 0);
-          const linkedJoined = campaign.inviteLinks.reduce(
-            (linkSum, link) => linkSum + Number(link.joinedCount || 0),
-            0,
+          const linkedJoined = sumInviteLinkAttributedSubscribers(
+            campaign.inviteLinks,
           );
           return (
             sum +
@@ -2567,17 +2817,31 @@ export class TelegramChannelsService {
 
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
-    const [channel, timePostsByChannel] = await Promise.all([
+    const loadChannel = () =>
       this.prisma.telegramChannel.findFirst({
-      where: { id, workspaceId },
-      include: {
-        adminLinks: { include: { telegramUserAccountIntegration: true } },
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-      },
-      }),
-      this.timePostsByChannelIds([id]),
-    ]);
+        where: { id, workspaceId },
+        include: {
+          adminLinks: { include: { telegramUserAccountIntegration: true } },
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+        },
+      });
+    let channel;
+    let timePostsByChannel;
+    try {
+      [channel, timePostsByChannel] = await Promise.all([
+        loadChannel(),
+        this.timePostsByChannelIds([id]),
+      ]);
+    } catch (error) {
+      if (!this.isMissingTelegramChannelSyncScopeColumn(error)) throw error;
+      this.telegramChannelSyncScopeColumnsAvailable = false;
+      await this.ensureTelegramChannelSyncScopeColumnsAvailable();
+      [channel, timePostsByChannel] = await Promise.all([
+        loadChannel(),
+        this.timePostsByChannelIds([id]),
+      ]);
+    }
     if (!channel) throw new NotFoundException('Telegram channel not found');
     return {
       ...channel,
@@ -5518,275 +5782,356 @@ export class TelegramChannelsService {
   async syncNow(
     userId: string,
     channelId: string,
+    dto: SyncNowDto = {},
     onProgress?: BulkProgressCallback,
   ) {
     const workspaceId = await this.workspace(userId);
-    const totalSteps = 8;
+    const channel = await this.findOne(userId, channelId);
+    const selection = this.resolveSyncSelection(
+      channel as Partial<TelegramChannelSyncSelection>,
+      dto,
+    );
+    if (!this.syncSelectionHasAnyEnabled(selection)) {
+      throw new BadRequestException('Select at least one sync section');
+    }
+    if (dto.saveSelection) {
+      await this.prisma.telegramChannel.update({
+        where: { id: channelId },
+        data: selection,
+      });
+    }
+    const totalSteps = this.syncSelectionTotalSteps(selection);
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
-      await this.bestMtprotoAccountId(
-        workspaceId,
-        channelId,
-        TelegramChannelDataType.STATS,
-      ),
+      dto.telegramUserAccountId ||
+        (await this.bestMtprotoAccountId(
+          workspaceId,
+          channelId,
+          TelegramChannelDataType.STATS,
+        )),
     );
     const steps: SyncStepResult[] = [];
+    let progressStep = 0;
+    const nextProgressStep = () => {
+      progressStep += 1;
+      return progressStep;
+    };
+    const postLimit = dto.postLimit || (await this.postSyncLimitForChannel(channelId));
+    let publicInfo: any = null;
+    let historical: any = null;
+    let postsMetricsSync: any = null;
+    let olderPostsBackfill: any = null;
+    let channelStatsSync: any = null;
+    let managedPostsSync: any = null;
+    let audienceSnapshot: any = null;
 
-    await this.notifyTaskProgress(
-      onProgress,
-      1,
-      totalSteps,
-      'Refreshing public channel info',
-    );
-    const publicInfoStartedAt = Date.now();
-    let publicInfo: any;
-    try {
-      publicInfo = await this.syncPublicChannelInfo(workspaceId, channelId, account);
-      steps.push(
-        this.syncStepSuccess(
-          'channel_info',
-          publicInfoStartedAt,
-          'Channel info refreshed',
-          { subscribersCount: publicInfo?.subscribersCount ?? null },
-        ),
+    if (selection.syncIncludePublicInfo) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Refreshing public channel info',
       );
-    } catch (error) {
-      steps.push(
-        this.syncStepFailure(
-          'channel_info',
-          publicInfoStartedAt,
-          error,
-          'CHANNEL_INFO_FAILED',
-          'Failed to refresh channel info',
-        ),
-      );
-      throw error;
-    }
-    const postLimit = await this.postSyncLimitForChannel(channelId);
-    await this.notifyTaskProgress(
-      onProgress,
-      2,
-      totalSteps,
-      'Importing posts and invite links',
-    );
-    const historicalStartedAt = Date.now();
-    let historical: any;
-    try {
-      historical = await this.syncHistorical(userId, channelId, {
-        telegramUserAccountId: account.id,
-        syncInviteLinks: true,
-        syncPosts: true,
-        postLimit,
-      }, onProgress, { current: 2, total: totalSteps });
-      const historicalMetadata = {
-        importedInviteLinks: historical?.imported ?? 0,
-        updatedInviteLinks: historical?.updated ?? 0,
-        postsUpdated: historical?.postsUpdated ?? 0,
-        inviteLinksScope: historical?.inviteLinksScope ?? null,
-        inviteLinksExpectedTotal: historical?.inviteLinksExpectedTotal ?? null,
-        inviteLinksFetchedTotal: historical?.inviteLinksFetchedTotal ?? 0,
-        inviteLinksMissingTotal: historical?.inviteLinksMissingTotal ?? 0,
-        inviteLinkWarnings: historical?.inviteLinkWarnings ?? [],
-      };
-      steps.push(
-        historical?.inviteLinksScope === 'PARTIAL_ADMINS'
-          ? this.syncStepPartial(
-              'historical_posts',
-              historicalStartedAt,
-              'Posts synced, but invite-link sync completed partially',
-              historicalMetadata,
-            )
-          : this.syncStepSuccess(
-              'historical_posts',
-              historicalStartedAt,
-              'Posts and invite links synced',
-              historicalMetadata,
-            ),
-      );
-    } catch (error) {
-      steps.push(
-        this.syncStepFailure(
-          'historical_posts',
-          historicalStartedAt,
-          error,
-          'HISTORICAL_SYNC_FAILED',
-          'Failed to sync historical Telegram data',
-        ),
-      );
-      throw error;
-    }
-    await this.notifyTaskProgress(
-      onProgress,
-      3,
-      totalSteps,
-      'Updating post metrics',
-    );
-    const postsMetricsStartedAt = Date.now();
-    let postsMetricsSync: any;
-    try {
-      postsMetricsSync = await this.syncPostsMetrics(userId, channelId, {
-        telegramUserAccountId: account.id,
-        postLimit,
-      }, onProgress, { current: 3, total: totalSteps });
-      steps.push(
-        this.syncStepSuccess(
-          'post_metrics',
-          postsMetricsStartedAt,
-          'Post metrics synced',
-          { syncedPosts: postsMetricsSync?.syncedPosts ?? 0 },
-        ),
-      );
-    } catch (error) {
-      steps.push(
-        this.syncStepFailure(
-          'post_metrics',
-          postsMetricsStartedAt,
-          error,
-          'POST_METRICS_FAILED',
-          'Failed to sync post metrics',
-        ),
-      );
-      throw error;
-    }
-    await this.notifyTaskProgress(
-      onProgress,
-      4,
-      totalSteps,
-      'Backfilling older post metrics',
-    );
-    const olderPostsStartedAt = Date.now();
-    const olderPostsBackfill =
-      await this.syncOlderPostsMetricsBackfillForWorkspace(workspaceId, channelId, {
-        telegramUserAccountId: account.id,
-        maxPages:
-          postLimit === this.initialPostBackfillLimit
-            ? this.olderPostBackfillMaxPages
-            : 1,
-      });
-    steps.push(
-      olderPostsBackfill?.syncedPosts
-        ? this.syncStepSuccess(
-            'older_post_backfill',
-            olderPostsStartedAt,
-            'Older post metrics backfilled',
-            {
-              syncedPosts: olderPostsBackfill.syncedPosts,
-              pagesFetched: olderPostsBackfill.pagesFetched ?? 0,
-            },
-          )
-        : this.syncStepSkipped(
-            'older_post_backfill',
-            olderPostsStartedAt,
-            'No older posts were available for backfill',
+      const publicInfoStartedAt = Date.now();
+      try {
+        publicInfo = await this.syncPublicChannelInfo(
+          workspaceId,
+          channelId,
+          account,
+        );
+        steps.push(
+          this.syncStepSuccess(
+            'channel_info',
+            publicInfoStartedAt,
+            'Channel info refreshed',
+            { subscribersCount: publicInfo?.subscribersCount ?? null },
           ),
-    );
-    await this.notifyTaskProgress(
-      onProgress,
-      5,
-      totalSteps,
-      'Syncing channel stats',
-    );
-    const statsStartedAt = Date.now();
-    let channelStatsSync: any;
-    try {
-      channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
-        telegramUserAccountId: account.id,
-      });
-      const statsStatus =
-        channelStatsSync?.success === true
-          ? 'success'
-          : channelStatsSync?.snapshot?.normalizedStats?.status === 'available'
-            ? 'success'
-            : 'skipped';
+        );
+      } catch (error) {
+        steps.push(
+          this.syncStepFailure(
+            'channel_info',
+            publicInfoStartedAt,
+            error,
+            'CHANNEL_INFO_FAILED',
+            'Failed to refresh channel info',
+          ),
+        );
+        throw error;
+      }
+    }
+    if (
+      selection.syncIncludeInviteLinks ||
+      selection.syncIncludeHistoricalPosts
+    ) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Importing posts and invite links',
+      );
+      const historicalStartedAt = Date.now();
+      try {
+        historical = await this.syncHistorical(
+          userId,
+          channelId,
+          {
+            telegramUserAccountId: account.id,
+            syncInviteLinks: selection.syncIncludeInviteLinks,
+            syncPosts: selection.syncIncludeHistoricalPosts,
+            postLimit,
+          },
+          onProgress,
+          { current: currentStep, total: totalSteps },
+        );
+        const historicalMetadata = {
+          importedInviteLinks: historical?.imported ?? 0,
+          updatedInviteLinks: historical?.updated ?? 0,
+          postsUpdated: historical?.postsUpdated ?? 0,
+          inviteLinksScope: historical?.inviteLinksScope ?? null,
+          inviteLinksExpectedTotal: historical?.inviteLinksExpectedTotal ?? null,
+          inviteLinksFetchedTotal: historical?.inviteLinksFetchedTotal ?? 0,
+          inviteLinksMissingTotal: historical?.inviteLinksMissingTotal ?? 0,
+          inviteLinkWarnings: historical?.inviteLinkWarnings ?? [],
+        };
+        const historicalMessage =
+          selection.syncIncludeInviteLinks &&
+          selection.syncIncludeHistoricalPosts
+            ? 'Posts and invite links synced'
+            : selection.syncIncludeInviteLinks
+              ? 'Invite links synced'
+              : 'Historical posts synced';
+        steps.push(
+          historical?.inviteLinksScope === 'PARTIAL_ADMINS'
+            ? this.syncStepPartial(
+                'historical_posts',
+                historicalStartedAt,
+                'Posts synced, but invite-link sync completed partially',
+                historicalMetadata,
+              )
+            : this.syncStepSuccess(
+                'historical_posts',
+                historicalStartedAt,
+                historicalMessage,
+                historicalMetadata,
+              ),
+        );
+      } catch (error) {
+        steps.push(
+          this.syncStepFailure(
+            'historical_posts',
+            historicalStartedAt,
+            error,
+            'HISTORICAL_SYNC_FAILED',
+            'Failed to sync historical Telegram data',
+          ),
+        );
+        throw error;
+      }
+    }
+    if (selection.syncIncludePostMetrics) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Updating post metrics',
+      );
+      const postsMetricsStartedAt = Date.now();
+      try {
+        postsMetricsSync = await this.syncPostsMetrics(
+          userId,
+          channelId,
+          {
+            telegramUserAccountId: account.id,
+            postLimit,
+          },
+          onProgress,
+          { current: currentStep, total: totalSteps },
+        );
+        steps.push(
+          this.syncStepSuccess(
+            'post_metrics',
+            postsMetricsStartedAt,
+            'Post metrics synced',
+            { syncedPosts: postsMetricsSync?.syncedPosts ?? 0 },
+          ),
+        );
+      } catch (error) {
+        steps.push(
+          this.syncStepFailure(
+            'post_metrics',
+            postsMetricsStartedAt,
+            error,
+            'POST_METRICS_FAILED',
+            'Failed to sync post metrics',
+          ),
+        );
+        throw error;
+      }
+    }
+    if (selection.syncIncludeOlderPosts) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Backfilling older post metrics',
+      );
+      const olderPostsStartedAt = Date.now();
+      olderPostsBackfill =
+        await this.syncOlderPostsMetricsBackfillForWorkspace(
+          workspaceId,
+          channelId,
+          {
+            telegramUserAccountId: account.id,
+            maxPages:
+              postLimit === this.initialPostBackfillLimit
+                ? this.olderPostBackfillMaxPages
+                : 1,
+          },
+        );
       steps.push(
-        statsStatus === 'success'
+        olderPostsBackfill?.syncedPosts
           ? this.syncStepSuccess(
-              'broadcast_stats',
-              statsStartedAt,
-              'Broadcast stats synced',
-              { pointsUpserted: channelStatsSync?.pointsUpserted ?? 0 },
+              'older_post_backfill',
+              olderPostsStartedAt,
+              'Older post metrics backfilled',
+              {
+                syncedPosts: olderPostsBackfill.syncedPosts,
+                pagesFetched: olderPostsBackfill.pagesFetched ?? 0,
+              },
             )
           : this.syncStepSkipped(
-              'broadcast_stats',
-              statsStartedAt,
-              'Broadcast stats unavailable for this channel/source',
-              {
-                normalizedStatus:
-                  channelStatsSync?.snapshot?.normalizedStats?.status ?? null,
-              },
+              'older_post_backfill',
+              olderPostsStartedAt,
+              'No older posts were available for backfill',
             ),
       );
-    } catch (error) {
-      steps.push(
-        this.syncStepFailure(
-          'broadcast_stats',
-          statsStartedAt,
-          error,
-          'BROADCAST_STATS_FAILED',
-          'Failed to sync broadcast stats',
-        ),
-      );
     }
-    await this.notifyTaskProgress(
-      onProgress,
-      6,
-      totalSteps,
-      'Syncing managed posts',
-    );
-    const managedPostsStartedAt = Date.now();
-    let managedPostsSync: any = null;
-    try {
-      managedPostsSync = await this.syncManagedPosts(userId, channelId);
-      steps.push(
-        this.syncStepSuccess(
-          'managed_posts',
-          managedPostsStartedAt,
-          'Managed posts synced',
-          { syncedPosts: managedPostsSync?.posts?.length ?? 0 },
-        ),
+    if (selection.syncIncludeChannelStats) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Syncing channel stats',
       );
-    } catch (error) {
-      steps.push(
-        this.syncStepSkipped(
-          'managed_posts',
-          managedPostsStartedAt,
-          error instanceof Error
-            ? error.message
-            : 'Managed post sync is not available',
-        ),
-      );
-    }
-    await this.notifyTaskProgress(
-      onProgress,
-      7,
-      totalSteps,
-      'Saving audience snapshot',
-    );
-    const audienceStartedAt = Date.now();
-    const audienceSnapshot = await this.createAudienceSnapshotSafely(channelId, 'sync');
-    steps.push(
-      audienceSnapshot
-        ? this.syncStepSuccess(
-            'audience_snapshot',
-            audienceStartedAt,
-            'Audience snapshot saved',
-          )
-        : this.syncStepSkipped(
-            'audience_snapshot',
-            audienceStartedAt,
-            'Audience snapshot was skipped',
+      const statsStartedAt = Date.now();
+      try {
+        channelStatsSync = await this.syncBroadcastStats(userId, channelId, {
+          telegramUserAccountId: account.id,
+        });
+        const statsStatus =
+          channelStatsSync?.success === true
+            ? 'success'
+            : channelStatsSync?.snapshot?.normalizedStats?.status === 'available'
+              ? 'success'
+              : 'skipped';
+        steps.push(
+          statsStatus === 'success'
+            ? this.syncStepSuccess(
+                'broadcast_stats',
+                statsStartedAt,
+                'Broadcast stats synced',
+                { pointsUpserted: channelStatsSync?.pointsUpserted ?? 0 },
+              )
+            : this.syncStepSkipped(
+                'broadcast_stats',
+                statsStartedAt,
+                'Broadcast stats unavailable for this channel/source',
+                {
+                  normalizedStatus:
+                    channelStatsSync?.snapshot?.normalizedStats?.status ?? null,
+                },
+              ),
+        );
+      } catch (error) {
+        steps.push(
+          this.syncStepFailure(
+            'broadcast_stats',
+            statsStartedAt,
+            error,
+            'BROADCAST_STATS_FAILED',
+            'Failed to sync broadcast stats',
           ),
-    );
+        );
+      }
+    }
+    if (selection.syncIncludeManagedPosts) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Syncing managed posts',
+      );
+      const managedPostsStartedAt = Date.now();
+      try {
+        managedPostsSync = await this.syncManagedPosts(userId, channelId);
+        steps.push(
+          this.syncStepSuccess(
+            'managed_posts',
+            managedPostsStartedAt,
+            'Managed posts synced',
+            { syncedPosts: managedPostsSync?.posts?.length ?? 0 },
+          ),
+        );
+      } catch (error) {
+        steps.push(
+          this.syncStepSkipped(
+            'managed_posts',
+            managedPostsStartedAt,
+            error instanceof Error
+              ? error.message
+              : 'Managed post sync is not available',
+          ),
+        );
+      }
+    }
+    if (selection.syncIncludeAudienceSnapshot) {
+      const currentStep = nextProgressStep();
+      await this.notifyTaskProgress(
+        onProgress,
+        currentStep,
+        totalSteps,
+        'Saving audience snapshot',
+      );
+      const audienceStartedAt = Date.now();
+      audienceSnapshot = await this.createAudienceSnapshotSafely(channelId, 'sync');
+      steps.push(
+        audienceSnapshot
+          ? this.syncStepSuccess(
+              'audience_snapshot',
+              audienceStartedAt,
+              'Audience snapshot saved',
+            )
+          : this.syncStepSkipped(
+              'audience_snapshot',
+              audienceStartedAt,
+              'Audience snapshot was skipped',
+            ),
+      );
+    }
     await this.notifyTaskProgress(
       onProgress,
-      8,
+      nextProgressStep(),
       totalSteps,
       'Finalizing sync status',
     );
-    const requiredSteps = steps.filter((step) =>
-      ['channel_info', 'historical_posts', 'post_metrics'].includes(step.step),
-    );
+    const requiredStepNames = new Set<string>();
+    if (selection.syncIncludePublicInfo) requiredStepNames.add('channel_info');
+    if (
+      selection.syncIncludeInviteLinks ||
+      selection.syncIncludeHistoricalPosts
+    ) {
+      requiredStepNames.add('historical_posts');
+    }
+    if (selection.syncIncludePostMetrics) requiredStepNames.add('post_metrics');
+    const requiredSteps = steps.filter((step) => requiredStepNames.has(step.step));
     const hasRequiredFailure = requiredSteps.some((step) => step.status === 'failed');
     const hasRequiredPartial = requiredSteps.some((step) => step.status === 'partial');
     const hasOptionalFailure = steps.some((step) => step.status === 'failed');
@@ -5945,6 +6290,17 @@ export class TelegramChannelsService {
     const channelReference = this.mtprotoChannelReference(channel);
     if (!channelReference.telegramChatId && !channelReference.username)
       throw new BadRequestException('Channel must have username or chatId');
+    const liveInviteLinkSync = dto.syncInviteLinks
+      ? {
+          maps: await this.buildInviteAttributionMaps(workspaceId),
+          importedCount: 0,
+          updatedCount: 0,
+          matchedMembersCount: 0,
+          unresolvedCreatorsCount: 0,
+          affectedCampaignIds: new Set<string>(),
+          processedUrls: new Set<string>(),
+        }
+      : null;
     const historical = await this.mtprotoClient.getChannelHistorical({
       ...this.accountCredentials(account),
       channel: channelReference,
@@ -5957,6 +6313,42 @@ export class TelegramChannelsService {
           item,
         );
       },
+      onInviteLinkLoaded: liveInviteLinkSync
+        ? async (link, loadedCount, expectedTotal, warnings) => {
+            if (liveInviteLinkSync.processedUrls.has(link.url)) return;
+            liveInviteLinkSync.processedUrls.add(link.url);
+            const persisted = await this.persistInviteLinkFromRemote({
+              workspaceId,
+              channelId,
+              link,
+              maps: liveInviteLinkSync.maps,
+              processedCount: loadedCount,
+              totalLinks: Math.max(expectedTotal, loadedCount),
+              warnings,
+              onProgress,
+              progressStep,
+            });
+            if (persisted.matchedMember) liveInviteLinkSync.matchedMembersCount += 1;
+            if (persisted.unresolved) {
+              liveInviteLinkSync.unresolvedCreatorsCount += 1;
+            }
+            if (persisted.existing) {
+              liveInviteLinkSync.updatedCount += 1;
+              if (persisted.existing.adCampaignId) {
+                liveInviteLinkSync.affectedCampaignIds.add(
+                  persisted.existing.adCampaignId,
+                );
+              }
+            } else {
+              liveInviteLinkSync.importedCount += 1;
+            }
+            if (persisted.upserted.adCampaignId) {
+              liveInviteLinkSync.affectedCampaignIds.add(
+                persisted.upserted.adCampaignId,
+              );
+            }
+          }
+        : undefined,
     });
     await this.notifyDetailedTaskProgress(
       onProgress,
@@ -5983,25 +6375,76 @@ export class TelegramChannelsService {
         progressStep.total,
         'Matching invite link creators and saving invite links',
       );
-      inviteResult = await this.syncChannelInviteLinks({
-        workspaceId,
-        channelId,
-        account,
-        channelReference,
-        prefetchedRemote: historical?.inviteLinksDetailed
-          ? {
-              scope: historical.inviteLinksScope ?? 'ALL_ADMINS',
-              expectedTotalLinks:
-                historical.inviteLinksExpectedTotal ??
-                historical.inviteLinksDetailed.length,
-              admins: [],
-              links: historical.inviteLinksDetailed,
-              warnings: historical.inviteLinkWarnings ?? [],
+      const remote = historical?.inviteLinksDetailed
+        ? {
+            scope: historical.inviteLinksScope ?? 'ALL_ADMINS',
+            expectedTotalLinks:
+              historical.inviteLinksExpectedTotal ??
+              historical.inviteLinksDetailed.length,
+            admins: [],
+            links: historical.inviteLinksDetailed,
+            warnings: historical.inviteLinkWarnings ?? [],
+          }
+        : null;
+      if (remote && liveInviteLinkSync) {
+        for (const [index, link] of remote.links.entries()) {
+          if (liveInviteLinkSync.processedUrls.has(link.url)) continue;
+          liveInviteLinkSync.processedUrls.add(link.url);
+          const persisted = await this.persistInviteLinkFromRemote({
+            workspaceId,
+            channelId,
+            link,
+            maps: liveInviteLinkSync.maps,
+            processedCount: index + 1,
+            totalLinks: remote.links.length,
+            warnings: remote.warnings,
+            onProgress,
+            progressStep,
+          });
+          if (persisted.matchedMember) liveInviteLinkSync.matchedMembersCount += 1;
+          if (persisted.unresolved) {
+            liveInviteLinkSync.unresolvedCreatorsCount += 1;
+          }
+          if (persisted.existing) {
+            liveInviteLinkSync.updatedCount += 1;
+            if (persisted.existing.adCampaignId) {
+              liveInviteLinkSync.affectedCampaignIds.add(
+                persisted.existing.adCampaignId,
+              );
             }
-          : null,
-        onProgress,
-        progressStep,
-      });
+          } else {
+            liveInviteLinkSync.importedCount += 1;
+          }
+          if (persisted.upserted.adCampaignId) {
+            liveInviteLinkSync.affectedCampaignIds.add(
+              persisted.upserted.adCampaignId,
+            );
+          }
+        }
+        inviteResult = await this.finalizeInviteLinkSync({
+          workspaceId,
+          channelId,
+          account,
+          remote,
+          importedCount: liveInviteLinkSync.importedCount,
+          updatedCount: liveInviteLinkSync.updatedCount,
+          matchedMembersCount: liveInviteLinkSync.matchedMembersCount,
+          unresolvedCreatorsCount: liveInviteLinkSync.unresolvedCreatorsCount,
+          affectedCampaignIds: liveInviteLinkSync.affectedCampaignIds,
+          onProgress,
+          progressStep,
+        });
+      } else {
+        inviteResult = await this.syncChannelInviteLinks({
+          workspaceId,
+          channelId,
+          account,
+          channelReference,
+          prefetchedRemote: remote,
+          onProgress,
+          progressStep,
+        });
+      }
       imported = inviteResult.imported;
       updated = inviteResult.updated;
     }
@@ -7357,11 +7800,11 @@ export class TelegramChannelsService {
     ]);
     const linksById = new Map(inviteLinks.map((link) => [link.id, link]));
     const campaignsWithMetrics = campaigns.map((campaign) => {
-      const joinedCount = Number(
-        campaign.telegramInviteLinkId
-          ? linksById.get(campaign.telegramInviteLinkId)?.joinedCount || 0
-          : 0,
-      );
+      const joinedCount = campaign.telegramInviteLinkId
+        ? inviteLinkAttributedSubscribers(
+            linksById.get(campaign.telegramInviteLinkId),
+          )
+        : 0;
       return {
         ...campaign,
         joinedCount,
@@ -7371,10 +7814,8 @@ export class TelegramChannelsService {
         attributionSource: 'mtproto_invite_link_usage',
       };
     });
-    const inviteLinksJoinedTotal = inviteLinks.reduce(
-      (sum, link) => sum + Number(link.joinedCount || 0),
-      0,
-    );
+    const inviteLinksJoinedTotal =
+      sumInviteLinkAttributedSubscribers(inviteLinks);
     return {
       source: 'mtproto',
       channel,
@@ -7472,9 +7913,9 @@ export class TelegramChannelsService {
     if (!campaign) return null;
     const links = await this.prisma.telegramInviteLink.findMany({
       where: { adCampaignId: campaignId },
-      select: { joinedCount: true },
+      select: { joinedCount: true, requestedCount: true },
     });
-    const joinedCount = links.reduce((sum, link) => sum + link.joinedCount, 0);
+    const joinedCount = sumInviteLinkAttributedSubscribers(links);
     return this.prisma.adCampaign.update({
       where: { id: campaignId },
       data: {

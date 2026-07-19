@@ -643,6 +643,14 @@ export type TelegramChannel = EntityAssignment & {
   photoUrl?: string;
   sourceType?: string;
   lastPublicSyncedAt?: string;
+  syncIncludePublicInfo?: boolean;
+  syncIncludeInviteLinks?: boolean;
+  syncIncludeHistoricalPosts?: boolean;
+  syncIncludePostMetrics?: boolean;
+  syncIncludeOlderPosts?: boolean;
+  syncIncludeChannelStats?: boolean;
+  syncIncludeManagedPosts?: boolean;
+  syncIncludeAudienceSnapshot?: boolean;
   adminLinks?: TelegramChannelAdminLink[];
   timePosts?: TelegramChannelTimePost[];
   isActive: boolean;
@@ -687,6 +695,25 @@ export type TelegramSyncResult = SyncOperationResult & {
   channelStatsSync?: Record<string, unknown>;
   managedPostsSync?: Record<string, unknown> | null;
   audienceSnapshot?: Record<string, unknown> | null;
+};
+
+export type TelegramChannelSyncSelection = {
+  syncIncludePublicInfo: boolean;
+  syncIncludeInviteLinks: boolean;
+  syncIncludeHistoricalPosts: boolean;
+  syncIncludePostMetrics: boolean;
+  syncIncludeOlderPosts: boolean;
+  syncIncludeChannelStats: boolean;
+  syncIncludeManagedPosts: boolean;
+  syncIncludeAudienceSnapshot: boolean;
+};
+
+export type TelegramChannelSyncNowPayload = Partial<
+  TelegramChannelSyncSelection
+> & {
+  telegramUserAccountId?: string;
+  saveSelection?: boolean;
+  postLimit?: number;
 };
 
 export type ApiErrorPayload = StructuredApiError;
@@ -2356,20 +2383,24 @@ export const adHypothesesApi = {
 };
 export const exchangeRatesApi = crud("/exchange-rates");
 
-export async function syncTelegramChannelNow(channelId: string) {
-  return (await api.post(`/telegram-channels/${channelId}/sync-now`)).data;
+export async function syncTelegramChannelNow(
+  channelId: string,
+  payload: TelegramChannelSyncNowPayload = {},
+) {
+  return (await api.post(`/telegram-channels/${channelId}/sync-now`, payload)).data;
 }
 
 export async function syncTelegramChannelNowWithProgress(
   channelId: string,
   onProgress: StreamProgressHandler<TelegramChannelSyncProgressItem>,
+  payload: TelegramChannelSyncNowPayload = {},
 ) {
   return streamProgressAction<
     SyncOperationResult & Record<string, unknown>,
     TelegramChannelSyncProgressItem
   >(
     `/telegram-channels/${channelId}/sync-now-stream`,
-    {},
+    payload,
     onProgress,
   );
 }

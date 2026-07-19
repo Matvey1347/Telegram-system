@@ -524,6 +524,102 @@ describe('TelegramMtprotoClient import resolution', () => {
     expect(progress).toContain('loading_invite_links:24/24');
   });
 
+  it('reads requested counts from wrapped exported invite responses', async () => {
+    const channel = new Api.Channel(({
+      id: '7002' as any,
+      title: 'Wrapped Invite Channel',
+      accessHash: '9002' as any,
+      broadcast: true,
+      megagroup: false,
+      username: 'wrapped_invite_channel',
+    } as unknown) as any);
+    const selfUser = new Api.User(({
+      id: '100' as any,
+      accessHash: '1000' as any,
+      firstName: 'Owner',
+      username: 'owner_admin',
+    } as unknown) as any);
+
+    fakeClient.getEntity.mockResolvedValue(channel);
+    fakeClient.getMe.mockResolvedValue(selfUser);
+    fakeClient.invoke.mockImplementation((request: unknown) => {
+      if (request instanceof Api.users.GetFullUser) {
+        return { users: [selfUser] };
+      }
+      if (request instanceof Api.messages.GetAdminsWithInvites) {
+        return {
+          admins: [{ adminId: '100', invitesCount: 2, revokedInvitesCount: 0 }],
+          users: [selfUser],
+        };
+      }
+      if (request instanceof Api.messages.GetExportedChatInvites) {
+        const offsetLink = String((request as any).offsetLink || '');
+        if (offsetLink) {
+          return { invites: [], users: [selfUser] };
+        }
+        return {
+          invites: [
+            new Api.messages.ExportedChatInvite({
+              invite: new Api.ChatInviteExported({
+                link: 'https://t.me/+wrapped_1',
+                date: 1,
+                adminId: '100' as any,
+                usage: 0,
+                requested: 14,
+                requestNeeded: true,
+                revoked: false,
+              }),
+              users: [selfUser],
+            }),
+            new Api.messages.ExportedChatInviteReplaced({
+              invite: new Api.ChatInviteExported({
+                link: 'https://t.me/+wrapped_old',
+                date: 2,
+                adminId: '100' as any,
+                usage: 0,
+                requested: 1,
+                requestNeeded: true,
+                revoked: true,
+              }),
+              newInvite: new Api.ChatInviteExported({
+                link: 'https://t.me/+wrapped_2',
+                date: 3,
+                adminId: '100' as any,
+                usage: 0,
+                requested: 9,
+                requestNeeded: true,
+                revoked: false,
+              }),
+              users: [selfUser],
+            }),
+          ],
+          users: [selfUser],
+        };
+      }
+      throw new Error(`Unexpected invoke: ${String((request as any)?.className || request)}`);
+    });
+
+    const result = await client.getAllChannelInviteLinks({
+      apiId: '1',
+      apiHash: 'hash',
+      session: 'session',
+      channelRef: '@wrapped_invite_channel',
+    });
+
+    expect(result.links).toEqual([
+      expect.objectContaining({
+        url: 'https://t.me/+wrapped_1',
+        requested: 14,
+        requestNeeded: true,
+      }),
+      expect.objectContaining({
+        url: 'https://t.me/+wrapped_2',
+        requested: 9,
+        requestNeeded: true,
+      }),
+    ]);
+  });
+
   it('falls back to channel admin directory when invite admins payload lacks resolvable access data', async () => {
     const channel = new Api.Channel(({
       id: '7003' as any,

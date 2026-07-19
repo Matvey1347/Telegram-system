@@ -78,6 +78,14 @@ export class UpdateTelegramChannelDto {
   @ValidateNested({ each: true })
   @Type(() => TelegramChannelTimePostDto)
   timePosts?: TelegramChannelTimePostDto[];
+  @IsOptional() @IsBoolean() syncIncludePublicInfo?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeInviteLinks?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeHistoricalPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludePostMetrics?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeOlderPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeChannelStats?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeManagedPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeAudienceSnapshot?: boolean;
 }
 
 export class ImportTelegramChannelDto {
@@ -90,6 +98,20 @@ export class HistoricalSyncDto {
   @IsOptional() @IsString() telegramUserAccountId?: string;
   @IsOptional() @IsBoolean() syncInviteLinks?: boolean;
   @IsOptional() @IsBoolean() syncPosts?: boolean;
+  @IsOptional() @Type(() => Number) @IsInt() postLimit?: number;
+}
+
+export class SyncNowDto {
+  @IsOptional() @IsString() telegramUserAccountId?: string;
+  @IsOptional() @IsBoolean() saveSelection?: boolean;
+  @IsOptional() @IsBoolean() syncIncludePublicInfo?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeInviteLinks?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeHistoricalPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludePostMetrics?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeOlderPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeChannelStats?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeManagedPosts?: boolean;
+  @IsOptional() @IsBoolean() syncIncludeAudienceSnapshot?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() postLimit?: number;
 }
 

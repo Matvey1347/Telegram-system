@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { inviteLinkAttributedSubscribers } from '../common/analytics/invite-link-metrics';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
@@ -738,10 +739,13 @@ export class AdCampaignsService {
             id: campaign.telegramInviteLinkId,
             workspaceId: campaign.workspaceId,
           },
-          select: { joinedCount: true },
+          select: { joinedCount: true, requestedCount: true },
         })
       : null;
-    const joinedCount = Number(inviteLink?.joinedCount ?? campaign.joinedCount ?? 0);
+    const joinedCount =
+      inviteLink != null
+        ? inviteLinkAttributedSubscribers(inviteLink)
+        : Number(campaign.joinedCount ?? 0);
     const costAmount = Number(campaign.price || 0);
 
     return {

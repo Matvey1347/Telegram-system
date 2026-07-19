@@ -63,6 +63,8 @@ import {
   type TelegramChannel,
   type TelegramChannelAudienceSnapshot,
   type TelegramInviteLink,
+  type TelegramChannelSyncNowPayload,
+  type TelegramChannelSyncSelection,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
@@ -181,6 +183,46 @@ const closedChannelSections: ChannelSectionState = {
   campaigns: false,
 };
 
+const DEFAULT_SYNC_SELECTION: TelegramChannelSyncSelection = {
+  syncIncludePublicInfo: true,
+  syncIncludeInviteLinks: true,
+  syncIncludeHistoricalPosts: true,
+  syncIncludePostMetrics: true,
+  syncIncludeOlderPosts: true,
+  syncIncludeChannelStats: true,
+  syncIncludeManagedPosts: true,
+  syncIncludeAudienceSnapshot: true,
+};
+
+function countSelectedSyncSections(selection: TelegramChannelSyncSelection) {
+  return Object.values(selection).filter(Boolean).length;
+}
+
+function syncSelectionFromChannel(
+  channel?: TelegramChannel | null,
+): TelegramChannelSyncSelection {
+  return {
+    syncIncludePublicInfo:
+      channel?.syncIncludePublicInfo ?? DEFAULT_SYNC_SELECTION.syncIncludePublicInfo,
+    syncIncludeInviteLinks:
+      channel?.syncIncludeInviteLinks ?? DEFAULT_SYNC_SELECTION.syncIncludeInviteLinks,
+    syncIncludeHistoricalPosts:
+      channel?.syncIncludeHistoricalPosts ??
+      DEFAULT_SYNC_SELECTION.syncIncludeHistoricalPosts,
+    syncIncludePostMetrics:
+      channel?.syncIncludePostMetrics ?? DEFAULT_SYNC_SELECTION.syncIncludePostMetrics,
+    syncIncludeOlderPosts:
+      channel?.syncIncludeOlderPosts ?? DEFAULT_SYNC_SELECTION.syncIncludeOlderPosts,
+    syncIncludeChannelStats:
+      channel?.syncIncludeChannelStats ?? DEFAULT_SYNC_SELECTION.syncIncludeChannelStats,
+    syncIncludeManagedPosts:
+      channel?.syncIncludeManagedPosts ?? DEFAULT_SYNC_SELECTION.syncIncludeManagedPosts,
+    syncIncludeAudienceSnapshot:
+      channel?.syncIncludeAudienceSnapshot ??
+      DEFAULT_SYNC_SELECTION.syncIncludeAudienceSnapshot,
+  };
+}
+
 function channelSectionsStorageKey(channelId: string) {
   return `telegram-channel:${channelId}:open-sections`;
 }
@@ -212,12 +254,13 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const [syncScopeOpen, setSyncScopeOpen] = useState(false);
   const [syncStatusOpen, setSyncStatusOpen] = useState(false);
+  const [syncSelection, setSyncSelection] = useState<TelegramChannelSyncSelection>(
+    DEFAULT_SYNC_SELECTION,
+  );
   const [rangeMode, setRangeMode] = useState<"30d" | "all" | "custom">("all");
   const [customFrom, setCustomFrom] = useState(thirtyDaysAgoIso);
   const [customTo, setCustomTo] = useState(todayIso);
   const [lastSyncResult, setLastSyncResult] = useState<any>(null);
-  const [selectedSourceAccess, setSelectedSourceAccess] =
-    useState<TelegramChannelSourceAccess | null>(null);
   const [openSections, setOpenSections] = useState<ChannelSectionState>(() =>
     readStoredChannelSections(id),
   );
@@ -277,10 +320,6 @@ export default function TelegramChannelAnalyticsPage() {
     queryKey: ["telegram-channel-posts", id],
     queryFn: () => getTelegramChannelPosts(id, 100, 0),
   });
-  const { data: analyticsSources } = useQuery({
-    queryKey: ["telegram-channel-analytics-sources", id],
-    queryFn: () => telegramChannelsApi.analyticsSources(id),
-  });
   const { data: currencySettings } = useQuery({
     queryKey: ["currency-settings"],
     queryFn: currenciesApi.getSettings,
@@ -300,6 +339,7 @@ export default function TelegramChannelAnalyticsPage() {
   useEffect(() => {
     const source = channel || data?.channel;
     if (!source) return;
+    setSyncSelection(syncSelectionFromChannel(source));
     setSettings({
       seedSubscribersCount: String(source.seedSubscribersCount ?? 0),
       activeSubscribersWindow: String(source.activeSubscribersWindow ?? 5),
@@ -337,14 +377,38 @@ export default function TelegramChannelAnalyticsPage() {
   }, [channel, data?.channel]);
 
   const syncMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (payload: TelegramChannelSyncNowPayload) => {
       const progressId = `telegram-channel-sync:${id}`;
       const progressTitle = `Sync ${channel?.title || "channel"}`;
+      const syncSelection: TelegramChannelSyncSelection = {
+        syncIncludePublicInfo:
+          payload.syncIncludePublicInfo ?? DEFAULT_SYNC_SELECTION.syncIncludePublicInfo,
+        syncIncludeInviteLinks:
+          payload.syncIncludeInviteLinks ?? DEFAULT_SYNC_SELECTION.syncIncludeInviteLinks,
+        syncIncludeHistoricalPosts:
+          payload.syncIncludeHistoricalPosts ??
+          DEFAULT_SYNC_SELECTION.syncIncludeHistoricalPosts,
+        syncIncludePostMetrics:
+          payload.syncIncludePostMetrics ?? DEFAULT_SYNC_SELECTION.syncIncludePostMetrics,
+        syncIncludeOlderPosts:
+          payload.syncIncludeOlderPosts ?? DEFAULT_SYNC_SELECTION.syncIncludeOlderPosts,
+        syncIncludeChannelStats:
+          payload.syncIncludeChannelStats ?? DEFAULT_SYNC_SELECTION.syncIncludeChannelStats,
+        syncIncludeManagedPosts:
+          payload.syncIncludeManagedPosts ?? DEFAULT_SYNC_SELECTION.syncIncludeManagedPosts,
+        syncIncludeAudienceSnapshot:
+          payload.syncIncludeAudienceSnapshot ??
+          DEFAULT_SYNC_SELECTION.syncIncludeAudienceSnapshot,
+      };
+      const totalSelectedSteps = Math.max(
+        1,
+        countSelectedSyncSections(syncSelection),
+      );
       setProgress({
         id: progressId,
         title: progressTitle,
         current: 0,
-        total: 8,
+        total: totalSelectedSteps,
         message: "Starting sync…",
         iconUrl: channel?.photoUrl || undefined,
       });
@@ -363,14 +427,15 @@ export default function TelegramChannelAnalyticsPage() {
               }),
             );
           },
+          payload,
         );
         const partial = result?.status === "partial";
         const failed = result?.status === "failed";
         setProgress({
           id: progressId,
           title: progressTitle,
-          current: 8,
-          total: 8,
+          current: totalSelectedSteps,
+          total: totalSelectedSteps,
           message: failed
             ? "Channel sync failed"
             : partial
@@ -391,6 +456,7 @@ export default function TelegramChannelAnalyticsPage() {
     },
     onSuccess: (result) => {
       void invalidateTelegramChannelQueries(queryClient, id);
+      setSyncScopeOpen(false);
       setLastSyncResult(result);
       pushToast(
         summarizeSync(result),
@@ -582,7 +648,8 @@ export default function TelegramChannelAnalyticsPage() {
     const forwardRate =
       viewsTotal > 0 ? (forwardsTotal / viewsTotal) * 100 : null;
     const joinedFromLinks = inviteLinks.reduce(
-      (sum: number, link: any) => sum + toNumber(link.joinedCount),
+      (sum: number, link: any) =>
+        sum + toNumber(link.joinedCount) + toNumber(link.requestedCount),
       0,
     );
     const adSpend = campaigns.reduce(
@@ -718,7 +785,11 @@ export default function TelegramChannelAnalyticsPage() {
   const topInviteLinks = useMemo(
     () =>
       [...inviteLinks].sort(
-        (a: any, b: any) => toNumber(b.joinedCount) - toNumber(a.joinedCount),
+        (a: any, b: any) =>
+          toNumber(b.joinedCount) +
+          toNumber(b.requestedCount) -
+          toNumber(a.joinedCount) -
+          toNumber(a.requestedCount),
       ),
     [inviteLinks],
   );
@@ -793,7 +864,7 @@ export default function TelegramChannelAnalyticsPage() {
             <Button
               variant="primary"
               disabled={syncMutation.isPending}
-              onClick={() => syncMutation.mutate()}
+              onClick={() => setSyncScopeOpen(true)}
               className="inline-flex h-11 items-center justify-center gap-2 border border-blue-500/40 bg-blue-600/95 px-5 text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
             >
               <RefreshCw
@@ -952,15 +1023,23 @@ export default function TelegramChannelAnalyticsPage() {
       <SyncScopeModal
         open={syncScopeOpen}
         onClose={() => setSyncScopeOpen(false)}
-        sources={analyticsSources?.sources || []}
-        dataAttribution={analyticsSources?.dataAttribution || []}
         isSyncing={syncMutation.isPending}
         lastSyncResult={lastSyncResult}
-        onSelectSource={setSelectedSourceAccess}
-      />
-      <SourceAccessModal
-        access={selectedSourceAccess}
-        onClose={() => setSelectedSourceAccess(null)}
+        selection={syncSelection}
+        onSelectionChange={setSyncSelection}
+        onSyncAll={() => {
+          setSyncScopeOpen(false);
+          syncMutation.mutate({
+            ...DEFAULT_SYNC_SELECTION,
+          })
+        }}
+        onSyncSelected={() => {
+          setSyncScopeOpen(false);
+          syncMutation.mutate({
+            ...syncSelection,
+            saveSelection: true,
+          })
+        }}
       />
     </AppShell>
   );
@@ -2037,121 +2116,110 @@ function SyncStatusModal({
 function SyncScopeModal({
   open,
   onClose,
-  sources,
-  dataAttribution,
   isSyncing,
   lastSyncResult,
-  onSelectSource,
+  selection,
+  onSelectionChange,
+  onSyncAll,
+  onSyncSelected,
 }: {
   open: boolean;
   onClose: () => void;
-  sources: Array<TelegramChannelSourceAccess & { usedFor?: string[] }>;
-  dataAttribution: Array<{
-    dataType: string;
-    label: string;
-    status: string;
-    sources: Array<{
-      sourceId: string;
-      sourceType: string;
-      displayName?: string | null;
-    }>;
-    syncedAt?: string | null;
-    errorMessage?: string | null;
-  }>;
   isSyncing: boolean;
   lastSyncResult: unknown;
-  onSelectSource: (source: TelegramChannelSourceAccess) => void;
+  selection: TelegramChannelSyncSelection;
+  onSelectionChange: (selection: TelegramChannelSyncSelection) => void;
+  onSyncAll: () => void;
+  onSyncSelected: () => void;
 }) {
+  const syncOptions: Array<{
+    key: keyof TelegramChannelSyncSelection;
+    title: string;
+    description: string;
+  }> = [
+    {
+      key: "syncIncludePublicInfo",
+      title: "Public info",
+      description: "Title, username, chat identity and subscriber counter.",
+    },
+    {
+      key: "syncIncludeInviteLinks",
+      title: "Invite links",
+      description: "Joined and pending requests attribution for invite links.",
+    },
+    {
+      key: "syncIncludeHistoricalPosts",
+      title: "Historical daily rows",
+      description: "Daily aggregated historical post rows.",
+    },
+    {
+      key: "syncIncludePostMetrics",
+      title: "Post metrics",
+      description: "Views, reactions and post-level metrics sync.",
+    },
+    {
+      key: "syncIncludeOlderPosts",
+      title: "Older posts backfill",
+      description: "Extra pass for older post metrics pages.",
+    },
+    {
+      key: "syncIncludeChannelStats",
+      title: "Channel stats",
+      description: "Broadcast analytics graphs and stat snapshots.",
+    },
+    {
+      key: "syncIncludeManagedPosts",
+      title: "Managed posts",
+      description: "Remote managed-post status and message links.",
+    },
+    {
+      key: "syncIncludeAudienceSnapshot",
+      title: "Audience snapshot",
+      description: "Save the latest audience estimate after sync.",
+    },
+  ];
+  const selectedCount = syncOptions.filter((option) => selection[option.key]).length;
+
   return (
     <Modal open={open} onClose={onClose} title="Sync sources and scope">
       <div className="space-y-4">
         <div>
-          <p className="mb-2 text-sm font-medium text-slate-200">
-            Connected sources
-          </p>
-          {!sources.length ? (
-            <EmptyState text="No synced source access for this channel yet." />
-          ) : null}
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-slate-200">Sync scope</p>
+            <span className="text-xs text-slate-400">
+              Selected: {selectedCount}/{syncOptions.length}
+            </span>
+          </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {sources.map((source) => (
-              <button
-                key={`${source.sourceType}:${source.sourceId}`}
-                type="button"
-                onClick={() => onSelectSource(source)}
-                className="flex min-h-36 flex-col rounded-md border border-slate-800 bg-slate-900/40 p-3 text-left hover:border-slate-600"
+            {syncOptions.map((option) => (
+              <label
+                key={option.key}
+                className="flex cursor-pointer items-start gap-3 rounded-md border border-slate-800 bg-slate-900/40 p-3"
               >
-                <div className="flex items-center gap-3">
-                  <TelegramSourceAvatar
-                    avatarUrl={source.avatarUrl}
-                    sourceType={source.sourceType}
-                    alt={source.displayName}
-                    size="md"
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white">
-                      {source.displayName}
-                    </p>
-                    <p className="flex items-center gap-1 text-xs text-slate-400">
-                      <span>{source.sourceType}</span>
-                      <span>·</span>
-                      <AccessBadge
-                        label={formatRole(source.role)}
-                        tip={roleTooltip(source.role, source.sourceType)}
-                      />
-                    </p>
-                  </div>
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950 text-blue-500"
+                  checked={selection[option.key]}
+                  onChange={(event) =>
+                    onSelectionChange({
+                      ...selection,
+                      [option.key]: event.target.checked,
+                    })
+                  }
+                />
+                <div>
+                  <p className="text-sm font-medium text-white">{option.title}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {option.description}
+                  </p>
                 </div>
-                <div
-                  className={`mt-2 flex min-h-11 flex-wrap items-center gap-1 text-xs ${source.canBeUsedForAnalytics ? "text-emerald-300" : "text-amber-300"}`}
-                >
-                  <span>
-                    {source.canBeUsedForAnalytics
-                      ? "Can be used for analytics"
-                      : "Not enough access for analytics"}
-                  </span>
-                  <PermissionSummaryBadges
-                    permissions={source.permissions}
-                    role={source.role}
-                    sourceType={source.sourceType}
-                  />
-                </div>
-                <p className="mt-auto pt-2 text-xs text-slate-400">
-                  Used for:{" "}
-                  {source.usedFor?.length
-                    ? source.usedFor.map(formatDataType).join(", ")
-                    : "-"}
-                </p>
-              </button>
+              </label>
             ))}
           </div>
-        </div>
-        <div>
-          <p className="mb-2 text-sm font-medium text-slate-200">
-            Data attribution
+          <p className="mt-2 text-xs text-slate-500">
+            Sync selected saves this scope to the channel. Sync all runs the
+            full sync without changing the saved selection.
           </p>
-          <div className="rounded-lg border border-slate-800">
-            {dataAttribution.map((item) => (
-              <div
-                key={item.dataType}
-                className="flex flex-col gap-1 border-t border-slate-800 px-3 py-2 first:border-t-0 md:flex-row md:items-center md:justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  <Database size={15} className="text-slate-400" />
-                  <span className="text-sm font-medium">{item.label}</span>
-                  <span
-                    className={`text-xs ${item.status === "SUCCESS" ? "text-emerald-300" : item.status === "FAILED" ? "text-rose-300" : "text-slate-400"}`}
-                  >
-                    {item.status}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-400">
-                  {item.sources.length
-                    ? `Loaded from ${item.sources.map((source) => source.displayName || source.sourceType).join(" / ")}`
-                    : `Not available${item.errorMessage ? `: ${item.errorMessage}` : ""}`}
-                </p>
-              </div>
-            ))}
-          </div>
         </div>
         <div className="rounded-md border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-300">
           <p>
@@ -2165,9 +2233,28 @@ function SyncScopeModal({
               : "Run sync to capture detailed result in UI"}
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            Source choice is recorded per data type; unavailable rows explain
-            which permission is missing.
+            The selected scope is saved on the channel and reused for the next
+            sync.
           </p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={isSyncing}>
+            Close
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={onSyncAll}
+            disabled={isSyncing}
+          >
+            Sync all
+          </Button>
+          <Button
+            variant="primary"
+            onClick={onSyncSelected}
+            disabled={isSyncing || selectedCount === 0}
+          >
+            Sync selected
+          </Button>
         </div>
       </div>
     </Modal>
