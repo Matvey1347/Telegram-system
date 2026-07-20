@@ -4,7 +4,7 @@
   "private": true,
   "description": "Internal system for Telegram channel finance, ads, campaigns and analytics.",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter web --filter api dev",
