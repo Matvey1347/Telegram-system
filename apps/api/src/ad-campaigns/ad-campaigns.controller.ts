@@ -48,6 +48,15 @@ export class AdCampaignsController {
     return this.service.findOne(user.sub, id);
   }
 
+  @Get(':id/invite-link-history')
+  inviteLinkHistory(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.inviteLinkHistory(user.sub, id, Number(limit || 120));
+  }
+
   @Patch(':id/analytics-input')
   updateAnalyticsInput(
     @CurrentUser() user: JwtUser,

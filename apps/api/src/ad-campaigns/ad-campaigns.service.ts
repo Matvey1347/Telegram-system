@@ -20,6 +20,8 @@ import { AdCampaignAnalyticsService } from './ad-campaign-analytics.service';
 export class AdCampaignsService {
   private campaignPromoStorageState: 'unknown' | 'available' | 'missing' =
     'unknown';
+  private inviteLinkSnapshotStorageState: 'unknown' | 'available' | 'missing' =
+    'unknown';
 
   constructor(
     private prisma: PrismaService,
@@ -86,6 +88,25 @@ export class AdCampaignsService {
     }
   }
 
+  private isInviteLinkSnapshotStorageMissing(error: unknown) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+    if (error.code === 'P2021') return true;
+    if (error.code !== 'P2010') return false;
+
+    const originalCode =
+      (
+        error.meta as
+          | {
+              driverAdapterError?: {
+                cause?: { originalCode?: string };
+              };
+            }
+          | undefined
+      )?.driverAdapterError?.cause?.originalCode ?? null;
+
+    return originalCode === '42P01';
+  }
+
   private async ensurePromoBelongsToChannel(
     workspaceId: string,
     promoId: string,
@@ -102,6 +123,75 @@ export class AdCampaignsService {
 
   private normalizeSelectionIds(ids: Array<string | null | undefined>) {
     return [...new Set(ids.map((value) => String(value || '').trim()).filter(Boolean))];
+  }
+
+  private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number }>(
+    rows: T[],
+  ) {
+    let peakJoinedCount = 0;
+    return rows.map((row) => {
+      const joinedCount = Number(row.joinedCount || 0);
+      const requestedCount = Number(row.requestedCount || 0);
+      peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
+      const drawdownFromPeak = Math.max(0, peakJoinedCount - joinedCount);
+      const drawdownPercent =
+        peakJoinedCount > 0 ? (drawdownFromPeak / peakJoinedCount) * 100 : 0;
+      return {
+        syncedAt: row.syncedAt,
+        joinedCount,
+        requestedCount,
+        totalAttributed: joinedCount + requestedCount,
+        peakJoinedCount,
+        drawdownFromPeak,
+        drawdownPercent,
+      };
+    });
+  }
+
+  private inviteLinkSyntheticHistoryPoint(params: {
+    syncedAt?: Date | null;
+    joinedCount?: number | null;
+    requestedCount?: number | null;
+    isRevoked?: boolean | null;
+  }) {
+    return {
+      syncedAt: params.syncedAt ?? new Date(),
+      joinedCount: Number(params.joinedCount ?? 0),
+      requestedCount: Number(params.requestedCount ?? 0),
+      isRevoked: Boolean(params.isRevoked),
+    };
+  }
+
+  private inviteLinkHistorySummary<
+    T extends {
+      joinedCount: number;
+      requestedCount: number;
+      peakJoinedCount: number;
+      drawdownFromPeak: number;
+      drawdownPercent: number;
+    },
+  >(points: T[]) {
+    const current = points[points.length - 1] ?? null;
+    const peakJoinedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.peakJoinedCount || 0)),
+      0,
+    );
+    const peakRequestedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.requestedCount || 0)),
+      0,
+    );
+    return {
+      currentJoinedCount: Number(current?.joinedCount || 0),
+      currentRequestedCount: Number(current?.requestedCount || 0),
+      currentTotalAttributed:
+        Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
+      peakJoinedCount,
+      peakRequestedCount,
+      peakTotalAttributed: peakJoinedCount + peakRequestedCount,
+      drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
+      drawdownPercent: Number(current?.drawdownPercent || 0),
+      hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,
+    };
   }
 
   private selectedPromoIds(dto: {
@@ -706,6 +796,153 @@ export class AdCampaignsService {
     }
     if (!row) throw new NotFoundException('Campaign not found');
     return this.shapeCampaign(row);
+  }
+
+  async inviteLinkHistory(userId: string, id: string, limit = 120) {
+    const workspaceId = await this.workspace(userId);
+    const campaign = await this.prisma.adCampaign.findFirst({
+      where: { id, workspaceId },
+      select: {
+        id: true,
+        title: true,
+        inviteLinks: {
+          select: {
+            id: true,
+            name: true,
+            url: true,
+            joinedCount: true,
+            requestedCount: true,
+            isRevoked: true,
+          },
+        },
+      },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+
+    let rows: Array<{
+      inviteLinkId: string;
+      syncedAt: Date;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked: boolean | null;
+    }> = [];
+    if (this.inviteLinkSnapshotStorageState !== 'missing') {
+      try {
+        rows = await this.prisma.telegramInviteLinkSnapshot.findMany({
+          where: { workspaceId, adCampaignId: id },
+          orderBy: [{ syncedAt: 'desc' }, { inviteLinkId: 'asc' }],
+          take: Math.max(
+            2,
+            Math.min(2000, limit * Math.max(1, campaign.inviteLinks.length || 1)),
+          ),
+          select: {
+            inviteLinkId: true,
+            syncedAt: true,
+            joinedCount: true,
+            requestedCount: true,
+            isRevoked: true,
+          },
+        });
+        this.inviteLinkSnapshotStorageState = 'available';
+      } catch (error) {
+        if (!this.isInviteLinkSnapshotStorageMissing(error)) throw error;
+        this.inviteLinkSnapshotStorageState = 'missing';
+      }
+    }
+
+    const rowsAsc = [...rows].reverse();
+    const grouped = new Map<
+      string,
+      { syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked: boolean }
+    >();
+    for (const row of rowsAsc) {
+      const key = row.syncedAt.toISOString();
+      const current = grouped.get(key);
+      if (current) {
+        current.joinedCount += Number(row.joinedCount || 0);
+        current.requestedCount += Number(row.requestedCount || 0);
+        current.isRevoked = current.isRevoked && Boolean(row.isRevoked);
+      } else {
+        grouped.set(key, {
+          syncedAt: row.syncedAt,
+          joinedCount: Number(row.joinedCount || 0),
+          requestedCount: Number(row.requestedCount || 0),
+          isRevoked: Boolean(row.isRevoked),
+        });
+      }
+    }
+
+    const aggregateRows = [...grouped.values()].slice(
+      -Math.max(2, Math.min(365, limit)),
+    );
+    const aggregatePoints = this.inviteLinkHistoryPoints(
+      aggregateRows.length
+        ? aggregateRows
+        : [
+            this.inviteLinkSyntheticHistoryPoint({
+              joinedCount: campaign.inviteLinks.reduce(
+                (sum, link) => sum + Number(link.joinedCount || 0),
+                0,
+              ),
+              requestedCount: campaign.inviteLinks.reduce(
+                (sum, link) => sum + Number(link.requestedCount || 0),
+                0,
+              ),
+              isRevoked:
+                campaign.inviteLinks.length > 0 &&
+                campaign.inviteLinks.every((link) => Boolean(link.isRevoked)),
+            }),
+          ],
+    );
+
+    const perLinkRows = new Map<
+      string,
+      Array<{ syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked: boolean }>
+    >();
+    for (const row of rowsAsc) {
+      const list = perLinkRows.get(row.inviteLinkId) ?? [];
+      list.push({
+        syncedAt: row.syncedAt,
+        joinedCount: Number(row.joinedCount || 0),
+        requestedCount: Number(row.requestedCount || 0),
+        isRevoked: Boolean(row.isRevoked),
+      });
+      perLinkRows.set(row.inviteLinkId, list);
+    }
+
+    const inviteLinks = campaign.inviteLinks.map((link) => {
+      const linkRows = (perLinkRows.get(link.id) ?? []).slice(
+        -Math.max(2, Math.min(365, limit)),
+      );
+      const points = this.inviteLinkHistoryPoints(
+        linkRows.length
+          ? linkRows
+          : [
+              this.inviteLinkSyntheticHistoryPoint({
+                joinedCount: link.joinedCount,
+                requestedCount: link.requestedCount,
+                isRevoked: link.isRevoked,
+              }),
+            ],
+      );
+      return {
+        ...link,
+        summary: this.inviteLinkHistorySummary(points),
+      };
+    });
+
+    return {
+      campaign: {
+        id: campaign.id,
+        title: campaign.title,
+      },
+      inviteLinks,
+      points: aggregatePoints,
+      summary: {
+        ...this.inviteLinkHistorySummary(aggregatePoints),
+        inviteLinksCount: campaign.inviteLinks.length,
+      },
+    };
   }
 
   async create(userId: string, dto: CreateAdCampaignDto) {

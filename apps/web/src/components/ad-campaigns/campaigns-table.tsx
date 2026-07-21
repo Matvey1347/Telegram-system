@@ -3,6 +3,7 @@
 import { type MouseEventHandler, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { MoneyStack } from "@/components/ui/money-stack";
+import { CampaignInviteLinkHistoryModal } from "@/components/ad-campaigns/campaign-invite-link-history-modal";
 import { PromoPreviewModal } from "@/components/ad-campaigns/promo-preview-modal";
 import { IconButton } from "@/components/ui/primitives";
 import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
@@ -414,6 +415,7 @@ function PerformanceCell({
   metrics,
   onShowKpiTooltip,
   onHideKpiTooltip,
+  onOpenHistory,
 }: {
   campaign: AdCampaign;
   cost: number;
@@ -430,11 +432,17 @@ function PerformanceCell({
   metrics: Array<{ label: string; value: string }>;
   onShowKpiTooltip: (channel: TelegramChannel | undefined, element: HTMLElement) => void;
   onHideKpiTooltip: () => void;
+  onOpenHistory?: () => void;
 }) {
   const kpiTextClass = kpiMetricTextClass(kpiStatus);
   const cardClass = performanceCardClass(kpiStatus);
   const shouldShowKpiTooltip =
     kpiStatus === "good" || kpiStatus === "acceptable" || kpiStatus === "bad";
+  const peakJoined = joined + Math.max(0, left);
+  const unsubscribedPercent =
+    peakJoined > 0 ? (Math.max(0, left) / peakJoined) * 100 : 0;
+  const showPeakJoined = peakJoined > joined;
+  const showUnsubscribed = left > 0;
 
   return (
     <div className={`rounded-xl border p-3 ${cardClass}`}>
@@ -507,6 +515,33 @@ function PerformanceCell({
               {metric.label}: {metric.value}
             </span>
           ))}
+        </div>
+      ) : null}
+      {campaign.inviteLinks?.length ? (
+        <div className="mt-3">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
+              Current {formatMetric(joined)}
+            </span>
+            {showPeakJoined ? (
+              <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
+                Peak {formatMetric(peakJoined)}
+              </span>
+            ) : null}
+            {showUnsubscribed ? (
+              <span className="rounded border border-amber-700/80 bg-amber-950/20 px-2 py-0.5 text-amber-200">
+                Unsub {formatPercent(unsubscribedPercent)}
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+            title="Open invite-link history for this campaign"
+          >
+            Trend
+          </button>
         </div>
       ) : null}
     </div>
@@ -741,6 +776,7 @@ export function AdCampaignsTable({
     left: number;
     top: number;
   } | null>(null);
+  const [historyCampaign, setHistoryCampaign] = useState<AdCampaign | null>(null);
 
   const normalizedCampaigns = useMemo(
     () =>
@@ -824,6 +860,7 @@ export function AdCampaignsTable({
             {normalizedCampaigns.map((row, index) => (
               <tr
                 key={row.campaign.id}
+                id={`campaign-${row.campaign.id}`}
                 className={`align-top text-slate-200 transition-colors hover:bg-neutral-900 ${index % 2 ? "bg-neutral-950" : "bg-black"}`}
               >
                 <td className="px-4 py-4">
@@ -884,6 +921,7 @@ export function AdCampaignsTable({
                     metrics={row.metrics}
                     onShowKpiTooltip={showKpiTooltip}
                     onHideKpiTooltip={() => setKpiTooltip(null)}
+                    onOpenHistory={() => setHistoryCampaign(row.campaign)}
                   />
                 </td>
                 {showHypotheses ? (
@@ -932,6 +970,10 @@ export function AdCampaignsTable({
           top={kpiTooltip.top}
         />
       ) : null}
+      <CampaignInviteLinkHistoryModal
+        campaign={historyCampaign}
+        onClose={() => setHistoryCampaign(null)}
+      />
     </>
   );
 }

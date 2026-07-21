@@ -196,6 +196,7 @@ model Workspace {
   telegramChannelNetworkMembers    TelegramChannelNetworkMember[]
   telegramChannelStatsPoints       TelegramChannelStatsPoint[]
   telegramChannelAdAnalyses        TelegramChannelAdAnalysis[]
+  telegramInviteLinkSnapshots      TelegramInviteLinkSnapshot[]
   telegramPosts                    TelegramPost[]
   telegramManagedPosts             TelegramManagedPost[]
   telegramManagedPostRevisions     TelegramManagedPostRevision[]
@@ -597,6 +598,7 @@ model TelegramChannel {
   adCampaigns       AdCampaign[]
   adPlacements      AdCampaignTelegramChannelPlacement[]
   inviteLinks       TelegramInviteLink[]
+  inviteLinkSnapshots TelegramInviteLinkSnapshot[]
   dailyStats        TelegramChannelDailyStats[]
   adminLinks        TelegramChannelAdminLink[]
   sourceAccesses    TelegramChannelSourceAccess[]
@@ -965,6 +967,7 @@ model AdCampaign {
   promos                      AdCampaignPromo[]
 
   inviteLinks TelegramInviteLink[]
+  inviteLinkSnapshots TelegramInviteLinkSnapshot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1126,6 +1129,7 @@ model TelegramInviteLink {
   telegramChannel TelegramChannel  @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   adCampaign      AdCampaign?      @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
   creatorMember   WorkspaceMember? @relation("TelegramInviteLinkCreatorMember", fields: [creatorMemberId, workspaceId], references: [id, workspaceId], onDelete: SetNull)
+  snapshots       TelegramInviteLinkSnapshot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1134,6 +1138,30 @@ model TelegramInviteLink {
   @@index([workspaceId, creatorTelegramUserId])
   @@index([workspaceId, creatorMemberId])
   @@index([telegramChannelId, isRevoked])
+}
+
+model TelegramInviteLinkSnapshot {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  inviteLinkId      String
+  adCampaignId      String?
+  syncedAt          DateTime
+  joinedCount       Int      @default(0)
+  requestedCount    Int      @default(0)
+  isRevoked         Boolean  @default(false)
+
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel    @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  inviteLink      TelegramInviteLink @relation(fields: [inviteLinkId], references: [id], onDelete: Cascade)
+  adCampaign      AdCampaign?        @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([inviteLinkId, syncedAt])
+  @@index([workspaceId, telegramChannelId, syncedAt])
+  @@index([workspaceId, adCampaignId, syncedAt])
+  @@index([workspaceId, inviteLinkId, syncedAt])
 }
 
 model TelegramBotIntegration {

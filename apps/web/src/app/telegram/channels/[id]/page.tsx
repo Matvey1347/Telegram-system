@@ -198,15 +198,17 @@ function valueInRange(value: number, from: number | null, to: number | null) {
 }
 
 type ChannelSectionState = {
+  charts: boolean;
   posts: boolean;
   inviteLinks: boolean;
   campaigns: boolean;
 };
 
 const closedChannelSections: ChannelSectionState = {
+  charts: false,
   posts: false,
   inviteLinks: false,
-  campaigns: true,
+  campaigns: false,
 };
 
 const DEFAULT_SYNC_SELECTION: TelegramChannelSyncSelection = {
@@ -260,6 +262,7 @@ function readStoredChannelSections(channelId: string): ChannelSectionState {
     if (!raw) return closedChannelSections;
     const parsed = JSON.parse(raw) as Partial<ChannelSectionState>;
     return {
+      charts: Boolean(parsed.charts),
       posts: Boolean(parsed.posts),
       inviteLinks: Boolean(parsed.inviteLinks),
       campaigns: Boolean(parsed.campaigns),
@@ -978,17 +981,25 @@ export default function TelegramChannelAnalyticsPage() {
 
       {hasAudienceChart || mtprotoGraphs.length ? (
         <section className="mt-6">
-          <h3 className="mb-3 text-lg font-semibold">Charts</h3>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
-            {hasAudienceChart ? (
-              <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
-            ) : null}
-            {mtprotoGraphs.map(({ key, title, chart }) => (
-              <SimplePanel key={key} title={title}>
-                <MtprotoGraphChart chart={chart} />
-              </SimplePanel>
-            ))}
-          </div>
+          <SectionToggle
+            title="Charts"
+            open={openSections.charts}
+            onToggle={() =>
+              setOpenSections((prev) => ({ ...prev, charts: !prev.charts }))
+            }
+          />
+          {openSections.charts ? (
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
+              {hasAudienceChart ? (
+                <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
+              ) : null}
+              {mtprotoGraphs.map(({ key, title, chart }) => (
+                <SimplePanel key={key} title={title}>
+                  <MtprotoGraphChart chart={chart} />
+                </SimplePanel>
+              ))}
+            </div>
+          ) : null}
         </section>
       ) : null}
 

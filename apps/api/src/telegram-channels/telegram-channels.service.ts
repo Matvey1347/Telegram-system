@@ -30,6 +30,7 @@ import {
   sumInviteLinkAttributedSubscribers,
 } from '../common/analytics/invite-link-metrics';
 import { ApplicationLoggerService } from '../application-logs/application-logger.service';
+import { ResponseCacheService } from '../common/response-cache.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -243,11 +244,23 @@ export class TelegramChannelsService {
   } as const;
   private readonly inviteLinkSyncUpsertSelect = {
     id: true,
+    workspaceId: true,
+    telegramChannelId: true,
     adCampaignId: true,
+    joinedCount: true,
+    requestedCount: true,
+    isRevoked: true,
   } as const;
   private telegramInviteLinkRequestedCountSupported: boolean | null = null;
   private telegramInviteLinkRequestedCountColumnAvailable: boolean | null =
     null;
+  private telegramInviteLinkSnapshotStorageState:
+    | 'unknown'
+    | 'available'
+    | 'missing' = 'unknown';
+  private ensureTelegramInviteLinkSnapshotStoragePromise:
+    | Promise<boolean>
+    | null = null;
   private ensureTelegramInviteLinkRequestedCountColumnPromise:
     | Promise<boolean>
     | null = null;
@@ -258,6 +271,7 @@ export class TelegramChannelsService {
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
+    private responseCache: ResponseCacheService,
     private encryptionService: TokenEncryptionService,
     private mtprotoClient: TelegramMtprotoClient,
     private sourceAccessService: TelegramSourceAccessService,
@@ -270,6 +284,22 @@ export class TelegramChannelsService {
 
   private workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
+  }
+
+  private cacheScopePrefix(userId: string, workspaceId: string) {
+    return `api:${userId}:${workspaceId || 'no-workspace'}`;
+  }
+
+  private invalidateTelegramChannelReadCache(
+    userId: string,
+    workspaceId: string,
+  ) {
+    this.responseCache.clearByPrefix(
+      `${this.cacheScopePrefix(userId, workspaceId)}:GET:/telegram-channels`,
+    );
+    this.responseCache.clearByPrefix(
+      `${this.cacheScopePrefix(userId, '')}:GET:/telegram-channels`,
+    );
   }
 
   private isMissingTelegramChannelSyncScopeColumn(error: unknown) {
@@ -1215,6 +1245,120 @@ export class TelegramChannelsService {
     };
   }
 
+  private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked?: boolean | null }>(
+    rows: T[],
+  ) {
+    let peakJoinedCount = 0;
+    return rows.map((row) => {
+      const joinedCount = Number(row.joinedCount || 0);
+      const requestedCount = Number(row.requestedCount || 0);
+      peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
+      const drawdownFromPeak = Math.max(0, peakJoinedCount - joinedCount);
+      const drawdownPercent =
+        peakJoinedCount > 0 ? (drawdownFromPeak / peakJoinedCount) * 100 : 0;
+      return {
+        syncedAt: row.syncedAt,
+        joinedCount,
+        requestedCount,
+        totalAttributed: joinedCount + requestedCount,
+        peakJoinedCount,
+        drawdownFromPeak,
+        drawdownPercent,
+        isRevoked: Boolean(row.isRevoked),
+      };
+    });
+  }
+
+  private inviteLinkHistorySummary<
+    T extends {
+      joinedCount: number;
+      requestedCount: number;
+      peakJoinedCount: number;
+      drawdownFromPeak: number;
+      drawdownPercent: number;
+    },
+  >(points: T[]) {
+    const current = points[points.length - 1] ?? null;
+    const peakJoinedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.peakJoinedCount || 0)),
+      0,
+    );
+    const peakRequestedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.requestedCount || 0)),
+      0,
+    );
+    return {
+      currentJoinedCount: Number(current?.joinedCount || 0),
+      currentRequestedCount: Number(current?.requestedCount || 0),
+      currentTotalAttributed:
+        Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
+      peakJoinedCount,
+      peakRequestedCount,
+      peakTotalAttributed: peakJoinedCount + peakRequestedCount,
+      drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
+      drawdownPercent: Number(current?.drawdownPercent || 0),
+      hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,
+    };
+  }
+
+  private async persistInviteLinkSnapshots(params: {
+    workspaceId: string;
+    channelId: string;
+    syncedAt: Date;
+    links: Array<{
+      id: string;
+      telegramChannelId: string;
+      adCampaignId: string | null;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked: boolean;
+    }>;
+  }) {
+    if (!params.links.length) return;
+    if (this.telegramInviteLinkSnapshotStorageState === 'missing') return;
+    try {
+      await this.prisma.telegramInviteLinkSnapshot.createMany({
+        data: params.links.map((link) => ({
+          workspaceId: params.workspaceId,
+          telegramChannelId: params.channelId,
+          inviteLinkId: link.id,
+          adCampaignId: link.adCampaignId ?? null,
+          syncedAt: params.syncedAt,
+          joinedCount: Number(link.joinedCount || 0),
+          requestedCount: Number(link.requestedCount || 0),
+          isRevoked: Boolean(link.isRevoked),
+        })),
+        skipDuplicates: true,
+      });
+      this.telegramInviteLinkSnapshotStorageState = 'available';
+    } catch (error) {
+      if (!this.isInviteLinkSnapshotStorageMissing(error)) throw error;
+      this.telegramInviteLinkSnapshotStorageState = 'missing';
+      const repaired =
+        await this.ensureTelegramInviteLinkSnapshotStorageAvailable();
+      if (!repaired) {
+        this.logger.warn(
+          'TelegramInviteLinkSnapshot table is missing; invite-link history snapshots are skipped until migrations are applied.',
+        );
+        return;
+      }
+      await this.prisma.telegramInviteLinkSnapshot.createMany({
+        data: params.links.map((link) => ({
+          workspaceId: params.workspaceId,
+          telegramChannelId: params.channelId,
+          inviteLinkId: link.id,
+          adCampaignId: link.adCampaignId ?? null,
+          syncedAt: params.syncedAt,
+          joinedCount: Number(link.joinedCount || 0),
+          requestedCount: Number(link.requestedCount || 0),
+          isRevoked: Boolean(link.isRevoked),
+        })),
+        skipDuplicates: true,
+      });
+      this.telegramInviteLinkSnapshotStorageState = 'available';
+    }
+  }
+
   async reattributeWorkspaceInviteLinks(workspaceId: string) {
     const maps = await this.buildInviteAttributionMaps(workspaceId);
     const links = await this.prisma.telegramInviteLink.findMany({
@@ -1292,6 +1436,15 @@ export class TelegramChannelsService {
     let matchedMembersCount = 0;
     let unresolvedCreatorsCount = 0;
     const affectedCampaignIds = new Set<string>();
+    const persistedLinks: Array<{
+      id: string;
+      telegramChannelId: string;
+      adCampaignId: string | null;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked: boolean;
+    }> = [];
+    const syncedAt = new Date();
     const totalLinks = remote.links.length;
 
     await this.notifyInviteLinksProgress(
@@ -1335,7 +1488,22 @@ export class TelegramChannelsService {
       if (persisted.upserted.adCampaignId) {
         affectedCampaignIds.add(persisted.upserted.adCampaignId);
       }
+      persistedLinks.push({
+        id: persisted.upserted.id,
+        telegramChannelId: persisted.upserted.telegramChannelId,
+        adCampaignId: persisted.upserted.adCampaignId ?? null,
+        joinedCount: persisted.upserted.joinedCount,
+        requestedCount: persisted.upserted.requestedCount,
+        isRevoked: persisted.upserted.isRevoked,
+      });
     }
+
+    await this.persistInviteLinkSnapshots({
+      workspaceId: params.workspaceId,
+      channelId: params.channelId,
+      syncedAt,
+      links: persistedLinks,
+    });
 
     return this.finalizeInviteLinkSync({
       workspaceId: params.workspaceId,
@@ -1364,6 +1532,170 @@ export class TelegramChannelsService {
         message,
       )
     );
+  }
+
+  private isInviteLinkSnapshotStorageMissing(error: unknown) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+    if (error.code === 'P2021') return true;
+    if (error.code !== 'P2010') return false;
+
+    const originalCode =
+      (
+        error.meta as
+          | {
+              driverAdapterError?: {
+                cause?: { originalCode?: string };
+              };
+            }
+          | undefined
+      )?.driverAdapterError?.cause?.originalCode ?? null;
+
+    return originalCode === '42P01';
+  }
+
+  private async ensureTelegramInviteLinkSnapshotStorageAvailable() {
+    if (this.telegramInviteLinkSnapshotStorageState === 'available') {
+      return true;
+    }
+    if (this.ensureTelegramInviteLinkSnapshotStoragePromise) {
+      return this.ensureTelegramInviteLinkSnapshotStoragePromise;
+    }
+    this.ensureTelegramInviteLinkSnapshotStoragePromise = (async () => {
+      if (typeof this.prisma.$executeRawUnsafe !== 'function') {
+        return false;
+      }
+      await this.prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "TelegramInviteLinkSnapshot" (
+          "id" TEXT NOT NULL,
+          "workspaceId" TEXT NOT NULL,
+          "telegramChannelId" TEXT NOT NULL,
+          "inviteLinkId" TEXT NOT NULL,
+          "adCampaignId" TEXT,
+          "syncedAt" TIMESTAMP(3) NOT NULL,
+          "joinedCount" INTEGER NOT NULL DEFAULT 0,
+          "requestedCount" INTEGER NOT NULL DEFAULT 0,
+          "isRevoked" BOOLEAN NOT NULL DEFAULT false,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "TelegramInviteLinkSnapshot_pkey" PRIMARY KEY ("id")
+        )
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "TelegramInviteLinkSnapshot_inviteLinkId_syncedAt_key"
+        ON "TelegramInviteLinkSnapshot"("inviteLinkId", "syncedAt")
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "TelegramInviteLinkSnapshot_workspaceId_telegramChannelId_syncedAt_idx"
+        ON "TelegramInviteLinkSnapshot"("workspaceId", "telegramChannelId", "syncedAt")
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "TelegramInviteLinkSnapshot_workspaceId_adCampaignId_syncedAt_idx"
+        ON "TelegramInviteLinkSnapshot"("workspaceId", "adCampaignId", "syncedAt")
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "TelegramInviteLinkSnapshot_workspaceId_inviteLinkId_syncedAt_idx"
+        ON "TelegramInviteLinkSnapshot"("workspaceId", "inviteLinkId", "syncedAt")
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'TelegramInviteLinkSnapshot_workspaceId_fkey'
+          ) THEN
+            ALTER TABLE "TelegramInviteLinkSnapshot"
+            ADD CONSTRAINT "TelegramInviteLinkSnapshot_workspaceId_fkey"
+            FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id")
+            ON DELETE CASCADE ON UPDATE CASCADE;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'TelegramInviteLinkSnapshot_telegramChannelId_fkey'
+          ) THEN
+            ALTER TABLE "TelegramInviteLinkSnapshot"
+            ADD CONSTRAINT "TelegramInviteLinkSnapshot_telegramChannelId_fkey"
+            FOREIGN KEY ("telegramChannelId") REFERENCES "TelegramChannel"("id")
+            ON DELETE CASCADE ON UPDATE CASCADE;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'TelegramInviteLinkSnapshot_inviteLinkId_fkey'
+          ) THEN
+            ALTER TABLE "TelegramInviteLinkSnapshot"
+            ADD CONSTRAINT "TelegramInviteLinkSnapshot_inviteLinkId_fkey"
+            FOREIGN KEY ("inviteLinkId") REFERENCES "TelegramInviteLink"("id")
+            ON DELETE CASCADE ON UPDATE CASCADE;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'TelegramInviteLinkSnapshot_adCampaignId_fkey'
+          ) THEN
+            ALTER TABLE "TelegramInviteLinkSnapshot"
+            ADD CONSTRAINT "TelegramInviteLinkSnapshot_adCampaignId_fkey"
+            FOREIGN KEY ("adCampaignId") REFERENCES "AdCampaign"("id")
+            ON DELETE SET NULL ON UPDATE CASCADE;
+          END IF;
+        END
+        $$;
+      `);
+      this.telegramInviteLinkSnapshotStorageState = 'available';
+      this.logger.warn(
+        'TelegramInviteLinkSnapshot table was missing in the database and was created automatically for compatibility.',
+      );
+      return true;
+    })();
+    try {
+      return await this.ensureTelegramInviteLinkSnapshotStoragePromise;
+    } finally {
+      this.ensureTelegramInviteLinkSnapshotStoragePromise = null;
+    }
+  }
+
+  private inviteLinkSyntheticHistoryPoint(params: {
+    syncedAt?: Date | null;
+    joinedCount?: number | null;
+    requestedCount?: number | null;
+    isRevoked?: boolean | null;
+  }) {
+    return {
+      syncedAt: params.syncedAt ?? new Date(),
+      joinedCount: Number(params.joinedCount ?? 0),
+      requestedCount: Number(params.requestedCount ?? 0),
+      isRevoked: Boolean(params.isRevoked),
+    };
+  }
+
+  private async readInviteLinkSnapshotsOrEmpty(params: {
+    where: Prisma.TelegramInviteLinkSnapshotWhereInput;
+    orderBy:
+      | Prisma.TelegramInviteLinkSnapshotOrderByWithRelationInput
+      | Prisma.TelegramInviteLinkSnapshotOrderByWithRelationInput[];
+    take: number;
+  }) {
+    if (this.telegramInviteLinkSnapshotStorageState === 'missing') {
+      return [];
+    }
+    try {
+      const rows = await this.prisma.telegramInviteLinkSnapshot.findMany({
+        where: params.where,
+        orderBy: params.orderBy,
+        take: params.take,
+      });
+      this.telegramInviteLinkSnapshotStorageState = 'available';
+      return rows;
+    } catch (error) {
+      if (!this.isInviteLinkSnapshotStorageMissing(error)) throw error;
+      this.telegramInviteLinkSnapshotStorageState = 'missing';
+      const repaired =
+        await this.ensureTelegramInviteLinkSnapshotStorageAvailable();
+      if (!repaired) return [];
+      const rows = await this.prisma.telegramInviteLinkSnapshot.findMany({
+        where: params.where,
+        orderBy: params.orderBy,
+        take: params.take,
+      });
+      this.telegramInviteLinkSnapshotStorageState = 'available';
+      return rows;
+    }
   }
 
   private requestedCountCompatibilityReason(error: unknown) {
@@ -3700,6 +4032,7 @@ export class TelegramChannelsService {
         posts.length,
       );
     }
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
     return result;
   }
 
@@ -6193,6 +6526,7 @@ export class TelegramChannelsService {
       durationMs: Date.now() - startedAt,
       metadata: { channelId, sourceAccountId: account.id, steps },
     });
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
     return result;
   }
 
@@ -6239,7 +6573,7 @@ export class TelegramChannelsService {
       channelId,
       'sync',
     );
-    return {
+    const result = {
       message: 'Deep MTProto sync completed',
       source: 'mtproto',
       publicInfo,
@@ -6249,6 +6583,8 @@ export class TelegramChannelsService {
       channelStatsSync,
       audienceSnapshot,
     };
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
+    return result;
   }
 
   private async syncPublicChannelInfo(
@@ -6533,7 +6869,7 @@ export class TelegramChannelsService {
       dto.syncPosts || dto.syncInviteLinks
         ? await this.createAudienceSnapshotSafely(channelId, 'sync')
         : null;
-    return {
+    const result = {
       message: 'Historical MTProto sync completed',
       source: 'mtproto',
       imported,
@@ -6559,6 +6895,8 @@ export class TelegramChannelsService {
         inviteResult?.warnings ?? historical?.inviteLinkWarnings ?? [],
       audienceSnapshot,
     };
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
+    return result;
   }
 
   async syncPostsMetrics(
@@ -6569,13 +6907,15 @@ export class TelegramChannelsService {
     progressStep = { current: 3, total: 8 },
   ) {
     const workspaceId = await this.workspace(userId);
-    return this.syncPostsMetricsForWorkspace(
+    const result = await this.syncPostsMetricsForWorkspace(
       workspaceId,
       channelId,
       dto,
       onProgress,
       progressStep,
     );
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
+    return result;
   }
 
   async syncPostsMetricsForWorkspace(
@@ -7577,11 +7917,13 @@ export class TelegramChannelsService {
       channelId,
       dto.telegramUserAccountId,
     );
-    return this.syncBroadcastStatsForWorkspace(
+    const result = await this.syncBroadcastStatsForWorkspace(
       workspaceId,
       channelId,
       account.id,
     );
+    this.invalidateTelegramChannelReadCache(userId, workspaceId);
+    return result;
   }
 
   async syncBroadcastStatsForWorkspace(
@@ -7791,6 +8133,55 @@ export class TelegramChannelsService {
       where: { workspaceId, telegramChannelId: channelId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async inviteLinkHistory(
+    userId: string,
+    channelId: string,
+    inviteLinkId: string,
+    limit = 120,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const inviteLink = await this.prisma.telegramInviteLink.findFirst({
+      where: {
+        id: inviteLinkId,
+        workspaceId,
+        telegramChannelId: channelId,
+      },
+      select: this.inviteLinkReadSelect(true),
+    });
+    if (!inviteLink) {
+      throw new NotFoundException('Invite link not found');
+    }
+    const rows = await this.readInviteLinkSnapshotsOrEmpty({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        inviteLinkId,
+      },
+      orderBy: { syncedAt: 'desc' },
+      take: Math.max(2, Math.min(365, limit)),
+    });
+    const points = this.inviteLinkHistoryPoints(
+      rows.length
+        ? [...rows].reverse()
+        : [
+            this.inviteLinkSyntheticHistoryPoint({
+              syncedAt:
+                inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
+              joinedCount: inviteLink.joinedCount,
+              requestedCount: (inviteLink as { requestedCount?: number | null })
+                .requestedCount,
+              isRevoked: inviteLink.isRevoked,
+            }),
+          ],
+    );
+    return {
+      inviteLink: this.normalizeInviteLinkRequestedCount(inviteLink),
+      points,
+      summary: this.inviteLinkHistorySummary(points),
+    };
   }
 
   async promosByChannel(userId: string, channelId: string) {

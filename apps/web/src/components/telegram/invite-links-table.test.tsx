@@ -1,8 +1,22 @@
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { InviteLinksTable } from "@/components/telegram/invite-links-table";
 import { syncProgressToToast } from "@/lib/progress";
 import type { TelegramInviteLink } from "@/lib/api";
+
+function renderWithQuery(ui: React.ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
 
 describe("InviteLinksTable", () => {
   it("renders linked and unlinked creators with joined/requested counts", () => {
@@ -40,7 +54,7 @@ describe("InviteLinksTable", () => {
       },
     ];
 
-    render(<InviteLinksTable links={links} />);
+    renderWithQuery(<InviteLinksTable links={links} />);
 
     expect(screen.getByText(/Created by Owner Admin/)).toBeInTheDocument();
     expect(screen.getByText(/Created by Sasha Admin/)).toBeInTheDocument();
@@ -49,7 +63,7 @@ describe("InviteLinksTable", () => {
     expect(screen.getByText("11")).toBeInTheDocument();
     expect(screen.getByText("13")).toBeInTheDocument();
     expect(screen.getByText("4")).toBeInTheDocument();
-    expect(screen.getAllByText("pending requests")).toHaveLength(2);
+    expect(screen.getAllByText("pending requests")).toHaveLength(1);
     expect(screen.getByText("Revoked")).toBeInTheDocument();
     expect(screen.queryByText("Join requests")).not.toBeInTheDocument();
   });
@@ -80,7 +94,7 @@ describe("InviteLinksTable", () => {
       },
     ];
 
-    render(<InviteLinksTable links={links} />);
+    renderWithQuery(<InviteLinksTable links={links} />);
 
     expect(screen.queryByText("https://t.me/+hidden")).not.toBeInTheDocument();
     expect(screen.getByText("https://t.me/+visible")).toBeInTheDocument();

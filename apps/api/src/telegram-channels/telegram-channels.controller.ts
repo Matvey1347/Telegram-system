@@ -539,6 +539,20 @@ export class TelegramChannelsController {
   ) {
     return this.service.inviteLinks(user.sub, id);
   }
+  @Get(':id/invite-links/:inviteLinkId/history')
+  inviteLinkHistory(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('inviteLinkId') inviteLinkId: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.inviteLinkHistory(
+      user.sub,
+      id,
+      inviteLinkId,
+      Number(limit || 120),
+    );
+  }
   @Get(':id/promos')
   promos(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.promosByChannel(user.sub, id);

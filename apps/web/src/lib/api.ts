@@ -1226,6 +1226,50 @@ export type TelegramInviteLink = {
   } | null;
   adCampaign?: AdCampaign;
 };
+export type InviteLinkHistoryPoint = {
+  syncedAt: string;
+  joinedCount: number;
+  requestedCount: number;
+  totalAttributed: number;
+  peakJoinedCount: number;
+  drawdownFromPeak: number;
+  drawdownPercent: number;
+  isRevoked?: boolean;
+};
+export type InviteLinkHistorySummary = {
+  currentJoinedCount: number;
+  currentRequestedCount: number;
+  currentTotalAttributed: number;
+  peakJoinedCount: number;
+  peakRequestedCount: number;
+  peakTotalAttributed: number;
+  drawdownFromPeak: number;
+  drawdownPercent: number;
+  hasHighDropoff: boolean;
+};
+export type TelegramInviteLinkHistory = {
+  inviteLink: TelegramInviteLink;
+  points: InviteLinkHistoryPoint[];
+  summary: InviteLinkHistorySummary;
+};
+export type AdCampaignInviteLinkHistory = {
+  campaign: {
+    id: string;
+    title?: string | null;
+  };
+  inviteLinks: Array<
+    Pick<
+      TelegramInviteLink,
+      "id" | "name" | "url" | "joinedCount" | "requestedCount" | "isRevoked"
+    > & {
+      summary: InviteLinkHistorySummary;
+    }
+  >;
+  points: InviteLinkHistoryPoint[];
+  summary: InviteLinkHistorySummary & {
+    inviteLinksCount: number;
+  };
+};
 export type Promo = {
   id: string;
   telegramChannelId: string;
@@ -2430,6 +2474,13 @@ export const adCampaignsApi = {
         { params },
       )
     ).data,
+  inviteLinkHistory: async (id: string, limit = 120) =>
+    (
+      await api.get<AdCampaignInviteLinkHistory>(
+        `/ad-campaigns/${id}/invite-link-history`,
+        { params: { limit } },
+      )
+    ).data,
 };
 export const telegramSyncApi = {
   runDailyAnalytics: async () =>
@@ -2549,6 +2600,19 @@ export async function getTelegramChannelInviteLinks(channelId: string) {
   return (
     await api.get<TelegramInviteLink[]>(
       `/telegram-channels/${channelId}/invite-links`,
+    )
+  ).data;
+}
+
+export async function getTelegramChannelInviteLinkHistory(
+  channelId: string,
+  inviteLinkId: string,
+  limit = 120,
+) {
+  return (
+    await api.get<TelegramInviteLinkHistory>(
+      `/telegram-channels/${channelId}/invite-links/${inviteLinkId}/history`,
+      { params: { limit } },
     )
   ).data;
 }

@@ -4,7 +4,7 @@ import {
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
-import { firstValueFrom, from, Observable } from 'rxjs';
+import { firstValueFrom, from, Observable, tap } from 'rxjs';
 import { ResponseCacheService } from './response-cache.service';
 
 type RequestWithUser = {
@@ -36,8 +36,11 @@ export class ResponseCacheInterceptor implements NestInterceptor {
       return next.handle();
 
     if (method !== 'GET') {
-      this.invalidateScope(userId, workspaceId);
-      return next.handle();
+      return next.handle().pipe(
+        tap({
+          next: () => this.invalidateScope(userId, workspaceId),
+        }),
+      );
     }
 
     if (!this.isCacheableGet(url)) return next.handle();
