@@ -1231,6 +1231,8 @@ export type Promo = {
   telegramChannelId: string;
   iconId?: string | null;
   icon?: Icon | null;
+  assignedMemberId?: string | null;
+  assignedMember?: WorkspaceMember | null;
   title: string;
   text?: string;
   imageData?: string;

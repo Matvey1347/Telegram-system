@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
+import { AdCampaignsTable } from '@/components/ad-campaigns/campaigns-table';
 import { IconAvatar } from '@/components/icons/icon-avatar';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
@@ -339,15 +340,15 @@ export default function AdCampaignsPage() {
     {isLoading ? <LoadingState /> : null}
     {error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load campaigns.</div> : null}
     {viewMode === 'campaigns' && !isLoading && visibleCampaigns.length ? (
-      <CampaignsTable
+      <AdCampaignsTable
         campaigns={visibleCampaigns}
         moneySettings={moneySettings}
-      rates={rates}
-      onEdit={setEditing}
-      onDelete={setDeleting}
-      onToggleExclude={(campaign, excludeFromAnalytics) => excludeMutation.mutate({ id: campaign.id, excludeFromAnalytics })}
-      onOpenPromo={setPreviewPromo}
-    />
+        rates={rates}
+        onEdit={setEditing}
+        onDelete={setDeleting}
+        onToggleExclude={(campaign, excludeFromAnalytics) => excludeMutation.mutate({ id: campaign.id, excludeFromAnalytics })}
+        onOpenPromo={setPreviewPromo}
+      />
     ) : null}
     {viewMode === 'campaigns' && !isLoading && !error && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
 
@@ -1212,7 +1213,10 @@ function PromosSection({
                     <PromoIcon iconId={promo.iconId} icon={promo.icon} title={promo.title} />
                     <h3 className="truncate text-lg font-semibold text-white">{promo.title}</h3>
                   </div>
-                  {promo.telegramChannel ? <SourceChip source={promo.telegramChannel} compact /> : null}
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {promo.telegramChannel ? <SourceChip source={promo.telegramChannel} compact /> : null}
+                    {promo.assignedMember ? <PromoAssignedMemberChip member={promo.assignedMember} /> : null}
+                  </div>
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <IconButton onClick={() => onEdit(promo)} />
@@ -1251,6 +1255,24 @@ function PromoIcon({
       bordered={false}
       className="!bg-transparent"
     />
+  );
+}
+
+function PromoAssignedMemberChip({ member }: { member: NonNullable<Promo['assignedMember']> }) {
+  const label = member.user?.name || 'Member';
+  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
+  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  return (
+    <a
+      href="/workspace-members"
+      title={`Assigned member: ${label}\nClick to open workspace members.\nCtrl/Cmd + click opens it in a new tab.`}
+      className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-slate-700/80 bg-slate-900/70 px-2 py-1 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+    >
+      {avatarImageUrl ? <img src={avatarImageUrl} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" /> : null}
+      {!avatarImageUrl && avatarEmoji ? <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-[12px] leading-none">{avatarEmoji}</span> : null}
+      {!avatarImageUrl && !avatarEmoji ? <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-slate-600 text-[10px] text-slate-400">{label.slice(0, 1).toUpperCase()}</span> : null}
+      <span className="truncate">{label}</span>
+    </a>
   );
 }
 
@@ -1345,7 +1367,7 @@ function PromoModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: { telegramChannelId: string; iconId?: string | null; title: string; imageData?: string; text?: string }) => void;
+  onSubmit: (payload: { telegramChannelId: string; assignedMemberId?: string | null; iconId?: string | null; title: string; imageData?: string; text?: string }) => void;
   title: string;
   initial?: Promo;
   channels: TelegramChannel[];
@@ -1355,6 +1377,7 @@ function PromoModal({
     [channels],
   );
   const [iconId, setIconId] = useState<string | null>(initial?.iconId || null);
+  const [assignedMemberId, setAssignedMemberId] = useState<string | null>(initial?.assignedMemberId ?? initial?.assignedMember?.id ?? null);
   const [selectedChannelId, setSelectedChannelId] = useState(initial?.telegramChannelId ?? '');
   const [titleValue, setTitleValue] = useState(initial?.title ?? '');
   const [textValue, setTextValue] = useState(initial?.text ?? '');
@@ -1364,6 +1387,7 @@ function PromoModal({
   useEffect(() => {
     if (!open) return;
     setIconId(initial?.iconId || null);
+    setAssignedMemberId(initial?.assignedMemberId ?? initial?.assignedMember?.id ?? null);
     setSelectedChannelId(initial?.telegramChannelId ?? '');
     setTitleValue(initial?.title ?? '');
     setTextValue(initial?.text ?? '');
@@ -1382,6 +1406,7 @@ function PromoModal({
     const trimmedText = textValue.trim();
     onSubmit({
       telegramChannelId: selectedChannelId,
+      assignedMemberId,
       iconId,
       title: trimmedTitle,
       imageData: imageUrls[0] || undefined,
@@ -1421,6 +1446,13 @@ function PromoModal({
               />
             </FormField>
           </div>
+          <FormField label="Member">
+            <MemberSelect
+              value={assignedMemberId}
+              onChange={(value) => setAssignedMemberId(value || null)}
+              defaultToCurrent={!initial}
+            />
+          </FormField>
           <FormField label="Telegram text">
             <TelegramTextEditor
               value={textValue}
@@ -1468,6 +1500,7 @@ function PromoPreviewModal({ promo, onClose }: { promo: Promo | null; onClose: (
               <div>
                 <h3 className="text-lg font-semibold text-white">{promo.title}</h3>
                 {promo.telegramChannel ? <p className="text-sm text-slate-400">{promo.telegramChannel.title}</p> : null}
+                {promo.assignedMember ? <div className="mt-2"><PromoAssignedMemberChip member={promo.assignedMember} /></div> : null}
               </div>
             </div>
             {promo.text ? (
@@ -1812,6 +1845,18 @@ function campaignAdvertisingSources(row: any) {
   return [];
 }
 
+function mergeCampaignSelectOptions(
+  primary: CampaignSelectOption[],
+  fallback: CampaignSelectOption[],
+) {
+  const byId = new Map<string, CampaignSelectOption>();
+  [...fallback, ...primary].forEach((option) => {
+    if (!option?.value) return;
+    byId.set(option.value, option);
+  });
+  return [...byId.values()];
+}
+
 function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: any) {
   const mapInitialValues = (row?: any): CampaignValues => row
     ? {
@@ -1858,35 +1903,68 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
 
   const availablePromos = useMemo(() => promos ?? [], [promos]);
   const ownTelegramChannels = useMemo(() => (channels || []).filter(isOwnTelegramChannel), [channels]);
-  const promoOptions = useMemo(() => availablePromos.map((promo: Promo) => ({
-    value: promo.id,
-    label: promo.title,
-    iconUrl: promo.icon?.imageUrl ?? undefined,
-    iconEmoji: promo.icon?.emoji ?? undefined,
-    iconFallback: promo.title,
-    description: promo.telegramChannel?.title,
-    searchText: promo.text,
-  })), [availablePromos]);
-  const inviteLinkOptions = useMemo(() => (inviteLinks || []).map((inviteLink: TelegramInviteLink) => ({
-    value: inviteLink.id,
-    label: inviteLink.name,
-    iconUrl:
-      inviteLink.creatorMember?.avatarIcon?.imageUrl ??
-      inviteLink.creatorPhotoUrl ??
-      undefined,
-    iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
-    iconFallback:
-      inviteLink.creatorMember?.user?.name ??
-      inviteLink.creatorFirstName ??
-      inviteLink.creatorUsername ??
-      inviteLink.name,
-    description:
-      inviteLink.creatorMember?.user?.name ||
-      inviteLink.creatorUsername
-        ? `${inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername} · ${inviteLink.url}`
-        : inviteLink.url,
-  })), [inviteLinks]);
-  const advertisingSources = useMemo(() => [
+  const promoOptions = useMemo(() => {
+    const liveOptions = availablePromos.map((promo: Promo) => ({
+      value: promo.id,
+      label: promo.title,
+      iconUrl: promo.icon?.imageUrl ?? undefined,
+      iconEmoji: promo.icon?.emoji ?? undefined,
+      iconFallback: promo.title,
+      description: promo.telegramChannel?.title,
+      searchText: promo.text,
+    }));
+    const initialOptions = (initial?.promos || (initial?.promo ? [initial.promo] : [])).map((promo: Promo) => ({
+      value: promo.id,
+      label: promo.title,
+      iconUrl: promo.icon?.imageUrl ?? undefined,
+      iconEmoji: promo.icon?.emoji ?? undefined,
+      iconFallback: promo.title,
+      description: promo.telegramChannel?.title,
+      searchText: promo.text,
+    }));
+    return mergeCampaignSelectOptions(liveOptions, initialOptions);
+  }, [availablePromos, initial]);
+  const inviteLinkOptions = useMemo(() => {
+    const liveOptions = (inviteLinks || []).map((inviteLink: TelegramInviteLink) => ({
+      value: inviteLink.id,
+      label: inviteLink.name,
+      iconUrl:
+        inviteLink.creatorMember?.avatarIcon?.imageUrl ??
+        inviteLink.creatorPhotoUrl ??
+        undefined,
+      iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
+      iconFallback:
+        inviteLink.creatorMember?.user?.name ??
+        inviteLink.creatorFirstName ??
+        inviteLink.creatorUsername ??
+        inviteLink.name,
+      description:
+        inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername
+          ? `${inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername} · ${inviteLink.url}`
+          : inviteLink.url,
+    }));
+    const initialOptions = (initial?.inviteLinks || (initial?.telegramInviteLink ? [initial.telegramInviteLink] : [])).map((inviteLink: TelegramInviteLink) => ({
+      value: inviteLink.id,
+      label: inviteLink.name,
+      iconUrl:
+        inviteLink.creatorMember?.avatarIcon?.imageUrl ??
+        inviteLink.creatorPhotoUrl ??
+        undefined,
+      iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
+      iconFallback:
+        inviteLink.creatorMember?.user?.name ??
+        inviteLink.creatorFirstName ??
+        inviteLink.creatorUsername ??
+        inviteLink.name,
+      description:
+        inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername
+          ? `${inviteLink.creatorMember?.user?.name || inviteLink.creatorUsername} · ${inviteLink.url}`
+          : inviteLink.url,
+    }));
+    return mergeCampaignSelectOptions(liveOptions, initialOptions);
+  }, [initial, inviteLinks]);
+  const advertisingSources = useMemo(() => {
+    const liveOptions = [
     ...(people || []).map((person: any) => ({
       value: person.selectionId || `source:${person.id}`,
       label: person.title || person.name,
@@ -1908,7 +1986,22 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
           searchText: channel.username || '',
         };
       }),
-  ], [channels, people, selectedChannelId]);
+    ];
+    const initialOptions = campaignAdvertisingSources(initial).map((source: any) => ({
+      value: advertisingSelectionId(source),
+      label: source.title || source.name,
+      iconUrl: source.photoUrl || source.imageUrl || undefined,
+      iconFallback: source.title || source.name,
+      description:
+        source.selectionId?.startsWith('source:') ||
+        source.sourceKind === 'person' ||
+        source.kind === 'person'
+          ? 'Person'
+          : 'External channel',
+      searchText: `${source.username || source.telegramUsername || ''} ${source.contactInfo || ''}`,
+    }));
+    return mergeCampaignSelectOptions(liveOptions, initialOptions);
+  }, [channels, initial, people, selectedChannelId]);
 
   return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit((v: any) => {
     onSubmit({

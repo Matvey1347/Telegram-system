@@ -47,6 +47,22 @@ export class TelegramChannelAnalyticsService {
     return true;
   }
 
+  private effectiveCampaignJoinedSubscribers(campaign: any) {
+    const linkedJoined = sumInviteLinkAttributedSubscribers(
+      Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+    );
+    if (linkedJoined > 0) return linkedJoined;
+    return Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
+  }
+
+  private effectiveCampaignActiveSubscribers(campaign: any) {
+    return Number(
+      campaign.cappedActiveSubscribersFromAd ??
+        campaign.activeSubscribersFromAd ??
+        0,
+    );
+  }
+
   private isMissingTelegramChannelSyncScopeColumn(error: unknown) {
     const message =
       error instanceof Error ? error.message : String(error || '');
@@ -438,35 +454,18 @@ export class TelegramChannelAnalyticsService {
       }),
     ]);
     const campaigns = campaignRows as any[];
-    const inviteLinksById = new Map(
-      channelInviteLinks.map((link) => [
-        link.id,
-        inviteLinkAttributedSubscribers(link),
-      ]),
-    );
     const totalAdSpend = campaigns.reduce(
       (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
       0,
     );
-    const totalJoinedSubscribers = campaigns.reduce((sum, campaign) => {
-      const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
-      if (selectedLinkId && inviteLinksById.has(selectedLinkId)) {
-        return sum + Number(inviteLinksById.get(selectedLinkId) || 0);
-      }
-      const campaignJoined = Number(campaign.joinedCount || 0);
-      const linksJoined = sumInviteLinkAttributedSubscribers(campaign.inviteLinks);
-      if (linksJoined > 0 || campaignJoined > 0) {
-        return sum + Math.max(campaignJoined, linksJoined);
-      }
-      if (campaign.newSubscribers != null) {
-        return sum + Number(campaign.newSubscribers || 0);
-      }
-      return sum + Math.max(campaignJoined, linksJoined);
-    }, 0);
+    const totalJoinedSubscribers = campaigns.reduce(
+      (sum, campaign) => sum + this.effectiveCampaignJoinedSubscribers(campaign),
+      0,
+    );
     const avgCpa =
       totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
     const campaignActiveSubscribersEstimate = campaigns.reduce(
-      (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
+      (sum, campaign) => sum + this.effectiveCampaignActiveSubscribers(campaign),
       0,
     );
     const paidActiveSubscribersEstimate =

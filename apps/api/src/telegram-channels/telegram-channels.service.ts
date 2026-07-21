@@ -7866,6 +7866,38 @@ export class TelegramChannelsService {
         include: {
           telegramChannel: true,
           promo: true,
+          inviteLinks: {
+            select: {
+              id: true,
+              telegramChannelId: true,
+              adCampaignId: true,
+              name: true,
+              url: true,
+              joinedCount: true,
+              requestedCount: true,
+              isRevoked: true,
+              creatorTelegramUserId: true,
+              creatorUsername: true,
+              creatorFirstName: true,
+              creatorLastName: true,
+              creatorPhotoUrl: true,
+              creatorMatchSource: true,
+              creatorMember: {
+                select: {
+                  id: true,
+                  role: true,
+                  telegramUsername: true,
+                  avatarIcon: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
           advertisingTelegramChannels: {
             include: {
               telegramChannel: true,
@@ -7893,19 +7925,41 @@ export class TelegramChannelsService {
         orderBy: [{ date: 'asc' }, { metric: 'asc' }, { series: 'asc' }],
       }),
     ]);
-    const linksById = new Map(inviteLinks.map((link) => [link.id, link]));
     const campaignsWithMetrics = campaigns.map((campaign) => {
-      const joinedCount = campaign.telegramInviteLinkId
-        ? inviteLinkAttributedSubscribers(
-            linksById.get(campaign.telegramInviteLinkId),
-          )
-        : 0;
+      const joinedCount = sumInviteLinkAttributedSubscribers(
+        Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+      );
+      const fallbackJoinedCount = Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
+      const effectiveJoinedCount =
+        joinedCount > 0 ? joinedCount : fallbackJoinedCount;
+      const activeSubscribersFromAd = Number(
+        campaign.cappedActiveSubscribersFromAd ??
+          campaign.activeSubscribersFromAd ??
+          0,
+      );
       return {
         ...campaign,
-        joinedCount,
+        joinedCount: effectiveJoinedCount,
         leftCount: null,
         netGrowthCount: null,
-        cpa: joinedCount > 0 ? Number(campaign.price) / joinedCount : null,
+        cpa:
+          effectiveJoinedCount > 0
+            ? Number(campaign.price) / effectiveJoinedCount
+            : null,
+        analytics: {
+          joinedCount: effectiveJoinedCount,
+          leftCount: null,
+          netGrowth: effectiveJoinedCount,
+          costPerJoinedSubscriber:
+            effectiveJoinedCount > 0
+              ? Number(campaign.price) / effectiveJoinedCount
+              : null,
+          costPerNetSubscriber:
+            effectiveJoinedCount > 0
+              ? Number(campaign.price) / effectiveJoinedCount
+              : null,
+        },
+        activeSubscribersFromAd,
         attributionSource: 'mtproto_invite_link_usage',
       };
     });

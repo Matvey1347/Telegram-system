@@ -35,6 +35,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { AdCampaignsTable } from "@/components/ad-campaigns/campaigns-table";
 import { AppShell } from "@/components/layout/app-shell";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
@@ -169,8 +170,6 @@ function valueInRange(value: number, from: number | null, to: number | null) {
   return true;
 }
 
-type CampaignKpiStatus = "good" | "acceptable" | "bad" | "unknown";
-
 type ChannelSectionState = {
   posts: boolean;
   inviteLinks: boolean;
@@ -180,7 +179,7 @@ type ChannelSectionState = {
 const closedChannelSections: ChannelSectionState = {
   posts: false,
   inviteLinks: false,
-  campaigns: false,
+  campaigns: true,
 };
 
 const DEFAULT_SYNC_SELECTION: TelegramChannelSyncSelection = {
@@ -795,25 +794,14 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const campaignRows = useMemo(
     () =>
-      campaigns.map((campaign: any) => {
-        const joined = toNumber(campaign.joinedCount);
-        const cost = toNumber(campaign.costAmount ?? campaign.price);
-        const costInPrimary = hasNumericValue(campaign.priceInPrimaryCurrency)
-          ? toNumber(campaign.priceInPrimaryCurrency)
-          : null;
-        const kpiCost = costInPrimary != null
-          ? costInPrimary
-          : cost;
-        return {
-          ...campaign,
-          joined,
-          cost,
-          costInPrimary,
-          cpa: joined > 0 ? cost / joined : null,
-          cpaForKpi: joined > 0 ? kpiCost / joined : null,
-        };
+      campaigns.filter((campaign: any) => {
+        const linkedChannelId =
+          campaign.telegramChannelId ||
+          campaign.ownTelegramChannelId ||
+          campaign.telegramChannel?.id;
+        return !linkedChannelId || linkedChannelId === id;
       }),
-    [campaigns],
+    [campaigns, id],
   );
   const hasAudienceChart = audienceSnapshots.some(
     (snapshot) =>
@@ -951,7 +939,6 @@ export default function TelegramChannelAnalyticsPage() {
           {openSections.campaigns ? (
             <CampaignsTable
               campaigns={campaignRows}
-              settings={settings}
               currencySettings={currencySettings}
               rates={rates}
             />
@@ -3073,179 +3060,22 @@ function PostManualMetricsEditor({
 
 function CampaignsTable({
   campaigns,
-  settings,
   currencySettings,
   rates,
 }: {
   campaigns: any[];
-  settings: SettingsState;
   currencySettings: any;
   rates: any[] | undefined;
 }) {
   return (
-    <div className="table-scroll w-full rounded-lg border border-slate-700">
-      <table className="w-max min-w-full text-sm">
-        <thead className="bg-slate-900/60 text-slate-300">
-          <tr>
-            <th className="px-3 py-2 text-left">Campaign</th>
-            <th className="px-3 py-2 text-left">Date</th>
-            <th className="px-3 py-2 text-right">Joined</th>
-            <th className="px-3 py-2 text-right">Cost</th>
-            <th className="px-3 py-2 text-right">CPA</th>
-          </tr>
-        </thead>
-        <tbody>
-          {campaigns.map((campaign) => {
-            const status = campaignKpiStatus(campaign.cpaForKpi, settings);
-            return (
-              <tr
-                key={campaign.id}
-                className={`border-t border-slate-800 ${campaignRowKpiClass(status)}`}
-              >
-                <td className="max-w-md truncate px-3 py-2">
-                  {campaignDisplayTitleWithDate(campaign)}
-                </td>
-                <td className="px-3 py-2">
-                  {formatLocalDate(
-                    campaign.placementDate ||
-                      campaign.startedAt ||
-                      campaign.createdAt,
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {formatNumber(campaign.joined)}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <MoneyStack
-                    amount={campaign.cost}
-                    currency={campaign.currency}
-                    settings={currencySettings}
-                    rates={rates}
-                    amountInPrimary={campaign.costInPrimary}
-                    className="inline-block min-w-[112px] text-right"
-                    mainClassName="font-semibold leading-snug text-white"
-                    subClassName="text-xs leading-snug text-slate-500"
-                  />
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {campaign.cpa == null ? (
-                    "-"
-                  ) : (
-                    <div
-                      className={`inline-flex min-w-[112px] justify-center rounded px-2 py-1 ${campaignCpaBadgeClass(status)}`}
-                    >
-                      <MoneyStack
-                        amount={campaign.cpa}
-                        currency={campaign.currency}
-                        settings={currencySettings}
-                        rates={rates}
-                        amountInPrimary={campaign.cpaForKpi}
-                        mainClassName="text-xs font-semibold leading-snug"
-                        subClassName="text-[11px] font-medium leading-snug opacity-75"
-                      />
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <AdCampaignsTable
+      campaigns={campaigns}
+      moneySettings={currencySettings}
+      rates={rates}
+      showActions={false}
+      showHypotheses
+    />
   );
-}
-
-function campaignDisplayTitleWithDate(campaign: any) {
-  const date = formatLocalDate(
-    campaign?.placementDate || campaign?.startedAt || campaign?.createdAt,
-  );
-  const title = campaignDisplayTitle(campaign);
-  return date && date !== "-" ? `${date} | ${title}` : title;
-}
-
-function campaignDisplayTitle(campaign: any) {
-  const date = formatLocalDate(
-    campaign?.placementDate || campaign?.startedAt || campaign?.createdAt,
-  );
-  let title = String(campaign?.title || "").trim();
-  title = title.replace(/^Telegram ad campaign:\s*/i, "").trim();
-  if (date && date !== "-") {
-    title = title
-      .replace(new RegExp(`^${date}\\s*\\|\\s*`), "")
-      .replace(new RegExp(`^${date}\\b\\s*[-|:]?\\s*`), "")
-      .trim();
-  }
-  if (!title || /^Campaign\s+\d{4}-\d{2}-\d{2}$/i.test(title)) {
-    return generatedCampaignDisplayTitle(campaign);
-  }
-  return title;
-}
-
-function generatedCampaignDisplayTitle(campaign: any) {
-  const sources = campaignSourceLabels(campaign);
-  const promo = campaign?.promo?.title;
-  const parts = [...sources.slice(0, 2), promo].filter(Boolean);
-  if (parts.length) return [...new Set(parts)].join(" | ");
-  return campaign?.telegramChannel?.title || "Campaign";
-}
-
-function campaignSourceLabels(campaign: any) {
-  const normalized = (campaign?.advertisingChannels || [])
-    .map((source: any) =>
-      source?.title ||
-      source?.name ||
-      source?.advertisingSource?.name ||
-      source?.advertisingSource?.title,
-    )
-    .filter(Boolean);
-  const telegramSources = (campaign?.advertisingTelegramChannels || [])
-    .map((placement: any) => placement?.telegramChannel?.title)
-    .filter(Boolean);
-  return [...new Set([...telegramSources, ...normalized])];
-}
-
-function campaignKpiStatus(
-  value: unknown,
-  settings: SettingsState,
-): CampaignKpiStatus {
-  const cpa = nullableNumber(value);
-  if (cpa == null) return "unknown";
-  const targetFrom = nullableNumber(settings.targetCpaFrom);
-  const targetTo = nullableNumber(settings.targetCpa);
-  const acceptableFrom = nullableNumber(settings.acceptableCpaFrom);
-  const acceptableTo = nullableNumber(settings.acceptableCpa);
-  const stopFrom =
-    nullableNumber(settings.stopCpaFrom) ?? nullableNumber(settings.stopCpa);
-  if (
-    targetFrom == null &&
-    targetTo == null &&
-    acceptableFrom == null &&
-    acceptableTo == null &&
-    stopFrom == null
-  ) {
-    return "unknown";
-  }
-  if (valueInRange(cpa, targetFrom, targetTo)) return "good";
-  if (valueInRange(cpa, acceptableFrom, acceptableTo)) return "acceptable";
-  if (valueInRange(cpa, stopFrom, null)) return "bad";
-  return "unknown";
-}
-
-function campaignRowKpiClass(status: CampaignKpiStatus) {
-  if (status === "good") return "bg-emerald-950/10";
-  if (status === "acceptable") return "bg-yellow-950/10";
-  if (status === "bad") return "bg-rose-950/15";
-  return "";
-}
-
-function campaignCpaBadgeClass(status: CampaignKpiStatus) {
-  if (status === "good")
-    return "border-emerald-700/80 bg-emerald-950/40 text-emerald-200";
-  if (status === "acceptable")
-    return "border-yellow-700/80 bg-yellow-950/40 text-yellow-200";
-  if (status === "bad")
-    return "border-rose-700/80 bg-rose-950/40 text-rose-200";
-  return "border-slate-700 bg-slate-900/40 text-slate-200";
 }
 
 function SnapshotItem({ label, value }: { label: string; value: ReactNode }) {
