@@ -109,6 +109,33 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function adjustedPostViews(post: any, ownViewsPerPost: number) {
+  return Math.max(
+    0,
+    toNumber(post.viewsCount) -
+      Math.max(0, ownViewsPerPost) -
+      toNumber(post.manualOwnViews),
+  );
+}
+
+function adjustedPostReactions(post: any, ownReactionsPerPost: number) {
+  return Math.max(
+    0,
+    toNumber(post.reactionsCount) -
+      Math.max(0, ownReactionsPerPost) -
+      toNumber(post.manualOwnReactions),
+  );
+}
+
+const channelMetricTips: Record<string, string> = {
+  err: "ERR = Engagement Reach Rate. Formula: average eligible adjusted views / current subscribers * 100. Eligible posts are posts 1-30 days old with views > 0 and not excluded from analytics.",
+  reactionRate:
+    "Reaction Rate = adjusted reactions / adjusted views * 100. Adjusted reactions subtract channel-wide own reactions per post and manual own reactions on the specific post.",
+  cpa: "CPA = Cost Per Acquisition. Formula: total ad spend / joined from invite links.",
+  reactions:
+    "Adjusted reactions after subtracting channel-wide own reactions per post and manual own reactions on each post. Excludes posts removed from analytics.",
+};
+
 function formatNumber(value: unknown, decimals = 0) {
   return toNumber(value).toLocaleString(undefined, {
     maximumFractionDigits: decimals,
@@ -588,6 +615,18 @@ export default function TelegramChannelAnalyticsPage() {
     [data?.channelStatsPoints, mtprotoStats],
   );
   const activeChannel = (channel || data?.channel) as TelegramChannel | undefined;
+  const ownViewsPerPost = Math.max(
+    0,
+    toNumber(
+      activeChannel?.ownViewsPerPost ?? settings.ownViewsPerPost,
+    ),
+  );
+  const ownReactionsPerPost = Math.max(
+    0,
+    toNumber(
+      activeChannel?.ownReactionsPerPost ?? settings.ownReactionsPerPost,
+    ),
+  );
   const hasKpi = Boolean(
     settings.targetCpaFrom ||
       settings.targetCpa ||
@@ -598,31 +637,44 @@ export default function TelegramChannelAnalyticsPage() {
   );
 
   const computed = useMemo(() => {
-    const viewsTotal = posts.reduce(
+    const analyticsPosts = posts.filter(
+      (post: any) => !post.excludeFromAnalytics,
+    );
+    const viewsTotal = analyticsPosts.reduce(
       (sum: number, post: any) => sum + toNumber(post.viewsCount),
       0,
     );
-    const forwardsTotal = posts.reduce(
+    const forwardsTotal = analyticsPosts.reduce(
       (sum: number, post: any) => sum + toNumber(post.forwardsCount),
       0,
     );
-    const reactionsTotal = posts.reduce(
+    const reactionsTotal = analyticsPosts.reduce(
       (sum: number, post: any) => sum + toNumber(post.reactionsCount),
       0,
     );
-    const commentsTotal = posts.reduce(
+    const adjustedViewsTotal = analyticsPosts.reduce(
+      (sum: number, post: any) =>
+        sum + adjustedPostViews(post, ownViewsPerPost),
+      0,
+    );
+    const adjustedReactionsTotal = analyticsPosts.reduce(
+      (sum: number, post: any) =>
+        sum + adjustedPostReactions(post, ownReactionsPerPost),
+      0,
+    );
+    const commentsTotal = analyticsPosts.reduce(
       (sum: number, post: any) => sum + toNumber(post.commentsCount),
       0,
     );
-    const viewedPosts = posts.filter(
-      (post: any) => toNumber(post.viewsCount) > 0,
+    const viewedPosts = analyticsPosts.filter(
+      (post: any) => adjustedPostViews(post, ownViewsPerPost) > 0,
     );
-    const eligiblePosts = posts.filter((post: any) => {
+    const eligiblePosts = analyticsPosts.filter((post: any) => {
       const ageMs = Date.now() - new Date(post.postDate).getTime();
       return (
         ageMs >= 24 * 3600 * 1000 &&
         ageMs <= 30 * 24 * 3600 * 1000 &&
-        toNumber(post.viewsCount) > 0
+        adjustedPostViews(post, ownViewsPerPost) > 0
       );
     });
     const subscribers =
@@ -630,11 +682,12 @@ export default function TelegramChannelAnalyticsPage() {
       toNumber(mtprotoStats?.followers?.current) ||
       toNumber(data?.summary?.subscribersCurrent);
     const averagePostViews = viewedPosts.length
-      ? viewsTotal / viewedPosts.length
+      ? adjustedViewsTotal / viewedPosts.length
       : null;
     const averageEligibleViews = eligiblePosts.length
       ? eligiblePosts.reduce(
-          (sum: number, post: any) => sum + toNumber(post.viewsCount),
+          (sum: number, post: any) =>
+            sum + adjustedPostViews(post, ownViewsPerPost),
           0,
         ) / eligiblePosts.length
       : null;
@@ -643,7 +696,9 @@ export default function TelegramChannelAnalyticsPage() {
         ? (averageEligibleViews / subscribers) * 100
         : null;
     const reactionRate =
-      viewsTotal > 0 ? (reactionsTotal / viewsTotal) * 100 : null;
+      adjustedViewsTotal > 0
+        ? (adjustedReactionsTotal / adjustedViewsTotal) * 100
+        : null;
     const forwardRate =
       viewsTotal > 0 ? (forwardsTotal / viewsTotal) * 100 : null;
     const joinedFromLinks = inviteLinks.reduce(
@@ -663,8 +718,10 @@ export default function TelegramChannelAnalyticsPage() {
       postsCount: posts.length,
       visiblePostsCount: visiblePosts.length,
       viewsTotal,
+      adjustedViewsTotal,
       forwardsTotal,
       reactionsTotal,
+      adjustedReactionsTotal,
       commentsTotal,
       averagePostViews,
       averageEligibleViews,
@@ -674,6 +731,9 @@ export default function TelegramChannelAnalyticsPage() {
       joinedFromLinks,
       adSpend,
       cpa,
+      ownReactionsPerPost,
+      ownViewsPerPost,
+      analyticsPostsCount: analyticsPosts.length,
       eligiblePostsCount: eligiblePosts.length,
     };
   }, [
@@ -682,6 +742,8 @@ export default function TelegramChannelAnalyticsPage() {
     data?.summary?.subscribersCurrent,
     inviteLinks,
     mtprotoStats?.followers?.current,
+    ownReactionsPerPost,
+    ownViewsPerPost,
     posts,
     visiblePosts.length,
   ]);
@@ -720,13 +782,15 @@ export default function TelegramChannelAnalyticsPage() {
       title: "ERR",
       value: formatPercent(computed.err, 2),
       hint: `Eligible posts: ${computed.eligiblePostsCount}`,
+      tip: channelMetricTips.err,
     },
     {
       key: "reactions",
-      show: hasPositiveValue(computed.reactionsTotal),
+      show: hasPositiveValue(computed.adjustedReactionsTotal),
       title: "Reactions",
-      value: formatNumber(computed.reactionsTotal),
+      value: formatNumber(computed.adjustedReactionsTotal),
       hint: `Rate: ${formatPercent(computed.reactionRate, 2)}`,
+      tip: channelMetricTips.reactions,
     },
     {
       key: "forwards",
@@ -748,6 +812,7 @@ export default function TelegramChannelAnalyticsPage() {
       title: "Campaign CPA",
       value: formatNumber(computed.cpa, 2),
       hint: "Spend / joined from links",
+      tip: channelMetricTips.cpa,
     },
     {
       key: "comments",
@@ -968,6 +1033,8 @@ export default function TelegramChannelAnalyticsPage() {
                   channelId={params.id}
                   posts={visiblePosts}
                   subscribers={computed.subscribers}
+                  ownViewsPerPost={ownViewsPerPost}
+                  ownReactionsPerPost={ownReactionsPerPost}
                   savingPostId={
                     manualMetricsMutation.isPending
                       ? manualMetricsMutation.variables?.postId
@@ -1096,6 +1163,7 @@ function ChannelMetricsDeck({
     title: string;
     value: string;
     hint?: string;
+    tip?: string;
   }>;
 }) {
   if (!metrics.length) return null;
@@ -1122,7 +1190,10 @@ function ChannelMetricsDeck({
             key={metric.key}
             className="min-h-[82px] rounded-lg border border-slate-800 bg-slate-900/40 p-3"
           >
-            <p className="truncate text-xs text-slate-400">{metric.title}</p>
+            <div className="flex items-center gap-1">
+              <p className="truncate text-xs text-slate-400">{metric.title}</p>
+              {metric.tip ? <InfoTooltip tip={metric.tip} /> : null}
+            </div>
             <p className="mt-1.5 truncate text-xl font-semibold text-white">
               {metric.value}
             </p>
@@ -1146,12 +1217,15 @@ function ChannelMetricsDeck({
 function CompactMetric({
   metric,
 }: {
-  metric: { title: string; value: string; hint?: string };
+  metric: { title: string; value: string; hint?: string; tip?: string };
 }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="truncate text-xs text-slate-400">{metric.title}</p>
+        <div className="flex min-w-0 items-center gap-1">
+          <p className="truncate text-xs text-slate-400">{metric.title}</p>
+          {metric.tip ? <InfoTooltip tip={metric.tip} /> : null}
+        </div>
         <p className="shrink-0 text-sm font-semibold text-slate-100">
           {metric.value}
         </p>
@@ -2510,12 +2584,16 @@ function PostsTable({
   channelId,
   posts,
   subscribers,
+  ownViewsPerPost,
+  ownReactionsPerPost,
   savingPostId,
   onSaveManualMetrics,
 }: {
   channelId: string;
   posts: any[];
   subscribers: number;
+  ownViewsPerPost: number;
+  ownReactionsPerPost: number;
   savingPostId?: string | null;
   onSaveManualMetrics: (
     postId: string,
@@ -2546,15 +2624,37 @@ function PostsTable({
     key: null,
     direction: "desc",
   });
-  const columns = [
+  const columns: Array<{
+    label: string;
+    className: string;
+    sortKey?:
+      | "postDate"
+      | "viewsCount"
+      | "forwardsCount"
+      | "reactionsCount"
+      | "commentsCount"
+      | "err"
+      | "reactionRate";
+    tip?: string;
+  }> = [
     { label: "Date", className: "text-left", sortKey: "postDate" as const },
     { label: "Text", className: "text-left" },
     { label: "Views", className: "text-right", sortKey: "viewsCount" as const },
     { label: "Forwards", className: "text-right", sortKey: "forwardsCount" as const },
     { label: "Reactions", className: "text-right", sortKey: "reactionsCount" as const },
     { label: "Comments", className: "text-right", sortKey: "commentsCount" as const },
-    { label: "ERR", className: "text-right", sortKey: "err" as const },
-    { label: "Reaction Rate", className: "text-right", sortKey: "reactionRate" as const },
+    {
+      label: "ERR",
+      className: "text-right",
+      sortKey: "err" as const,
+      tip: channelMetricTips.err,
+    },
+    {
+      label: "Reaction Rate",
+      className: "text-right",
+      sortKey: "reactionRate" as const,
+      tip: channelMetricTips.reactionRate,
+    },
     { label: "Manual correction", className: "text-right" },
   ];
   const gridTemplateColumns =
@@ -2590,6 +2690,11 @@ function PostsTable({
     const getSortValue = (post: any) => {
       const views = toNumber(post.viewsCount);
       const reactions = toNumber(post.reactionsCount);
+      const adjustedViews = adjustedPostViews(post, ownViewsPerPost);
+      const adjustedReactions = adjustedPostReactions(
+        post,
+        ownReactionsPerPost,
+      );
       switch (sortState.key) {
         case "postDate":
           return new Date(post.postDate ?? 0).getTime();
@@ -2602,9 +2707,11 @@ function PostsTable({
         case "commentsCount":
           return toNumber(post.commentsCount);
         case "err":
-          return subscribers > 0 ? (views / subscribers) * 100 : -1;
+          return subscribers > 0 ? (adjustedViews / subscribers) * 100 : -1;
         case "reactionRate":
-          return views > 0 ? (reactions / views) * 100 : -1;
+          return adjustedViews > 0
+            ? (adjustedReactions / adjustedViews) * 100
+            : -1;
         default:
           return 0;
       }
@@ -2616,7 +2723,7 @@ function PostsTable({
       const result = aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
       return sortState.direction === "asc" ? result : -result;
     });
-  }, [posts, sortState, subscribers]);
+  }, [ownReactionsPerPost, ownViewsPerPost, posts, sortState, subscribers]);
 
   useEffect(() => {
     const updateFloatingHeader = () => {
@@ -2667,27 +2774,38 @@ function PostsTable({
           key={column.label}
           className={`whitespace-nowrap px-3 py-2 ${column.className}`}
         >
-          {column.sortKey ? (
-            <button
-              type="button"
-              onClick={() => toggleSort(column.sortKey)}
+          {column.sortKey ? (() => {
+            const sortKey = column.sortKey;
+            return (
+            <span
               className={`inline-flex items-center gap-1 ${
                 column.className.includes("text-right") ? "ml-auto" : ""
               }`}
             >
-              <span>{column.label}</span>
-              {sortState.key === column.sortKey ? (
-                sortState.direction === "asc" ? (
-                  <ChevronUp size={14} />
+              <button
+                type="button"
+                onClick={() => toggleSort(sortKey)}
+                className="inline-flex items-center gap-1"
+              >
+                <span>{column.label}</span>
+                {sortState.key === sortKey ? (
+                  sortState.direction === "asc" ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )
                 ) : (
-                  <ChevronDown size={14} />
-                )
-              ) : (
-                <ChevronDown size={14} className="opacity-35" />
-              )}
-            </button>
-          ) : (
-            column.label
+                  <ChevronDown size={14} className="opacity-35" />
+                )}
+              </button>
+              {column.tip ? <InfoTooltip tip={column.tip} /> : null}
+            </span>
+            );
+          })() : (
+            <span className="inline-flex items-center gap-1">
+              <span>{column.label}</span>
+              {column.tip ? <InfoTooltip tip={column.tip} /> : null}
+            </span>
           )}
         </div>
       ))}
@@ -2733,6 +2851,11 @@ function PostsTable({
           {sortedPosts.map((post) => {
             const views = toNumber(post.viewsCount);
             const reactions = toNumber(post.reactionsCount);
+            const adjustedViews = adjustedPostViews(post, ownViewsPerPost);
+            const adjustedReactions = adjustedPostReactions(
+              post,
+              ownReactionsPerPost,
+            );
             return (
               <div
                 key={post.id}
@@ -2759,12 +2882,15 @@ function PostsTable({
                 </div>
                 <div className="whitespace-nowrap px-3 py-2 text-right">
                   {subscribers > 0
-                    ? formatPercent((views / subscribers) * 100, 2)
+                    ? formatPercent((adjustedViews / subscribers) * 100, 2)
                     : "-"}
                 </div>
                 <div className="whitespace-nowrap px-3 py-2 text-right">
-                  {views > 0
-                    ? formatPercent((reactions / views) * 100, 2)
+                  {adjustedViews > 0
+                    ? formatPercent(
+                        (adjustedReactions / adjustedViews) * 100,
+                        2,
+                      )
                     : "-"}
                 </div>
                 <div className="px-3 py-2">
@@ -3153,20 +3279,65 @@ function summarizeSync(result: any) {
 }
 
 function InfoTooltip({ tip, children }: { tip: string; children?: ReactNode }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({
+    top: 0,
+    left: 0,
+    ready: false,
+  });
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !tooltipRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const tooltip = tooltipRef.current.getBoundingClientRect();
+    const gap = 8;
+    const padding = 12;
+    const top = Math.max(padding, trigger.top - tooltip.height - gap);
+    const centeredLeft = trigger.left + trigger.width / 2 - tooltip.width / 2;
+    const left = Math.min(
+      window.innerWidth - tooltip.width - padding,
+      Math.max(padding, centeredLeft),
+    );
+    setPosition({ top, left, ready: true });
+  }, [open, tip]);
+
+  const tooltip =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <span
+            ref={tooltipRef}
+            className={`pointer-events-none fixed z-[140] w-[200px] max-w-[calc(100vw-1.5rem)] rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs leading-relaxed text-slate-100 shadow-xl transition-opacity ${position.ready ? "opacity-100" : "opacity-0"}`}
+            style={{ top: position.top, left: position.left }}
+          >
+            {tip}
+          </span>,
+          document.body,
+        )
+      : null;
+
   return (
-    <span className="group relative inline-flex">
+    <span
+      ref={triggerRef}
+      className="relative inline-flex"
+      onMouseEnter={() => {
+        setPosition((prev) => ({ ...prev, ready: false }));
+        setOpen(true);
+      }}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => {
+        setPosition((prev) => ({ ...prev, ready: false }));
+        setOpen(true);
+      }}
+      onBlur={() => setOpen(false)}
+    >
       {children || (
         <span className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-slate-600 text-slate-300">
           <CircleHelp size={13} />
         </span>
       )}
-      <TooltipBubble
-        side="bottom"
-        align="right"
-        className="w-64 border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-slate-100 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-      >
-        {tip}
-      </TooltipBubble>
+      {tooltip}
     </span>
   );
 }

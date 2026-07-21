@@ -3,6 +3,7 @@
 import { type MouseEventHandler, useMemo, useState } from "react";
 import { CircleHelp } from "lucide-react";
 import { MoneyStack } from "@/components/ui/money-stack";
+import { PromoPreviewModal } from "@/components/ad-campaigns/promo-preview-modal";
 import { IconButton } from "@/components/ui/primitives";
 import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
 import type {
@@ -130,13 +131,6 @@ function campaignMetrics(campaign: AdCampaign) {
     {
       label: "New subs",
       value: (campaign as any)?.newSubscribers,
-      format: (value: unknown) => formatMetric(value),
-    },
-    {
-      label: "Active",
-      value:
-        (campaign as any)?.cappedActiveSubscribersFromAd ??
-        (campaign as any)?.activeSubscribersFromAd,
       format: (value: unknown) => formatMetric(value),
     },
     {
@@ -529,6 +523,7 @@ function PromoList({
   onOpenPromo?: (promo: Promo) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [previewPromo, setPreviewPromo] = useState<Promo | null>(null);
   if (!promos.length) return null;
   const visible = expanded ? promos : promos.slice(0, 3);
   const hiddenCount = Math.max(0, promos.length - visible.length);
@@ -540,11 +535,15 @@ function PromoList({
           type="button"
           onClick={(event) => {
             if (event.metaKey || event.ctrlKey || !onOpenPromo) {
-              window.open(
-                `/ad-campaigns?view=promos&promoId=${promo.id}`,
-                "_blank",
-                "noopener,noreferrer",
-              );
+              if (event.metaKey || event.ctrlKey) {
+                window.open(
+                  `/ad-campaigns?view=promos&promoId=${promo.id}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                );
+                return;
+              }
+              setPreviewPromo(promo);
               return;
             }
             onOpenPromo(promo);
@@ -566,6 +565,10 @@ function PromoList({
           +{hiddenCount}
         </button>
       ) : null}
+      <PromoPreviewModal
+        promo={previewPromo}
+        onClose={() => setPreviewPromo(null)}
+      />
     </>
   );
   if (inline) return content;

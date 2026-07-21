@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AdCampaignsTable } from '@/components/ad-campaigns/campaigns-table';
+import { PromoPreviewModal } from '@/components/ad-campaigns/promo-preview-modal';
 import { IconAvatar } from '@/components/icons/icon-avatar';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
@@ -1479,47 +1480,6 @@ function PromoModal({
           </div>
         </Card>
       </div>
-    </Modal>
-  );
-}
-
-function PromoPreviewModal({ promo, onClose }: { promo: Promo | null; onClose: () => void }) {
-  return (
-    <Modal open={Boolean(promo)} onClose={onClose} title={promo?.title || 'Promo preview'} size="xl">
-      {promo ? (
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
-          <TelegramPostPreview
-            channelTitle={promo.telegramChannel?.title || 'Telegram channel'}
-            channelPhotoUrl={promo.telegramChannel?.photoUrl}
-            text={promo.text || ''}
-            imageUrls={promo.imageData ? [promo.imageData] : []}
-          />
-          <Card className="space-y-4">
-            <div className="flex items-center gap-3">
-              <PromoVisual promo={promo} />
-              <div>
-                <h3 className="text-lg font-semibold text-white">{promo.title}</h3>
-                {promo.telegramChannel ? <p className="text-sm text-slate-400">{promo.telegramChannel.title}</p> : null}
-                {promo.assignedMember ? <div className="mt-2"><PromoAssignedMemberChip member={promo.assignedMember} /></div> : null}
-              </div>
-            </div>
-            {promo.text ? (
-              <div>
-                <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Text</p>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm whitespace-pre-wrap text-slate-200">
-                  {promo.text}
-                </div>
-              </div>
-            ) : null}
-            {promo.imageData ? (
-              <div>
-                <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Image</p>
-                <img src={promo.imageData} alt="" className="max-h-[320px] rounded-lg border border-slate-800 object-contain" />
-              </div>
-            ) : null}
-          </Card>
-        </div>
-      ) : null}
     </Modal>
   );
 }

@@ -81,13 +81,11 @@ export function InviteLinkPreviewCard({
                 pending requests
               </p>
             </div>
-            <p
-              className={`whitespace-nowrap text-xs font-medium ${
-                link.isRevoked ? "text-rose-300" : "text-emerald-300"
-              }`}
-            >
-              {link.isRevoked ? "Revoked" : "Active"}
-            </p>
+            {link.isRevoked ? (
+              <p className="whitespace-nowrap text-xs font-medium text-rose-300">
+                Revoked
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

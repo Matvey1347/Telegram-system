@@ -7865,7 +7865,13 @@ export class TelegramChannelsService {
         where: { workspaceId, telegramChannelId: channelId },
         include: {
           telegramChannel: true,
-          promo: true,
+          promo: {
+            include: {
+              icon: true,
+              telegramChannel: true,
+              assignedMember: WorkspaceService.assignedMemberInclude,
+            },
+          },
           inviteLinks: {
             select: {
               id: true,
