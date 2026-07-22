@@ -18,15 +18,20 @@ describe('TelegramChannelsService invite link sync', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    telegramInviteLinkSnapshot: { createMany: jest.fn() },
   };
   const workspaceService = {
     resolveWorkspaceIdForUser: jest.fn(),
+  };
+  const responseCache = {
+    clearByPrefix: jest.fn(),
   };
   const encryptionService = {
     decrypt: jest.fn(),
   };
   const mtprotoClient = {
     getAllChannelInviteLinks: jest.fn(),
+    getChannelHistorical: jest.fn(),
   };
   const sourceAccessService = {
     recordDataSource: jest.fn(),
@@ -40,6 +45,7 @@ describe('TelegramChannelsService invite link sync', () => {
     service = new TelegramChannelsService(
       prisma as never,
       workspaceService as never,
+      responseCache as never,
       encryptionService as never,
       mtprotoClient as never,
       sourceAccessService as never,
@@ -87,7 +93,11 @@ describe('TelegramChannelsService invite link sync', () => {
     prisma.telegramPost.findMany.mockResolvedValue([]);
     prisma.telegramChannelStatsSnapshot.findFirst.mockResolvedValue(null);
     prisma.telegramChannelStatsPoint.findMany.mockResolvedValue([]);
+    prisma.telegramInviteLinkSnapshot.createMany.mockResolvedValue({
+      count: 0,
+    });
     sourceAccessService.recordDataSource.mockResolvedValue(undefined);
+    encryptionService.decrypt.mockReturnValue('decrypted');
     jest
       .spyOn(service as never, 'recalculateCampaignMetricsById' as never)
       .mockResolvedValue(undefined as never);
@@ -95,7 +105,9 @@ describe('TelegramChannelsService invite link sync', () => {
       id: 'channel-1',
       workspaceId: 'ws-1',
       currentSubscribersCount: 10,
+      username: 'invite_channel',
     } as never);
+    workspaceService.resolveWorkspaceIdForUser.mockResolvedValue('ws-1');
   });
 
   it('upserts all remote links and emits sequential saving progress', async () => {
@@ -706,5 +718,148 @@ describe('TelegramChannelsService invite link sync', () => {
         requestedCount: 0,
       }),
     ]);
+  });
+
+  it('persists invite-link history snapshots during syncHistorical remote invite-link syncs', async () => {
+    jest.spyOn(service as never, 'connectedAccount' as never).mockResolvedValue({
+      id: 'tg-account-1',
+      label: 'Owner',
+      username: 'owner_admin',
+      firstName: 'Owner',
+      apiId: '1',
+      apiHashEncrypted: 'enc',
+      apiHashIv: 'iv',
+      apiHashAuthTag: 'tag',
+      sessionEncrypted: 'sess',
+      sessionIv: 'sess-iv',
+      sessionAuthTag: 'sess-tag',
+    } as never);
+    jest
+      .spyOn(service as never, 'buildInviteAttributionMaps' as never)
+      .mockResolvedValue({} as never);
+    jest
+      .spyOn(service as never, 'persistResolvedChannelIdentity' as never)
+      .mockResolvedValue(undefined as never);
+    jest
+      .spyOn(service as never, 'notifyDetailedTaskProgress' as never)
+      .mockResolvedValue(undefined as never);
+    jest
+      .spyOn(service as never, 'notifyInviteLinksProgress' as never)
+      .mockResolvedValue(undefined as never);
+
+    const persistInviteLinkSnapshotsSpy = jest
+      .spyOn(service as never, 'persistInviteLinkSnapshots' as never)
+      .mockResolvedValue(undefined as never);
+    const finalizeInviteLinkSyncSpy = jest
+      .spyOn(service as never, 'finalizeInviteLinkSync' as never)
+      .mockResolvedValue({
+        imported: 2,
+        updated: 0,
+        scope: 'ALL_ADMINS',
+        expectedTotalLinks: 2,
+        fetchedTotalLinks: 2,
+        missingTotalLinks: 0,
+        warnings: [],
+      } as never);
+    const persistedByUrl = new Map([
+      [
+        'https://t.me/+hist_1',
+        {
+          upserted: {
+            id: 'invite-1',
+            telegramChannelId: 'channel-1',
+            adCampaignId: 'campaign-1',
+            joinedCount: 11,
+            requestedCount: 0,
+            isRevoked: false,
+          },
+          existing: null,
+          unresolved: false,
+          matchedMember: true,
+        },
+      ],
+      [
+        'https://t.me/+hist_2',
+        {
+          upserted: {
+            id: 'invite-2',
+            telegramChannelId: 'channel-1',
+            adCampaignId: null,
+            joinedCount: 7,
+            requestedCount: 2,
+            isRevoked: false,
+          },
+          existing: null,
+          unresolved: false,
+          matchedMember: true,
+        },
+      ],
+    ]);
+    jest
+      .spyOn(service as never, 'persistInviteLinkFromRemote' as never)
+      .mockImplementation(async ({ link }: { link: { url: string } }) => {
+        const persisted = persistedByUrl.get(link.url);
+        if (!persisted) throw new Error(`Unexpected link ${link.url}`);
+        return persisted as never;
+      });
+
+    mtprotoClient.getChannelHistorical.mockImplementation(
+      async (params: {
+        onInviteLinkLoaded?: (
+          link: { url: string },
+          loadedCount: number,
+          expectedTotal: number,
+          warnings: string[],
+        ) => Promise<void>;
+      }) => {
+        const links = [
+          { url: 'https://t.me/+hist_1' },
+          { url: 'https://t.me/+hist_2' },
+        ];
+        if (params.onInviteLinkLoaded) {
+          await params.onInviteLinkLoaded(links[0], 1, 2, []);
+          await params.onInviteLinkLoaded(links[1], 2, 2, []);
+        }
+        return {
+          channel: null,
+          inviteLinksDetailed: links,
+          inviteLinksScope: 'ALL_ADMINS',
+          inviteLinksExpectedTotal: 2,
+          inviteLinkWarnings: [],
+        };
+      },
+    );
+
+    await service.syncHistorical('user-1', 'channel-1', {
+      syncInviteLinks: true,
+      syncPosts: false,
+      syncMetrics: false,
+      syncVisuals: false,
+      syncJoinRequests: false,
+      syncIncludeHistoricalPosts: false,
+      postLimit: 10,
+    } as never);
+
+    expect(persistInviteLinkSnapshotsSpy).toHaveBeenCalledTimes(1);
+    expect(persistInviteLinkSnapshotsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        channelId: 'channel-1',
+        syncedAt: expect.any(Date),
+        links: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'invite-1',
+            joinedCount: 11,
+            requestedCount: 0,
+          }),
+          expect.objectContaining({
+            id: 'invite-2',
+            joinedCount: 7,
+            requestedCount: 2,
+          }),
+        ]),
+      }),
+    );
+    expect(finalizeInviteLinkSyncSpy).toHaveBeenCalledTimes(1);
   });
 });
