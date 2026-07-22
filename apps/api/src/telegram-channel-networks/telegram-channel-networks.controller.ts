@@ -6,8 +6,10 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -21,8 +23,8 @@ export class TelegramChannelNetworksController {
   constructor(private service: TelegramChannelNetworksService) {}
 
   @Get()
-  list(@CurrentUser() user: JwtUser) {
-    return this.service.list(user.sub);
+  list(@CurrentUser() user: JwtUser, @Query() query: PaginationQueryDto) {
+    return this.service.list(user.sub, query);
   }
 
   @Get(':id/summary')

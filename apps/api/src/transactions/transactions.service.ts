@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import {
@@ -102,53 +103,61 @@ export class TransactionsService {
       ];
     }
 
-    return this.prisma.transaction.findMany({
-      where,
-      orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
-      include: {
-        account: {
-          include: {
-            assignedMember: WorkspaceService.assignedMemberInclude,
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
+    const pagination = normalizePagination(query);
+    const orderDirection = query.sort === 'date_asc' ? 'asc' : 'desc';
+    const [items, totalItems] = await this.prisma.$transaction([
+      this.prisma.transaction.findMany({
+        where,
+        orderBy: [{ date: orderDirection }, { id: orderDirection }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          account: {
+            include: {
+              assignedMember: WorkspaceService.assignedMemberInclude,
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
               },
             },
           },
-        },
-        categoryRef: {
-          include: {
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
+          categoryRef: {
+            include: {
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
               },
             },
           },
-        },
-        member: { include: { user: true } },
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        adCampaign: true,
-        investment: true,
-        icon: {
-          select: {
-            id: true,
-            type: true,
-            name: true,
-            emoji: true,
-            imageUrl: true,
+          member: { include: { user: true } },
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          adCampaign: true,
+          investment: true,
+          icon: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              emoji: true,
+              imageUrl: true,
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.transaction.count({ where }),
+    ]);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {

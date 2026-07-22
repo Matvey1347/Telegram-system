@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsOptional, IsString, IsNumber, Min } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 export class AdCampaignAnalyticsInputDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) subscribersBefore?: number;
@@ -89,7 +90,7 @@ export class UpdateAdCampaignDto {
   @IsOptional() @IsBoolean() excludeFromAnalytics?: boolean;
 }
 
-export class AdCampaignQueryDto {
+export class AdCampaignQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsString() telegramChannelId?: string;
 }

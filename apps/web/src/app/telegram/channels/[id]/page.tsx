@@ -44,6 +44,7 @@ import { InviteLinksTable } from "@/components/telegram/invite-links-table";
 import { TelegramPostPreviewModal } from "@/components/telegram/post-preview-modal";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
+import { Pagination } from "@/components/ui/pagination";
 import {
   Button,
   DateRangeInput,
@@ -56,8 +57,10 @@ import {
   TooltipBubble,
 } from "@/components/ui/primitives";
 import {
+  adCampaignsApi,
   currenciesApi,
   getTelegramChannelAnalytics,
+  getTelegramChannelInviteLinks,
   getTelegramChannelPosts,
   syncTelegramChannelNowWithProgress,
   telegramChannelsApi,
@@ -69,6 +72,7 @@ import {
   type TelegramChannelSyncSelection,
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
+import { usePagination } from "@/hooks/use-pagination";
 import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
 import { invalidateTelegramChannelQueries } from "@/lib/telegram-query-invalidation";
 import { useAppToast } from "@/providers/toast-provider";
@@ -308,6 +312,9 @@ export default function TelegramChannelAnalyticsPage() {
     stopCpa: "",
     timePosts: [],
   });
+  const postsPagination = usePagination({ initialPageSize: 25 });
+  const inviteLinksPagination = usePagination({ initialPageSize: 25 });
+  const campaignsPagination = usePagination({ initialPageSize: 25 });
 
   const rangeParams = useMemo(() => {
     if (rangeMode === "all") return { from: "2000-01-01", to: todayIso };
@@ -347,8 +354,47 @@ export default function TelegramChannelAnalyticsPage() {
     isLoading: isPostsLoading,
     error: postsError,
   } = useQuery({
-    queryKey: ["telegram-channel-posts", id],
-    queryFn: () => getTelegramChannelPosts(id, 100, 0),
+    queryKey: [
+      "telegram-channel-posts",
+      id,
+      postsPagination.page,
+      postsPagination.pageSize,
+    ],
+    queryFn: () =>
+      getTelegramChannelPosts(id, {
+        page: postsPagination.page,
+        pageSize: postsPagination.pageSize,
+      }),
+    enabled: openSections.posts,
+  });
+  const { data: inviteLinksData, isLoading: isInviteLinksLoading } = useQuery({
+    queryKey: [
+      "telegram-channel-invite-links",
+      id,
+      inviteLinksPagination.page,
+      inviteLinksPagination.pageSize,
+    ],
+    queryFn: () =>
+      getTelegramChannelInviteLinks(id, {
+        page: inviteLinksPagination.page,
+        pageSize: inviteLinksPagination.pageSize,
+      }),
+    enabled: openSections.inviteLinks,
+  });
+  const { data: campaignsData, isLoading: isCampaignsLoading } = useQuery({
+    queryKey: [
+      "telegram-channel-campaigns",
+      id,
+      campaignsPagination.page,
+      campaignsPagination.pageSize,
+    ],
+    queryFn: () =>
+      adCampaignsApi.listPage({
+        telegramChannelId: id,
+        page: campaignsPagination.page,
+        pageSize: campaignsPagination.pageSize,
+      }),
+    enabled: openSections.campaigns,
   });
   const { data: currencySettings } = useQuery({
     queryKey: ["currency-settings"],
@@ -584,9 +630,8 @@ export default function TelegramChannelAnalyticsPage() {
   });
 
   const posts = useMemo(
-    () =>
-      postsData?.items?.length ? postsData.items : data?.recentPosts || [],
-    [data?.recentPosts, postsData?.items],
+    () => postsData?.items || [],
+    [postsData?.items],
   );
   const visiblePosts = useMemo(
     () =>
@@ -597,12 +642,23 @@ export default function TelegramChannelAnalyticsPage() {
     [posts],
   );
   const inviteLinks = useMemo(
-    () => data?.inviteLinks || [],
-    [data?.inviteLinks],
+    () => inviteLinksData?.items || [],
+    [inviteLinksData?.items],
   );
-  const campaigns = useMemo(() => data?.campaigns || [], [data?.campaigns]);
-  const latestSnapshot = data?.channelStatsSnapshot;
-  const mtprotoStats = latestSnapshot?.normalizedStats;
+  const campaigns = useMemo(
+    () => campaignsData?.items || [],
+    [campaignsData?.items],
+  );
+  const latestSnapshot = data?.channelStatsSnapshot as
+    | ({ syncedAt?: string; normalizedStats?: any } & Record<string, unknown>)
+    | null
+    | undefined;
+  const mtprotoStats = latestSnapshot?.normalizedStats as
+    | {
+        graphs?: Record<string, unknown>;
+        followers?: { current?: number | null };
+      }
+    | undefined;
   const mtprotoGraphs = useMemo(
     () =>
       mtprotoGraphConfigs
@@ -906,7 +962,7 @@ export default function TelegramChannelAnalyticsPage() {
             <InfoTooltip
               tip={
                 latestSnapshot
-                  ? `Last sync: ${new Date(latestSnapshot.syncedAt).toLocaleString()}`
+                  ? `Last sync: ${new Date(String(latestSnapshot.syncedAt)).toLocaleString()}`
                   : "No Telegram snapshot yet."
               }
             >
@@ -1004,7 +1060,7 @@ export default function TelegramChannelAnalyticsPage() {
         </section>
       ) : null}
 
-      {campaignRows.length ? (
+      {toNumber(data?.summary?.campaignsCount) > 0 ? (
         <section className="mt-6">
           <SectionToggle
             title="Campaign Attribution"
@@ -1014,16 +1070,33 @@ export default function TelegramChannelAnalyticsPage() {
             }
           />
           {openSections.campaigns ? (
-            <CampaignsTable
-              campaigns={campaignRows}
-              currencySettings={currencySettings}
-              rates={rates}
-            />
+            <>
+              {isCampaignsLoading ? <LoadingState /> : null}
+              <CampaignsTable
+                campaigns={campaignRows}
+                currencySettings={currencySettings}
+                rates={rates}
+              />
+              {campaignsData?.pagination ? (
+                <Pagination
+                  {...campaignsData.pagination}
+                  page={campaignsData.pagination.page}
+                  pageSize={campaignsData.pagination.pageSize}
+                  totalItems={campaignsData.pagination.totalItems}
+                  totalPages={campaignsData.pagination.totalPages}
+                  hasNextPage={campaignsData.pagination.hasNextPage}
+                  hasPreviousPage={campaignsData.pagination.hasPreviousPage}
+                  loading={isCampaignsLoading}
+                  onPageChange={campaignsPagination.setPage}
+                  onPageSizeChange={campaignsPagination.setPageSize}
+                />
+              ) : null}
+            </>
           ) : null}
         </section>
       ) : null}
 
-      {isPostsLoading || postsError || visiblePosts.length ? (
+      {openSections.posts || toNumber(data?.summary?.postsTotal) > 0 ? (
         <section className="mt-6">
           <SectionToggle
             title="All Posts Metrics"
@@ -1041,30 +1114,46 @@ export default function TelegramChannelAnalyticsPage() {
                 </div>
               ) : null}
               {!isPostsLoading && !postsError && visiblePosts.length ? (
-                <PostsTable
-                  channelId={params.id}
-                  channelTitle={data?.channel?.title || "Telegram channel"}
-                  channelPhotoUrl={data?.channel?.photoUrl || null}
-                  posts={visiblePosts}
-                  subscribers={computed.subscribers}
-                  ownViewsPerPost={ownViewsPerPost}
-                  ownReactionsPerPost={ownReactionsPerPost}
-                  savingPostId={
-                    manualMetricsMutation.isPending
-                      ? manualMetricsMutation.variables?.postId
-                      : null
-                  }
-                  onSaveManualMetrics={(postId, payload) =>
-                    manualMetricsMutation.mutate({ postId, payload })
-                  }
-                />
+                <>
+                  <PostsTable
+                    channelId={params.id}
+                    channelTitle={data?.channel?.title || "Telegram channel"}
+                    channelPhotoUrl={data?.channel?.photoUrl || null}
+                    posts={visiblePosts}
+                    subscribers={computed.subscribers}
+                    ownViewsPerPost={ownViewsPerPost}
+                    ownReactionsPerPost={ownReactionsPerPost}
+                    savingPostId={
+                      manualMetricsMutation.isPending
+                        ? manualMetricsMutation.variables?.postId
+                        : null
+                    }
+                    onSaveManualMetrics={(postId, payload) =>
+                      manualMetricsMutation.mutate({ postId, payload })
+                    }
+                  />
+                  {postsData?.pagination ? (
+                    <Pagination
+                      {...postsData.pagination}
+                      page={postsData.pagination.page}
+                      pageSize={postsData.pagination.pageSize}
+                      totalItems={postsData.pagination.totalItems}
+                      totalPages={postsData.pagination.totalPages}
+                      hasNextPage={postsData.pagination.hasNextPage}
+                      hasPreviousPage={postsData.pagination.hasPreviousPage}
+                      loading={isPostsLoading}
+                      onPageChange={postsPagination.setPage}
+                      onPageSizeChange={postsPagination.setPageSize}
+                    />
+                  ) : null}
+                </>
               ) : null}
             </>
           ) : null}
         </section>
       ) : null}
 
-      {topInviteLinks.length ? (
+      {openSections.inviteLinks || toNumber(data?.summary?.inviteLinksCount) > 0 ? (
         <section className="mt-6">
           <SectionToggle
             title="Raw Invite Links"
@@ -1077,7 +1166,27 @@ export default function TelegramChannelAnalyticsPage() {
             }
           />
           {openSections.inviteLinks ? (
-            <InviteLinksTable links={topInviteLinks} />
+            <>
+              {isInviteLinksLoading ? (
+                <LoadingState />
+              ) : (
+                <InviteLinksTable links={topInviteLinks} />
+              )}
+              {inviteLinksData?.pagination ? (
+                <Pagination
+                  {...inviteLinksData.pagination}
+                  page={inviteLinksData.pagination.page}
+                  pageSize={inviteLinksData.pagination.pageSize}
+                  totalItems={inviteLinksData.pagination.totalItems}
+                  totalPages={inviteLinksData.pagination.totalPages}
+                  hasNextPage={inviteLinksData.pagination.hasNextPage}
+                  hasPreviousPage={inviteLinksData.pagination.hasPreviousPage}
+                  loading={isInviteLinksLoading}
+                  onPageChange={inviteLinksPagination.setPage}
+                  onPageSizeChange={inviteLinksPagination.setPageSize}
+                />
+              ) : null}
+            </>
           ) : null}
         </section>
       ) : null}

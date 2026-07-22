@@ -83,6 +83,7 @@ describe('TelegramChannelsService updateManagedPost', () => {
           assignedMemberId: 'member-1',
         }),
       } as never,
+      { clearByPrefix: jest.fn() } as never,
       {} as never,
       mtprotoClient as never,
       sourceAccessService as never,
@@ -207,6 +208,7 @@ describe('TelegramChannelsService updateManagedPost', () => {
           assignedMemberId: 'member-1',
         }),
       } as never,
+      { clearByPrefix: jest.fn() } as never,
       {} as never,
       mtprotoClient as never,
       sourceAccessService as never,
@@ -332,6 +334,7 @@ describe('TelegramChannelsService updateManagedPost', () => {
       {
         resolveWorkspaceIdForUser: jest.fn().mockResolvedValue('workspace'),
       } as never,
+      { clearByPrefix: jest.fn() } as never,
       {} as never,
       {} as never,
       {} as never,

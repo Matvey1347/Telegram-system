@@ -133,10 +133,12 @@ export default function AdCampaignsPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['ad-campaigns', channelFilter],
     queryFn: () => adCampaignsApi.list(channelFilter ? { telegramChannelId: channelFilter } : undefined),
+    enabled: viewMode === 'campaigns',
   });
   const { data: performance } = useQuery({
     queryKey: ['ad-campaigns-performance', channelFilter],
     queryFn: () => adCampaignsApi.performanceSummary(channelFilter ? { channelId: channelFilter } : undefined),
+    enabled: viewMode === 'campaigns',
   });
   const { data: hypotheses = [], isLoading: hypothesesLoading, error: hypothesesError } = useQuery({
     queryKey: ['ad-hypotheses'],
@@ -338,8 +340,8 @@ export default function AdCampaignsPage() {
       </div>
     </Card>
 
-    {isLoading ? <LoadingState /> : null}
-    {error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load campaigns.</div> : null}
+    {viewMode === 'campaigns' && isLoading ? <LoadingState /> : null}
+    {viewMode === 'campaigns' && error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load campaigns.</div> : null}
     {viewMode === 'campaigns' && !isLoading && visibleCampaigns.length ? (
       <AdCampaignsTable
         campaigns={visibleCampaigns}
@@ -1885,7 +1887,7 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     return mergeCampaignSelectOptions(liveOptions, initialOptions);
   }, [availablePromos, initial]);
   const inviteLinkOptions = useMemo(() => {
-    const liveOptions = (inviteLinks || []).map((inviteLink: TelegramInviteLink) => ({
+    const liveOptions = (inviteLinks?.items || []).map((inviteLink: TelegramInviteLink) => ({
       value: inviteLink.id,
       label: inviteLink.name,
       iconUrl:

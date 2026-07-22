@@ -7,6 +7,7 @@ import {
   inviteLinkJoinedSubscribers,
   sumInviteLinkJoinedSubscribers,
 } from '../common/analytics/invite-link-metrics';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAdHypothesisDto } from './dto/create-ad-hypothesis.dto';
@@ -366,16 +367,26 @@ export class AdHypothesesService {
     };
   }
 
-  async list(userId: string) {
+  async list(
+    userId: string,
+    query: { page?: number; pageSize?: number } = {},
+  ) {
     const workspaceId = await this.workspace(userId);
-    const hypotheses = await (this.prisma.adHypothesis as any).findMany({
-      where: { workspaceId },
-      include: this.includeHypothesisCampaigns(),
-      orderBy: { createdAt: 'desc' },
-    });
-    return hypotheses.map((hypothesis: any) =>
+    const pagination = normalizePagination(query);
+    const [hypotheses, totalItems] = await this.prisma.$transaction([
+      (this.prisma.adHypothesis as any).findMany({
+        where: { workspaceId },
+        include: this.includeHypothesisCampaigns(),
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.adHypothesis.count({ where: { workspaceId } }),
+    ]);
+    const items = hypotheses.map((hypothesis: any) =>
       this.enrichHypothesis(hypothesis, false),
     );
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async getById(userId: string, hypothesisId: string) {

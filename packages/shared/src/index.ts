@@ -5,3 +5,4 @@ export * from './types/post-groups';
 export * from './types/operations';
 export * from './types/application-logs';
 export * from './telegram-spoilers';
+export * from './pagination';

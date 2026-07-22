@@ -15,6 +15,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 export class CreateTelegramChannelDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
@@ -187,10 +188,18 @@ export class UpdatePostGroupDto {
   @IsOptional() @IsString() icon?: string | null;
 }
 
-export class PostGroupsQueryDto {
+export class PostGroupsQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() telegramChannelId?: string;
   @IsOptional() @IsString() search?: string;
 }
+
+export class TelegramChannelListQueryDto extends PaginationQueryDto {}
+
+export class TelegramChannelPostsQueryDto extends PaginationQueryDto {}
+
+export class TelegramChannelInviteLinksQueryDto extends PaginationQueryDto {}
+
+export class TelegramManagedPostsQueryDto extends PaginationQueryDto {}
 
 export class PostIdsDto {
   @IsArray() @IsString({ each: true }) postIds!: string[];

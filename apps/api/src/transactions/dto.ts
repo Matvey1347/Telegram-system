@@ -9,6 +9,7 @@ import {
   IsString,
   Min,
 } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 export class CreateTransactionDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
@@ -44,7 +45,7 @@ export class UpdateTransactionDto {
   @IsOptional() @IsDateString() date?: string;
 }
 
-export class TransactionQueryDto {
+export class TransactionQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;

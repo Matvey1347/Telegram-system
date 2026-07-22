@@ -7,6 +7,7 @@ import {
   Matches,
   Min,
 } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 const normalizeCurrency = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toUpperCase() : value;
@@ -61,6 +62,6 @@ export class UpdateAccountDto {
   isActive?: boolean;
 }
 
-export class AccountQueryDto {
+export class AccountQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() assignedMemberId?: string;
 }

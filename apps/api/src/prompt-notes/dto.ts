@@ -1,6 +1,7 @@
 import { IsArray, IsOptional, IsString, MaxLength } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
-export class PromptNotesQueryDto {
+export class PromptNotesQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() telegramChannelId?: string;
   @IsOptional() @IsString() postGroupId?: string;

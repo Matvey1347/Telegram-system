@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreatePromoDto, PromoQueryDto, UpdatePromoDto } from './dto';
@@ -20,15 +21,28 @@ export class PromosService {
   }
   async findAll(userId: string, query: PromoQueryDto = {}) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.promo.findMany({
-      where: {
-        workspaceId,
-        telegramChannelId: query.telegramChannelId || undefined,
-        assignedMemberId: query.assignedMemberId || undefined,
-      },
-      include: { telegramChannel: true, icon: true, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
-      orderBy: { createdAt: 'desc' },
-    });
+    const where = {
+      workspaceId,
+      telegramChannelId: query.telegramChannelId || undefined,
+      assignedMemberId: query.assignedMemberId || undefined,
+    };
+    const pagination = normalizePagination(query);
+    const [items, totalItems] = await this.prisma.$transaction([
+      this.prisma.promo.findMany({
+        where,
+        include: {
+          telegramChannel: true,
+          icon: true,
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.promo.count({ where }),
+    ]);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);

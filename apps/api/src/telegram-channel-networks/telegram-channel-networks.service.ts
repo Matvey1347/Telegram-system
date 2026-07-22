@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramChannelAnalyticsService } from '../telegram-channels/telegram-channel-analytics.service';
@@ -183,21 +184,33 @@ export class TelegramChannelNetworksService {
     };
   }
 
-  async list(userId: string) {
+  async list(
+    userId: string,
+    query: { page?: number; pageSize?: number } = {},
+  ) {
     const workspaceId = await this.workspace(userId);
-    const networks = await this.prisma.telegramChannelNetwork.findMany({
-      where: { workspaceId },
-      include: {
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        channels: {
-          include: { telegramChannel: true },
-          orderBy: { createdAt: 'asc' },
+    const pagination = normalizePagination(query);
+    const [networks, totalItems] = await this.prisma.$transaction([
+      this.prisma.telegramChannelNetwork.findMany({
+        where: { workspaceId },
+        include: {
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          channels: {
+            include: { telegramChannel: true },
+            orderBy: { createdAt: 'asc' },
+          },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return Promise.all(networks.map((network) => this.enrichNetwork(network)));
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.telegramChannelNetwork.count({ where: { workspaceId } }),
+    ]);
+    const items = await Promise.all(
+      networks.map((network) => this.enrichNetwork(network)),
+    );
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async getById(userId: string, networkId: string) {

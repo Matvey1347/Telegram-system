@@ -106,6 +106,8 @@ describe('TelegramChannelsService managed post history', () => {
     const service = new TelegramChannelsService(
       prisma as never,
       {} as never,
+      { clearByPrefix: jest.fn() } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

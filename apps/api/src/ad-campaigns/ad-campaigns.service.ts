@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { sumInviteLinkJoinedSubscribers } from '../common/analytics/invite-link-metrics';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
@@ -1055,31 +1056,38 @@ export class AdCampaignsService {
       telegramChannelId: query.telegramChannelId || undefined,
       assignedMemberId: query.assignedMemberId || undefined,
     };
+    const pagination = normalizePagination(query);
+    const loadRows = async (withCampaignPromos: boolean) => {
+      const [items, totalItems] = await Promise.all([
+        (this.prisma.adCampaign as any).findMany({
+          where,
+          include: this.adCampaignInclude(withCampaignPromos),
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: pagination.skip,
+          take: pagination.take,
+        }),
+        this.prisma.adCampaign.count({ where }),
+      ]);
+      return { items, totalItems };
+    };
     let rows;
     try {
-      rows = await (this.prisma.adCampaign as any).findMany({
-        where,
-        include: this.adCampaignInclude(await this.hasCampaignPromoStorage()),
-        orderBy: { createdAt: 'desc' },
-      });
+      rows = await loadRows(await this.hasCampaignPromoStorage());
     } catch (error) {
       if (!this.isCampaignPromoTableMissing(error)) throw error;
       this.campaignPromoStorageState = 'missing';
-      rows = await (this.prisma.adCampaign as any).findMany({
-        where,
-        include: this.adCampaignInclude(false),
-        orderBy: { createdAt: 'desc' },
-      });
+      rows = await loadRows(false);
     }
     const preloadedInviteLinkHistories = await this.preloadCampaignInviteLinkHistories(
       workspaceId,
-      rows,
+      rows.items,
     );
-    return Promise.all(
-      rows.map((row) =>
+    const items = await Promise.all(
+      rows.items.map((row) =>
         this.shapeCampaign(row, preloadedInviteLinkHistories.get(row.id) ?? null),
       ),
     );
+    return createPaginatedResponse(items, rows.totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {

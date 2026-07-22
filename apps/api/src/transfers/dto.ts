@@ -7,6 +7,7 @@ import {
   IsString,
   Min,
 } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 export class CreateTransferDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
@@ -27,7 +28,7 @@ export class UpdateTransferDto {
   @IsOptional() @IsString() description?: string;
 }
 
-export class TransferQueryDto {
+export class TransferQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;

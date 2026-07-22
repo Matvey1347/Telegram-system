@@ -6,11 +6,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/current-user.decorator';
 import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 import { CreateInvestmentDto, UpdateInvestmentDto } from './dto';
 import { InvestmentsService } from './investments.service';
 
@@ -19,8 +21,11 @@ import { InvestmentsService } from './investments.service';
 export class InvestmentsController {
   constructor(private readonly service: InvestmentsService) {}
 
-  @Get() findAll(@CurrentUser() user: JwtUser) {
-    return this.service.findAll(user.sub);
+  @Get() findAll(
+    @CurrentUser() user: JwtUser,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.service.findAll(user.sub, query);
   }
   @Post() create(
     @CurrentUser() user: JwtUser,

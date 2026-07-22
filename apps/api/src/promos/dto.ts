@@ -1,5 +1,6 @@
 import { PromoStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
 
 export class CreatePromoDto {
   @IsOptional() @IsString() assignedMemberId?: string | null;
@@ -20,7 +21,7 @@ export class UpdatePromoDto {
   @IsOptional() @IsEnum(PromoStatus) status?: PromoStatus;
 }
 
-export class PromoQueryDto {
+export class PromoQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsString() telegramChannelId?: string;
 }

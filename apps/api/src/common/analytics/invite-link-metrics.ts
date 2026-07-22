@@ -5,6 +5,7 @@ function toCount(value: unknown) {
 
 export function inviteLinkJoinedSubscribers(link: {
   joinedCount?: unknown;
+  requestedCount?: unknown;
 } | null | undefined) {
   return toCount(link?.joinedCount);
 }
@@ -12,6 +13,7 @@ export function inviteLinkJoinedSubscribers(link: {
 export function sumInviteLinkJoinedSubscribers(
   links: Array<{
     joinedCount?: unknown;
+    requestedCount?: unknown;
   } | null | undefined>,
 ) {
   return links.reduce(

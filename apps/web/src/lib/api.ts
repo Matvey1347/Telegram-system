@@ -13,6 +13,8 @@ import type {
   SyncOperationResult,
   TelegramChannelSyncProgressItem,
   TelegramChannelAccessMode,
+  PaginatedResponse,
+  PaginationMeta,
 } from "@telegram-system/shared";
 import {
   clearAccessToken,
@@ -412,6 +414,11 @@ api.interceptors.response.use(
 );
 
 export type WorkspaceRole = "owner" | "admin" | "MEDIA_BUYER" | "member";
+export type { PaginatedResponse, PaginationMeta };
+export type PaginationParams = {
+  page?: number;
+  pageSize?: number;
+};
 export type CurrencyDisplayMode = "code" | "symbol";
 export type IconType = "emoji" | "image";
 export type Icon = {
@@ -1071,6 +1078,7 @@ export type TelegramPostAnalyticsItem = {
   reactionRateBySubscribers?: number | null;
   commentsRateBySubscribers?: number | null;
   viewsRateBySubscribers?: number | null;
+  primaryTelegramMessageUrl?: string | null;
 };
 export type TelegramUserAccount = {
   id: string;
@@ -1418,6 +1426,54 @@ export type DailyAnalyticsSyncRun = {
   errorsCount: number;
   errorMessage?: string | null;
 };
+
+export type TelegramChannelAnalyticsSummary = {
+  subscribersCurrent: number | null;
+  joinedHistoricalByLinks: number;
+  joinedToday: number | null;
+  leftToday: number | null;
+  netGrowthToday: number | null;
+  leftTotal: number | null;
+  netGrowth: number | null;
+  inviteLinksCount: number;
+  campaignsCount: number;
+  postsTotal: number;
+  viewsTotal: number;
+  forwardsTotal: number;
+  reactionsTotal: number;
+  commentsTotal: number;
+  requestedJoinsTotal: number;
+  totalAdSpend: number;
+  totalJoinedSubscribers: number;
+  avgCpa: number | null;
+  activeCpa: number | null;
+};
+
+export type TelegramChannelAnalyticsResponse = {
+  source: string;
+  channel: TelegramChannel;
+  summary: TelegramChannelAnalyticsSummary;
+  dailyStats: Array<Record<string, unknown>>;
+  recentEvents: Array<Record<string, unknown>>;
+  channelStatsSnapshot:
+    | ({
+        normalizedStats?: {
+          graphs?: Record<string, unknown>;
+          followers?: { current?: number | null };
+        } | null;
+      } & Record<string, unknown>)
+    | null;
+  channelStatsPoints: Array<Record<string, unknown>>;
+  financialSummary: TelegramChannelFinancialSummary;
+  range: {
+    from: string;
+    to: string;
+    maxRangeDays: number;
+  };
+  recentPosts?: TelegramPostAnalyticsItem[];
+  inviteLinks?: TelegramInviteLink[];
+  campaigns?: AdCampaign[];
+};
 export type AdCampaignPerformanceSummary = {
   campaignsCount: number;
   totalSpend: number;
@@ -1732,6 +1788,42 @@ export const iconsApi = {
     ).data,
 };
 
+async function getPaginated<T>(
+  path: string,
+  params?: Record<string, unknown>,
+): Promise<PaginatedResponse<T>> {
+  return (await api.get<PaginatedResponse<T>>(path, { params })).data;
+}
+
+function hasExplicitPagination(params?: Record<string, unknown>) {
+  return params?.page != null || params?.pageSize != null;
+}
+
+async function getAllPaginatedItems<T>(
+  path: string,
+  params?: Record<string, unknown>,
+): Promise<T[]> {
+  const firstPage = await getPaginated<T>(path, params);
+  if (!firstPage.pagination.hasNextPage) {
+    return firstPage.items;
+  }
+
+  const items = [...firstPage.items];
+  for (
+    let page = firstPage.pagination.page + 1;
+    page <= firstPage.pagination.totalPages;
+    page += 1
+  ) {
+    const nextPage = await getPaginated<T>(path, {
+      ...params,
+      page,
+      pageSize: firstPage.pagination.pageSize,
+    });
+    items.push(...nextPage.items);
+  }
+  return items;
+}
+
 const crud = <T>(path: string) => ({
   list: async () => (await api.get<T[]>(path)).data,
   get: async (id: string) => (await api.get<T>(`${path}/${id}`)).data,
@@ -1765,16 +1857,20 @@ export const workspaceMembersApi = {
 };
 
 export const promptNotesApi = {
-  list: async (params?: {
+  listPage: async (params?: PaginationParams & {
     search?: string;
     telegramChannelId?: string;
     postGroupId?: string;
   }) =>
-    (
-      await api.get<PromptNote[]>("/prompt-notes", {
-        params,
-      })
-    ).data,
+    getPaginated<PromptNote>("/prompt-notes", params),
+  list: async (params?: PaginationParams & {
+    search?: string;
+    telegramChannelId?: string;
+    postGroupId?: string;
+  }) =>
+    hasExplicitPagination(params)
+      ? (await getPaginated<PromptNote>("/prompt-notes", params)).items
+      : getAllPaginatedItems<PromptNote>("/prompt-notes", params),
   create: async (payload: {
     title: string;
     content: string;
@@ -1801,7 +1897,12 @@ export const promptNotesApi = {
   ) => (await api.patch<PromptNote>(`/prompt-notes/${id}`, payload)).data,
   remove: async (id: string) => (await api.delete(`/prompt-notes/${id}`)).data,
 };
-export const accountsApi = quietCrud<Account>("/accounts");
+export const accountsApi = {
+  ...quietCrud<Account>("/accounts"),
+  listPage: async (params?: PaginationParams & { assignedMemberId?: string }) =>
+    getPaginated<Account>("/accounts", params),
+  list: async () => getAllPaginatedItems<Account>("/accounts"),
+};
 export type TransactionQuery = {
   assignedMemberId?: string;
   dateFrom?: string;
@@ -1814,8 +1915,12 @@ export type TransactionQuery = {
 };
 export const transactionsApi = {
   ...quietCrud<Transaction>("/transactions"),
-  list: async (params?: TransactionQuery) =>
-    (await api.get<Transaction[]>("/transactions", { params })).data,
+  listPage: async (params?: TransactionQuery & PaginationParams) =>
+    getPaginated<Transaction>("/transactions", params),
+  list: async (params?: TransactionQuery & PaginationParams) =>
+    hasExplicitPagination(params)
+      ? (await getPaginated<Transaction>("/transactions", params)).items
+      : getAllPaginatedItems<Transaction>("/transactions", params),
 };
 export const transactionCategoriesApi = {
   list: async (type: TransactionType) =>
@@ -1859,11 +1964,18 @@ export type TransferQuery = {
 };
 export const transfersApi = {
   ...quietCrud<Transfer>("/transfers"),
-  list: async (params?: TransferQuery) =>
-    (await api.get<Transfer[]>("/transfers", { params })).data,
+  listPage: async (params?: TransferQuery & PaginationParams) =>
+    getPaginated<Transfer>("/transfers", params),
+  list: async (params?: TransferQuery & PaginationParams) =>
+    hasExplicitPagination(params)
+      ? (await getPaginated<Transfer>("/transfers", params)).items
+      : getAllPaginatedItems<Transfer>("/transfers", params),
 };
 export const telegramChannelsApi = {
   ...crud<TelegramChannel>("/telegram-channels"),
+  listPage: async (params?: PaginationParams) =>
+    getPaginated<TelegramChannel>("/telegram-channels", params),
+  list: async () => getAllPaginatedItems<TelegramChannel>("/telegram-channels"),
   updateQuiet: async (id: string, payload: Record<string, unknown>) =>
     (
       await api.patch<TelegramChannel>(
@@ -1932,12 +2044,26 @@ export const telegramChannelsApi = {
         `/telegram-channels/${id}/financial-summary`,
       )
     ).data,
-  managedPosts: async (channelId: string) =>
-    (
-      await api.get<TelegramManagedPost[]>(
+  managedPostsPage: async (
+    channelId: string,
+    params?: PaginationParams,
+  ) =>
+    getPaginated<TelegramManagedPost>(
+      `/telegram-channels/${channelId}/managed-posts`,
+      params,
+    ),
+  managedPosts: async (channelId: string, params?: PaginationParams) =>
+    hasExplicitPagination(params)
+      ? (
+      await getPaginated<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts`,
+        params,
       )
-    ).data,
+    ).items
+      : getAllPaginatedItems<TelegramManagedPost>(
+          `/telegram-channels/${channelId}/managed-posts`,
+          params,
+        ),
   syncManagedPosts: async (channelId: string) =>
     (
       await api.post<{
@@ -2074,12 +2200,23 @@ export const telegramChannelsApi = {
         { targetTelegramChannelId },
       )
     ).data,
-  postGroups: async (params?: {
+  postGroupsPage: async (params?: PaginationParams & {
     telegramChannelId?: string;
     search?: string;
   }) =>
-    (await api.get<PostGroup[]>("/telegram-channels/post-groups", { params }))
-      .data,
+    getPaginated<PostGroup>("/telegram-channels/post-groups", params),
+  postGroups: async (params?: PaginationParams & {
+    telegramChannelId?: string;
+    search?: string;
+  }) =>
+    hasExplicitPagination(params)
+      ? (
+      await getPaginated<PostGroup>("/telegram-channels/post-groups", params)
+    ).items
+      : getAllPaginatedItems<PostGroup>(
+          "/telegram-channels/post-groups",
+          params,
+        ),
   postGroup: async (groupId: string) =>
     (await api.get<PostGroup>(`/telegram-channels/post-groups/${groupId}`))
       .data,
@@ -2332,9 +2469,10 @@ export const telegramChannelsApi = {
     ).data,
 };
 export const telegramChannelNetworksApi = {
+  listPage: async (params?: PaginationParams) =>
+    getPaginated<TelegramChannelNetwork>("/telegram-channel-networks", params),
   list: async () =>
-    (await api.get<TelegramChannelNetwork[]>("/telegram-channel-networks"))
-      .data,
+    getAllPaginatedItems<TelegramChannelNetwork>("/telegram-channel-networks"),
   get: async (id: string) =>
     (
       await api.get<TelegramChannelNetworkDetail>(
@@ -2430,8 +2568,12 @@ export const telegramBotsApi = {
 };
 export const promosApi = {
   ...quietCrud<Promo>("/promos"),
-  list: async (params?: { telegramChannelId?: string }) =>
-    (await api.get<Promo[]>("/promos", { params })).data,
+  listPage: async (params?: PaginationParams & { telegramChannelId?: string }) =>
+    getPaginated<Promo>("/promos", params),
+  list: async (params?: PaginationParams & { telegramChannelId?: string }) =>
+    hasExplicitPagination(params)
+      ? (await getPaginated<Promo>("/promos", params)).items
+      : getAllPaginatedItems<Promo>("/promos", params),
   uploadImage: async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -2447,8 +2589,12 @@ export const advertisingChannelsApi = crud<AdvertisingChannel>(
 );
 export const adCampaignsApi = {
   ...quietCrud<AdCampaign>("/ad-campaigns"),
-  list: async (params?: { telegramChannelId?: string }) =>
-    (await api.get<AdCampaign[]>("/ad-campaigns", { params })).data,
+  listPage: async (params?: PaginationParams & { telegramChannelId?: string }) =>
+    getPaginated<AdCampaign>("/ad-campaigns", params),
+  list: async (params?: PaginationParams & { telegramChannelId?: string }) =>
+    hasExplicitPagination(params)
+      ? (await getPaginated<AdCampaign>("/ad-campaigns", params)).items
+      : getAllPaginatedItems<AdCampaign>("/ad-campaigns", params),
   updateAnalyticsInput: async (id: string, payload: AdCampaignAnalyticsInput) =>
     (
       await api.patch<AdCampaign>(
@@ -2507,7 +2653,9 @@ export const telegramSyncApi = {
     ).data,
 };
 export const adHypothesesApi = {
-  list: async () => (await api.get<AdHypothesis[]>("/ad-hypotheses")).data,
+  listPage: async (params?: PaginationParams) =>
+    getPaginated<AdHypothesis>("/ad-hypotheses", params),
+  list: async () => getAllPaginatedItems<AdHypothesis>("/ad-hypotheses"),
   get: async (id: string) =>
     (await api.get<AdHypothesisDetail>(`/ad-hypotheses/${id}`)).data,
   create: async (payload: CreateAdHypothesisPayload) =>
@@ -2578,33 +2726,33 @@ export async function getTelegramChannelAnalytics(
   to?: string,
 ) {
   return (
-    await api.get(`/telegram-channels/${channelId}/analytics`, {
-      params: { from, to },
-    })
+    await api.get<TelegramChannelAnalyticsResponse>(
+      `/telegram-channels/${channelId}/analytics`,
+      {
+        params: { from, to },
+      },
+    )
   ).data;
 }
 
 export async function getTelegramChannelPosts(
   channelId: string,
-  limit = 50,
-  offset = 0,
+  params?: PaginationParams,
 ) {
-  return (
-    await api.get<{
-      items: TelegramPostAnalyticsItem[];
-      total: number;
-      limit: number;
-      offset: number;
-    }>(`/telegram-channels/${channelId}/posts`, { params: { limit, offset } })
-  ).data;
+  return getPaginated<TelegramPostAnalyticsItem>(
+    `/telegram-channels/${channelId}/posts`,
+    params,
+  );
 }
 
-export async function getTelegramChannelInviteLinks(channelId: string) {
-  return (
-    await api.get<TelegramInviteLink[]>(
-      `/telegram-channels/${channelId}/invite-links`,
-    )
-  ).data;
+export async function getTelegramChannelInviteLinks(
+  channelId: string,
+  params?: PaginationParams,
+) {
+  return getPaginated<TelegramInviteLink>(
+    `/telegram-channels/${channelId}/invite-links`,
+    params,
+  );
 }
 
 export async function getTelegramChannelInviteLinkHistory(

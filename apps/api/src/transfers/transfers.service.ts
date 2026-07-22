@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateTransferDto, TransferQueryDto, UpdateTransferDto } from './dto';
@@ -89,12 +90,29 @@ export class TransfersService {
         { toAccountId: query.accountId },
       ];
     }
-    const transfers = await this.prisma.transfer.findMany({
-      where,
-      orderBy: { date: query.sort === 'date_asc' ? 'asc' : 'desc' },
-      include: { fromAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, toAccount: { include: { assignedMember: WorkspaceService.assignedMemberInclude } }, assignedMember: WorkspaceService.assignedMemberInclude, createdByUser: WorkspaceService.createdByUserInclude },
-    });
-    return this.withLosses(workspaceId, transfers);
+    const pagination = normalizePagination(query);
+    const orderDirection = query.sort === 'date_asc' ? 'asc' : 'desc';
+    const [transfers, totalItems] = await this.prisma.$transaction([
+      this.prisma.transfer.findMany({
+        where,
+        orderBy: [{ date: orderDirection }, { id: orderDirection }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          fromAccount: {
+            include: { assignedMember: WorkspaceService.assignedMemberInclude },
+          },
+          toAccount: {
+            include: { assignedMember: WorkspaceService.assignedMemberInclude },
+          },
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+        },
+      }),
+      this.prisma.transfer.count({ where }),
+    ]);
+    const items = await this.withLosses(workspaceId, transfers);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
   async findOne(userId: string, id: string) {
     const workspaceId =

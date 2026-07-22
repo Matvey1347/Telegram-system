@@ -14,6 +14,9 @@ describe('TelegramChannelsService importChannel', () => {
   const workspaceService = {
     resolveWorkspaceIdForUser: jest.fn(),
   };
+  const responseCache = {
+    clearByPrefix: jest.fn(),
+  };
   const encryptionService = {
     decrypt: jest.fn(),
   };
@@ -34,6 +37,7 @@ describe('TelegramChannelsService importChannel', () => {
     service = new TelegramChannelsService(
       prisma as never,
       workspaceService as never,
+      responseCache as never,
       encryptionService as never,
       mtprotoClient as never,
       sourceAccessService as never,

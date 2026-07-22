@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreatePromptNoteDto,
@@ -60,19 +61,27 @@ export class PromptNotesService {
         ],
       });
     }
-    return this.prisma.promptNote.findMany({
-      where: {
-        workspaceId,
-        ...(and.length ? { AND: and } : {}),
-      },
-      include: {
-        icon: true,
-        assignedMember: { include: { user: true, avatarIcon: true } },
-        telegramChannel: true,
-        postGroup: true,
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+    const where = {
+      workspaceId,
+      ...(and.length ? { AND: and } : {}),
+    };
+    const pagination = normalizePagination(query);
+    const [items, totalItems] = await this.prisma.$transaction([
+      this.prisma.promptNote.findMany({
+        where,
+        include: {
+          icon: true,
+          assignedMember: { include: { user: true, avatarIcon: true } },
+          telegramChannel: true,
+          postGroup: true,
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.promptNote.count({ where }),
+    ]);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async create(userId: string, dto: CreatePromptNoteDto) {

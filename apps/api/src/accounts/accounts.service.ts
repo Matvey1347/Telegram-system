@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { CurrenciesService } from '../currencies/currencies.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -129,31 +130,36 @@ export class AccountsService {
   async findAll(userId: string, query: AccountQueryDto = {}) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const accounts = await this.prisma.account.findMany({
-      where: {
-        workspaceId,
-        assignedMemberId: query.assignedMemberId || undefined,
-        OR: [
-          { assignedMemberId: null },
-          { assignedMember: { isHidden: false } },
-        ],
-      },
-      include: {
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        icon: {
-          select: {
-            id: true,
-            type: true,
-            name: true,
-            emoji: true,
-            imageUrl: true,
+    const where = {
+      workspaceId,
+      assignedMemberId: query.assignedMemberId || undefined,
+      OR: [{ assignedMemberId: null }, { assignedMember: { isHidden: false } }],
+    };
+    const pagination = normalizePagination(query);
+    const [accounts, totalItems] = await this.prisma.$transaction([
+      this.prisma.account.findMany({
+        where,
+        include: {
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          icon: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              emoji: true,
+              imageUrl: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return this.withBalances(workspaceId, accounts);
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.account.count({ where }),
+    ]);
+    const items = await this.withBalances(workspaceId, accounts);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {

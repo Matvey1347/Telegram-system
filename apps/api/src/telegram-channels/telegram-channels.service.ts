@@ -17,6 +17,7 @@ import {
   TelegramUserAccountStatus,
 } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import type { PaginatedResponse } from '@telegram-system/shared';
 import type {
   BulkActionResult,
   BulkActionResultItem,
@@ -39,6 +40,10 @@ import {
 } from '../common/analytics/channel-financial-summary';
 import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 import { ResponseCacheService } from '../common/response-cache.service';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -57,6 +62,10 @@ import {
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   ManagedPostLinkTargetsQueryDto,
+  TelegramChannelInviteLinksQueryDto,
+  TelegramChannelListQueryDto,
+  TelegramChannelPostsQueryDto,
+  TelegramManagedPostsQueryDto,
   MovePostChannelDto,
   PostGroupsQueryDto,
   PostIdsDto,
@@ -2289,11 +2298,15 @@ export class TelegramChannelsService {
     orderBy?:
       | Prisma.TelegramInviteLinkOrderByWithRelationInput
       | Prisma.TelegramInviteLinkOrderByWithRelationInput[];
+    skip?: number;
+    take?: number;
   }) {
     const run = async (includeRequestedCount: boolean) => {
       const links = await this.prisma.telegramInviteLink.findMany({
         where: params.where,
         orderBy: params.orderBy,
+        skip: params.skip,
+        take: params.take,
         select: this.inviteLinkReadSelect(includeRequestedCount),
       });
       return this.normalizeInviteLinksRequestedCount(links);
@@ -3286,66 +3299,230 @@ export class TelegramChannelsService {
     });
   }
 
-  async findAll(userId: string) {
-    const workspaceId = await this.workspace(userId);
-    const loadChannels = () =>
-      this.prisma.telegramChannel.findMany({
-        where: { workspaceId, isActive: true },
-        include: {
-          assignedMember: WorkspaceService.assignedMemberInclude,
-          createdByUser: WorkspaceService.createdByUserInclude,
-          adAnalyses: {
-            orderBy: { analyzedAt: 'desc' },
-            take: 1,
-            include: {
-              assignedMember: WorkspaceService.assignedMemberInclude,
-            },
-          },
-          _count: { select: { adAnalyses: true } },
-          adminLinks: { include: { telegramUserAccountIntegration: true } },
-          sourceAccesses: { select: { id: true, canPostMessages: true } },
-          audienceSnapshots: {
-            orderBy: { collectedAt: 'desc' },
-            take: 1,
-            select: {
-              subscribersCount: true,
-              activeSubscribersEstimate: true,
-              viewRate: true,
-              dataQuality: true,
-              dataQualityReason: true,
-              hasExternalTrafficAnomaly: true,
-              hasSubscriberBasePollution: true,
-              postsWindow: true,
-            },
-          },
+  private async buildChannelFinancialSummaryPreview(
+    workspaceId: string,
+    channels: Array<{
+      id: string;
+      activeSubscribersWindow?: number | null;
+      targetCpaFrom?: Prisma.Decimal | number | null;
+      targetCpa?: Prisma.Decimal | number | null;
+      acceptableCpaFrom?: Prisma.Decimal | number | null;
+      acceptableCpa?: Prisma.Decimal | number | null;
+      stopCpaFrom?: Prisma.Decimal | number | null;
+      stopCpa?: Prisma.Decimal | number | null;
+      audienceSnapshots?: Array<{
+        activeSubscribersEstimate?: number | null;
+        dataQuality?: string | null;
+        dataQualityReason?: string | null;
+        hasExternalTrafficAnomaly?: boolean | null;
+        hasSubscriberBasePollution?: boolean | null;
+      }>;
+    }>,
+  ) {
+    if (!channels.length) {
+      return new Map<string, Record<string, unknown>>();
+    }
+    const channelIds = channels.map((channel) => channel.id);
+    const [campaigns, inviteLinks] = await Promise.all([
+      this.prisma.adCampaign.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: { in: channelIds },
+          excludeFromAnalytics: false,
         },
-        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          telegramChannelId: true,
+          priceInPrimaryCurrency: true,
+          joinedCount: true,
+          newSubscribers: true,
+          cappedActiveSubscribersFromAd: true,
+          activeSubscribersFromAd: true,
+          activeRate: true,
+          retention7d: true,
+        },
+      }),
+      this.prisma.telegramInviteLink.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: { in: channelIds },
+          adCampaignId: { not: null },
+        },
+        select: {
+          telegramChannelId: true,
+          adCampaignId: true,
+          joinedCount: true,
+        },
+      }),
+    ]);
+
+    const inviteLinksByCampaignId = new Map<
+      string,
+      Array<{ joinedCount: number }>
+    >();
+    for (const inviteLink of inviteLinks) {
+      if (!inviteLink.adCampaignId) continue;
+      const list = inviteLinksByCampaignId.get(inviteLink.adCampaignId) ?? [];
+      list.push({ joinedCount: Number(inviteLink.joinedCount || 0) });
+      inviteLinksByCampaignId.set(inviteLink.adCampaignId, list);
+    }
+
+    const campaignsByChannelId = new Map<string, typeof campaigns>();
+    for (const campaign of campaigns) {
+      const list = campaignsByChannelId.get(campaign.telegramChannelId) ?? [];
+      list.push(campaign);
+      campaignsByChannelId.set(campaign.telegramChannelId, list);
+    }
+
+    const summaries = new Map<string, Record<string, unknown>>();
+
+    for (const channel of channels) {
+      const audience = channel.audienceSnapshots?.[0];
+      const channelCampaigns = campaignsByChannelId.get(channel.id) ?? [];
+      const totalAdSpend = channelCampaigns.reduce(
+        (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
+        0,
+      );
+      const totalJoinedSubscribers = channelCampaigns.reduce((sum, campaign) => {
+        const joinedFromLinks = (
+          inviteLinksByCampaignId.get(campaign.id) ?? []
+        ).reduce((nestedSum, link) => nestedSum + Number(link.joinedCount || 0), 0);
+        const fallbackJoinedCount = Number(
+          campaign.joinedCount ?? campaign.newSubscribers ?? 0,
+        );
+        return sum + (joinedFromLinks > 0 ? joinedFromLinks : fallbackJoinedCount);
+      }, 0);
+      const avgCpa =
+        totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
+      const campaignActiveSubscribersEstimate = channelCampaigns.reduce(
+        (sum, campaign) =>
+          sum +
+          Number(
+            campaign.cappedActiveSubscribersFromAd ??
+              campaign.activeSubscribersFromAd ??
+              0,
+          ),
+        0,
+      );
+      const paidActiveSubscribersEstimate =
+        campaignActiveSubscribersEstimate > 0
+          ? campaignActiveSubscribersEstimate
+          : (audience?.activeSubscribersEstimate ?? null);
+      const activeCpa =
+        paidActiveSubscribersEstimate && paidActiveSubscribersEstimate > 0
+          ? totalAdSpend / paidActiveSubscribersEstimate
+          : null;
+      const activeRates = channelCampaigns
+        .map((campaign) => Number(campaign.activeRate))
+        .filter((value) => Number.isFinite(value));
+      const retentionRates = channelCampaigns
+        .map((campaign) => Number(campaign.retention7d))
+        .filter((value) => Number.isFinite(value));
+      const kpiStatus = resolveChannelKpiStatus({
+        avgCpa,
+        targetCpaFrom: channel.targetCpaFrom,
+        targetCpa: channel.targetCpa,
+        acceptableCpaFrom: channel.acceptableCpaFrom,
+        acceptableCpa: channel.acceptableCpa,
+        stopCpaFrom: channel.stopCpaFrom,
+        stopCpa: channel.stopCpa,
       });
+      summaries.set(channel.id, {
+        totalAdSpend,
+        campaignsCount: channelCampaigns.length,
+        totalJoinedSubscribers,
+        avgCpa,
+        activeSubscribersEstimate: audience?.activeSubscribersEstimate ?? null,
+        paidActiveSubscribersEstimate,
+        activeCpa,
+        avgActiveRate: activeRates.length
+          ? activeRates.reduce((sum, value) => sum + value, 0) /
+            activeRates.length
+          : null,
+        avgRetention7d: retentionRates.length
+          ? retentionRates.reduce((sum, value) => sum + value, 0) /
+            retentionRates.length
+          : null,
+        dataQuality: audience?.dataQuality ?? null,
+        dataQualityReason: audience?.dataQualityReason ?? null,
+        dataQualityWarning: null,
+        hasExternalTrafficAnomaly:
+          audience?.hasExternalTrafficAnomaly ?? false,
+        hasSubscriberBasePollution:
+          audience?.hasSubscriberBasePollution ?? false,
+        kpiStatus,
+        kpiLabel: resolveChannelKpiLabel(kpiStatus),
+      });
+    }
+
+    return summaries;
+  }
+
+  async findAll(userId: string, query: TelegramChannelListQueryDto = {}) {
+    const workspaceId = await this.workspace(userId);
+    const pagination = normalizePagination(query);
+    const loadChannels = () =>
+      this.prisma.$transaction([
+        this.prisma.telegramChannel.findMany({
+          where: { workspaceId, isActive: true },
+          include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
+            createdByUser: WorkspaceService.createdByUserInclude,
+            adAnalyses: {
+              orderBy: { analyzedAt: 'desc' },
+              take: 1,
+              include: {
+                assignedMember: WorkspaceService.assignedMemberInclude,
+              },
+            },
+            _count: { select: { adAnalyses: true } },
+            adminLinks: { include: { telegramUserAccountIntegration: true } },
+            sourceAccesses: { select: { id: true, canPostMessages: true } },
+            audienceSnapshots: {
+              orderBy: { collectedAt: 'desc' },
+              take: 1,
+              select: {
+                subscribersCount: true,
+                activeSubscribersEstimate: true,
+                viewRate: true,
+                dataQuality: true,
+                dataQualityReason: true,
+                hasExternalTrafficAnomaly: true,
+                hasSubscriberBasePollution: true,
+                postsWindow: true,
+              },
+            },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: pagination.skip,
+          take: pagination.take,
+        }),
+        this.prisma.telegramChannel.count({
+          where: { workspaceId, isActive: true },
+        }),
+      ]);
     let channels;
+    let totalItems;
     try {
-      channels = await loadChannels();
+      [channels, totalItems] = await loadChannels();
     } catch (error) {
       if (!this.isMissingTelegramChannelSyncScopeColumn(error)) throw error;
       this.telegramChannelSyncScopeColumnsAvailable = false;
       await this.ensureTelegramChannelSyncScopeColumnsAvailable();
-      channels = await loadChannels();
+      [channels, totalItems] = await loadChannels();
     }
 
-    if (!channels.length) return channels;
+    if (!channels.length) {
+      return createPaginatedResponse([], totalItems, pagination);
+    }
 
     const channelIds = channels.map((channel) => channel.id);
-    const [timePostsByChannel, financialSummaryEntries] = await Promise.all([
+    const [timePostsByChannel, financialSummaryByChannel] = await Promise.all([
       this.timePostsByChannelIds(channelIds),
-      Promise.all(
-        channels.map(async (channel) => [
-          channel.id,
-          await this.analyticsService.getChannelFinancialSummary(channel.id),
-        ] as const),
-      ),
+      this.buildChannelFinancialSummaryPreview(workspaceId, channels),
     ]);
-    const financialSummaryByChannel = new Map(financialSummaryEntries);
 
-    return channels.map((channel) => {
+    const items = channels.map((channel) => {
       const {
         sourceAccesses,
         audienceSnapshots,
@@ -3418,6 +3595,7 @@ export class TelegramChannelsService {
         },
       };
     });
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {
@@ -3672,25 +3850,33 @@ export class TelegramChannelsService {
     if (query.telegramChannelId) {
       await this.findOne(userId, query.telegramChannelId);
     }
-    const groups = await this.prisma.postGroup.findMany({
-      where: {
-        workspaceId,
-        telegramChannelId: query.telegramChannelId,
-        title: query.search?.trim()
-          ? { contains: query.search.trim(), mode: 'insensitive' }
-          : undefined,
-      },
-      include: {
-        ...this.postGroupBaseInclude,
-        posts: { select: { status: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return groups.map(({ posts, ...group }) => ({
+    const where = {
+      workspaceId,
+      telegramChannelId: query.telegramChannelId,
+      title: query.search?.trim()
+        ? { contains: query.search.trim(), mode: 'insensitive' as const }
+        : undefined,
+    };
+    const pagination = normalizePagination(query);
+    const [groups, totalItems] = await this.prisma.$transaction([
+      this.prisma.postGroup.findMany({
+        where,
+        include: {
+          ...this.postGroupBaseInclude,
+          posts: { select: { status: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.postGroup.count({ where }),
+    ]);
+    const items = groups.map(({ posts, ...group }) => ({
       ...group,
       postsCount: posts.length,
       statusSummary: postGroupStatusSummary(posts.map((post) => post.status)),
     }));
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async postGroup(userId: string, groupId: string) {
@@ -3904,15 +4090,27 @@ export class TelegramChannelsService {
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
 
-  async managedPosts(userId: string, channelId: string) {
+  async managedPosts(
+    userId: string,
+    channelId: string,
+    query: TelegramManagedPostsQueryDto = {},
+  ) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
     await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
-    return this.prisma.telegramManagedPost.findMany({
-      where: { workspaceId, telegramChannelId: channelId },
-      orderBy: { createdAt: 'desc' },
-      include: this.managedPostInclude,
-    });
+    const where = { workspaceId, telegramChannelId: channelId };
+    const pagination = normalizePagination(query);
+    const [items, totalItems] = await this.prisma.$transaction([
+      this.prisma.telegramManagedPost.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: this.managedPostInclude,
+      }),
+      this.prisma.telegramManagedPost.count({ where }),
+    ]);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   private async promoteDueScheduledManagedPosts(
@@ -8427,15 +8625,26 @@ export class TelegramChannelsService {
     });
   }
 
-  async inviteLinks(userId: string, channelId: string) {
+  async inviteLinks(
+    userId: string,
+    channelId: string,
+    query: TelegramChannelInviteLinksQueryDto = {},
+  ) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
-    const links = await this.findInviteLinksWithRequestedCountFallback({
-      workspaceId,
-      where: { workspaceId, telegramChannelId: channelId },
-      orderBy: { createdAt: 'desc' },
-    });
-    return this.attachInviteLinkHistories(workspaceId, channelId, links);
+    const where = { workspaceId, telegramChannelId: channelId };
+    const pagination = normalizePagination(query);
+    const [links, totalItems] = await Promise.all([
+      this.findInviteLinksWithRequestedCountFallback({
+        workspaceId,
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.telegramInviteLink.count({ where }),
+    ]);
+    return createPaginatedResponse(links, totalItems, pagination);
   }
 
   async inviteLinkHistory(
@@ -8486,34 +8695,31 @@ export class TelegramChannelsService {
     });
   }
 
-  async posts(userId: string, channelId: string, limit = 50, offset = 0) {
+  async posts(userId: string, channelId: string, query: TelegramChannelPostsQueryDto = {}) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
-    const safeLimit = Math.max(1, Math.min(200, limit));
-    const safeOffset = Math.max(0, offset);
+    const pagination = normalizePagination(query);
     const where = { workspaceId, telegramChannelId: channelId };
-    const [items, total] = await Promise.all([
+    const [items, totalItems] = await Promise.all([
       this.prisma.telegramPost.findMany({
         where,
-        orderBy: { postDate: 'desc' },
-        skip: safeOffset,
-        take: safeLimit,
+        orderBy: [{ postDate: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
       }),
       this.prisma.telegramPost.count({ where }),
     ]);
-    return {
-      source: 'mtproto',
-      items: items.map((post) => ({
+    return createPaginatedResponse(
+      items.map((post) => ({
         ...post,
         primaryTelegramMessageUrl: this.telegramMessageUrl(
           channel,
           post.telegramMessageId,
         ),
       })),
-      total,
-      limit: safeLimit,
-      offset: safeOffset,
-    };
+      totalItems,
+      pagination,
+    );
   }
 
   async analytics(
@@ -8528,82 +8734,87 @@ export class TelegramChannelsService {
       ? new Date(from)
       : new Date(Date.now() - 30 * 24 * 3600 * 1000);
     const toDate = to ? new Date(to) : new Date();
+    const maxRangeDays = 366;
+    const safeFromDate = Number.isNaN(fromDate.getTime())
+      ? new Date(Date.now() - 30 * 24 * 3600 * 1000)
+      : fromDate;
+    const safeToDate = Number.isNaN(toDate.getTime()) ? new Date() : toDate;
+    if (safeFromDate > safeToDate) {
+      throw new BadRequestException('from must be before to');
+    }
+    const maxRangeMs = maxRangeDays * 24 * 3600 * 1000;
+    const effectiveFromDate =
+      safeToDate.getTime() - safeFromDate.getTime() > maxRangeMs
+        ? new Date(safeToDate.getTime() - maxRangeMs)
+        : safeFromDate;
+    const emptyFinancialSummary = {
+      totalAdSpend: 0,
+      campaignsCount: 0,
+      totalJoinedSubscribers: 0,
+      avgCpa: null,
+      activeSubscribersEstimate: null,
+      paidActiveSubscribersEstimate: null,
+      activeCpa: null,
+      avgActiveRate: null,
+      avgRetention7d: null,
+      dataQuality: null,
+      dataQualityReason: null,
+      dataQualityWarning: null,
+      hasExternalTrafficAnomaly: false,
+      hasSubscriberBasePollution: false,
+      kpiStatus: 'unknown',
+      kpiLabel: '-',
+    } as const;
     const [
       dailyStats,
-      inviteLinks,
-      campaigns,
-      recentPosts,
+      postsAggregate,
+      postsTotal,
+      inviteLinksAggregate,
+      inviteLinksCount,
+      financialSummary,
       channelStatsSnapshot,
       channelStatsPoints,
     ] = await Promise.all([
       this.prisma.telegramChannelDailyStats.findMany({
         where: {
           telegramChannelId: channelId,
-          date: { gte: fromDate, lte: toDate },
+          date: { gte: effectiveFromDate, lte: safeToDate },
         },
         orderBy: { date: 'asc' },
       }),
-      this.findInviteLinksWithRequestedCountFallback({
-        workspaceId,
-        where: { workspaceId, telegramChannelId: channelId },
-      }),
-      this.prisma.adCampaign.findMany({
-        where: { workspaceId, telegramChannelId: channelId },
-        include: {
-          telegramChannel: true,
-          promo: {
-            include: {
-              icon: true,
-              telegramChannel: true,
-              assignedMember: WorkspaceService.assignedMemberInclude,
-            },
-          },
-          inviteLinks: {
-            select: {
-              id: true,
-              telegramChannelId: true,
-              adCampaignId: true,
-              name: true,
-              url: true,
-              joinedCount: true,
-              requestedCount: true,
-              isRevoked: true,
-              creatorTelegramUserId: true,
-              creatorUsername: true,
-              creatorFirstName: true,
-              creatorLastName: true,
-              creatorPhotoUrl: true,
-              creatorMatchSource: true,
-              creatorMember: {
-                select: {
-                  id: true,
-                  role: true,
-                  telegramUsername: true,
-                  avatarIcon: true,
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-          advertisingTelegramChannels: {
-            include: {
-              telegramChannel: true,
-            },
-          },
-          advertisingChannels: { include: { advertisingSource: true } },
+      this.prisma.telegramPost.aggregate({
+        where: {
+          workspaceId,
+          telegramChannelId: channelId,
+          postDate: { gte: effectiveFromDate, lte: safeToDate },
         },
-        orderBy: { createdAt: 'desc' },
+        _sum: {
+          viewsCount: true,
+          forwardsCount: true,
+          reactionsCount: true,
+          commentsCount: true,
+        },
       }),
-      this.prisma.telegramPost.findMany({
+      this.prisma.telegramPost.count({
+        where: {
+          workspaceId,
+          telegramChannelId: channelId,
+          postDate: { gte: effectiveFromDate, lte: safeToDate },
+        },
+      }),
+      this.prisma.telegramInviteLink.aggregate({
         where: { workspaceId, telegramChannelId: channelId },
-        orderBy: { postDate: 'desc' },
-        take: 100,
+        _sum: {
+          joinedCount: true,
+          requestedCount: true,
+        },
       }),
+      this.prisma.telegramInviteLink.count({
+        where: { workspaceId, telegramChannelId: channelId },
+      }),
+      this.analyticsService
+        .getChannelFinancialSummary(channelId)
+        .catch(() => emptyFinancialSummary),
       this.prisma.telegramChannelStatsSnapshot.findFirst({
         where: { workspaceId, telegramChannelId: channelId },
         orderBy: { syncedAt: 'desc' },
@@ -8612,92 +8823,48 @@ export class TelegramChannelsService {
         where: {
           workspaceId,
           telegramChannelId: channelId,
-          date: { gte: fromDate, lte: toDate },
+          date: { gte: effectiveFromDate, lte: safeToDate },
         },
         orderBy: [{ date: 'asc' }, { metric: 'asc' }, { series: 'asc' }],
+        take: 5000,
       }),
     ]);
-    const inviteLinksWithHistory = await this.attachInviteLinkHistories(
-      workspaceId,
-      channelId,
-      inviteLinks,
-    );
-    const campaignInviteLinkHistoryById =
-      await this.preloadCampaignInviteLinkHistories(workspaceId, campaigns);
-    const campaignsWithMetrics = campaigns.map((campaign) => {
-      const joinedCount = sumInviteLinkJoinedSubscribers(
-        Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
-      );
-      const fallbackJoinedCount = Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
-      const effectiveJoinedCount =
-        joinedCount > 0 ? joinedCount : fallbackJoinedCount;
-      const activeSubscribersFromAd = Number(
-        campaign.cappedActiveSubscribersFromAd ??
-          campaign.activeSubscribersFromAd ??
-          0,
-      );
-      return {
-        ...campaign,
-        joinedCount: effectiveJoinedCount,
-        leftCount: null,
-        netGrowthCount: null,
-        cpa:
-          effectiveJoinedCount > 0
-            ? Number(campaign.price) / effectiveJoinedCount
-            : null,
-        analytics: {
-          joinedCount: effectiveJoinedCount,
-          leftCount: null,
-          netGrowth: effectiveJoinedCount,
-          costPerJoinedSubscriber:
-            effectiveJoinedCount > 0
-              ? Number(campaign.price) / effectiveJoinedCount
-              : null,
-          costPerNetSubscriber:
-            effectiveJoinedCount > 0
-              ? Number(campaign.price) / effectiveJoinedCount
-              : null,
-        },
-        activeSubscribersFromAd,
-        attributionSource: 'mtproto_invite_link_usage',
-        inviteLinkHistory: campaignInviteLinkHistoryById.get(campaign.id) ?? null,
-      };
-    });
-    const inviteLinksJoinedTotal = sumInviteLinkJoinedSubscribers(inviteLinksWithHistory);
     return {
       source: 'mtproto',
       channel,
       summary: {
         subscribersCurrent: channel.currentSubscribersCount ?? null,
-        joinedHistoricalByLinks: inviteLinksJoinedTotal,
+        joinedHistoricalByLinks: Number(inviteLinksAggregate._sum.joinedCount || 0),
         joinedToday: null,
         leftToday: null,
         netGrowthToday: null,
         leftTotal: null,
         netGrowth: null,
-        inviteLinksCount: inviteLinks.length,
-        campaignsCount: campaigns.length,
-        postsTotal: recentPosts.length,
-        viewsTotal: recentPosts.reduce(
-          (sum, post) => sum + Number(post.viewsCount || 0),
-          0,
+        inviteLinksCount,
+        campaignsCount: financialSummary.campaignsCount,
+        postsTotal,
+        viewsTotal: Number(postsAggregate._sum.viewsCount || 0),
+        forwardsTotal: Number(postsAggregate._sum.forwardsCount || 0),
+        reactionsTotal: Number(postsAggregate._sum.reactionsCount || 0),
+        commentsTotal: Number(postsAggregate._sum.commentsCount || 0),
+        requestedJoinsTotal: Number(
+          inviteLinksAggregate._sum.requestedCount || 0,
         ),
-        forwardsTotal: recentPosts.reduce(
-          (sum, post) => sum + Number(post.forwardsCount || 0),
-          0,
-        ),
-        reactionsTotal: recentPosts.reduce(
-          (sum, post) => sum + Number(post.reactionsCount || 0),
-          0,
-        ),
+        totalAdSpend: financialSummary.totalAdSpend,
+        totalJoinedSubscribers: financialSummary.totalJoinedSubscribers,
+        avgCpa: financialSummary.avgCpa,
+        activeCpa: financialSummary.activeCpa,
       },
       dailyStats,
-      inviteLinks: inviteLinksWithHistory,
-      campaigns: campaignsWithMetrics,
-      recentPosts,
       recentEvents: [],
       channelStatsSnapshot,
       channelStatsPoints,
+      financialSummary,
+      range: {
+        from: effectiveFromDate.toISOString(),
+        to: safeToDate.toISOString(),
+        maxRangeDays,
+      },
     };
   }
 

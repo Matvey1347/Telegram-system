@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { CreateInvestmentDto, UpdateInvestmentDto } from './dto';
 
@@ -18,21 +19,34 @@ export class InvestmentsService {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
   }
 
-  async findAll(userId: string) {
+  async findAll(
+    userId: string,
+    query: { page?: number; pageSize?: number } = {},
+  ) {
     const workspaceId = await this.workspace(userId);
-    return this.prisma.investment.findMany({
-      where: { workspaceId },
-      include: {
-        workspaceMember: {
-          include: { user: { select: { id: true, name: true, email: true } } },
+    const where = { workspaceId };
+    const pagination = normalizePagination(query);
+    const [items, totalItems] = await this.prisma.$transaction([
+      this.prisma.investment.findMany({
+        where,
+        include: {
+          workspaceMember: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+          account: true,
+          transaction: true,
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
         },
-        account: true,
-        transaction: true,
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-      },
-      orderBy: { date: 'desc' },
-    });
+        orderBy: [{ date: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+      this.prisma.investment.count({ where }),
+    ]);
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {

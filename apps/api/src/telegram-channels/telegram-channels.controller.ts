@@ -23,6 +23,10 @@ import {
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   ManagedPostLinkTargetsQueryDto,
+  TelegramChannelInviteLinksQueryDto,
+  TelegramChannelListQueryDto,
+  TelegramChannelPostsQueryDto,
+  TelegramManagedPostsQueryDto,
   MovePostChannelDto,
   PostGroupsQueryDto,
   PostIdsDto,
@@ -61,8 +65,11 @@ export class TelegramChannelsController {
   ) {
     return this.streamResponse.stream(res, { eventPrefix, action });
   }
-  @Get() findAll(@CurrentUser() user: JwtUser) {
-    return this.service.findAll(user.sub);
+  @Get() findAll(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramChannelListQueryDto,
+  ) {
+    return this.service.findAll(user.sub, query);
   }
   @Post() create(
     @CurrentUser() user: JwtUser,
@@ -241,8 +248,12 @@ export class TelegramChannelsController {
     return this.service.managedPostLinkTargets(user.sub, id, query);
   }
   @Get(':id/managed-posts')
-  managedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.service.managedPosts(user.sub, id);
+  managedPosts(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query() query: TelegramManagedPostsQueryDto,
+  ) {
+    return this.service.managedPosts(user.sub, id, query);
   }
   @Post(':id/managed-posts/sync')
   syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
@@ -536,8 +547,9 @@ export class TelegramChannelsController {
   @Get(':id/invite-links') inviteLinks(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
+    @Query() query: TelegramChannelInviteLinksQueryDto,
   ) {
-    return this.service.inviteLinks(user.sub, id);
+    return this.service.inviteLinks(user.sub, id, query);
   }
   @Get(':id/invite-links/:inviteLinkId/history')
   inviteLinkHistory(
@@ -561,15 +573,9 @@ export class TelegramChannelsController {
   posts(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
+    @Query() query: TelegramChannelPostsQueryDto,
   ) {
-    return this.service.posts(
-      user.sub,
-      id,
-      Number(limit || 50),
-      Number(offset || 0),
-    );
+    return this.service.posts(user.sub, id, query);
   }
   @Patch(':channelId/posts/:postId/manual-metrics')
   updatePostManualMetrics(

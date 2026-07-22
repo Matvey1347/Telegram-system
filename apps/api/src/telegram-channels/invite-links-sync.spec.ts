@@ -7,7 +7,11 @@ describe('TelegramChannelsService invite link sync', () => {
     telegramUserAccountIntegration: { findMany: jest.fn() },
     telegramChannelDailyStats: { findMany: jest.fn() },
     adCampaign: { findMany: jest.fn() },
-    telegramPost: { findMany: jest.fn() },
+    telegramPost: {
+      findMany: jest.fn(),
+      aggregate: jest.fn(),
+      count: jest.fn(),
+    },
     telegramChannelStatsSnapshot: { findFirst: jest.fn() },
     telegramChannelStatsPoint: { findMany: jest.fn() },
     telegramInviteLink: {
@@ -17,6 +21,8 @@ describe('TelegramChannelsService invite link sync', () => {
       upsert: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      count: jest.fn(),
+      aggregate: jest.fn(),
     },
     telegramInviteLinkSnapshot: { createMany: jest.fn() },
   };
@@ -36,7 +42,9 @@ describe('TelegramChannelsService invite link sync', () => {
   const sourceAccessService = {
     recordDataSource: jest.fn(),
   };
-  const analyticsService = {};
+  const analyticsService = {
+    getChannelFinancialSummary: jest.fn(),
+  };
 
   let service: TelegramChannelsService;
 
@@ -76,6 +84,10 @@ describe('TelegramChannelsService invite link sync', () => {
       }),
     );
     prisma.telegramInviteLink.findMany.mockResolvedValue([]);
+    prisma.telegramInviteLink.count.mockResolvedValue(0);
+    prisma.telegramInviteLink.aggregate.mockResolvedValue({
+      _sum: { joinedCount: 0, requestedCount: 0 },
+    });
     prisma.telegramInviteLink.create.mockImplementation(
       async ({ data }: { data: Record<string, unknown> }) => ({
         id: String(data.url),
@@ -91,12 +103,39 @@ describe('TelegramChannelsService invite link sync', () => {
     prisma.telegramChannelDailyStats.findMany.mockResolvedValue([]);
     prisma.adCampaign.findMany.mockResolvedValue([]);
     prisma.telegramPost.findMany.mockResolvedValue([]);
+    prisma.telegramPost.aggregate.mockResolvedValue({
+      _sum: {
+        viewsCount: 0,
+        forwardsCount: 0,
+        reactionsCount: 0,
+        commentsCount: 0,
+      },
+    });
+    prisma.telegramPost.count.mockResolvedValue(0);
     prisma.telegramChannelStatsSnapshot.findFirst.mockResolvedValue(null);
     prisma.telegramChannelStatsPoint.findMany.mockResolvedValue([]);
     prisma.telegramInviteLinkSnapshot.createMany.mockResolvedValue({
       count: 0,
     });
     sourceAccessService.recordDataSource.mockResolvedValue(undefined);
+    analyticsService.getChannelFinancialSummary.mockResolvedValue({
+      totalAdSpend: 0,
+      campaignsCount: 0,
+      totalJoinedSubscribers: 0,
+      avgCpa: null,
+      activeSubscribersEstimate: null,
+      paidActiveSubscribersEstimate: null,
+      activeCpa: null,
+      avgActiveRate: null,
+      avgRetention7d: null,
+      dataQuality: null,
+      dataQualityReason: null,
+      dataQualityWarning: null,
+      hasExternalTrafficAnomaly: false,
+      hasSubscriberBasePollution: false,
+      kpiStatus: 'unknown',
+      kpiLabel: '-',
+    });
     encryptionService.decrypt.mockReturnValue('decrypted');
     jest
       .spyOn(service as never, 'recalculateCampaignMetricsById' as never)
@@ -375,9 +414,9 @@ describe('TelegramChannelsService invite link sync', () => {
       missingTotalLinks: 0,
       warnings: [],
     });
-    expect((service as any).telegramInviteLinkRequestedCountColumnAvailable).toBe(
-      false,
-    );
+    expect(
+      (service as any).telegramInviteLinkRequestedCountColumnAvailable,
+    ).toBe(false);
     expect(prisma.telegramInviteLink.upsert).toHaveBeenCalledTimes(1);
     expect(prisma.telegramInviteLink.upsert.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
@@ -650,42 +689,11 @@ describe('TelegramChannelsService invite link sync', () => {
     );
   });
 
-  it('falls back to invite-link reads without requestedCount while loading analytics', async () => {
-    prisma.telegramInviteLink.findMany
-      .mockRejectedValueOnce(
-        new Error(
-          'The column `TelegramInviteLink.requestedCount` does not exist in the current database.',
-        ),
-      )
-      .mockResolvedValueOnce([
-        {
-          id: 'link-analytics-1',
-          workspaceId: 'ws-1',
-          telegramChannelId: 'channel-1',
-          adCampaignId: null,
-          name: 'Analytics Link',
-          url: 'https://t.me/+analytics_1',
-          telegramInviteLinkId: 'https://t.me/+analytics_1',
-          createdBy: 'Owner',
-          createsJoinRequest: false,
-          expireDate: null,
-          memberLimit: null,
-          joinedCount: 12,
-          isRevoked: false,
-          lastSyncedAt: null,
-          creatorTelegramUserId: '100',
-          creatorUsername: 'owner_admin',
-          creatorFirstName: 'Owner',
-          creatorLastName: 'Admin',
-          creatorPhotoUrl: null,
-          creatorMemberId: 'member-1',
-          creatorMatchSource: 'TELEGRAM_USER_ID',
-          createdAt: new Date('2026-07-18T00:00:00.000Z'),
-          updatedAt: new Date('2026-07-18T00:00:00.000Z'),
-          adCampaign: null,
-          creatorMember: null,
-        },
-      ]);
+  it('loads analytics invite-link totals via aggregates without reading invite-link rows', async () => {
+    prisma.telegramInviteLink.aggregate.mockResolvedValueOnce({
+      _sum: { joinedCount: 12, requestedCount: 4 },
+    });
+    prisma.telegramInviteLink.count.mockResolvedValueOnce(1);
 
     const result = await service.analytics(
       'user-1',
@@ -695,29 +703,11 @@ describe('TelegramChannelsService invite link sync', () => {
     );
 
     expect((service as any).telegramInviteLinkRequestedCountColumnAvailable).toBe(
-      false,
+      null,
     );
-    expect(prisma.telegramInviteLink.findMany).toHaveBeenCalledTimes(2);
-    expect(prisma.telegramInviteLink.findMany.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        select: expect.objectContaining({ requestedCount: true }),
-      }),
-    );
-    expect(prisma.telegramInviteLink.findMany.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({
-        select: expect.not.objectContaining({
-          requestedCount: expect.anything(),
-        }),
-      }),
-    );
+    expect(prisma.telegramInviteLink.findMany).not.toHaveBeenCalled();
     expect(result.summary.joinedHistoricalByLinks).toBe(12);
-    expect(result.inviteLinks).toEqual([
-      expect.objectContaining({
-        id: 'link-analytics-1',
-        joinedCount: 12,
-        requestedCount: 0,
-      }),
-    ]);
+    expect((result as Record<string, unknown>).inviteLinks).toBeUndefined();
   });
 
   it('persists invite-link history snapshots during syncHistorical remote invite-link syncs', async () => {
@@ -797,11 +787,13 @@ describe('TelegramChannelsService invite link sync', () => {
     ]);
     jest
       .spyOn(service as never, 'persistInviteLinkFromRemote' as never)
-      .mockImplementation(async ({ link }: { link: { url: string } }) => {
-        const persisted = persistedByUrl.get(link.url);
-        if (!persisted) throw new Error(`Unexpected link ${link.url}`);
-        return persisted as never;
-      });
+      .mockImplementation(
+        (async ({ link }: { link: { url: string } }) => {
+          const persisted = persistedByUrl.get(link.url);
+          if (!persisted) throw new Error(`Unexpected link ${link.url}`);
+          return persisted as never;
+        }) as never,
+      );
 
     mtprotoClient.getChannelHistorical.mockImplementation(
       async (params: {
@@ -861,5 +853,28 @@ describe('TelegramChannelsService invite link sync', () => {
       }),
     );
     expect(finalizeInviteLinkSyncSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps analytics date range to the latest 366 days instead of throwing', async () => {
+    const result = await service.analytics(
+      'user-1',
+      'channel-1',
+      '2024-01-01',
+      '2026-07-18',
+    );
+
+    expect(result.range.maxRangeDays).toBe(366);
+    expect(result.range.from).toBe('2025-07-17T00:00:00.000Z');
+    expect(result.range.to).toBe('2026-07-18T00:00:00.000Z');
+    expect(prisma.telegramChannelDailyStats.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          date: {
+            gte: new Date('2025-07-17T00:00:00.000Z'),
+            lte: new Date('2026-07-18T00:00:00.000Z'),
+          },
+        }),
+      }),
+    );
   });
 });

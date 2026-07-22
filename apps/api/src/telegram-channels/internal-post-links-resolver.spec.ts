@@ -9,9 +9,13 @@ describe('TelegramChannelsService internal post link resolver', () => {
         findMany: jest.fn().mockResolvedValue(targets),
       },
     };
+    const responseCache = {
+      clearByPrefix: jest.fn(),
+    };
     return new TelegramChannelsService(
       prisma as never,
       {} as never,
+      responseCache as never,
       {} as never,
       {} as never,
       {} as never,
