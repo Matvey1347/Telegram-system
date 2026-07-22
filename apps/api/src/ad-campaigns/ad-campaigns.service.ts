@@ -732,6 +732,13 @@ export class AdCampaignsService {
           joinedCount: true,
           requestedCount: true,
           isRevoked: true,
+          creatorTelegramUserId: true,
+          creatorUsername: true,
+          creatorFirstName: true,
+          creatorLastName: true,
+          creatorPhotoUrl: true,
+          creatorMatchSource: true,
+          creatorMember: WorkspaceService.assignedMemberInclude,
         },
       },
       advertisingTelegramChannels: {

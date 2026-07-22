@@ -41,6 +41,7 @@ import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import { ChannelAccessBadge, telegramChannelAccessLabel } from "@/components/telegram/channel-access-badge";
 import { InviteLinksTable } from "@/components/telegram/invite-links-table";
+import { TelegramPostPreviewModal } from "@/components/telegram/post-preview-modal";
 import { TelegramSourceAvatar } from "@/components/telegram/telegram-source-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
 import {
@@ -1042,6 +1043,8 @@ export default function TelegramChannelAnalyticsPage() {
               {!isPostsLoading && !postsError && visiblePosts.length ? (
                 <PostsTable
                   channelId={params.id}
+                  channelTitle={data?.channel?.title || "Telegram channel"}
+                  channelPhotoUrl={data?.channel?.photoUrl || null}
                   posts={visiblePosts}
                   subscribers={computed.subscribers}
                   ownViewsPerPost={ownViewsPerPost}
@@ -2593,6 +2596,8 @@ function TopPostsTable({
 
 function PostsTable({
   channelId,
+  channelTitle,
+  channelPhotoUrl,
   posts,
   subscribers,
   ownViewsPerPost,
@@ -2601,6 +2606,8 @@ function PostsTable({
   onSaveManualMetrics,
 }: {
   channelId: string;
+  channelTitle: string;
+  channelPhotoUrl?: string | null;
   posts: any[];
   subscribers: number;
   ownViewsPerPost: number;
@@ -2676,6 +2683,7 @@ function PostsTable({
     width: 0,
     height: 0,
   });
+  const [previewPost, setPreviewPost] = useState<any | null>(null);
   const syncHeaderScroll = () => {
     if (!bodyScrollRef.current) return;
     const scrollLeft = bodyScrollRef.current.scrollLeft;
@@ -2877,7 +2885,7 @@ function PostsTable({
                   {formatLocalDate(post.postDate)}
                 </div>
                 <div className="min-w-0 px-3 py-2">
-                  <PostTextTooltip channelId={channelId} post={post} />
+                  <PostPreviewTrigger post={post} onOpen={() => setPreviewPost(post)} />
                 </div>
                 <div className="whitespace-nowrap px-3 py-2 text-right">
                   {formatNumber(views)}
@@ -2918,160 +2926,41 @@ function PostsTable({
           })}
         </div>
       </div>
+      <TelegramPostPreviewModal
+        open={Boolean(previewPost)}
+        onClose={() => setPreviewPost(null)}
+        channelId={channelId}
+        channelTitle={channelTitle}
+        channelPhotoUrl={channelPhotoUrl}
+        post={previewPost}
+      />
     </div>
   );
 }
 
-function PostTextTooltip({
-  channelId,
+function PostPreviewTrigger({
   post,
+  onOpen,
 }: {
-  channelId: string;
   post: {
     id: string;
+    primaryTelegramMessageUrl?: string | null;
     text?: string | null;
     formattedText?: string | null;
     hasMedia?: boolean;
     mediaKind?: string | null;
+    telegramMessageId?: string | null;
   };
+  onOpen: () => void;
 }) {
-  const triggerRef = useRef<HTMLSpanElement | null>(null);
-  const tooltipRef = useRef<HTMLSpanElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const [position, setPosition] = useState({
-    top: 0,
-    left: 0,
-    ready: false,
-  });
-  const media = useQuery({
-    queryKey: ["telegram-post-media", channelId, post.id],
-    queryFn: () => telegramChannelsApi.postMedia(channelId, post.id),
-    enabled: open && Boolean(post.hasMedia),
-    staleTime: 5 * 60_000,
-  });
-  const [mediaUrl, setMediaUrl] = useState("");
-  useEffect(() => {
-    if (!media.data) {
-      setMediaUrl("");
-      return;
-    }
-    const url = URL.createObjectURL(media.data);
-    setMediaUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [media.data]);
   const text = post.text || "";
 
-  useEffect(() => {
-    if (!pinned) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        triggerRef.current?.contains(target) ||
-        tooltipRef.current?.contains(target)
-      ) {
-        return;
-      }
-      setPinned(false);
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
-  }, [pinned]);
-
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current || !tooltipRef.current) return;
-    const trigger = triggerRef.current.getBoundingClientRect();
-    const tooltip = tooltipRef.current.getBoundingClientRect();
-    const gap = 8;
-    const padding = 12;
-    const spaceAbove = trigger.top - padding;
-    const spaceBelow = window.innerHeight - trigger.bottom - padding;
-    const showAbove =
-      spaceAbove >= tooltip.height + gap || spaceAbove > spaceBelow;
-    const top = showAbove
-      ? Math.max(padding, trigger.top - tooltip.height - gap)
-      : Math.min(
-          window.innerHeight - tooltip.height - padding,
-          trigger.bottom + gap,
-        );
-    const left = Math.min(
-      window.innerWidth - tooltip.width - padding,
-      Math.max(padding, trigger.left),
-    );
-    setPosition({ top, left, ready: true });
-  }, [open, text, mediaUrl]);
-
-  const tooltip =
-    open && typeof document !== "undefined"
-      ? createPortal(
-          <span
-            ref={tooltipRef}
-            onClick={(event) => event.stopPropagation()}
-            className={`fixed z-[9999] max-h-[70vh] w-[min(28rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-700 bg-[#182533] p-3 text-sm leading-relaxed text-slate-100 shadow-2xl ${position.ready ? "opacity-100" : "opacity-0"}`}
-            style={{ top: position.top, left: position.left }}
-          >
-            {post.hasMedia ? (
-              <span className="mb-3 block overflow-hidden rounded-lg bg-black/30">
-                {mediaUrl && media.data?.type.startsWith("image/") ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={mediaUrl}
-                    alt=""
-                    className="max-h-80 w-full object-contain"
-                  />
-                ) : media.isLoading ? (
-                  <span className="flex h-36 items-center justify-center text-slate-400">
-                    Loading image…
-                  </span>
-                ) : (
-                  <span className="flex h-24 items-center justify-center text-slate-400">
-                    Telegram media
-                  </span>
-                )}
-              </span>
-            ) : null}
-            {post.formattedText ? (
-              <span
-                className="telegram-preview-text block whitespace-pre-wrap break-words"
-                dangerouslySetInnerHTML={{ __html: post.formattedText }}
-              />
-            ) : text ? (
-              <span className="block whitespace-pre-wrap break-words">
-                {text}
-              </span>
-            ) : null}
-          </span>,
-          document.body,
-        )
-      : null;
-
   return (
-    <span
-      ref={triggerRef}
-      className="block min-w-0"
-      onMouseEnter={() => {
-        setPosition((prev) => ({ ...prev, ready: false }));
-        setOpen(true);
-      }}
-      onMouseLeave={() => {
-        if (!pinned) setOpen(false);
-      }}
-      onFocus={() => {
-        setPosition((prev) => ({ ...prev, ready: false }));
-        setOpen(true);
-      }}
-      onBlur={() => {
-        if (!pinned) setOpen(false);
-      }}
-      onClick={() => {
-        setPosition((prev) => ({ ...prev, ready: false }));
-        const nextPinned = !pinned;
-        setPinned(nextPinned);
-        setOpen(nextPinned);
-      }}
-      title={pinned ? "Click to close preview" : "Click to keep preview open"}
-      tabIndex={0}
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex min-w-0 max-w-full items-center gap-2 text-left transition-colors hover:text-white"
+      title="Click to open Telegram-style post preview"
     >
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="min-w-0 truncate">
@@ -3083,8 +2972,10 @@ function PostTextTooltip({
           </span>
         ) : null}
       </span>
-      {tooltip}
-    </span>
+      <span className="shrink-0 rounded-full border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
+        Preview
+      </span>
+    </button>
   );
 }
 

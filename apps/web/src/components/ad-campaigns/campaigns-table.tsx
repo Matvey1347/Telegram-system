@@ -1,10 +1,11 @@
 "use client";
 
 import { type MouseEventHandler, useMemo, useState } from "react";
-import { CircleHelp } from "lucide-react";
 import { MoneyStack } from "@/components/ui/money-stack";
 import { CampaignInviteLinkHistoryModal } from "@/components/ad-campaigns/campaign-invite-link-history-modal";
 import { PromoPreviewModal } from "@/components/ad-campaigns/promo-preview-modal";
+import { IconAvatar } from "@/components/icons/icon-avatar";
+import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { IconButton } from "@/components/ui/primitives";
 import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
 import type {
@@ -14,6 +15,44 @@ import type {
   TelegramChannel,
   TelegramInviteLink,
 } from "@/lib/api";
+
+function InviteLinkCreatorAvatar({
+  inviteLink,
+}: {
+  inviteLink: TelegramInviteLink;
+}) {
+  if (inviteLink.creatorMember) {
+    return (
+      <IconAvatar
+        icon={inviteLink.creatorMember.avatarIcon}
+        label={inviteLink.creatorMember.user?.name || inviteLink.name}
+        size="xs"
+        className="rounded-full"
+      />
+    );
+  }
+  if (inviteLink.creatorPhotoUrl) {
+    return (
+      <img
+        src={inviteLink.creatorPhotoUrl}
+        alt=""
+        className="h-4 w-4 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-slate-700 text-[10px] text-slate-400">
+      {String(
+        inviteLink.creatorFirstName ||
+          inviteLink.creatorUsername ||
+          inviteLink.name ||
+          "A",
+      )
+        .slice(0, 1)
+        .toUpperCase()}
+    </span>
+  );
+}
 
 function formatMetric(value: unknown, decimals = 0) {
   if (value == null || !Number.isFinite(Number(value))) return "-";
@@ -407,7 +446,6 @@ function PerformanceCell({
   costPerJoined,
   primaryCostPerJoined,
   joined,
-  net,
   left,
   moneySettings,
   rates,
@@ -424,7 +462,6 @@ function PerformanceCell({
   costPerJoined: number | null;
   primaryCostPerJoined: number | null;
   joined: number;
-  net: number;
   left: number;
   moneySettings: any;
   rates: any[] | undefined;
@@ -443,6 +480,13 @@ function PerformanceCell({
     peakJoined > 0 ? (Math.max(0, left) / peakJoined) * 100 : 0;
   const showPeakJoined = peakJoined > joined;
   const showUnsubscribed = left > 0;
+  const peakPrimaryCostPerJoined =
+    showPeakJoined && peakJoined > 0 ? primaryCost / peakJoined : null;
+  const showPeakCost =
+    showPeakJoined &&
+    peakPrimaryCostPerJoined != null &&
+    primaryCostPerJoined != null &&
+    Math.abs(peakPrimaryCostPerJoined - primaryCostPerJoined) >= 0.005;
 
   return (
     <div className={`rounded-xl border p-3 ${cardClass}`}>
@@ -481,10 +525,21 @@ function PerformanceCell({
           <p className={`font-semibold leading-snug ${kpiTextClass}`}>
             {formatMetric(joined)}
           </p>
-          <p className="text-xs leading-snug text-slate-500">
-            Net {formatMetric(net)}
-            {left > 0 ? ` / left ${formatMetric(left)}` : ""}
-          </p>
+          {showPeakJoined || showUnsubscribed ? (
+            <div className="mt-1 space-y-0.5 text-xs leading-snug text-slate-500">
+              {showPeakJoined ? (
+                <p>
+                  Peak {formatMetric(peakJoined)}
+                  {showPeakCost
+                    ? ` · $${formatMetric(peakPrimaryCostPerJoined, 2)}/sub`
+                    : ""}
+                </p>
+              ) : null}
+              {showUnsubscribed ? (
+                <p>Unsubscribed {formatPercent(unsubscribedPercent)}</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
@@ -520,9 +575,6 @@ function PerformanceCell({
       {campaign.inviteLinks?.length ? (
         <div className="mt-3">
           <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
-              Current {formatMetric(joined)}
-            </span>
             {showPeakJoined ? (
               <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
                 Peak {formatMetric(peakJoined)}
@@ -640,19 +692,7 @@ function InviteLinkList({
           title={`Invite link: ${inviteLink.name}\nClick to open preview modal.\nCtrl/Cmd + click opens the invite link in a new tab.`}
           className="inline-flex max-w-[240px] items-center gap-1 rounded-full border border-amber-800 bg-amber-950/20 px-2 py-1 text-xs text-amber-100 transition-colors hover:bg-amber-950/35"
         >
-          {inviteLink.creatorMember?.avatarIcon?.imageUrl ? (
-            <img
-              src={inviteLink.creatorMember.avatarIcon.imageUrl}
-              alt=""
-              className="h-4 w-4 rounded-full object-cover"
-            />
-          ) : inviteLink.creatorPhotoUrl ? (
-            <img
-              src={inviteLink.creatorPhotoUrl}
-              alt=""
-              className="h-4 w-4 rounded-full object-cover"
-            />
-          ) : null}
+          <InviteLinkCreatorAvatar inviteLink={inviteLink} />
           <span className="truncate">{inviteLink.name}</span>
         </button>
       ))}
@@ -839,14 +879,8 @@ export function AdCampaignsTable({
           <thead className="bg-slate-950 text-xs uppercase text-neutral-400">
             <tr>
               <th className="px-4 py-3 font-medium">Campaign</th>
-              <th
-                className="px-4 py-3 font-medium"
-                title="Hover a campaign performance card to see this channel's KPI ranges."
-              >
-                <span className="inline-flex items-center gap-1">
-                  Performance
-                  <CircleHelp size={13} className="text-slate-500" />
-                </span>
+              <th className="px-4 py-3 font-medium">
+                Performance
               </th>
               {showHypotheses ? (
                 <th className="px-4 py-3 font-medium">Hypotheses</th>
@@ -913,7 +947,6 @@ export function AdCampaignsTable({
                     costPerJoined={row.costPerJoined}
                     primaryCostPerJoined={row.primaryCostPerJoined}
                     joined={row.joined}
-                    net={row.net}
                     left={row.left}
                     moneySettings={moneySettings}
                     rates={rates}

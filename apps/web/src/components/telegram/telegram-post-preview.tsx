@@ -7,6 +7,7 @@ type TelegramPostPreviewProps = {
   channelTitle: string;
   channelPhotoUrl?: string | null;
   text: string;
+  formattedHtml?: string | null;
   imageUrls: string[];
   longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 };
@@ -124,10 +125,30 @@ function previewHtml(raw: string) {
     );
 }
 
+function normalizeTelegramFormattedHtml(html: string) {
+  return html
+    .replace(
+      /<blockquote\s+expandable(?:=(['"])?.*?\1)?\s*>/gi,
+      '<blockquote class="expandable">',
+    )
+    .replace(/<tg-spoiler>/gi, '<span class="tg-spoiler">')
+    .replace(/<\/tg-spoiler>/gi, "</span>")
+    .replace(/<span class="spoiler">/gi, '<span class="tg-spoiler">')
+    .replace(
+      /<pre>(?![\s\S]*data-copy-code)([\s\S]*?)<\/pre>/gi,
+      (_match, inner: string) => {
+        const hasCodeTag = /<code[\s>]/i.test(inner);
+        const content = hasCodeTag ? inner : `<code>${inner}</code>`;
+        return `<pre class="tg-native-pre"><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button>${content}</pre>`;
+      },
+    );
+}
+
 export function TelegramPostPreview({
   channelTitle,
   channelPhotoUrl,
   text,
+  formattedHtml,
   imageUrls,
   longTextMode = "IMAGES_THEN_TEXT",
 }: TelegramPostPreviewProps) {
@@ -192,6 +213,7 @@ export function TelegramPostPreview({
                 <TelegramMessageBubble
                   key={`${index}-${message.text.length}-${message.imageUrls.length}`}
                   text={message.text}
+                  formattedHtml={index === 0 ? formattedHtml : null}
                   imageUrls={message.imageUrls}
                   time={time}
                 />
@@ -210,10 +232,12 @@ export function TelegramPostPreview({
 
 function TelegramMessageBubble({
   text,
+  formattedHtml,
   imageUrls,
   time,
 }: {
   text: string;
+  formattedHtml?: string | null;
   imageUrls: string[];
   time: string;
 }) {
@@ -222,11 +246,21 @@ function TelegramMessageBubble({
       {imageUrls.length ? <TelegramMediaGrid imageUrls={imageUrls} /> : null}
       {text.trim() ? (
         <div className="px-3.5 pb-2.5 pt-3">
-          <div
-            className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
-            dangerouslySetInnerHTML={{ __html: previewHtml(text) }}
-            onClick={handlePreviewContentClick}
-          />
+          {formattedHtml ? (
+            <div
+              className="telegram-preview-text break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
+              dangerouslySetInnerHTML={{
+                __html: normalizeTelegramFormattedHtml(formattedHtml),
+              }}
+              onClick={handlePreviewContentClick}
+            />
+          ) : (
+            <div
+              className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
+              dangerouslySetInnerHTML={{ __html: previewHtml(text) }}
+              onClick={handlePreviewContentClick}
+            />
+          )}
           <MessageMeta time={time} />
         </div>
       ) : (

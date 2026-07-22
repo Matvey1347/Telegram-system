@@ -8199,7 +8199,7 @@ export class TelegramChannelsService {
 
   async posts(userId: string, channelId: string, limit = 50, offset = 0) {
     const workspaceId = await this.workspace(userId);
-    await this.findOne(userId, channelId);
+    const channel = await this.findOne(userId, channelId);
     const safeLimit = Math.max(1, Math.min(200, limit));
     const safeOffset = Math.max(0, offset);
     const where = { workspaceId, telegramChannelId: channelId };
@@ -8214,7 +8214,13 @@ export class TelegramChannelsService {
     ]);
     return {
       source: 'mtproto',
-      items,
+      items: items.map((post) => ({
+        ...post,
+        primaryTelegramMessageUrl: this.telegramMessageUrl(
+          channel,
+          post.telegramMessageId,
+        ),
+      })),
       total,
       limit: safeLimit,
       offset: safeOffset,

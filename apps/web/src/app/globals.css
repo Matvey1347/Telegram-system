@@ -204,6 +204,53 @@ button:disabled,
   line-height: 1.32;
 }
 
+.telegram-preview-text .tg-native-pre {
+  position: relative;
+  margin: 7px 0;
+  overflow-x: auto;
+  border-left: 3px solid rgb(255 255 255 / 92%);
+  border-radius: 5px;
+  background: rgb(35 48 63 / 96%);
+  padding: 10px 40px 10px 12px;
+  white-space: pre-wrap;
+}
+
+.telegram-preview-text .tg-native-pre > button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #dbe9f5;
+  cursor: pointer;
+}
+
+.telegram-preview-text .tg-native-pre > button:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.telegram-preview-text .tg-native-pre > button.copied .tg-copy-icon {
+  display: none;
+}
+
+.telegram-preview-text .tg-native-pre > button.copied::after {
+  content: "✓";
+  font-size: 14px;
+}
+
+.telegram-preview-text .tg-native-pre code {
+  display: block;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.36;
+  white-space: pre-wrap;
+}
+
 .telegram-preview-text blockquote {
   position: relative;
   margin: 7px 0;

@@ -763,6 +763,7 @@ export type TelegramPost = {
   id: string;
   telegramChannelId: string;
   telegramMessageId: string;
+  primaryTelegramMessageUrl?: string | null;
   postDate: string;
   text?: string | null;
   formattedText?: string | null;
