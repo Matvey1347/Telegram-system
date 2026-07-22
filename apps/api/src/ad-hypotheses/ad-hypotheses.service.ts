@@ -4,8 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  inviteLinkAttributedSubscribers,
-  sumInviteLinkAttributedSubscribers,
+  inviteLinkJoinedSubscribers,
+  sumInviteLinkJoinedSubscribers,
 } from '../common/analytics/invite-link-metrics';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -140,14 +140,14 @@ export class AdHypothesesService {
         : []),
     ];
     const selectedLink = inviteLinks.find((link: any) => link.id === selectedLinkId);
-    return selectedLink ? inviteLinkAttributedSubscribers(selectedLink) : null;
+    return selectedLink ? inviteLinkJoinedSubscribers(selectedLink) : null;
   }
 
   private campaignJoined(campaign: any) {
     const selectedLinkJoined = this.selectedInviteLinkJoined(campaign);
     if (selectedLinkJoined != null) return selectedLinkJoined;
     const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
-      ? sumInviteLinkAttributedSubscribers(campaign.inviteLinks)
+      ? sumInviteLinkJoinedSubscribers(campaign.inviteLinks)
       : null;
     if (inviteLinksJoined != null && inviteLinksJoined > 0) {
       return inviteLinksJoined;

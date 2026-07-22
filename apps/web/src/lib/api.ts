@@ -1226,6 +1226,7 @@ export type TelegramInviteLink = {
     user: Pick<User, "id" | "name">;
   } | null;
   adCampaign?: AdCampaign;
+  history?: TelegramInviteLinkHistory | null;
 };
 export type InviteLinkHistoryPoint = {
   syncedAt: string;
@@ -1391,6 +1392,7 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   assignedMemberId?: string | null;
   assignedMember?: WorkspaceMember | null;
   hypothesisLinks?: AdCampaignHypothesisLink[];
+  inviteLinkHistory?: AdCampaignInviteLinkHistory | null;
   analytics?: {
     joinedCount: number;
     leftCount: number;

@@ -25,6 +25,22 @@ function drawdownClass(percent: number) {
   return "border-emerald-700/60 bg-emerald-950/20 text-emerald-200";
 }
 
+function hasVisibleInviteLinkHistory(summary: {
+  currentJoinedCount: number;
+  currentRequestedCount: number;
+  peakJoinedCount: number;
+  peakRequestedCount?: number;
+  drawdownFromPeak: number;
+}) {
+  return (
+    summary.currentJoinedCount > 0 ||
+    summary.currentRequestedCount > 0 ||
+    summary.peakJoinedCount > 0 ||
+    Number(summary.peakRequestedCount || 0) > 0 ||
+    summary.drawdownFromPeak > 0
+  );
+}
+
 export function CampaignInviteLinkHistoryModal({
   campaign,
   onClose,
@@ -32,11 +48,14 @@ export function CampaignInviteLinkHistoryModal({
   campaign: AdCampaign | null;
   onClose: () => void;
 }) {
+  const embeddedHistory = campaign?.inviteLinkHistory ?? null;
   const historyQuery = useQuery({
     queryKey: ["campaign-invite-link-history", campaign?.id],
     queryFn: () => adCampaignsApi.inviteLinkHistory(campaign!.id),
-    enabled: Boolean(campaign?.id),
+    enabled: !embeddedHistory && Boolean(campaign?.id),
   });
+  const resolvedHistory = embeddedHistory ?? historyQuery.data ?? null;
+  const isLoadingHistory = !embeddedHistory && historyQuery.isLoading;
 
   return (
     <Modal
@@ -47,19 +66,19 @@ export function CampaignInviteLinkHistoryModal({
     >
       {campaign ? (
         <div className="space-y-4">
-          {historyQuery.isLoading ? (
+          {isLoadingHistory ? (
             <div className="rounded-lg border border-slate-800 bg-slate-900/20 p-4 text-sm text-slate-400">
               Loading campaign history...
             </div>
           ) : null}
 
-          {!historyQuery.isLoading ? (
+          {!isLoadingHistory ? (
             <>
               <InviteLinkHistoryPanel
                 title="Campaign invite-link trend"
                 subtitle="Aggregate joined and pending requests across all campaign invite links after each sync."
-                points={historyQuery.data?.points || []}
-                summary={historyQuery.data?.summary || null}
+                points={resolvedHistory?.points || []}
+                summary={resolvedHistory?.summary || null}
               />
 
               <div className="rounded-lg border border-slate-800 bg-slate-900/20 p-4">
@@ -68,32 +87,35 @@ export function CampaignInviteLinkHistoryModal({
                     Invite links breakdown
                   </h3>
                   <span className="text-xs text-slate-500">
-                    {formatNumber(historyQuery.data?.summary.inviteLinksCount || 0)}{" "}
+                    {formatNumber(resolvedHistory?.summary.inviteLinksCount || 0)}{" "}
                     links
                   </span>
                 </div>
                 <div className="space-y-2">
-                  {(historyQuery.data?.inviteLinks || []).map((link) => (
-                    <div
-                      key={link.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white">
-                          {link.name}
-                        </p>
-                        <p className="truncate text-xs text-slate-500">
-                          current {formatNumber(link.summary.currentJoinedCount)} /
-                          peak {formatNumber(link.summary.peakJoinedCount)}
-                        </p>
-                      </div>
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${drawdownClass(link.summary.drawdownPercent)}`}
+                  {(resolvedHistory?.inviteLinks || []).map((link) => {
+                    if (!hasVisibleInviteLinkHistory(link.summary)) return null;
+                    return (
+                      <div
+                        key={link.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"
                       >
-                        drop {formatPercent(link.summary.drawdownPercent)}
-                      </span>
-                    </div>
-                  ))}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-white">
+                            {link.name}
+                          </p>
+                          <p className="truncate text-xs text-slate-500">
+                            current {formatNumber(link.summary.currentJoinedCount)} /
+                            peak {formatNumber(link.summary.peakJoinedCount)}
+                          </p>
+                        </div>
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${drawdownClass(link.summary.drawdownPercent)}`}
+                        >
+                          drop {formatPercent(link.summary.drawdownPercent)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </>

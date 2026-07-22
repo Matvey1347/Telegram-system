@@ -135,11 +135,26 @@ function normalizeTelegramFormattedHtml(html: string) {
     .replace(/<\/tg-spoiler>/gi, "</span>")
     .replace(/<span class="spoiler">/gi, '<span class="tg-spoiler">')
     .replace(
-      /<pre>(?![\s\S]*data-copy-code)([\s\S]*?)<\/pre>/gi,
-      (_match, inner: string) => {
-        const hasCodeTag = /<code[\s>]/i.test(inner);
-        const content = hasCodeTag ? inner : `<code>${inner}</code>`;
-        return `<pre class="tg-native-pre"><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button>${content}</pre>`;
+      /<pre([^>]*)>([\s\S]*?)<\/pre>/gi,
+      (_match, attributes: string, inner: string) => {
+        if (/data-copy-code/i.test(inner)) return _match;
+        const languageFromAttr =
+          attributes.match(/\slanguage=(['"])(.*?)\1/i)?.[2] ||
+          attributes.match(/\slang=(['"])(.*?)\1/i)?.[2] ||
+          "";
+        const codeClassMatch = inner.match(
+          /<code[^>]*class=(['"])(.*?)\1[^>]*>/i,
+        );
+        const languageFromCodeClass = codeClassMatch?.[2]
+          ?.split(/\s+/)
+          .find((value) => value.startsWith("language-"))
+          ?.replace(/^language-/, "") || "";
+        const label = languageFromAttr || languageFromCodeClass;
+        const content = /<code[\s>]/i.test(inner) ? inner : `<code>${inner}</code>`;
+        const copyButton = `<button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button>`;
+        return label
+          ? `<pre class="tg-native-pre"><span class="tg-native-pre-header"><span>${escapeHtml(label)}</span>${copyButton}</span>${content}</pre>`
+          : `<pre class="tg-native-pre tg-native-pre-plain">${copyButton}${content}</pre>`;
       },
     );
 }
@@ -248,7 +263,7 @@ function TelegramMessageBubble({
         <div className="px-3.5 pb-2.5 pt-3">
           {formattedHtml ? (
             <div
-              className="telegram-preview-text break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
+              className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
               dangerouslySetInnerHTML={{
                 __html: normalizeTelegramFormattedHtml(formattedHtml),
               }}

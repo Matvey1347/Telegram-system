@@ -27,8 +27,16 @@ import type {
 import { HTMLParser } from 'telegram/extensions/html';
 import {
   inviteLinkAttributedSubscribers,
+  inviteLinkJoinedSubscribers,
   sumInviteLinkAttributedSubscribers,
+  sumInviteLinkJoinedSubscribers,
 } from '../common/analytics/invite-link-metrics';
+import {
+  effectiveCampaignActiveSubscribers,
+  effectiveCampaignJoinedSubscribers,
+  resolveChannelKpiLabel,
+  resolveChannelKpiStatus,
+} from '../common/analytics/channel-financial-summary';
 import { ApplicationLoggerService } from '../application-logs/application-logger.service';
 import { ResponseCacheService } from '../common/response-cache.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -1301,6 +1309,114 @@ export class TelegramChannelsService {
     };
   }
 
+  private buildInviteLinkHistoryPayload(
+    inviteLink: {
+      joinedCount: number;
+      requestedCount?: number | null;
+      isRevoked: boolean;
+      lastSyncedAt?: Date | null;
+      updatedAt?: Date | null;
+      createdAt?: Date | null;
+    } & Record<string, unknown>,
+    rowsAsc: Array<{
+      syncedAt: Date;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked?: boolean | null;
+    }>,
+    limit = 120,
+  ) {
+    const maxPoints = Math.max(2, Math.min(365, limit));
+    const historyRows = this.appendCurrentInviteLinkHistoryRowIfChanged(
+      rowsAsc.slice(-maxPoints),
+      {
+        syncedAt:
+          inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
+        joinedCount: inviteLink.joinedCount,
+        requestedCount: inviteLink.requestedCount,
+        isRevoked: inviteLink.isRevoked,
+      },
+    ).slice(-maxPoints);
+    const points = this.inviteLinkHistoryPoints(
+      historyRows.length
+        ? historyRows
+        : [
+            this.inviteLinkSyntheticHistoryPoint({
+              syncedAt:
+                inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
+              joinedCount: inviteLink.joinedCount,
+              requestedCount: inviteLink.requestedCount,
+              isRevoked: inviteLink.isRevoked,
+            }),
+          ],
+    );
+    return {
+      inviteLink: this.normalizeInviteLinkRequestedCount(inviteLink),
+      points,
+      summary: this.inviteLinkHistorySummary(points),
+    };
+  }
+
+  private async attachInviteLinkHistories<
+    T extends {
+      id: string;
+      telegramChannelId: string;
+      joinedCount: number;
+      requestedCount?: number | null;
+      isRevoked: boolean;
+      lastSyncedAt?: Date | null;
+      updatedAt?: Date | null;
+      createdAt?: Date | null;
+    } & Record<string, unknown>,
+  >(
+    workspaceId: string,
+    channelId: string,
+    links: T[],
+    limit = 120,
+  ) {
+    const normalizedLinks = this.normalizeInviteLinksRequestedCount(links);
+    if (!normalizedLinks.length) return normalizedLinks;
+    const rows = await this.readInviteLinkSnapshotsOrEmpty({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        inviteLinkId: { in: normalizedLinks.map((link) => link.id) },
+      },
+      orderBy: [{ inviteLinkId: 'asc' }, { syncedAt: 'asc' }],
+      take: Math.max(
+        2,
+        Math.min(5000, limit * Math.max(1, normalizedLinks.length)),
+      ),
+    });
+    const rowsByInviteLinkId = new Map<
+      string,
+      Array<{
+        syncedAt: Date;
+        joinedCount: number;
+        requestedCount: number;
+        isRevoked?: boolean | null;
+      }>
+    >();
+    for (const row of rows) {
+      const list = rowsByInviteLinkId.get(row.inviteLinkId) ?? [];
+      list.push({
+        syncedAt: row.syncedAt,
+        joinedCount: Number(row.joinedCount || 0),
+        requestedCount: Number(row.requestedCount || 0),
+        isRevoked: Boolean(row.isRevoked),
+      });
+      rowsByInviteLinkId.set(row.inviteLinkId, list);
+    }
+    return normalizedLinks.map((link) => ({
+      ...link,
+      history: this.buildInviteLinkHistoryPayload(
+        link,
+        rowsByInviteLinkId.get(link.id) ?? [],
+        limit,
+      ),
+    }));
+  }
+
   private async persistInviteLinkSnapshots(params: {
     workspaceId: string;
     channelId: string;
@@ -1662,6 +1778,45 @@ export class TelegramChannelsService {
       requestedCount: Number(params.requestedCount ?? 0),
       isRevoked: Boolean(params.isRevoked),
     };
+  }
+
+  private appendCurrentInviteLinkHistoryRowIfChanged<
+    T extends {
+      syncedAt: Date;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked?: boolean | null;
+    },
+  >(
+    rows: T[],
+    current: {
+      syncedAt?: Date | null;
+      joinedCount?: number | null;
+      requestedCount?: number | null;
+      isRevoked?: boolean | null;
+    },
+  ) {
+    const currentJoinedCount = Number(current.joinedCount ?? 0);
+    const currentRequestedCount = Number(current.requestedCount ?? 0);
+    const currentRevoked = Boolean(current.isRevoked);
+    const latest = rows[rows.length - 1] ?? null;
+    if (
+      latest &&
+      Number(latest.joinedCount || 0) === currentJoinedCount &&
+      Number(latest.requestedCount || 0) === currentRequestedCount &&
+      Boolean(latest.isRevoked) === currentRevoked
+    ) {
+      return rows;
+    }
+    return [
+      ...rows,
+      this.inviteLinkSyntheticHistoryPoint({
+        syncedAt: current.syncedAt ?? new Date(),
+        joinedCount: currentJoinedCount,
+        requestedCount: currentRequestedCount,
+        isRevoked: currentRevoked,
+      }),
+    ];
   }
 
   private async readInviteLinkSnapshotsOrEmpty(params: {
@@ -2947,41 +3102,16 @@ export class TelegramChannelsService {
     if (!channels.length) return channels;
 
     const channelIds = channels.map((channel) => channel.id);
-    const [campaigns, inviteLinks, timePostsByChannel] = await Promise.all([
-      this.prisma.adCampaign.findMany({
-        where: {
-          workspaceId,
-          telegramChannelId: { in: channelIds },
-          excludeFromAnalytics: false,
-        },
-        include: {
-          inviteLinks: { select: { joinedCount: true, requestedCount: true } },
-        },
-      }),
-      this.prisma.telegramInviteLink.findMany({
-        where: { workspaceId, telegramChannelId: { in: channelIds } },
-        select: {
-          id: true,
-          telegramChannelId: true,
-          joinedCount: true,
-          requestedCount: true,
-        },
-      }),
+    const [timePostsByChannel, financialSummaryEntries] = await Promise.all([
       this.timePostsByChannelIds(channelIds),
+      Promise.all(
+        channels.map(async (channel) => [
+          channel.id,
+          await this.analyticsService.getChannelFinancialSummary(channel.id),
+        ] as const),
+      ),
     ]);
-
-    const campaignsByChannel = new Map<string, typeof campaigns>();
-    for (const campaign of campaigns) {
-      const items = campaignsByChannel.get(campaign.telegramChannelId) ?? [];
-      items.push(campaign);
-      campaignsByChannel.set(campaign.telegramChannelId, items);
-    }
-    const inviteLinksByChannel = new Map<string, typeof inviteLinks>();
-    for (const link of inviteLinks) {
-      const items = inviteLinksByChannel.get(link.telegramChannelId) ?? [];
-      items.push(link);
-      inviteLinksByChannel.set(link.telegramChannelId, items);
-    }
+    const financialSummaryByChannel = new Map(financialSummaryEntries);
 
     return channels.map((channel) => {
       const {
@@ -3009,89 +3139,26 @@ export class TelegramChannelsService {
           snapshot?.hasSubscriberBasePollution ?? false,
         postsWindow: snapshot?.postsWindow ?? channel.activeSubscribersWindow,
       };
-      const channelCampaigns = campaignsByChannel.get(channel.id) ?? [];
-      const channelInviteLinks = inviteLinksByChannel.get(channel.id) ?? [];
-      const selectedInviteLinks = new Map(
-        channelInviteLinks.map((link) => [
-          link.id,
-          inviteLinkAttributedSubscribers(link),
-        ]),
-      );
-      const totalAdSpend = channelCampaigns.reduce(
-        (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
-        0,
-      );
-      const totalJoinedSubscribers = channelCampaigns.reduce(
-        (sum, campaign) => {
-          const selectedLinkId = String(
-            campaign.telegramInviteLinkId || '',
-          ).trim();
-          if (selectedLinkId && selectedInviteLinks.has(selectedLinkId)) {
-            return sum + Number(selectedInviteLinks.get(selectedLinkId) || 0);
-          }
-          const campaignJoined = Number(campaign.joinedCount || 0);
-          const linkedJoined = sumInviteLinkAttributedSubscribers(
-            campaign.inviteLinks,
-          );
-          return (
-            sum +
-            Math.max(
-              campaignJoined,
-              linkedJoined,
-              Number(campaign.newSubscribers || 0),
-            )
-          );
-        },
-        0,
-      );
-      const paidFromCampaigns = channelCampaigns.reduce(
-        (sum, campaign) => sum + Number(campaign.activeSubscribersFromAd || 0),
-        0,
-      );
-      const paidActiveSubscribersEstimate =
-        paidFromCampaigns || audience.paidActiveSubscribersEstimate || 0;
-      const average = (values: Array<number | null>) => {
-        const present = values.filter(
-          (value): value is number => value != null && Number.isFinite(value),
-        );
-        return present.length
-          ? present.reduce((sum, value) => sum + value, 0) / present.length
-          : null;
-      };
-      const avgCpa =
-        totalJoinedSubscribers > 0
-          ? totalAdSpend / totalJoinedSubscribers
-          : null;
-      const targetFrom =
-        channel.targetCpaFrom == null ? null : Number(channel.targetCpaFrom);
-      const targetTo =
-        channel.targetCpa == null ? null : Number(channel.targetCpa);
-      const acceptableFrom =
-        channel.acceptableCpaFrom == null
-          ? null
-          : Number(channel.acceptableCpaFrom);
-      const acceptableTo =
-        channel.acceptableCpa == null ? null : Number(channel.acceptableCpa);
-      const stopFrom =
-        channel.stopCpaFrom == null
-          ? channel.stopCpa == null
-            ? null
-            : Number(channel.stopCpa)
-          : Number(channel.stopCpaFrom);
-      const inRange = (value: number, from: number | null, to: number | null) =>
-        (from != null || to != null) &&
-        (from == null || value >= from) &&
-        (to == null || value <= to);
-      const kpiStatus =
-        avgCpa == null
-          ? 'unknown'
-          : inRange(avgCpa, targetFrom, targetTo)
-            ? 'good'
-            : inRange(avgCpa, acceptableFrom, acceptableTo)
-              ? 'acceptable'
-              : inRange(avgCpa, stopFrom, null)
-                ? 'bad'
-                : 'unknown';
+      const financialSummary =
+        financialSummaryByChannel.get(channel.id) ?? {
+          totalAdSpend: 0,
+          campaignsCount: 0,
+          totalJoinedSubscribers: 0,
+          avgCpa: null,
+          activeSubscribersEstimate: audience.activeSubscribersEstimate,
+          paidActiveSubscribersEstimate:
+            audience.paidActiveSubscribersEstimate ?? 0,
+          activeCpa: null,
+          avgActiveRate: null,
+          avgRetention7d: null,
+          dataQuality: audience.dataQuality,
+          dataQualityReason: audience.dataQualityReason,
+          dataQualityWarning: null,
+          hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
+          hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
+          kpiStatus: 'unknown' as const,
+          kpiLabel: '-',
+        };
 
       return {
         ...channelData,
@@ -3115,38 +3182,7 @@ export class TelegramChannelsService {
                 }
               : undefined,
           },
-          financialSummary: {
-            totalAdSpend,
-            campaignsCount: channelCampaigns.length,
-            totalJoinedSubscribers,
-            avgCpa,
-            activeSubscribersEstimate: audience.activeSubscribersEstimate,
-            paidActiveSubscribersEstimate,
-            activeCpa:
-              paidActiveSubscribersEstimate > 0
-                ? totalAdSpend / paidActiveSubscribersEstimate
-                : null,
-            avgActiveRate: average(
-              channelCampaigns.map((campaign) => campaign.activeRate),
-            ),
-            avgRetention7d: average(
-              channelCampaigns.map((campaign) => campaign.retention7d),
-            ),
-            dataQuality: audience.dataQuality,
-            dataQualityReason: audience.dataQualityReason,
-            dataQualityWarning: null,
-            hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
-            hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
-            kpiStatus,
-            kpiLabel:
-              kpiStatus === 'good'
-                ? 'Good'
-                : kpiStatus === 'acceptable'
-                  ? 'Acceptable'
-                  : kpiStatus === 'bad'
-                    ? 'Stop'
-                    : '-',
-          },
+          financialSummary,
         },
       };
     });
@@ -8128,11 +8164,12 @@ export class TelegramChannelsService {
   async inviteLinks(userId: string, channelId: string) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
-    return this.findInviteLinksWithRequestedCountFallback({
+    const links = await this.findInviteLinksWithRequestedCountFallback({
       workspaceId,
       where: { workspaceId, telegramChannelId: channelId },
       orderBy: { createdAt: 'desc' },
     });
+    return this.attachInviteLinkHistories(workspaceId, channelId, links);
   }
 
   async inviteLinkHistory(
@@ -8163,25 +8200,11 @@ export class TelegramChannelsService {
       orderBy: { syncedAt: 'desc' },
       take: Math.max(2, Math.min(365, limit)),
     });
-    const points = this.inviteLinkHistoryPoints(
-      rows.length
-        ? [...rows].reverse()
-        : [
-            this.inviteLinkSyntheticHistoryPoint({
-              syncedAt:
-                inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
-              joinedCount: inviteLink.joinedCount,
-              requestedCount: (inviteLink as { requestedCount?: number | null })
-                .requestedCount,
-              isRevoked: inviteLink.isRevoked,
-            }),
-          ],
+    return this.buildInviteLinkHistoryPayload(
+      inviteLink,
+      rows.length ? [...rows].reverse() : [],
+      limit,
     );
-    return {
-      inviteLink: this.normalizeInviteLinkRequestedCount(inviteLink),
-      points,
-      summary: this.inviteLinkHistorySummary(points),
-    };
   }
 
   async promosByChannel(userId: string, channelId: string) {
@@ -8329,7 +8352,7 @@ export class TelegramChannelsService {
       }),
     ]);
     const campaignsWithMetrics = campaigns.map((campaign) => {
-      const joinedCount = sumInviteLinkAttributedSubscribers(
+      const joinedCount = sumInviteLinkJoinedSubscribers(
         Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
       );
       const fallbackJoinedCount = Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
@@ -8366,8 +8389,7 @@ export class TelegramChannelsService {
         attributionSource: 'mtproto_invite_link_usage',
       };
     });
-    const inviteLinksJoinedTotal =
-      sumInviteLinkAttributedSubscribers(inviteLinks);
+    const inviteLinksJoinedTotal = sumInviteLinkJoinedSubscribers(inviteLinks);
     return {
       source: 'mtproto',
       channel,
@@ -8467,7 +8489,7 @@ export class TelegramChannelsService {
       where: { adCampaignId: campaignId },
       select: { joinedCount: true, requestedCount: true },
     });
-    const joinedCount = sumInviteLinkAttributedSubscribers(links);
+    const joinedCount = sumInviteLinkJoinedSubscribers(links);
     return this.prisma.adCampaign.update({
       where: { id: campaignId },
       data: {

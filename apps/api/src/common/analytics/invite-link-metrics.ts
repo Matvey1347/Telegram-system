@@ -3,11 +3,28 @@ function toCount(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+export function inviteLinkJoinedSubscribers(link: {
+  joinedCount?: unknown;
+} | null | undefined) {
+  return toCount(link?.joinedCount);
+}
+
+export function sumInviteLinkJoinedSubscribers(
+  links: Array<{
+    joinedCount?: unknown;
+  } | null | undefined>,
+) {
+  return links.reduce(
+    (sum, link) => sum + inviteLinkJoinedSubscribers(link),
+    0,
+  );
+}
+
 export function inviteLinkAttributedSubscribers(link: {
   joinedCount?: unknown;
   requestedCount?: unknown;
 } | null | undefined) {
-  return toCount(link?.joinedCount) + toCount(link?.requestedCount);
+  return inviteLinkJoinedSubscribers(link) + toCount(link?.requestedCount);
 }
 
 export function sumInviteLinkAttributedSubscribers(

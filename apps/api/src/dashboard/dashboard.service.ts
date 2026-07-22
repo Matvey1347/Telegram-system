@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { sumInviteLinkAttributedSubscribers } from '../common/analytics/invite-link-metrics';
+import { inviteLinkJoinedSubscribers, sumInviteLinkJoinedSubscribers } from '../common/analytics/invite-link-metrics';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -183,7 +183,7 @@ export class DashboardService {
     const selectedInviteLinksById = new Map(
       selectedInviteLinks.map((link) => [
         link.id,
-        sumInviteLinkAttributedSubscribers([link]),
+        inviteLinkJoinedSubscribers(link),
       ]),
     );
     const campaignJoinedCount = (campaign: any) => {
@@ -192,7 +192,7 @@ export class DashboardService {
         return Number(selectedInviteLinksById.get(selectedLinkId) || 0);
       }
 
-      const linkedJoined = sumInviteLinkAttributedSubscribers(campaign.inviteLinks);
+      const linkedJoined = sumInviteLinkJoinedSubscribers(campaign.inviteLinks);
       return Math.max(Number(campaign.joinedCount || 0), linkedJoined);
     };
     const campaignsWithMtprotoMetrics = campaigns.map((campaign) => {

@@ -8,11 +8,11 @@ import {
   type DataQuality,
 } from '../common/analytics/data-quality';
 import {
-  inviteLinkAttributedSubscribers,
-  sumInviteLinkAttributedSubscribers,
-} from '../common/analytics/invite-link-metrics';
-
-type KpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
+  effectiveCampaignActiveSubscribers,
+  effectiveCampaignJoinedSubscribers,
+  resolveChannelKpiLabel,
+  resolveChannelKpiStatus,
+} from '../common/analytics/channel-financial-summary';
 
 @Injectable()
 export class TelegramChannelAnalyticsService {
@@ -38,29 +38,6 @@ export class TelegramChannelAnalyticsService {
     if (value == null) return null;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  private inRange(value: number, from: number | null, to: number | null) {
-    if (from == null && to == null) return false;
-    if (from != null && value < from) return false;
-    if (to != null && value > to) return false;
-    return true;
-  }
-
-  private effectiveCampaignJoinedSubscribers(campaign: any) {
-    const linkedJoined = sumInviteLinkAttributedSubscribers(
-      Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
-    );
-    if (linkedJoined > 0) return linkedJoined;
-    return Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
-  }
-
-  private effectiveCampaignActiveSubscribers(campaign: any) {
-    return Number(
-      campaign.cappedActiveSubscribersFromAd ??
-        campaign.activeSubscribersFromAd ??
-        0,
-    );
   }
 
   private isMissingTelegramChannelSyncScopeColumn(error: unknown) {
@@ -459,13 +436,13 @@ export class TelegramChannelAnalyticsService {
       0,
     );
     const totalJoinedSubscribers = campaigns.reduce(
-      (sum, campaign) => sum + this.effectiveCampaignJoinedSubscribers(campaign),
+      (sum, campaign) => sum + effectiveCampaignJoinedSubscribers(campaign),
       0,
     );
     const avgCpa =
       totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
     const campaignActiveSubscribersEstimate = campaigns.reduce(
-      (sum, campaign) => sum + this.effectiveCampaignActiveSubscribers(campaign),
+      (sum, campaign) => sum + effectiveCampaignActiveSubscribers(campaign),
       0,
     );
     const paidActiveSubscribersEstimate =
@@ -486,27 +463,16 @@ export class TelegramChannelAnalyticsService {
         .map((campaign) => this.numberOrNull(campaign.retention7d))
         .filter((value): value is number => value != null),
     );
-    const targetCpaFrom = this.numberOrNull(channel.targetCpaFrom);
-    const targetCpa = this.numberOrNull(channel.targetCpa);
-    const acceptableCpaFrom = this.numberOrNull(channel.acceptableCpaFrom);
-    const acceptableCpa = this.numberOrNull(channel.acceptableCpa);
-    const stopCpaFrom =
-      this.numberOrNull(channel.stopCpaFrom) ?? this.numberOrNull(channel.stopCpa);
-    let kpiStatus: KpiStatus = 'unknown';
-    if (avgCpa != null) {
-      if (this.inRange(avgCpa, targetCpaFrom, targetCpa)) kpiStatus = 'good';
-      else if (this.inRange(avgCpa, acceptableCpaFrom, acceptableCpa))
-        kpiStatus = 'acceptable';
-      else if (this.inRange(avgCpa, stopCpaFrom, null)) kpiStatus = 'bad';
-    }
-    const kpiLabel =
-      kpiStatus === 'good'
-        ? 'Good'
-        : kpiStatus === 'acceptable'
-          ? 'Acceptable'
-          : kpiStatus === 'bad'
-            ? 'Stop'
-            : '-';
+    const kpiStatus = resolveChannelKpiStatus({
+      avgCpa,
+      targetCpaFrom: channel.targetCpaFrom,
+      targetCpa: channel.targetCpa,
+      acceptableCpaFrom: channel.acceptableCpaFrom,
+      acceptableCpa: channel.acceptableCpa,
+      stopCpaFrom: channel.stopCpaFrom,
+      stopCpa: channel.stopCpa,
+    });
+    const kpiLabel = resolveChannelKpiLabel(kpiStatus);
 
     return {
       totalAdSpend,

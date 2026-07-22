@@ -39,6 +39,27 @@ function drawdownClass(summary: InviteLinkHistorySummary) {
   return "border-emerald-700/60 bg-emerald-950/20 text-emerald-200";
 }
 
+function hasVisibleInviteLinkHistory(
+  points: InviteLinkHistoryPoint[],
+  summary: InviteLinkHistorySummary,
+) {
+  if (
+    summary.currentJoinedCount > 0 ||
+    summary.currentRequestedCount > 0 ||
+    summary.peakJoinedCount > 0 ||
+    summary.peakRequestedCount > 0 ||
+    summary.drawdownFromPeak > 0
+  ) {
+    return true;
+  }
+  return points.some(
+    (point) =>
+      Number(point.joinedCount || 0) > 0 ||
+      Number(point.requestedCount || 0) > 0 ||
+      Number(point.totalAttributed || 0) > 0,
+  );
+}
+
 export function InviteLinkHistoryPanel({
   title = "Invite link history",
   subtitle,
@@ -56,6 +77,10 @@ export function InviteLinkHistoryPanel({
         No invite-link history yet. Run at least one sync after this feature is enabled.
       </div>
     );
+  }
+
+  if (!hasVisibleInviteLinkHistory(points, summary)) {
+    return null;
   }
 
   const showPeak = summary.peakJoinedCount !== summary.currentJoinedCount;
