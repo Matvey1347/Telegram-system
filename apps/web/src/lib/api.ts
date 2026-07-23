@@ -2044,26 +2044,12 @@ export const telegramChannelsApi = {
         `/telegram-channels/${id}/financial-summary`,
       )
     ).data,
-  managedPostsPage: async (
-    channelId: string,
-    params?: PaginationParams,
-  ) =>
-    getPaginated<TelegramManagedPost>(
-      `/telegram-channels/${channelId}/managed-posts`,
-      params,
-    ),
-  managedPosts: async (channelId: string, params?: PaginationParams) =>
-    hasExplicitPagination(params)
-      ? (
-      await getPaginated<TelegramManagedPost>(
+  managedPosts: async (channelId: string) =>
+    (
+      await api.get<TelegramManagedPost[]>(
         `/telegram-channels/${channelId}/managed-posts`,
-        params,
       )
-    ).items
-      : getAllPaginatedItems<TelegramManagedPost>(
-          `/telegram-channels/${channelId}/managed-posts`,
-          params,
-        ),
+    ).data,
   syncManagedPosts: async (channelId: string) =>
     (
       await api.post<{

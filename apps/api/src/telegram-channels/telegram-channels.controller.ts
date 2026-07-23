@@ -251,9 +251,8 @@ export class TelegramChannelsController {
   managedPosts(
     @CurrentUser() user: JwtUser,
     @Param('id') id: string,
-    @Query() query: TelegramManagedPostsQueryDto,
   ) {
-    return this.service.managedPosts(user.sub, id, query);
+    return this.service.managedPosts(user.sub, id);
   }
   @Post(':id/managed-posts/sync')
   syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {

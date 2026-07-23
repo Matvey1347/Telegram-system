@@ -13,7 +13,10 @@ export function usePagination(options: UsePaginationOptions = {}) {
   const [pageSize, setPageSize] = useState(options.initialPageSize ?? 25);
 
   useEffect(() => {
-    if (!options.totalPages || options.totalPages < 1) {
+    if (options.totalPages == null) {
+      return;
+    }
+    if (options.totalPages < 1) {
       if (page !== 1) setPage(1);
       return;
     }

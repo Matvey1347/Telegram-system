@@ -3462,7 +3462,7 @@ export class TelegramChannelsService {
     const workspaceId = await this.workspace(userId);
     const pagination = normalizePagination(query);
     const loadChannels = () =>
-      this.prisma.$transaction([
+      Promise.all([
         this.prisma.telegramChannel.findMany({
           where: { workspaceId, isActive: true },
           include: {
@@ -4093,24 +4093,15 @@ export class TelegramChannelsService {
   async managedPosts(
     userId: string,
     channelId: string,
-    query: TelegramManagedPostsQueryDto = {},
   ) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
     await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
-    const where = { workspaceId, telegramChannelId: channelId };
-    const pagination = normalizePagination(query);
-    const [items, totalItems] = await this.prisma.$transaction([
-      this.prisma.telegramManagedPost.findMany({
-        where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip: pagination.skip,
-        take: pagination.take,
-        include: this.managedPostInclude,
-      }),
-      this.prisma.telegramManagedPost.count({ where }),
-    ]);
-    return createPaginatedResponse(items, totalItems, pagination);
+    return this.prisma.telegramManagedPost.findMany({
+      where: { workspaceId, telegramChannelId: channelId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: this.managedPostInclude,
+    });
   }
 
   private async promoteDueScheduledManagedPosts(
@@ -8644,7 +8635,12 @@ export class TelegramChannelsService {
       }),
       this.prisma.telegramInviteLink.count({ where }),
     ]);
-    return createPaginatedResponse(links, totalItems, pagination);
+    const items = await this.attachInviteLinkHistories(
+      workspaceId,
+      channelId,
+      links,
+    );
+    return createPaginatedResponse(items, totalItems, pagination);
   }
 
   async inviteLinkHistory(
