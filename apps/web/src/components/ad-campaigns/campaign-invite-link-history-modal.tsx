@@ -1,9 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { adCampaignsApi, type AdCampaign } from "@/lib/api";
+import {
+  adCampaignsApi,
+  type AdCampaign,
+  type TelegramInviteLink,
+} from "@/lib/api";
 import { Modal } from "@/components/ui/primitives";
 import { InviteLinkHistoryPanel } from "@/components/telegram/invite-link-history-panel";
+import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
 
 function formatNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -23,6 +29,11 @@ function drawdownClass(percent: number) {
     return "border-amber-700/80 bg-amber-950/30 text-amber-200";
   }
   return "border-emerald-700/60 bg-emerald-950/20 text-emerald-200";
+}
+
+function drawdownValueClass(value: number) {
+  if (value > 0) return "text-rose-300";
+  return "text-white";
 }
 
 function hasVisibleInviteLinkHistory(summary: {
@@ -48,6 +59,7 @@ export function CampaignInviteLinkHistoryModal({
   campaign: AdCampaign | null;
   onClose: () => void;
 }) {
+  const [previewLink, setPreviewLink] = useState<TelegramInviteLink | null>(null);
   const embeddedHistory = campaign?.inviteLinkHistory ?? null;
   const historyQuery = useQuery({
     queryKey: ["campaign-invite-link-history", campaign?.id],
@@ -94,32 +106,57 @@ export function CampaignInviteLinkHistoryModal({
                 <div className="space-y-2">
                   {(resolvedHistory?.inviteLinks || []).map((link) => {
                     if (!hasVisibleInviteLinkHistory(link.summary)) return null;
+                    const showDrop = Number(link.summary.drawdownFromPeak || 0) > 0;
+                    const previewLink: TelegramInviteLink = {
+                      ...link,
+                      telegramChannelId: campaign.telegramChannelId,
+                    };
                     return (
-                      <div
+                      <button
                         key={link.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"
+                        type="button"
+                        onClick={() => setPreviewLink(previewLink)}
+                        className="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left transition-colors hover:border-slate-700 hover:bg-slate-950/60"
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-white">
                             {link.name}
                           </p>
-                          <p className="truncate text-xs text-slate-500">
-                            current {formatNumber(link.summary.currentJoinedCount)} /
-                            peak {formatNumber(link.summary.peakJoinedCount)}
-                          </p>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                            <p>
+                              current {formatNumber(link.summary.currentJoinedCount)} /
+                              peak {formatNumber(link.summary.peakJoinedCount)}
+                            </p>
+                            {showDrop ? (
+                              <p>
+                                Drop from peak{" "}
+                                <span
+                                  className={`font-semibold ${drawdownValueClass(link.summary.drawdownFromPeak)}`}
+                                >
+                                  {formatNumber(link.summary.drawdownFromPeak)}
+                                </span>
+                              </p>
+                            ) : null}
+                          </div>
                         </div>
-                        <span
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${drawdownClass(link.summary.drawdownPercent)}`}
-                        >
-                          drop {formatPercent(link.summary.drawdownPercent)}
-                        </span>
-                      </div>
+                        {showDrop ? (
+                          <span
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${drawdownClass(link.summary.drawdownPercent)}`}
+                          >
+                            drop {formatPercent(link.summary.drawdownPercent)}
+                          </span>
+                        ) : null}
+                      </button>
                     );
                   })}
                 </div>
               </div>
             </>
           ) : null}
+          <InviteLinkPreviewModal
+            inviteLink={previewLink}
+            onClose={() => setPreviewLink(null)}
+          />
         </div>
       ) : null}
     </Modal>

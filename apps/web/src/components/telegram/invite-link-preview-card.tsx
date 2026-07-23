@@ -75,6 +75,28 @@ function hasVisibleInviteLinkHistory(
   );
 }
 
+function hasMeaningfulInviteLinkTrend(
+  points: InviteLinkHistoryPoint[],
+  summary: InviteLinkHistorySummary | null,
+) {
+  if (!summary || points.length < 2) return false;
+  if (
+    summary.drawdownFromPeak > 0 ||
+    summary.peakJoinedCount !== summary.currentJoinedCount ||
+    summary.peakRequestedCount !== summary.currentRequestedCount
+  ) {
+    return true;
+  }
+
+  const distinctStates = new Set(
+    points.map(
+      (point) =>
+        `${Number(point.joinedCount || 0)}:${Number(point.requestedCount || 0)}`,
+    ),
+  );
+  return distinctStates.size > 1;
+}
+
 function InviteLinkHistoryMiniPreview({
   points,
   summary,
@@ -82,19 +104,19 @@ function InviteLinkHistoryMiniPreview({
   points: InviteLinkHistoryPoint[];
   summary: InviteLinkHistorySummary | null;
 }) {
-  if (!points.length || !summary || !hasVisibleInviteLinkHistory(points, summary)) {
+  if (
+    !points.length ||
+    !summary ||
+    !hasVisibleInviteLinkHistory(points, summary) ||
+    !hasMeaningfulInviteLinkTrend(points, summary)
+  ) {
     return null;
   }
 
   return (
     <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-medium ${historyTone(summary)}`}
-          >
-            Drop {formatPercent(summary.drawdownPercent)}
-          </span>
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-slate-400">
             peak {formatNumber(summary.peakJoinedCount)}
           </span>
@@ -158,13 +180,11 @@ export function InviteLinkPreviewCard({
   className = "",
   history,
   showHistoryPreview = true,
-  onPreview,
 }: {
   link: TelegramInviteLink;
   className?: string;
   history?: TelegramInviteLinkHistory | null;
   showHistoryPreview?: boolean;
-  onPreview?: (link: TelegramInviteLink) => void;
 }) {
   const joinedCount = Number(link.joinedCount || 0);
   const requestedCount = Number(link.requestedCount || 0);
@@ -231,61 +251,48 @@ export function InviteLinkPreviewCard({
           ) : null}
         </div>
         <div className="shrink-0">
-          <div className="flex items-center gap-4 text-right">
-            {showJoined ? (
-              <div>
-                <p className="text-base font-semibold leading-none">
-                  {formatNumber(joinedCount)}
-                </p>
-                <p className="mt-0.5 text-[11px] text-slate-400">joined</p>
-              </div>
+          <div className="flex flex-col items-end gap-2 text-right">
+            {resolvedHistory?.summary ? (
+              <span
+                className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-medium ${historyTone(resolvedHistory.summary)}`}
+              >
+                Drop {formatPercent(resolvedHistory.summary.drawdownPercent)}
+              </span>
             ) : null}
-            {showRequested ? (
-              <div>
-                <p className="text-base font-semibold leading-none text-amber-200">
-                  {formatNumber(requestedCount)}
+            <div className="flex items-center gap-4 text-right">
+              {showJoined ? (
+                <div>
+                  <p className="text-base font-semibold leading-none">
+                    {formatNumber(joinedCount)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">joined</p>
+                </div>
+              ) : null}
+              {showRequested ? (
+                <div>
+                  <p className="text-base font-semibold leading-none text-amber-200">
+                    {formatNumber(requestedCount)}
+                  </p>
+                  <p className="mt-0.5 whitespace-nowrap text-[11px] text-slate-400">
+                    pending requests
+                  </p>
+                </div>
+              ) : null}
+              {showSingleZero ? (
+                <div className="min-w-[32px] text-center">
+                  <p className="text-base font-semibold leading-none text-slate-200">
+                    0
+                  </p>
+                </div>
+              ) : null}
+              {link.isRevoked ? (
+                <p className="whitespace-nowrap text-xs font-medium text-rose-300">
+                  Revoked
                 </p>
-                <p className="mt-0.5 whitespace-nowrap text-[11px] text-slate-400">
-                  pending requests
-                </p>
-              </div>
-            ) : null}
-            {showSingleZero ? (
-              <div className="min-w-[32px] text-center">
-                <p className="text-base font-semibold leading-none text-slate-200">
-                  0
-                </p>
-              </div>
-            ) : null}
-            {link.isRevoked ? (
-              <p className="whitespace-nowrap text-xs font-medium text-rose-300">
-                Revoked
-              </p>
-            ) : null}
+              ) : null}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500">Unsubscribed from peak</span>
-          <span
-            className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-medium ${historyTone(resolvedHistory?.summary || null)}`}
-          >
-            {unsubscribedPercent != null
-              ? formatPercent(unsubscribedPercent)
-              : "-"}
-          </span>
-        </div>
-        {onPreview ? (
-          <button
-            type="button"
-            onClick={() => onPreview(link)}
-            className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
-          >
-            Preview
-          </button>
-        ) : null}
       </div>
 
       {showHistoryPreview && !resolvedHistory?.summary ? (

@@ -700,32 +700,58 @@ export default function TelegramChannelAnalyticsPage() {
     const analyticsPosts = posts.filter(
       (post: any) => !post.excludeFromAnalytics,
     );
-    const viewsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) => sum + toNumber(post.viewsCount),
-      0,
+    const summaryPostsTotal = toNumber(data?.summary?.postsTotal);
+    const summaryViewsTotal = toNumber(data?.summary?.viewsTotal);
+    const summaryForwardsTotal = toNumber(data?.summary?.forwardsTotal);
+    const summaryReactionsTotal = toNumber(data?.summary?.reactionsTotal);
+    const summaryCommentsTotal = toNumber(data?.summary?.commentsTotal);
+    const summaryInviteLinksCount = toNumber(data?.summary?.inviteLinksCount);
+    const summaryCampaignsCount = toNumber(data?.summary?.campaignsCount);
+    const summaryJoinedHistoricalByLinks = toNumber(
+      data?.summary?.joinedHistoricalByLinks,
     );
-    const forwardsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) => sum + toNumber(post.forwardsCount),
-      0,
+    const summaryRequestedJoinsTotal = toNumber(
+      data?.summary?.requestedJoinsTotal,
     );
-    const reactionsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) => sum + toNumber(post.reactionsCount),
-      0,
-    );
-    const adjustedViewsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) =>
-        sum + adjustedPostViews(post, ownViewsPerPost),
-      0,
-    );
-    const adjustedReactionsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) =>
-        sum + adjustedPostReactions(post, ownReactionsPerPost),
-      0,
-    );
-    const commentsTotal = analyticsPosts.reduce(
-      (sum: number, post: any) => sum + toNumber(post.commentsCount),
-      0,
-    );
+    const hasLoadedPostMetrics = analyticsPosts.length > 0;
+    const viewsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) => sum + toNumber(post.viewsCount),
+          0,
+        )
+      : summaryViewsTotal;
+    const forwardsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) => sum + toNumber(post.forwardsCount),
+          0,
+        )
+      : summaryForwardsTotal;
+    const reactionsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) => sum + toNumber(post.reactionsCount),
+          0,
+        )
+      : summaryReactionsTotal;
+    const adjustedViewsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) =>
+            sum + adjustedPostViews(post, ownViewsPerPost),
+          0,
+        )
+      : summaryViewsTotal;
+    const adjustedReactionsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) =>
+            sum + adjustedPostReactions(post, ownReactionsPerPost),
+          0,
+        )
+      : summaryReactionsTotal;
+    const commentsTotal = hasLoadedPostMetrics
+      ? analyticsPosts.reduce(
+          (sum: number, post: any) => sum + toNumber(post.commentsCount),
+          0,
+        )
+      : summaryCommentsTotal;
     const viewedPosts = analyticsPosts.filter(
       (post: any) => adjustedPostViews(post, ownViewsPerPost) > 0,
     );
@@ -741,8 +767,13 @@ export default function TelegramChannelAnalyticsPage() {
       toNumber(data?.channel?.currentSubscribersCount) ||
       toNumber(mtprotoStats?.followers?.current) ||
       toNumber(data?.summary?.subscribersCurrent);
+    const effectivePostsCount = hasLoadedPostMetrics
+      ? analyticsPosts.length
+      : summaryPostsTotal;
     const averagePostViews = viewedPosts.length
       ? adjustedViewsTotal / viewedPosts.length
+      : effectivePostsCount > 0
+        ? adjustedViewsTotal / effectivePostsCount
       : null;
     const averageEligibleViews = eligiblePosts.length
       ? eligiblePosts.reduce(
@@ -761,22 +792,26 @@ export default function TelegramChannelAnalyticsPage() {
         : null;
     const forwardRate =
       viewsTotal > 0 ? (forwardsTotal / viewsTotal) * 100 : null;
-    const joinedFromLinks = inviteLinks.reduce(
-      (sum: number, link: any) =>
-        sum + toNumber(link.joinedCount) + toNumber(link.requestedCount),
-      0,
-    );
-    const adSpend = campaigns.reduce(
-      (sum: number, campaign: any) =>
-        sum + toNumber(campaign.costAmount ?? campaign.price),
-      0,
-    );
+    const joinedFromLinks = inviteLinks.length
+      ? inviteLinks.reduce(
+          (sum: number, link: any) =>
+            sum + toNumber(link.joinedCount) + toNumber(link.requestedCount),
+          0,
+        )
+      : summaryJoinedHistoricalByLinks + summaryRequestedJoinsTotal;
+    const adSpend = campaigns.length
+      ? campaigns.reduce(
+          (sum: number, campaign: any) =>
+            sum + toNumber(campaign.costAmount ?? campaign.price),
+          0,
+        )
+      : toNumber(data?.summary?.totalAdSpend);
     const cpa = joinedFromLinks > 0 ? adSpend / joinedFromLinks : null;
 
     return {
       subscribers,
-      postsCount: posts.length,
-      visiblePostsCount: visiblePosts.length,
+      postsCount: posts.length || summaryPostsTotal,
+      visiblePostsCount: visiblePosts.length || summaryPostsTotal,
       viewsTotal,
       adjustedViewsTotal,
       forwardsTotal,
@@ -791,15 +826,27 @@ export default function TelegramChannelAnalyticsPage() {
       joinedFromLinks,
       adSpend,
       cpa,
+      inviteLinksCount: inviteLinks.length || summaryInviteLinksCount,
+      campaignsCount: campaigns.length || summaryCampaignsCount,
       ownReactionsPerPost,
       ownViewsPerPost,
-      analyticsPostsCount: analyticsPosts.length,
+      analyticsPostsCount: analyticsPosts.length || summaryPostsTotal,
       eligiblePostsCount: eligiblePosts.length,
     };
   }, [
     campaigns,
     data?.channel?.currentSubscribersCount,
+    data?.summary?.campaignsCount,
+    data?.summary?.commentsTotal,
+    data?.summary?.forwardsTotal,
+    data?.summary?.inviteLinksCount,
+    data?.summary?.joinedHistoricalByLinks,
+    data?.summary?.postsTotal,
+    data?.summary?.reactionsTotal,
+    data?.summary?.requestedJoinsTotal,
     data?.summary?.subscribersCurrent,
+    data?.summary?.totalAdSpend,
+    data?.summary?.viewsTotal,
     inviteLinks,
     mtprotoStats?.followers?.current,
     ownReactionsPerPost,
@@ -883,16 +930,16 @@ export default function TelegramChannelAnalyticsPage() {
     },
     {
       key: "inviteLinks",
-      show: inviteLinks.length > 0,
+      show: computed.inviteLinksCount > 0,
       title: "Invite Links",
-      value: formatNumber(inviteLinks.length),
+      value: formatNumber(computed.inviteLinksCount),
       hint: "Imported invite links",
     },
     {
       key: "campaigns",
-      show: campaigns.length > 0,
+      show: computed.campaignsCount > 0,
       title: "Campaigns",
-      value: formatNumber(campaigns.length),
+      value: formatNumber(computed.campaignsCount),
       hint: "Attributed campaign rows",
     },
   ].filter((card) => card.show);
@@ -1072,11 +1119,13 @@ export default function TelegramChannelAnalyticsPage() {
           {openSections.campaigns ? (
             <>
               {isCampaignsLoading ? <LoadingState /> : null}
-              <CampaignsTable
-                campaigns={campaignRows}
-                currencySettings={currencySettings}
-                rates={rates}
-              />
+              {!isCampaignsLoading ? (
+                <CampaignsTable
+                  campaigns={campaignRows}
+                  currencySettings={currencySettings}
+                  rates={rates}
+                />
+              ) : null}
               {campaignsData?.pagination ? (
                 <Pagination
                   {...campaignsData.pagination}

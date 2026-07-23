@@ -1,13 +1,14 @@
 "use client";
 
 import { type MouseEventHandler, useMemo, useState } from "react";
-import { MoneyStack } from "@/components/ui/money-stack";
+import { TrendingUp } from "lucide-react";
 import { CampaignInviteLinkHistoryModal } from "@/components/ad-campaigns/campaign-invite-link-history-modal";
 import { PromoPreviewModal } from "@/components/ad-campaigns/promo-preview-modal";
 import { IconAvatar } from "@/components/icons/icon-avatar";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { IconButton } from "@/components/ui/primitives";
 import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
+import { convertMoney, formatMoney } from "@/lib/money";
 import type {
   AdCampaign,
   AdCampaignKpiStatus,
@@ -65,6 +66,33 @@ function formatMetric(value: unknown, decimals = 0) {
 function formatPercent(value: unknown, decimals = 1) {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return `${formatMetric(value, decimals)}%`;
+}
+
+function moneyBreakdown(
+  amount: number | null,
+  currency: string,
+  displayMode: "code" | "symbol",
+  rates: any[] | undefined,
+) {
+  const current = String(currency || "").toUpperCase();
+  const targets = [current, "PLN", "USD"].filter(
+    (value, index, list) => value && list.indexOf(value) === index,
+  );
+
+  return targets.map((target, index) => {
+    const value =
+      index === 0
+        ? amount
+        : convertMoney(amount, current, target, rates);
+    return {
+      currency: target,
+      label:
+        value == null
+          ? null
+          : `${index === 0 ? "" : "≈ "}${formatMoney(value, target, displayMode)}`,
+      isMain: index === 0,
+    };
+  }).filter((item) => item.label != null);
 }
 
 function numberOrNull(value: unknown) {
@@ -478,15 +506,46 @@ function PerformanceCell({
   const peakJoined = joined + Math.max(0, left);
   const unsubscribedPercent =
     peakJoined > 0 ? (Math.max(0, left) / peakJoined) * 100 : 0;
+  const historySummary = campaign.inviteLinkHistory?.summary ?? null;
+  const historyPeakJoined = Number(historySummary?.peakJoinedCount ?? 0);
+  const historyCurrentJoined = Number(historySummary?.currentJoinedCount ?? 0);
+  const historyDropPercent = Number(historySummary?.drawdownPercent ?? 0);
+  const historyDropAbsolute = Number(historySummary?.drawdownFromPeak ?? 0);
+  const resolvedPeakJoined =
+    historyPeakJoined > 0 ? historyPeakJoined : peakJoined;
+  const resolvedCurrentJoined =
+    historyCurrentJoined > 0 ? historyCurrentJoined : joined;
+  const resolvedDropPercent =
+    historySummary != null ? historyDropPercent : unsubscribedPercent;
+  const resolvedDropAbsolute =
+    historySummary != null ? historyDropAbsolute : Math.max(0, left);
   const showPeakJoined = peakJoined > joined;
   const showUnsubscribed = left > 0;
+  const showTrendDelta = resolvedPeakJoined > resolvedCurrentJoined;
   const peakPrimaryCostPerJoined =
-    showPeakJoined && peakJoined > 0 ? primaryCost / peakJoined : null;
+    resolvedPeakJoined > 0 ? primaryCost / resolvedPeakJoined : null;
+  const peakCostPerJoined =
+    resolvedPeakJoined > 0 ? cost / resolvedPeakJoined : null;
   const showPeakCost =
-    showPeakJoined &&
+    showTrendDelta &&
     peakPrimaryCostPerJoined != null &&
     primaryCostPerJoined != null &&
     Math.abs(peakPrimaryCostPerJoined - primaryCostPerJoined) >= 0.005;
+  const displayMode = moneySettings?.currencyDisplayMode ?? "code";
+  const spendBreakdown = moneyBreakdown(cost, currency, displayMode, rates);
+  const cpaBreakdown =
+    costPerJoined != null
+      ? moneyBreakdown(costPerJoined, currency, displayMode, rates)
+      : [];
+  const peakCpaBreakdown =
+    peakCostPerJoined != null
+      ? moneyBreakdown(
+          peakCostPerJoined,
+          currency,
+          displayMode,
+          rates,
+        )
+      : [];
 
   return (
     <div className={`rounded-xl border p-3 ${cardClass}`}>
@@ -508,56 +567,48 @@ function PerformanceCell({
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
             Spend
           </p>
-          <MoneyStack
-            amount={cost}
-            currency={currency}
-            settings={moneySettings}
-            rates={rates}
-            amountInPrimary={primaryCost}
-            mainClassName="font-semibold leading-snug text-white"
-            subClassName="text-xs leading-snug text-slate-500"
-          />
+          <div>
+            <p className="font-semibold leading-snug text-white">
+              {spendBreakdown[0]?.label ?? "-"}
+            </p>
+            <div className="text-xs leading-snug text-slate-500">
+              {spendBreakdown.slice(1).map((item) => (
+                <div key={item.currency}>{item.label}</div>
+              ))}
+            </div>
+          </div>
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
             Joined
           </p>
           <p className={`font-semibold leading-snug ${kpiTextClass}`}>
-            {formatMetric(joined)}
+            {formatMetric(resolvedCurrentJoined)}
           </p>
-          {showPeakJoined || showUnsubscribed ? (
-            <div className="mt-1 space-y-0.5 text-xs leading-snug text-slate-500">
-              {showPeakJoined ? (
-                <p>
-                  Peak {formatMetric(peakJoined)}
-                  {showPeakCost
-                    ? ` · $${formatMetric(peakPrimaryCostPerJoined, 2)}/sub`
-                    : ""}
-                </p>
-              ) : null}
-              {showUnsubscribed ? (
-                <p>Unsubscribed {formatPercent(unsubscribedPercent)}</p>
-              ) : null}
-            </div>
-          ) : null}
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
             CPA
           </p>
-          {costPerJoined !== null ? (
-            <MoneyStack
-              amount={costPerJoined}
-              currency={currency}
-              settings={moneySettings}
-              rates={rates}
-              amountInPrimary={primaryCostPerJoined}
-              mainClassName={`font-semibold leading-snug ${kpiTextClass}`}
-              subClassName="text-xs leading-snug text-slate-500"
-            />
+          {cpaBreakdown.length ? (
+            <div>
+              <p className={`font-semibold leading-snug ${kpiTextClass}`}>
+                {cpaBreakdown[0]?.label ?? "-"}
+              </p>
+              <div className="text-xs leading-snug text-slate-500">
+                {cpaBreakdown.slice(1).map((item) => (
+                  <div key={item.currency}>{item.label}</div>
+                ))}
+              </div>
+            </div>
           ) : (
             <p className="text-slate-500">-</p>
           )}
+          {showPeakCost ? (
+            <div className="mt-1 space-y-0.5 text-xs leading-snug text-slate-500">
+              <p>Peak {peakCpaBreakdown[0]?.label ?? "-"}</p>
+            </div>
+          ) : null}
         </div>
       </div>
       {metrics.length ? (
@@ -575,25 +626,29 @@ function PerformanceCell({
       {campaign.inviteLinks?.length ? (
         <div className="mt-3">
           <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
-            {showPeakJoined ? (
+            {showTrendDelta ? (
               <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
-                Peak {formatMetric(peakJoined)}
+                Peak {formatMetric(resolvedPeakJoined)}
               </span>
             ) : null}
-            {showUnsubscribed ? (
+            {resolvedDropPercent > 0 ? (
               <span className="rounded border border-amber-700/80 bg-amber-950/20 px-2 py-0.5 text-amber-200">
-                Unsub {formatPercent(unsubscribedPercent)}
+                Drop {formatPercent(resolvedDropPercent)}
+                {resolvedDropAbsolute > 0
+                  ? ` · ${formatMetric(resolvedDropAbsolute)}`
+                  : ""}
               </span>
             ) : null}
+            <button
+              type="button"
+              onClick={onOpenHistory}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-700 px-2.5 py-0.5 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+              title="Open invite-link history for this campaign"
+            >
+              <TrendingUp size={12} />
+              Trend
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onOpenHistory}
-            className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
-            title="Open invite-link history for this campaign"
-          >
-            Trend
-          </button>
         </div>
       ) : null}
     </div>
