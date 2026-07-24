@@ -1,4 +1,7 @@
-import { sumInviteLinkJoinedSubscribers } from './invite-link-metrics';
+import {
+  sumInviteLinkAttributedSubscribers,
+  sumInviteLinkJoinedSubscribers,
+} from './invite-link-metrics';
 
 export type ChannelKpiStatus = 'good' | 'acceptable' | 'bad' | 'unknown';
 
@@ -25,6 +28,37 @@ export function effectiveCampaignJoinedSubscribers(campaign: {
   );
   if (linkedJoined > 0) return linkedJoined;
   return Number(campaign.joinedCount ?? campaign.newSubscribers ?? 0);
+}
+
+export function effectiveCampaignPendingSubscribers(campaign: {
+  inviteLinks?:
+    | Array<{ joinedCount?: unknown; requestedCount?: unknown } | null | undefined>
+    | null;
+  requestedCount?: unknown;
+}) {
+  const linkedAttributed = sumInviteLinkAttributedSubscribers(
+    Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+  );
+  const linkedJoined = sumInviteLinkJoinedSubscribers(
+    Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+  );
+  const linkedPending = Math.max(0, linkedAttributed - linkedJoined);
+  if (linkedAttributed > 0) return linkedPending;
+  return Number(campaign.requestedCount ?? 0);
+}
+
+export function effectiveCampaignAttributedSubscribers(campaign: {
+  inviteLinks?:
+    | Array<{ joinedCount?: unknown; requestedCount?: unknown } | null | undefined>
+    | null;
+  joinedCount?: unknown;
+  requestedCount?: unknown;
+  newSubscribers?: unknown;
+}) {
+  return (
+    effectiveCampaignJoinedSubscribers(campaign) +
+    effectiveCampaignPendingSubscribers(campaign)
+  );
 }
 
 export function effectiveCampaignActiveSubscribers(campaign: {

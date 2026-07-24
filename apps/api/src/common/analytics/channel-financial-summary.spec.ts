@@ -1,6 +1,8 @@
 import {
   effectiveCampaignActiveSubscribers,
+  effectiveCampaignAttributedSubscribers,
   effectiveCampaignJoinedSubscribers,
+  effectiveCampaignPendingSubscribers,
   resolveChannelKpiLabel,
   resolveChannelKpiStatus,
 } from './channel-financial-summary';
@@ -14,6 +16,21 @@ describe('channel-financial-summary', () => {
         inviteLinks: [{ joinedCount: 80 }, { joinedCount: 72 }],
       }),
     ).toBe(152);
+  });
+
+  it('keeps pending requests in attributed totals used for CPA and KPI', () => {
+    const campaign = {
+      joinedCount: 23,
+      requestedCount: 5,
+      inviteLinks: [
+        { joinedCount: 80, requestedCount: 12 },
+        { joinedCount: 72, requestedCount: 8 },
+      ],
+    };
+
+    expect(effectiveCampaignJoinedSubscribers(campaign)).toBe(152);
+    expect(effectiveCampaignPendingSubscribers(campaign)).toBe(20);
+    expect(effectiveCampaignAttributedSubscribers(campaign)).toBe(172);
   });
 
   it('falls back to campaign active subscribers before channel-level estimate', () => {

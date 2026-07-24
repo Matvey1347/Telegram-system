@@ -474,6 +474,8 @@ function PerformanceCell({
   costPerJoined,
   primaryCostPerJoined,
   joined,
+  pending,
+  attributed,
   left,
   moneySettings,
   rates,
@@ -490,6 +492,8 @@ function PerformanceCell({
   costPerJoined: number | null;
   primaryCostPerJoined: number | null;
   joined: number;
+  pending: number;
+  attributed: number;
   left: number;
   moneySettings: any;
   rates: any[] | undefined;
@@ -580,11 +584,15 @@ function PerformanceCell({
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-            Joined
+            Attributed
           </p>
           <p className={`font-semibold leading-snug ${kpiTextClass}`}>
-            {formatMetric(resolvedCurrentJoined)}
+            {formatMetric(attributed)}
           </p>
+          <div className="mt-1 space-y-0.5 text-xs leading-snug text-slate-500">
+            <p>Joined {formatMetric(resolvedCurrentJoined)}</p>
+            <p>Pending {formatMetric(pending)}</p>
+          </div>
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
@@ -876,14 +884,27 @@ export function AdCampaignsTable({
   const normalizedCampaigns = useMemo(
     () =>
       campaigns.map((campaign) => {
-        const joined =
-          campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0;
+        const joined = Number(
+          campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0,
+        );
+        const pending = Number(
+          campaign.analytics?.requestedCount ??
+            campaign.inviteLinks?.reduce(
+              (sum, link) => sum + Number(link.requestedCount ?? 0),
+              0,
+            ) ??
+            0,
+        );
+        const attributed = Number(
+          campaign.analytics?.attributedCount ?? joined + pending,
+        );
         const net = campaign.analytics?.netGrowth ?? campaign.netGrowthCount ?? joined;
         const left = campaign.analytics?.leftCount ?? campaign.leftCount ?? 0;
         const cost = Number(campaign.price || campaign.costAmount || 0);
         const primaryCost = Number(campaign.priceInPrimaryCurrency ?? 0);
-        const costPerJoined = joined > 0 ? cost / joined : null;
-        const primaryCostPerJoined = joined > 0 ? primaryCost / joined : null;
+        const costPerJoined = attributed > 0 ? cost / attributed : null;
+        const primaryCostPerJoined =
+          attributed > 0 ? primaryCost / attributed : null;
         const metrics = campaignMetrics(campaign);
         const kpiStatus = effectiveCampaignKpiStatus(
           campaign,
@@ -893,6 +914,8 @@ export function AdCampaignsTable({
         return {
           campaign,
           joined,
+          pending,
+          attributed,
           net,
           left,
           cost,
@@ -1002,6 +1025,8 @@ export function AdCampaignsTable({
                     costPerJoined={row.costPerJoined}
                     primaryCostPerJoined={row.primaryCostPerJoined}
                     joined={row.joined}
+                    pending={row.pending}
+                    attributed={row.attributed}
                     left={row.left}
                     moneySettings={moneySettings}
                     rates={rates}

@@ -974,6 +974,8 @@ export type TelegramChannelFinancialSummary = {
   totalAdSpend: number;
   campaignsCount: number;
   totalJoinedSubscribers: number;
+  totalPendingSubscribers: number;
+  totalAttributedSubscribers: number;
   avgCpa: number | null;
   activeSubscribersEstimate: number | null;
   paidActiveSubscribersEstimate: number | null;
@@ -1002,6 +1004,8 @@ export type TelegramChannelNetworkSummary = {
   totalAdSpend: number;
   campaignsCount: number;
   totalJoinedSubscribers: number;
+  totalPendingSubscribers?: number;
+  totalAttributedSubscribers?: number;
   avgCpa: number | null;
   activeCpa: number | null;
   kpiStatus: TelegramChannelNetworkKpiStatus;
@@ -1033,6 +1037,8 @@ export type TelegramChannelNetworkChannelSummary = {
   totalAdSpend: number;
   campaignsCount: number;
   totalJoinedSubscribers: number;
+  totalPendingSubscribers?: number;
+  totalAttributedSubscribers?: number;
   avgCpa: number | null;
   activeCpa: number | null;
   kpiStatus: TelegramChannelNetworkKpiStatus;
@@ -1403,6 +1409,8 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   inviteLinkHistory?: AdCampaignInviteLinkHistory | null;
   analytics?: {
     joinedCount: number;
+    requestedCount?: number;
+    attributedCount?: number;
     leftCount: number;
     netGrowth: number;
     costPerJoinedSubscriber?: number | null;

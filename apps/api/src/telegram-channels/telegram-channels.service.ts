@@ -34,7 +34,9 @@ import {
 } from '../common/analytics/invite-link-metrics';
 import {
   effectiveCampaignActiveSubscribers,
+  effectiveCampaignAttributedSubscribers,
   effectiveCampaignJoinedSubscribers,
+  effectiveCampaignPendingSubscribers,
   resolveChannelKpiLabel,
   resolveChannelKpiStatus,
 } from '../common/analytics/channel-financial-summary';
@@ -3352,18 +3354,22 @@ export class TelegramChannelsService {
           telegramChannelId: true,
           adCampaignId: true,
           joinedCount: true,
+          requestedCount: true,
         },
       }),
     ]);
 
     const inviteLinksByCampaignId = new Map<
       string,
-      Array<{ joinedCount: number }>
+      Array<{ joinedCount: number; requestedCount: number }>
     >();
     for (const inviteLink of inviteLinks) {
       if (!inviteLink.adCampaignId) continue;
       const list = inviteLinksByCampaignId.get(inviteLink.adCampaignId) ?? [];
-      list.push({ joinedCount: Number(inviteLink.joinedCount || 0) });
+      list.push({
+        joinedCount: Number(inviteLink.joinedCount || 0),
+        requestedCount: Number(inviteLink.requestedCount || 0),
+      });
       inviteLinksByCampaignId.set(inviteLink.adCampaignId, list);
     }
 
@@ -3383,17 +3389,26 @@ export class TelegramChannelsService {
         (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
         0,
       );
-      const totalJoinedSubscribers = channelCampaigns.reduce((sum, campaign) => {
-        const joinedFromLinks = (
-          inviteLinksByCampaignId.get(campaign.id) ?? []
-        ).reduce((nestedSum, link) => nestedSum + Number(link.joinedCount || 0), 0);
-        const fallbackJoinedCount = Number(
-          campaign.joinedCount ?? campaign.newSubscribers ?? 0,
-        );
-        return sum + (joinedFromLinks > 0 ? joinedFromLinks : fallbackJoinedCount);
-      }, 0);
+      const normalizedCampaigns = channelCampaigns.map((campaign) => ({
+        ...campaign,
+        inviteLinks: inviteLinksByCampaignId.get(campaign.id) ?? [],
+      }));
+      const totalJoinedSubscribers = normalizedCampaigns.reduce(
+        (sum, campaign) => sum + effectiveCampaignJoinedSubscribers(campaign),
+        0,
+      );
+      const totalPendingSubscribers = normalizedCampaigns.reduce(
+        (sum, campaign) => sum + effectiveCampaignPendingSubscribers(campaign),
+        0,
+      );
+      const totalAttributedSubscribers = normalizedCampaigns.reduce(
+        (sum, campaign) => sum + effectiveCampaignAttributedSubscribers(campaign),
+        0,
+      );
       const avgCpa =
-        totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
+        totalAttributedSubscribers > 0
+          ? totalAdSpend / totalAttributedSubscribers
+          : null;
       const campaignActiveSubscribersEstimate = channelCampaigns.reduce(
         (sum, campaign) =>
           sum +
@@ -3431,6 +3446,8 @@ export class TelegramChannelsService {
         totalAdSpend,
         campaignsCount: channelCampaigns.length,
         totalJoinedSubscribers,
+        totalPendingSubscribers,
+        totalAttributedSubscribers,
         avgCpa,
         activeSubscribersEstimate: audience?.activeSubscribersEstimate ?? null,
         paidActiveSubscribersEstimate,

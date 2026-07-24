@@ -816,6 +816,12 @@ function ChannelFinanceMiniSummary({
   const joinedSubscribers = hasNumber(summary?.totalJoinedSubscribers)
     ? Number(summary?.totalJoinedSubscribers)
     : null;
+  const pendingSubscribers = hasNumber(summary?.totalPendingSubscribers)
+    ? Number(summary?.totalPendingSubscribers)
+    : null;
+  const attributedSubscribers = hasNumber(summary?.totalAttributedSubscribers)
+    ? Number(summary?.totalAttributedSubscribers)
+    : null;
   const paidActiveSubscribers = hasNumber(
     summary?.paidActiveSubscribersEstimate,
   )
@@ -844,8 +850,8 @@ function ChannelFinanceMiniSummary({
       label: "CPA / sub",
       value: moneyValue(summary?.avgCpa),
       tip:
-        "CPA / sub: ad spend divided by joined subscribers.\n\n" +
-        "Joined subscriber: a subscriber who joined through paid ad invite links for this channel.\n\n" +
+        "CPA / sub: ad spend divided by attributed subscribers from paid invite links.\n\n" +
+        "Attributed subscribers = joined subscribers + pending join requests.\n\n" +
         "This is not the total current Telegram subscriber count.",
     });
   }
@@ -872,6 +878,22 @@ function ChannelFinanceMiniSummary({
     metrics.push({
       label: "Joined",
       value: formatNumber(summary?.totalJoinedSubscribers),
+    });
+  }
+  if (hasPositiveNumber(summary?.totalPendingSubscribers)) {
+    metrics.push({
+      label: "Pending",
+      value: formatNumber(summary?.totalPendingSubscribers),
+    });
+  }
+  if (
+    attributedSubscribers != null &&
+    attributedSubscribers > 0 &&
+    attributedSubscribers !== joinedSubscribers
+  ) {
+    metrics.push({
+      label: "Attributed",
+      value: formatNumber(attributedSubscribers),
     });
   }
   if (hasNumber(audience?.viewRate)) {
@@ -1067,16 +1089,22 @@ function KpiPreviewTooltip({
         className="hidden w-72 border-slate-700 bg-slate-950 text-xs leading-relaxed text-slate-100 group-hover:block"
       >
         <span className="block font-semibold text-white">
-          KPI is calculated by CPA / sub
+          KPI is calculated by attributed CPA / sub
         </span>
         <span className="mt-1 block text-slate-300">
           Current CPA / sub:{" "}
-          <span className="font-semibold text-white">
-            {currentCpa == null
-              ? "not enough data"
-              : `$ ${formatNumber(currentCpa, 2)}`}
-          </span>
+            <span className="font-semibold text-white">
+              {currentCpa == null
+                ? "not enough data"
+                : `$ ${formatNumber(currentCpa, 2)}`}
+            </span>
         </span>
+        {summary ? (
+          <span className="mt-1 block text-slate-400">
+            Joined {formatNumber(summary.totalJoinedSubscribers || 0)} · Pending{" "}
+            {formatNumber(summary.totalPendingSubscribers || 0)}
+          </span>
+        ) : null}
         {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (
           <span className="mt-1 block text-slate-300">
             Result:{" "}

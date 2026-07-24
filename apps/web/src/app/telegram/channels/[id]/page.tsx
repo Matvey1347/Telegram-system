@@ -1569,6 +1569,19 @@ function FinancialOverview({
       node: <SnapshotItem label="Total joined subscribers" value={formatNumber(summary?.totalJoinedSubscribers)} />,
     },
     {
+      key: "pending",
+      show: hasPositiveValue(summary?.totalPendingSubscribers),
+      node: <SnapshotItem label="Total pending requests" value={formatNumber(summary?.totalPendingSubscribers)} />,
+    },
+    {
+      key: "attributed",
+      show:
+        hasPositiveValue(summary?.totalAttributedSubscribers) &&
+        toNumber(summary?.totalAttributedSubscribers) !==
+          toNumber(summary?.totalJoinedSubscribers),
+      node: <SnapshotItem label="Total attributed subscribers" value={formatNumber(summary?.totalAttributedSubscribers)} />,
+    },
+    {
       key: "active",
       show: hasPositiveValue(summary?.paidActiveSubscribersEstimate),
       node: <SnapshotItem label="Active subscribers from ads" value={formatNullableNumber(summary?.paidActiveSubscribersEstimate)} />,

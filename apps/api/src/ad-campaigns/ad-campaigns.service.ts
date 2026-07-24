@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { sumInviteLinkJoinedSubscribers } from '../common/analytics/invite-link-metrics';
+import {
+  sumInviteLinkAttributedSubscribers,
+  sumInviteLinkJoinedSubscribers,
+} from '../common/analytics/invite-link-metrics';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -1491,20 +1494,27 @@ export class AdCampaignsService {
           })
         : [];
     const linkedJoinedCount = sumInviteLinkJoinedSubscribers(inviteLinks);
+    const linkedRequestedCount =
+      sumInviteLinkAttributedSubscribers(inviteLinks) - linkedJoinedCount;
     const joinedCount =
+      linkedJoinedCount > 0 ? linkedJoinedCount : Number(campaign.joinedCount ?? 0);
+    const requestedCount =
       linkedJoinedCount > 0
-        ? linkedJoinedCount
-        : Number(campaign.joinedCount ?? 0);
+        ? linkedRequestedCount
+        : Number(campaign.requestedCount ?? 0);
+    const attributedCount = joinedCount + requestedCount;
     const costAmount = Number(campaign.price || 0);
 
     return {
       joinedCount,
+      requestedCount,
+      attributedCount,
       leftCount: null,
       netGrowth: null,
       costAmount,
       currency: campaign.currency,
       costPerJoinedSubscriber:
-        joinedCount > 0 ? costAmount / joinedCount : null,
+        attributedCount > 0 ? costAmount / attributedCount : null,
       costPerNetSubscriber: null,
       attributionSource: 'mtproto_invite_link_usage',
     };

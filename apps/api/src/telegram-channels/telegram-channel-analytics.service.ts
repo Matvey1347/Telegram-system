@@ -9,7 +9,9 @@ import {
 } from '../common/analytics/data-quality';
 import {
   effectiveCampaignActiveSubscribers,
+  effectiveCampaignAttributedSubscribers,
   effectiveCampaignJoinedSubscribers,
+  effectiveCampaignPendingSubscribers,
   resolveChannelKpiLabel,
   resolveChannelKpiStatus,
 } from '../common/analytics/channel-financial-summary';
@@ -439,8 +441,18 @@ export class TelegramChannelAnalyticsService {
       (sum, campaign) => sum + effectiveCampaignJoinedSubscribers(campaign),
       0,
     );
+    const totalPendingSubscribers = campaigns.reduce(
+      (sum, campaign) => sum + effectiveCampaignPendingSubscribers(campaign),
+      0,
+    );
+    const totalAttributedSubscribers = campaigns.reduce(
+      (sum, campaign) => sum + effectiveCampaignAttributedSubscribers(campaign),
+      0,
+    );
     const avgCpa =
-      totalJoinedSubscribers > 0 ? totalAdSpend / totalJoinedSubscribers : null;
+      totalAttributedSubscribers > 0
+        ? totalAdSpend / totalAttributedSubscribers
+        : null;
     const campaignActiveSubscribersEstimate = campaigns.reduce(
       (sum, campaign) => sum + effectiveCampaignActiveSubscribers(campaign),
       0,
@@ -478,6 +490,8 @@ export class TelegramChannelAnalyticsService {
       totalAdSpend,
       campaignsCount: campaigns.length,
       totalJoinedSubscribers,
+      totalPendingSubscribers,
+      totalAttributedSubscribers,
       avgCpa,
       activeSubscribersEstimate: audience.activeSubscribersEstimate,
       paidActiveSubscribersEstimate,
