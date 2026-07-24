@@ -228,7 +228,7 @@ export function MtprotoAccountsPanel({
 
   return (
     <>
-      {isLoading ? <LoadingState /> : null}
+      {isLoading && !data.length ? <LoadingState /> : null}
       <MasonryGrid>
         {data.map((account) => {
           const username = String(account.username || "").replace("@", "");
@@ -417,7 +417,7 @@ export function BotAccountsPanel({
 
   return (
     <>
-      {isLoading ? <LoadingState /> : null}
+      {isLoading && !data.length ? <LoadingState /> : null}
       <MasonryGrid>
         {data.map((bot) => (
           <EntityCard key={bot.id} title="" actions={null}>
@@ -713,7 +713,7 @@ function SourceChannelsModal({
   return (
     <Modal open={open} onClose={onClose} title="Channel access">
       <div className="space-y-3">
-        {isLoading ? <LoadingState /> : null}
+        {isLoading && !channels.length ? <LoadingState /> : null}
         {!isLoading && !error && !channels.length ? (
           <EmptyState text="No synced channel access yet." />
         ) : null}

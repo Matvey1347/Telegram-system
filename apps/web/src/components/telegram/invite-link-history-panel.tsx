@@ -84,6 +84,8 @@ export function InviteLinkHistoryPanel({
   }
 
   const showPeak = summary.peakJoinedCount !== summary.currentJoinedCount;
+  const showAttributedPeak =
+    summary.peakTotalAttributed !== summary.currentTotalAttributed;
   const showPending = summary.currentRequestedCount > 0;
   const showDrop = summary.drawdownFromPeak > 0;
 
@@ -112,14 +114,20 @@ export function InviteLinkHistoryPanel({
             {formatNumber(summary.currentJoinedCount)}
           </p>
         </div>
-        {showPeak ? (
+        {showAttributedPeak ? (
           <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-            <p className="text-xs text-slate-500">Peak joined</p>
+            <p className="text-xs text-slate-500">Peak attributed</p>
             <p className="mt-1 text-lg font-semibold text-white">
-              {formatNumber(summary.peakJoinedCount)}
+              {formatNumber(summary.peakTotalAttributed)}
             </p>
           </div>
         ) : null}
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+          <p className="text-xs text-slate-500">Current attributed</p>
+          <p className="mt-1 text-lg font-semibold text-white">
+            {formatNumber(summary.currentTotalAttributed)}
+          </p>
+        </div>
         {showPending ? (
           <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
             <p className="text-xs text-slate-500">Current pending</p>
@@ -166,7 +174,8 @@ export function InviteLinkHistoryPanel({
               name="Joined"
               stroke="#60a5fa"
               strokeWidth={2.5}
-              dot={false}
+              dot={points.length <= 2}
+              activeDot={{ r: 5 }}
             />
             <Line
               type="monotone"
@@ -174,7 +183,8 @@ export function InviteLinkHistoryPanel({
               name="Pending"
               stroke="#f59e0b"
               strokeWidth={2}
-              dot={false}
+              dot={points.length <= 2}
+              activeDot={{ r: 5 }}
             />
           </LineChart>
         </ResponsiveContainer>

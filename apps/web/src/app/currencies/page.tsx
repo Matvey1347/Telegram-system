@@ -17,6 +17,7 @@ export default function CurrenciesPage() {
 
   const { data: settings, isLoading: loadingSettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates, isLoading: loadingRates, error } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
+  const showInitialLoading = (loadingSettings && !settings) || (loadingRates && !rates);
 
   const saveSettings = useMutation({
     mutationFn: currenciesApi.updateSettings,
@@ -51,7 +52,7 @@ export default function CurrenciesPage() {
         subtitle="Configure primary/secondary currencies and exchange rates"
       />
 
-      {loadingSettings || loadingRates ? <LoadingState /> : null}
+      {showInitialLoading ? <LoadingState /> : null}
       {error ? <Card className="text-red-300">Failed to load currency data</Card> : null}
 
       {settings ? <CurrencySettingsCard key={`${settings.primaryCurrency}-${settings.secondaryCurrency}-${settings.currencyDisplayMode}`} settings={settings} onSave={(payload) => saveSettings.mutate(payload)} /> : null}

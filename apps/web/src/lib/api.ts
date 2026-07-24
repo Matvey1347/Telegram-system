@@ -1402,6 +1402,7 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   sourcePostViews?: number | null;
   sourcePostUrl?: string | null;
   notes?: string;
+  customTitleTemplate?: string | null;
   isMixedAttribution?: boolean;
   assignedMemberId?: string | null;
   assignedMember?: WorkspaceMember | null;
@@ -1518,6 +1519,8 @@ export type AdHypothesisCampaignSummary = {
   currency: Currency;
   spend: number;
   joinedSubscribers: number;
+  pendingSubscribers: number;
+  attributedSubscribers: number;
   leftSubscribers?: number | null;
   cpa?: number | null;
   views?: number | null;
@@ -1538,12 +1541,18 @@ export type AdHypothesisCampaignSummary = {
   source?: string | null;
   sourcePostUrl?: string | null;
   kpiStatus: AdHypothesisKpiStatus;
+  excludeFromAnalytics?: boolean;
 };
 export type AdHypothesisSummary = {
   campaignsCount: number;
   totalSpend: number;
+  displayCurrency?: string | null;
+  totalSpendDisplay?: number | null;
   totalJoinedSubscribers: number;
+  totalPendingSubscribers: number;
+  totalAttributedSubscribers: number;
   avgCpa?: number | null;
+  avgCpaDisplay?: number | null;
   activeSubscribersEstimate?: number | null;
   activeCpa?: number | null;
   avgActiveRate?: number | null;
@@ -1559,11 +1568,19 @@ export type AdHypothesisSummary = {
 export type AdHypothesis = {
   id: string;
   name: string;
+  iconId?: string | null;
+  icon?: Icon | null;
+  telegramChannelId?: string | null;
+  telegramChannel?: TelegramChannel | null;
   description?: string | null;
   status: AdHypothesisStatus;
   conclusion?: string | null;
+  assignedMemberId?: string | null;
+  assignedMember?: WorkspaceMember | null;
   createdAt: string;
   updatedAt: string;
+  allCampaignsExcludedFromAnalytics?: boolean;
+  excludedCampaignsCount?: number;
   campaignsCount: number;
   summary: AdHypothesisSummary;
 };
@@ -1576,8 +1593,37 @@ export type AdHypothesisDetail = AdHypothesis & {
   campaigns: AdCampaign[];
   campaignSummaries: AdHypothesisCampaignSummary[];
 };
+export type AdHypothesisInviteLinkHistory = {
+  hypothesis: {
+    id: string;
+    name: string;
+  };
+  inviteLinks: Array<
+    Pick<
+      TelegramInviteLink,
+      | "id"
+      | "name"
+      | "url"
+      | "joinedCount"
+      | "requestedCount"
+      | "isRevoked"
+      | "adCampaignId"
+      | "telegramChannelId"
+    > & {
+      summary: InviteLinkHistorySummary;
+    }
+  >;
+  points: InviteLinkHistoryPoint[];
+  summary: InviteLinkHistorySummary & {
+    inviteLinksCount: number;
+    campaignsCount: number;
+  };
+};
 export type CreateAdHypothesisPayload = {
   name: string;
+  iconId?: string | null;
+  telegramChannelId?: string | null;
+  assignedMemberId?: string | null;
   description?: string | null;
   status?: AdHypothesisStatus;
   conclusion?: string | null;
@@ -1585,6 +1631,9 @@ export type CreateAdHypothesisPayload = {
 };
 export type UpdateAdHypothesisPayload = {
   name?: string;
+  iconId?: string | null;
+  telegramChannelId?: string | null;
+  assignedMemberId?: string | null;
   description?: string | null;
   status?: AdHypothesisStatus;
   conclusion?: string | null;
@@ -2652,12 +2701,35 @@ export const adHypothesesApi = {
   list: async () => getAllPaginatedItems<AdHypothesis>("/ad-hypotheses"),
   get: async (id: string) =>
     (await api.get<AdHypothesisDetail>(`/ad-hypotheses/${id}`)).data,
+  inviteLinkHistory: async (id: string) =>
+    (
+      await api.get<AdHypothesisInviteLinkHistory>(
+        `/ad-hypotheses/${id}/invite-link-history`,
+      )
+    ).data,
   create: async (payload: CreateAdHypothesisPayload) =>
-    (await api.post<AdHypothesisDetail>("/ad-hypotheses", payload)).data,
+    (
+      await api.post<AdHypothesisDetail>(
+        "/ad-hypotheses",
+        payload,
+        quietMutationConfig,
+      )
+    ).data,
   update: async (id: string, payload: UpdateAdHypothesisPayload) =>
-    (await api.patch<AdHypothesisDetail>(`/ad-hypotheses/${id}`, payload)).data,
+    (
+      await api.patch<AdHypothesisDetail>(
+        `/ad-hypotheses/${id}`,
+        payload,
+        quietMutationConfig,
+      )
+    ).data,
   remove: async (id: string) =>
-    (await api.delete<{ success: boolean }>(`/ad-hypotheses/${id}`)).data,
+    (
+      await api.delete<{ success: boolean }>(
+        `/ad-hypotheses/${id}`,
+        quietMutationConfig,
+      )
+    ).data,
   summary: async (id: string) =>
     (await api.get<AdHypothesisSummary>(`/ad-hypotheses/${id}/summary`)).data,
 };

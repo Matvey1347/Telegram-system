@@ -145,10 +145,25 @@ function effectiveCampaignKpiStatus(
   );
 }
 
+function resolveCampaignCustomTitle(
+  customTitleTemplate?: string | null,
+  dateValue?: string | null,
+) {
+  const template = String(customTitleTemplate ?? "").trim();
+  if (!template) return "";
+  if (!dateValue) return template.replace(/\[date\]/gi, "").trim();
+  return template.replace(/\[date\]/gi, dateValue).trim();
+}
+
 function displayCampaignTitle(campaign: AdCampaign) {
   const date = toInputDate(
     campaign?.placementDate || campaign?.startedAt || (campaign as any)?.createdAt,
   );
+  const customTitle = resolveCampaignCustomTitle(
+    campaign?.customTitleTemplate,
+    date,
+  );
+  if (customTitle) return customTitle;
   let title = String(campaign?.title || "").trim();
   title = title.replace(/^Telegram ad campaign:\s*/i, "").trim();
   if (date) {
@@ -164,6 +179,9 @@ function displayCampaignTitle(campaign: AdCampaign) {
 }
 
 function displayCampaignTitleWithDate(campaign: AdCampaign) {
+  if (String(campaign?.customTitleTemplate || "").trim()) {
+    return displayCampaignTitle(campaign);
+  }
   const date = toInputDate(
     campaign?.placementDate || campaign?.startedAt || (campaign as any)?.createdAt,
   );
@@ -884,20 +902,33 @@ export function AdCampaignsTable({
   const normalizedCampaigns = useMemo(
     () =>
       campaigns.map((campaign) => {
-        const joined = Number(
-          campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0,
-        );
-        const pending = Number(
-          campaign.analytics?.requestedCount ??
-            campaign.inviteLinks?.reduce(
-              (sum, link) => sum + Number(link.requestedCount ?? 0),
-              0,
-            ) ??
+        const inviteLinkJoined = Number(
+          campaign.inviteLinks?.reduce(
+            (sum, link) => sum + Number(link.joinedCount ?? 0),
             0,
+          ) ?? 0,
         );
-        const attributed = Number(
-          campaign.analytics?.attributedCount ?? joined + pending,
+        const inviteLinkAttributed = Number(
+          campaign.inviteLinks?.reduce(
+            (sum, link) =>
+              sum +
+              Number(link.joinedCount ?? 0) +
+              Number(link.requestedCount ?? 0),
+            0,
+          ) ?? 0,
         );
+        const joined =
+          inviteLinkJoined > 0
+            ? inviteLinkJoined
+            : Number(campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0);
+        const pending =
+          inviteLinkAttributed > 0
+            ? Math.max(0, inviteLinkAttributed - inviteLinkJoined)
+            : Number(campaign.analytics?.requestedCount ?? 0);
+        const attributed =
+          inviteLinkAttributed > 0
+            ? inviteLinkAttributed
+            : Number(campaign.analytics?.attributedCount ?? joined + pending);
         const net = campaign.analytics?.netGrowth ?? campaign.netGrowthCount ?? joined;
         const left = campaign.analytics?.leftCount ?? campaign.leftCount ?? 0;
         const cost = Number(campaign.price || campaign.costAmount || 0);

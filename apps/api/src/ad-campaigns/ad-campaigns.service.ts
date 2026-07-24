@@ -129,22 +129,41 @@ export class AdCampaignsService {
     return [...new Set(ids.map((value) => String(value || '').trim()).filter(Boolean))];
   }
 
+  private resolveCampaignCustomTitleTemplate(
+    rawTitle: string | null | undefined,
+  ) {
+    const value = String(rawTitle || '').trim();
+    return value || null;
+  }
+
+  private renderCampaignTitleTemplate(
+    template: string,
+    placementDate: Date,
+  ) {
+    return template.replace(/\[date\]/gi, this.formatDatePart(placementDate));
+  }
+
   private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number }>(
     rows: T[],
   ) {
     let peakJoinedCount = 0;
+    let peakTotalAttributed = 0;
     return rows.map((row) => {
       const joinedCount = Number(row.joinedCount || 0);
       const requestedCount = Number(row.requestedCount || 0);
+      const totalAttributed = joinedCount + requestedCount;
       peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
-      const drawdownFromPeak = Math.max(0, peakJoinedCount - joinedCount);
+      peakTotalAttributed = Math.max(peakTotalAttributed, totalAttributed);
+      const drawdownFromPeak = Math.max(0, peakTotalAttributed - totalAttributed);
       const drawdownPercent =
-        peakJoinedCount > 0 ? (drawdownFromPeak / peakJoinedCount) * 100 : 0;
+        peakTotalAttributed > 0
+          ? (drawdownFromPeak / peakTotalAttributed) * 100
+          : 0;
       return {
         syncedAt: row.syncedAt,
         joinedCount,
         requestedCount,
-        totalAttributed: joinedCount + requestedCount,
+        totalAttributed,
         peakJoinedCount,
         drawdownFromPeak,
         drawdownPercent,
@@ -209,6 +228,7 @@ export class AdCampaignsService {
     T extends {
       joinedCount: number;
       requestedCount: number;
+      totalAttributed: number;
       peakJoinedCount: number;
       drawdownFromPeak: number;
       drawdownPercent: number;
@@ -223,6 +243,10 @@ export class AdCampaignsService {
       (max, point) => Math.max(max, Number(point.requestedCount || 0)),
       0,
     );
+    const peakTotalAttributed = points.reduce(
+      (max, point) => Math.max(max, Number(point.totalAttributed || 0)),
+      0,
+    );
     return {
       currentJoinedCount: Number(current?.joinedCount || 0),
       currentRequestedCount: Number(current?.requestedCount || 0),
@@ -230,7 +254,7 @@ export class AdCampaignsService {
         Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
       peakJoinedCount,
       peakRequestedCount,
-      peakTotalAttributed: peakJoinedCount + peakRequestedCount,
+      peakTotalAttributed,
       drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
       drawdownPercent: Number(current?.drawdownPercent || 0),
       hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,
@@ -1244,13 +1268,19 @@ export class AdCampaignsService {
         promoIds,
         rawAdvertisingSourceIds,
       );
+      const customTitleTemplate = this.resolveCampaignCustomTitleTemplate(
+        dto.customTitle,
+      );
       const row = await (tx.adCampaign as any).create({
         data: {
           workspaceId,
           telegramChannelId: dto.telegramChannelId,
           promoId: promoIds[0] || null,
           telegramInviteLinkId: inviteLinkIds[0] || null,
-          title: generatedTitle,
+          title: customTitleTemplate
+            ? this.renderCampaignTitleTemplate(customTitleTemplate, placementDate)
+            : generatedTitle,
+          customTitleTemplate,
           status: 'planned',
           price: dto.price,
           currency: account.currency,
@@ -1407,11 +1437,18 @@ export class AdCampaignsService {
           ),
         ],
       );
+      const customTitleTemplate =
+        dto.customTitle === undefined
+          ? (existing as any).customTitleTemplate
+          : this.resolveCampaignCustomTitleTemplate(dto.customTitle);
 
       const row = await (tx.adCampaign as any).update({
         where: { id },
         data: {
-          title: generatedTitle,
+          title: customTitleTemplate
+            ? this.renderCampaignTitleTemplate(customTitleTemplate, nextPlacementDate)
+            : generatedTitle,
+          customTitleTemplate,
           telegramChannelId: dto.telegramChannelId,
           promoId: nextPromoIds[0] || null,
           telegramInviteLinkId: nextInviteLinkIds[0] || null,

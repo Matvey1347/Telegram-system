@@ -51,6 +51,7 @@ export default function CategoriesPage() {
     queryKey: ['transactions', 'categories-stats', activeType],
     queryFn: () => transactionsApi.list({ type: activeType, sort: 'date_desc' }),
   });
+  const showInitialLoading = isLoading && !data;
 
   const createMutation = useMutation({
     mutationFn: (payload: CategoryFormValues) => transactionCategoriesApi.create(payload),
@@ -141,7 +142,7 @@ export default function CategoriesPage() {
       })}
     </div>
 
-    {isLoading || transactionsLoading ? <LoadingState /> : null}
+    {showInitialLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load categories</div> : null}
 
     <MasonryGrid>
@@ -168,7 +169,7 @@ export default function CategoriesPage() {
       })}
     </MasonryGrid>
 
-    {!isLoading && !transactionsLoading && !error && !data?.length ? <EmptyState text="No categories" /> : null}
+    {!isLoading && !error && !data?.length ? <EmptyState text="No categories" /> : null}
 
     <CategoryModal
       open={createOpen}

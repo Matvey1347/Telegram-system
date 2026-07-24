@@ -1268,18 +1268,23 @@ export class TelegramChannelsService {
     rows: T[],
   ) {
     let peakJoinedCount = 0;
+    let peakTotalAttributed = 0;
     return rows.map((row) => {
       const joinedCount = Number(row.joinedCount || 0);
       const requestedCount = Number(row.requestedCount || 0);
+      const totalAttributed = joinedCount + requestedCount;
       peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
-      const drawdownFromPeak = Math.max(0, peakJoinedCount - joinedCount);
+      peakTotalAttributed = Math.max(peakTotalAttributed, totalAttributed);
+      const drawdownFromPeak = Math.max(0, peakTotalAttributed - totalAttributed);
       const drawdownPercent =
-        peakJoinedCount > 0 ? (drawdownFromPeak / peakJoinedCount) * 100 : 0;
+        peakTotalAttributed > 0
+          ? (drawdownFromPeak / peakTotalAttributed) * 100
+          : 0;
       return {
         syncedAt: row.syncedAt,
         joinedCount,
         requestedCount,
-        totalAttributed: joinedCount + requestedCount,
+        totalAttributed,
         peakJoinedCount,
         drawdownFromPeak,
         drawdownPercent,
@@ -1292,6 +1297,7 @@ export class TelegramChannelsService {
     T extends {
       joinedCount: number;
       requestedCount: number;
+      totalAttributed: number;
       peakJoinedCount: number;
       drawdownFromPeak: number;
       drawdownPercent: number;
@@ -1306,6 +1312,10 @@ export class TelegramChannelsService {
       (max, point) => Math.max(max, Number(point.requestedCount || 0)),
       0,
     );
+    const peakTotalAttributed = points.reduce(
+      (max, point) => Math.max(max, Number(point.totalAttributed || 0)),
+      0,
+    );
     return {
       currentJoinedCount: Number(current?.joinedCount || 0),
       currentRequestedCount: Number(current?.requestedCount || 0),
@@ -1313,7 +1323,7 @@ export class TelegramChannelsService {
         Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
       peakJoinedCount,
       peakRequestedCount,
-      peakTotalAttributed: peakJoinedCount + peakRequestedCount,
+      peakTotalAttributed,
       drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
       drawdownPercent: Number(current?.drawdownPercent || 0),
       hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,

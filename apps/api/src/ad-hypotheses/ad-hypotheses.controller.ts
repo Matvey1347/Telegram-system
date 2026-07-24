@@ -32,6 +32,11 @@ export class AdHypothesesController {
     return this.service.getHypothesisSummary(user.sub, id);
   }
 
+  @Get(':id/invite-link-history')
+  inviteLinkHistory(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.service.inviteLinkHistory(user.sub, id);
+  }
+
   @Get(':id')
   getById(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.getById(user.sub, id);

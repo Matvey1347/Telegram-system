@@ -596,6 +596,7 @@ model TelegramChannel {
 
   promos            Promo[]
   adCampaigns       AdCampaign[]
+  adHypotheses      AdHypothesis[] @relation("AdHypothesisTelegramChannel")
   adPlacements      AdCampaignTelegramChannelPlacement[]
   inviteLinks       TelegramInviteLink[]
   inviteLinkSnapshots TelegramInviteLinkSnapshot[]
@@ -948,6 +949,7 @@ model AdCampaign {
   analyticsLastCalculatedAt     DateTime?
   analyticsLastAutoSyncedAt     DateTime?
   analyticsLastManualSyncedAt   DateTime?
+  customTitleTemplate           String?
   notes                         String?
   createdByUserId               String?
   assignedMemberId              String?
@@ -982,11 +984,15 @@ model AdHypothesis {
   description      String?
   status           String  @default("testing")
   conclusion       String?
+  iconId           String?
+  telegramChannelId String?
   assignedMemberId String?
   createdByUserId  String?
 
   workspace      Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaigns      AdHypothesisCampaign[]
+  icon           Icon?                  @relation(fields: [iconId], references: [id], onDelete: SetNull)
+  telegramChannel TelegramChannel?      @relation("AdHypothesisTelegramChannel", fields: [telegramChannelId], references: [id], onDelete: SetNull)
   assignedMember WorkspaceMember?       @relation("AdHypothesisAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser  User?                  @relation("AdHypothesisCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
@@ -996,6 +1002,8 @@ model AdHypothesis {
   @@unique([workspaceId, name])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([iconId])
+  @@index([telegramChannelId])
   @@index([workspaceId, assignedMemberId])
 }
 
@@ -1379,6 +1387,7 @@ model Icon {
   transactionCategories TransactionCategory[]
   promptNotes           PromptNote[]
   promos                Promo[]
+  adHypotheses          AdHypothesis[]
   telegramChannelTimePosts TelegramChannelTimePost[]
 
   createdAt DateTime @default(now())

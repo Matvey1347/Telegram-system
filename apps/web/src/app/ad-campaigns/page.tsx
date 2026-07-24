@@ -12,6 +12,8 @@ import { IconAvatar } from '@/components/icons/icon-avatar';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
 import { MemberSelect } from '@/components/workspace/member-select';
+import { InviteLinkHistoryPanel } from '@/components/telegram/invite-link-history-panel';
+import { InviteLinkPreviewModal } from '@/components/telegram/invite-link-preview-modal';
 import { TelegramImageUpload } from '@/components/telegram/telegram-image-upload';
 import { TelegramPostPreview } from '@/components/telegram/telegram-post-preview';
 import { TelegramTextEditor } from '@/components/telegram/telegram-text-editor';
@@ -30,15 +32,17 @@ import {
   type AdCampaign,
   type AdCampaignKpiStatus,
   type AdHypothesis,
+  type AdHypothesisDetail,
+  type AdHypothesisInviteLinkHistory,
   type Promo,
   type TelegramChannel,
   type TelegramInviteLink,
 } from '@/lib/api';
 import { currenciesApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, CustomSelect, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, LoadingState, Modal, PageHeader, Select, Textarea, TooltipBubble } from '@/components/ui/primitives';
 import { useAppToast } from '@/providers/toast-provider';
-import { CircleHelp } from 'lucide-react';
+import { CircleHelp, TrendingUp } from 'lucide-react';
 import { accountDisplayName } from '@/lib/account-display';
 
 type CampaignValues = {
@@ -50,6 +54,7 @@ type CampaignValues = {
   price: number;
   accountId: string;
   date?: string;
+  customTitle?: string;
   notes?: string;
 };
 
@@ -71,6 +76,7 @@ const AD_CAMPAIGNS_VIEW_OPTIONS = [
   { value: 'promos', label: 'Promos', iconEmoji: '📣' },
   { value: 'hypotheses', label: 'Hypotheses', iconEmoji: '🧪' },
 ];
+const EMPTY_CAMPAIGNS: AdCampaign[] = [];
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -116,6 +122,8 @@ export default function AdCampaignsPage() {
   const [hypothesisFormOpen, setHypothesisFormOpen] = useState(false);
   const [editingHypothesis, setEditingHypothesis] = useState<AdHypothesis | null>(null);
   const [deletingHypothesis, setDeletingHypothesis] = useState<AdHypothesis | null>(null);
+  const [previewHypothesis, setPreviewHypothesis] = useState<AdHypothesis | null>(null);
+  const [historyHypothesis, setHistoryHypothesis] = useState<AdHypothesis | null>(null);
   const [promoFormOpen, setPromoFormOpen] = useState(false);
   const [editingPromo, setEditingPromo] = useState<Promo | null>(null);
   const [deletingPromo, setDeletingPromo] = useState<Promo | null>(null);
@@ -201,31 +209,45 @@ export default function AdCampaignsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-hypotheses'] });
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setHypothesisFormOpen(false);
-      pushToast('Hypothesis created.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to create hypothesis.'), 'error'),
   });
   const updateHypothesisMutation = useMutation({
     mutationFn: ({ id, payload }: any) => adHypothesesApi.update(id, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-hypotheses'] });
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setEditingHypothesis(null);
-      setHypothesisFormOpen(false);
-      pushToast('Hypothesis updated.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update hypothesis.'), 'error'),
   });
   const deleteHypothesisMutation = useMutation({
     mutationFn: (id: string) => adHypothesesApi.remove(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ad-hypotheses'] });
       qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
-      setDeletingHypothesis(null);
-      pushToast('Hypothesis deleted.', 'success');
     },
-    onError: (error) => pushToast(getErrorMessage(error, 'Failed to delete hypothesis.'), 'error'),
+  });
+  const excludeHypothesisMutation = useMutation({
+    mutationFn: async ({
+      id,
+      excludeFromAnalytics,
+    }: {
+      id: string;
+      excludeFromAnalytics: boolean;
+    }) => {
+      const detail = await adHypothesesApi.get(id);
+      await Promise.all(
+        detail.campaigns.map((campaign) =>
+          adCampaignsApi.updateAnalyticsInput(campaign.id, { excludeFromAnalytics }),
+        ),
+      );
+      return detail;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ad-hypotheses'] });
+      qc.invalidateQueries({ queryKey: ['ad-campaigns'] });
+      qc.invalidateQueries({ queryKey: ['ad-campaigns-performance'] });
+      pushToast('Hypothesis analytics flag updated for all linked campaigns.', 'success');
+    },
+    onError: (error) => pushToast(getErrorMessage(error, 'Failed to update hypothesis analytics flag.'), 'error'),
   });
   const createPromoMutation = useMutation({
     mutationFn: promosApi.create,
@@ -254,6 +276,9 @@ export default function AdCampaignsPage() {
     () => (channels ?? []).filter(isOwnTelegramChannel),
     [channels],
   );
+  const showCampaignsInitialLoading = viewMode === 'campaigns' && isLoading && !data;
+  const showHypothesesInitialLoading = hypothesesLoading && !hypotheses.length;
+  const showPromosInitialLoading = promosLoading && !promos.length;
   const visibleCampaigns = useMemo(() => sortCampaigns(filterCampaigns(campaigns, search, dateFrom, dateTo), sort), [campaigns, search, dateFrom, dateTo, sort]);
   const visibleHypotheses = useMemo(() => filterHypotheses(hypotheses, search), [hypotheses, search]);
   const visiblePromos = useMemo(() => filterPromos(promos, search), [promos, search]);
@@ -340,9 +365,9 @@ export default function AdCampaignsPage() {
       </div>
     </Card>
 
-    {viewMode === 'campaigns' && isLoading ? <LoadingState /> : null}
+    {showCampaignsInitialLoading ? <LoadingState /> : null}
     {viewMode === 'campaigns' && error ? <div className="mb-4 rounded-lg border border-rose-700 p-3 text-sm text-rose-200">Failed to load campaigns.</div> : null}
-    {viewMode === 'campaigns' && !isLoading && visibleCampaigns.length ? (
+    {viewMode === 'campaigns' && !showCampaignsInitialLoading && visibleCampaigns.length ? (
       <AdCampaignsTable
         campaigns={visibleCampaigns}
         moneySettings={moneySettings}
@@ -353,12 +378,12 @@ export default function AdCampaignsPage() {
         onOpenPromo={setPreviewPromo}
       />
     ) : null}
-    {viewMode === 'campaigns' && !isLoading && !error && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
+    {viewMode === 'campaigns' && !showCampaignsInitialLoading && !error && !visibleCampaigns.length ? <EmptyState text="No campaigns" /> : null}
 
     {viewMode === 'hypotheses' ? (
       <HypothesesSection
         hypotheses={visibleHypotheses}
-        loading={hypothesesLoading}
+        loading={showHypothesesInitialLoading}
         error={hypothesesError}
         moneySettings={moneySettings}
         rates={rates}
@@ -367,12 +392,20 @@ export default function AdCampaignsPage() {
           setHypothesisFormOpen(true);
         }}
         onDelete={setDeletingHypothesis}
+        onOpenCampaigns={setPreviewHypothesis}
+        onOpenHistory={setHistoryHypothesis}
+        onToggleExclude={(hypothesis, excludeFromAnalytics) =>
+          excludeHypothesisMutation.mutate({
+            id: hypothesis.id,
+            excludeFromAnalytics,
+          })
+        }
       />
     ) : null}
     {viewMode === 'promos' ? (
       <PromosSection
         promos={visiblePromos}
-        loading={promosLoading}
+        loading={showPromosInitialLoading}
         error={promosError}
         onEdit={(promo) => {
           setEditingPromo(promo);
@@ -466,7 +499,7 @@ export default function AdCampaignsPage() {
     <HypothesisFormModal
       open={hypothesisFormOpen}
       hypothesis={editingHypothesis}
-      campaigns={campaigns}
+      channels={ownTelegramChannels}
       moneySettings={moneySettings}
       rates={rates}
       isSubmitting={createHypothesisMutation.isPending || updateHypothesisMutation.isPending}
@@ -474,10 +507,40 @@ export default function AdCampaignsPage() {
         setHypothesisFormOpen(false);
         setEditingHypothesis(null);
       }}
-      onSubmit={(payload) => {
-        if (editingHypothesis) updateHypothesisMutation.mutate({ id: editingHypothesis.id, payload });
-        else createHypothesisMutation.mutate(payload);
+      onSubmit={async (payload) => {
+        const currentHypothesis = editingHypothesis;
+        setHypothesisFormOpen(false);
+        setEditingHypothesis(null);
+        const operation = startOperation({
+          id: `hypothesis-${currentHypothesis ? `update:${currentHypothesis.id}` : 'create'}:${Date.now()}`,
+          title: 'Processing',
+          message: currentHypothesis ? 'Saving hypothesis...' : 'Creating hypothesis...',
+        });
+        try {
+          if (currentHypothesis) {
+            await updateHypothesisMutation.mutateAsync({ id: currentHypothesis.id, payload });
+            operation.succeed({ title: 'Success', message: 'Hypothesis updated.' });
+          } else {
+            await createHypothesisMutation.mutateAsync(payload);
+            operation.succeed({ title: 'Success', message: 'Hypothesis created.' });
+          }
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, currentHypothesis ? 'Failed to update hypothesis.' : 'Failed to create hypothesis.'),
+          });
+        }
       }}
+    />
+    <HypothesisCampaignsModal
+      hypothesis={previewHypothesis}
+      moneySettings={moneySettings}
+      rates={rates}
+      onClose={() => setPreviewHypothesis(null)}
+    />
+    <HypothesisInviteLinkHistoryModal
+      hypothesis={historyHypothesis}
+      onClose={() => setHistoryHypothesis(null)}
     />
     <ConfirmDeleteModal
       open={!!deleting}
@@ -504,7 +567,32 @@ export default function AdCampaignsPage() {
       }}
       label="Archive"
     />
-    <ConfirmDeleteModal open={!!deletingHypothesis} entityName={deletingHypothesis?.name ?? 'hypothesis'} description="This deletes only the hypothesis. Campaigns remain untouched." onClose={() => setDeletingHypothesis(null)} onConfirm={() => deletingHypothesis ? deleteHypothesisMutation.mutateAsync(deletingHypothesis.id) : undefined} label="Delete" />
+    <ConfirmDeleteModal
+      open={!!deletingHypothesis}
+      entityName={deletingHypothesis?.name ?? 'hypothesis'}
+      description="This deletes only the hypothesis. Campaigns remain untouched."
+      onClose={() => setDeletingHypothesis(null)}
+      onConfirm={async () => {
+        if (!deletingHypothesis) return;
+        const hypothesisId = deletingHypothesis.id;
+        setDeletingHypothesis(null);
+        const operation = startOperation({
+          id: `hypothesis-delete:${hypothesisId}:${Date.now()}`,
+          title: 'Processing',
+          message: 'Deleting hypothesis...',
+        });
+        try {
+          await deleteHypothesisMutation.mutateAsync(hypothesisId);
+          operation.succeed({ title: 'Success', message: 'Hypothesis deleted.' });
+        } catch (error) {
+          operation.fail({
+            title: 'Error',
+            message: getErrorMessage(error, 'Failed to delete hypothesis.'),
+          });
+        }
+      }}
+      label="Delete"
+    />
     <ConfirmDeleteModal
       open={!!deletingPromo}
       entityName={deletingPromo?.title ?? 'promo'}
@@ -580,6 +668,48 @@ function effectiveCampaignKpiStatus(campaign: AdCampaign, primaryCostPerJoined: 
   return calculatedKpiStatus(primaryCostPerJoined ?? costPerJoined, campaign.telegramChannel);
 }
 
+function campaignPendingCount(campaign: AdCampaign) {
+  const inviteLinkAttributed = (campaign.inviteLinks || []).reduce(
+    (sum, link) =>
+      sum +
+      Number(link.joinedCount ?? 0) +
+      Number(link.requestedCount ?? 0),
+    0,
+  );
+  const inviteLinkJoined = (campaign.inviteLinks || []).reduce(
+    (sum, link) => sum + Number(link.joinedCount ?? 0),
+    0,
+  );
+  const inviteLinkPending = Math.max(0, inviteLinkAttributed - inviteLinkJoined);
+  if (inviteLinkAttributed > 0) return inviteLinkPending;
+  const analyticsPending = Number(campaign.analytics?.requestedCount ?? 0);
+  if (analyticsPending > 0) return analyticsPending;
+  return 0;
+}
+
+function campaignJoinedCount(campaign: AdCampaign) {
+  const inviteLinkJoined = (campaign.inviteLinks || []).reduce(
+    (sum, link) => sum + Number(link.joinedCount ?? 0),
+    0,
+  );
+  if (inviteLinkJoined > 0) return inviteLinkJoined;
+  return Number(campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0);
+}
+
+function campaignAttributedCount(campaign: AdCampaign) {
+  const inviteLinkAttributed = (campaign.inviteLinks || []).reduce(
+    (sum, link) =>
+      sum +
+      Number(link.joinedCount ?? 0) +
+      Number(link.requestedCount ?? 0),
+    0,
+  );
+  if (inviteLinkAttributed > 0) return inviteLinkAttributed;
+  const analyticsAttributed = Number(campaign.analytics?.attributedCount ?? 0);
+  if (analyticsAttributed > 0) return analyticsAttributed;
+  return campaignJoinedCount(campaign) + campaignPendingCount(campaign);
+}
+
 function campaignDateValue(campaign: any) {
   const date = new Date(campaign?.placementDate || campaign?.startedAt || campaign?.createdAt || 0);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -626,6 +756,8 @@ function filterHypotheses(hypotheses: AdHypothesis[], search: string) {
     hypothesis.description,
     hypothesis.status,
     hypothesis.summary?.decision,
+    hypothesis.telegramChannel?.title,
+    hypothesis.telegramChannel?.username,
   ].filter(Boolean).join(' ').toLowerCase().includes(query));
 }
 
@@ -640,8 +772,20 @@ function filterPromos(promos: Promo[], search: string) {
   ].filter(Boolean).join(' ').toLowerCase().includes(query));
 }
 
+function resolveCampaignCustomTitle(
+  customTitleTemplate?: string | null,
+  dateValue?: string | null,
+) {
+  const template = String(customTitleTemplate ?? '').trim();
+  if (!template) return '';
+  if (!dateValue) return template.replace(/\[date\]/gi, '').trim();
+  return template.replace(/\[date\]/gi, dateValue).trim();
+}
+
 function displayCampaignTitle(campaign: any) {
   const date = toInputDate(campaign?.placementDate || campaign?.startedAt || campaign?.createdAt);
+  const customTitle = resolveCampaignCustomTitle(campaign?.customTitleTemplate, date);
+  if (customTitle) return customTitle;
   let title = String(campaign?.title || '').trim();
   title = title.replace(/^Telegram ad campaign:\s*/i, '').trim();
   if (date) {
@@ -658,6 +802,9 @@ function displayCampaignTitle(campaign: any) {
 
 function displayCampaignTitleWithDate(campaign: any) {
   const date = campaignDateInputValue(campaign);
+  if (String(campaign?.customTitleTemplate || '').trim()) {
+    return displayCampaignTitle(campaign);
+  }
   return date ? `${date} | ${displayCampaignTitle(campaign)}` : displayCampaignTitle(campaign);
 }
 
@@ -1287,6 +1434,9 @@ function HypothesesSection({
   rates,
   onEdit,
   onDelete,
+  onOpenCampaigns,
+  onOpenHistory,
+  onToggleExclude,
 }: {
   hypotheses: AdHypothesis[];
   loading: boolean;
@@ -1295,6 +1445,9 @@ function HypothesesSection({
   rates: any[] | undefined;
   onEdit: (hypothesis: AdHypothesis) => void;
   onDelete: (hypothesis: AdHypothesis) => void;
+  onOpenCampaigns: (hypothesis: AdHypothesis) => void;
+  onOpenHistory: (hypothesis: AdHypothesis) => void;
+  onToggleExclude: (hypothesis: AdHypothesis, excludeFromAnalytics: boolean) => void;
 }) {
   return (
     <>
@@ -1303,12 +1456,12 @@ function HypothesesSection({
       {!loading && !error && !hypotheses.length ? <EmptyState text="No hypotheses yet." /> : null}
       {hypotheses.length ? (
         <div className="table-scroll mb-5 w-full rounded-lg border border-neutral-800">
-          <table className="w-full min-w-[900px] table-fixed text-left text-sm">
+          <table className="w-full min-w-[1180px] table-fixed text-left text-sm">
             <thead className="bg-slate-950 text-xs uppercase text-neutral-400">
               <tr>
-                <th className="w-[40%] px-4 py-3 font-medium">Hypothesis</th>
-                <th className="w-[24%] px-4 py-3 font-medium">Performance</th>
-                <th className="w-[26%] px-4 py-3 font-medium">Decision</th>
+                <th className="w-[38%] px-4 py-3 font-medium">Hypothesis</th>
+                <th className="w-[28%] px-4 py-3 font-medium">Performance</th>
+                <th className="w-[24%] px-4 py-3 font-medium">Decision</th>
                 <th className="w-[10%] px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
@@ -1316,26 +1469,90 @@ function HypothesesSection({
               {hypotheses.map((hypothesis, index) => (
                 <tr key={hypothesis.id} className={`align-top text-slate-200 transition-colors hover:bg-neutral-900 ${index % 2 ? 'bg-neutral-950' : 'bg-black'}`}>
                   <td className="px-4 py-4">
-                    <p className="font-semibold text-white">{hypothesis.name}</p>
-                    {hypothesis.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-500">{hypothesis.description}</p> : null}
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3">
+                        {hypothesis.icon ? (
+                          <IconAvatar
+                            icon={hypothesis.icon}
+                            label={hypothesis.name}
+                            size="xs"
+                            bordered={false}
+                            className="!bg-transparent"
+                          />
+                        ) : null}
+                        <div className="min-w-0">
+                          <p className="font-semibold text-white">{hypothesis.name}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            {hypothesis.assignedMember ? (
+                              <MemberChip member={hypothesis.assignedMember} />
+                            ) : null}
+                            {hypothesis.telegramChannel ? (
+                              <SourceChip source={hypothesis.telegramChannel} compact />
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => onOpenCampaigns(hypothesis)}
+                              className="inline-flex items-center rounded-full border border-blue-700 px-2 py-0.5 text-xs text-blue-200 transition-colors hover:border-blue-500 hover:text-white"
+                            >
+                              Campaigns {formatMetric(hypothesis.summary?.campaignsCount ?? hypothesis.campaignsCount)}
+                            </button>
+                          </div>
+                          {hypothesis.description ? <p className="mt-2 line-clamp-2 text-xs text-slate-500">{hypothesis.description}</p> : null}
+                        </div>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-4">
-                    <div className="grid grid-cols-3 gap-2">
-                      <MiniPerformance label="Campaigns" value={formatMetric(hypothesis.summary?.campaignsCount ?? hypothesis.campaignsCount)} />
-                      <MiniPerformance label="Joined" value={formatMetric(hypothesis.summary?.totalJoinedSubscribers)} />
-                      <MiniPerformance
-                        label="CPA"
-                        value={
+                    <div className={`rounded-xl border p-3 ${performanceCardClass(hypothesis.summary?.kpiStatus)}`}>
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        <KpiStatusBadge status={hypothesis.summary?.kpiStatus} />
+                      </div>
+                      <div className="grid grid-cols-[minmax(90px,1fr)_minmax(80px,0.75fr)_minmax(80px,0.85fr)] gap-3">
+                        <div>
+                          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Spend</p>
                           <MoneyStack
-                            amount={hypothesis.summary?.avgCpa}
-                            currency={moneySettings.primaryCurrency}
+                            amount={hypothesis.summary?.totalSpendDisplay ?? hypothesis.summary?.totalSpend}
+                            currency={hypothesis.summary?.displayCurrency ?? moneySettings.primaryCurrency}
                             settings={moneySettings}
                             rates={rates}
+                            amountInPrimary={hypothesis.summary?.totalSpend}
                             mainClassName="font-semibold leading-snug text-white"
                             subClassName="text-xs leading-snug text-slate-500"
                           />
-                        }
-                      />
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Attributed</p>
+                          <p className={`font-semibold leading-snug ${kpiMetricTextClass(hypothesis.summary?.kpiStatus)}`}>
+                            {formatMetric(hypothesis.summary?.totalAttributedSubscribers)}
+                          </p>
+                          <div className="mt-1 space-y-0.5 text-xs leading-snug text-slate-500">
+                            <p>Joined {formatMetric(hypothesis.summary?.totalJoinedSubscribers)}</p>
+                            <p>Pending {formatMetric(hypothesis.summary?.totalPendingSubscribers)}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">CPA</p>
+                          <MoneyStack
+                            amount={hypothesis.summary?.avgCpaDisplay ?? hypothesis.summary?.avgCpa}
+                            currency={hypothesis.summary?.displayCurrency ?? moneySettings.primaryCurrency}
+                            settings={moneySettings}
+                            rates={rates}
+                            amountInPrimary={hypothesis.summary?.avgCpa}
+                            mainClassName={`font-semibold leading-snug ${kpiMetricTextClass(hypothesis.summary?.kpiStatus)}`}
+                            subClassName="text-xs leading-snug text-slate-500"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => onOpenHistory(hypothesis)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-100 transition-colors hover:border-slate-500 hover:text-white"
+                        >
+                          <TrendingUp size={14} />
+                          Trend
+                        </button>
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-4">
@@ -1345,7 +1562,24 @@ function HypothesesSection({
                     </div>
                   </td>
                   <td className="px-4 py-4">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="group relative inline-flex">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(hypothesis.allCampaignsExcludedFromAnalytics)}
+                          onChange={(event) =>
+                            onToggleExclude(hypothesis, event.target.checked)
+                          }
+                          className="h-4 w-4 shrink-0"
+                        />
+                        <TooltipBubble
+                          side="top"
+                          align="right"
+                          className="hidden whitespace-nowrap group-hover:block"
+                        >
+                          Exclude from channel performance calculations
+                        </TooltipBubble>
+                      </span>
                       <IconButton onClick={() => onEdit(hypothesis)} />
                       <IconButton kind="delete" onClick={() => onDelete(hypothesis)} />
                     </div>
@@ -1489,7 +1723,7 @@ function PromoModal({
 function HypothesisFormModal({
   open,
   hypothesis,
-  campaigns,
+  channels,
   moneySettings,
   rates,
   isSubmitting,
@@ -1498,13 +1732,16 @@ function HypothesisFormModal({
 }: {
   open: boolean;
   hypothesis: AdHypothesis | null;
-  campaigns: AdCampaign[];
+  channels: TelegramChannel[];
   moneySettings: any;
   rates: any[] | undefined;
   isSubmitting: boolean;
   onClose: () => void;
-  onSubmit: (payload: { name: string; description?: string | null; adCampaignIds: string[] }) => void;
+  onSubmit: (payload: { name: string; iconId?: string | null; telegramChannelId: string; assignedMemberId?: string | null; description?: string | null; adCampaignIds: string[] }) => void;
 }) {
+  const [iconId, setIconId] = useState<string | null>(null);
+  const [telegramChannelId, setTelegramChannelId] = useState('');
+  const [assignedMemberId, setAssignedMemberId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1512,6 +1749,9 @@ function HypothesisFormModal({
 
   useEffect(() => {
     if (!open) return;
+    setIconId(hypothesis?.iconId || null);
+    setTelegramChannelId(hypothesis?.telegramChannelId || '');
+    setAssignedMemberId(hypothesis?.assignedMemberId ?? hypothesis?.assignedMember?.id ?? null);
     setName(hypothesis?.name || '');
     setDescription(hypothesis?.description || '');
     setSelectedIds([]);
@@ -1521,9 +1761,40 @@ function HypothesisFormModal({
   useEffect(() => {
     if (!open || !hypothesis) return;
     adHypothesesApi.get(hypothesis.id).then((detail) => {
+      setTelegramChannelId(detail.telegramChannelId || '');
       setSelectedIds(detail.campaigns.map((campaign) => campaign.id));
     }).catch(() => setError('Failed to load linked campaigns.'));
   }, [hypothesis, open]);
+
+  const campaignsQuery = useQuery({
+    queryKey: ['ad-campaigns-hypothesis-form', telegramChannelId],
+    queryFn: () => adCampaignsApi.list({ telegramChannelId }),
+    enabled: open && Boolean(telegramChannelId),
+  });
+
+  const availableCampaigns = campaignsQuery.data ?? EMPTY_CAMPAIGNS;
+  const visibleCampaigns = useMemo(
+    () =>
+      availableCampaigns.filter(
+        (campaign: AdCampaign) => campaign.telegramChannelId === telegramChannelId,
+      ),
+    [availableCampaigns, telegramChannelId],
+  );
+  const visibleCampaignIds = useMemo(
+    () => new Set(visibleCampaigns.map((campaign: AdCampaign) => campaign.id)),
+    [visibleCampaigns],
+  );
+
+  useEffect(() => {
+    if (!telegramChannelId) {
+      setSelectedIds((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => visibleCampaignIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [telegramChannelId, visibleCampaignIds]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const toggleCampaign = (id: string) => {
@@ -1535,16 +1806,60 @@ function HypothesisFormModal({
       setError('Name is required.');
       return;
     }
+    if (!telegramChannelId) {
+      setError('Telegram channel is required.');
+      return;
+    }
     if (!selectedIds.length) {
       setError('Hypothesis must contain at least 1 campaign.');
       return;
     }
-    onSubmit({ name: trimmedName, description: description.trim() || null, adCampaignIds: selectedIds });
+    onSubmit({
+      name: trimmedName,
+      iconId,
+      telegramChannelId,
+      assignedMemberId,
+      description: description.trim() || null,
+      adCampaignIds: selectedIds,
+    });
   };
 
   return (
     <Modal open={open} onClose={onClose} title={hypothesis ? 'Edit hypothesis' : 'Create hypothesis'}>
       <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
+          <FormField label="Emoji">
+            <IconPicker
+              compact
+              iconId={iconId}
+              onChange={setIconId}
+              buttonLabel="Add emoji"
+            />
+          </FormField>
+          <FormField label="Member">
+            <MemberSelect
+              value={assignedMemberId}
+              onChange={(value) => setAssignedMemberId(value || null)}
+              defaultToCurrent={!hypothesis}
+            />
+          </FormField>
+        </div>
+        <FormField label="Own Telegram Channel" required>
+          <CustomSelect
+            value={telegramChannelId}
+            onChange={(value) => {
+              setTelegramChannelId(value);
+              setError('');
+            }}
+            placeholder="Select channel"
+            options={channels.map((channel: TelegramChannel) => ({
+              value: channel.id,
+              label: channel.title,
+              iconUrl: channel.photoUrl,
+              iconFallback: channel.title,
+            }))}
+          />
+        </FormField>
         <FormField label="Name" required>
           <Input value={name} onChange={(event) => setName(event.target.value)} />
         </FormField>
@@ -1554,7 +1869,13 @@ function HypothesisFormModal({
         <div>
           <p className="mb-2 text-sm font-medium text-slate-200">Campaigns</p>
           <div className="max-h-72 space-y-2 overflow-auto rounded-lg border border-slate-800 p-2">
-            {campaigns.map((campaign) => (
+            {campaignsQuery.isLoading && telegramChannelId ? (
+              <p className="p-2 text-sm text-slate-400">Loading campaigns…</p>
+            ) : null}
+            {!telegramChannelId ? (
+              <p className="p-2 text-sm text-slate-400">Select a channel to load campaigns.</p>
+            ) : null}
+            {visibleCampaigns.map((campaign: AdCampaign) => (
               <CampaignSelectRow
                 key={campaign.id}
                 campaign={campaign}
@@ -1564,7 +1885,7 @@ function HypothesisFormModal({
                 onToggle={() => toggleCampaign(campaign.id)}
               />
             ))}
-            {!campaigns.length ? <p className="p-2 text-sm text-slate-400">No campaigns available.</p> : null}
+            {telegramChannelId && !campaignsQuery.isLoading && !visibleCampaigns.length ? <p className="p-2 text-sm text-slate-400">No campaigns available for this channel.</p> : null}
           </div>
           {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
         </div>
@@ -1573,6 +1894,129 @@ function HypothesisFormModal({
           <Button type="button" disabled={isSubmitting} onClick={submit}>{isSubmitting ? 'Saving...' : 'Save'}</Button>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function HypothesisCampaignsModal({
+  hypothesis,
+  moneySettings,
+  rates,
+  onClose,
+}: {
+  hypothesis: AdHypothesis | null;
+  moneySettings: any;
+  rates: any[] | undefined;
+  onClose: () => void;
+}) {
+  const detailQuery = useQuery({
+    queryKey: ['ad-hypothesis-detail', hypothesis?.id],
+    queryFn: () => adHypothesesApi.get(hypothesis!.id),
+    enabled: Boolean(hypothesis?.id),
+  });
+
+  return (
+    <Modal
+      open={Boolean(hypothesis)}
+      onClose={onClose}
+      title={hypothesis ? `${hypothesis.name} campaigns` : 'Hypothesis campaigns'}
+      size="xl"
+    >
+      {detailQuery.isLoading ? <LoadingState /> : null}
+      {detailQuery.error ? (
+        <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
+          Failed to load hypothesis campaigns.
+        </div>
+      ) : null}
+      {detailQuery.data?.campaigns?.length ? (
+        <AdCampaignsTable
+          campaigns={detailQuery.data.campaigns}
+          moneySettings={moneySettings}
+          rates={rates}
+          showActions={false}
+          showHypotheses={false}
+        />
+      ) : null}
+      {!detailQuery.isLoading && !detailQuery.error && !detailQuery.data?.campaigns?.length ? (
+        <EmptyState text="No campaigns in this hypothesis." />
+      ) : null}
+    </Modal>
+  );
+}
+
+function HypothesisInviteLinkHistoryModal({
+  hypothesis,
+  onClose,
+}: {
+  hypothesis: AdHypothesis | null;
+  onClose: () => void;
+}) {
+  const [previewLink, setPreviewLink] = useState<TelegramInviteLink | null>(null);
+  const historyQuery = useQuery({
+    queryKey: ['ad-hypothesis-history', hypothesis?.id],
+    queryFn: () => adHypothesesApi.inviteLinkHistory(hypothesis!.id),
+    enabled: Boolean(hypothesis?.id),
+  });
+  const history = historyQuery.data;
+
+  return (
+    <Modal
+      open={Boolean(hypothesis)}
+      onClose={onClose}
+      title={hypothesis ? `${hypothesis.name} trend` : 'Hypothesis trend'}
+      size="xl"
+    >
+      {historyQuery.isLoading ? <LoadingState /> : null}
+      {historyQuery.error ? (
+        <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
+          Failed to load hypothesis trend.
+        </div>
+      ) : null}
+      {history ? (
+        <div className="space-y-4">
+          <InviteLinkHistoryPanel
+            title="Hypothesis invite-link trend"
+            subtitle="Aggregate joined and pending requests across all linked campaigns after each sync."
+            points={history.points}
+            summary={history.summary}
+          />
+          <div className="rounded-lg border border-slate-800 bg-slate-900/20 p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                Invite links breakdown
+              </h3>
+              <span className="text-xs text-slate-500">
+                {formatMetric(history.summary.campaignsCount)} campaigns · {formatMetric(history.summary.inviteLinksCount)} links
+              </span>
+            </div>
+            <div className="space-y-2">
+              {history.inviteLinks.map((link) => (
+                <button
+                  key={link.id}
+                  type="button"
+                  onClick={() => setPreviewLink(link as TelegramInviteLink)}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-left transition-colors hover:border-slate-700 hover:bg-slate-950/60"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-white">{link.name}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <p>current {formatMetric(link.summary.currentJoinedCount)} / peak {formatMetric(link.summary.peakJoinedCount)}</p>
+                      <p>pending {formatMetric(link.summary.currentRequestedCount)}</p>
+                    </div>
+                  </div>
+                  <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-200">
+                    drop {formatMetric(link.summary.drawdownPercent, 1)}%
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <InviteLinkPreviewModal
+            inviteLink={previewLink}
+            onClose={() => setPreviewLink(null)}
+          />
+        </div>
+      ) : null}
     </Modal>
   );
 }
@@ -1591,15 +2035,25 @@ function CampaignSelectRow({
   onToggle: () => void;
 }) {
   const joined = campaign.analytics?.joinedCount ?? campaign.joinedCount ?? 0;
+  const pending = campaignPendingCount(campaign);
+  const attributed = campaignAttributedCount(campaign);
   const price = Number(campaign.price ?? campaign.costAmount ?? 0);
   const primaryPrice = Number(campaign.priceInPrimaryCurrency ?? 0);
   return (
-    <label className={`flex cursor-pointer items-center gap-3 rounded-md border p-2 text-sm ${checked ? 'border-blue-700 bg-slate-900' : 'border-slate-800 bg-slate-900/30 hover:border-slate-700'}`}>
+    <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${checked ? 'border-blue-700 bg-slate-900' : 'border-slate-800 bg-slate-900/30 hover:border-slate-700'}`}>
       <input type="checkbox" checked={checked} onChange={onToggle} className="h-4 w-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold text-slate-100">{displayCampaignTitleWithDate(campaign)}</p>
-        <MoneyStack amount={price} currency={campaign.currency} settings={moneySettings} rates={rates} amountInPrimary={primaryPrice} mainClassName="mt-0.5 truncate text-xs text-slate-400" subClassName="text-xs text-slate-500" />
-        <p className="mt-0.5 text-xs text-slate-400">{formatMetric(joined)} joined</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          {campaign.telegramChannel ? <SourceChip source={campaign.telegramChannel} compact /> : null}
+          {campaign.assignedMember ? <MemberChip member={campaign.assignedMember} /> : null}
+        </div>
+        <MoneyStack amount={price} currency={campaign.currency} settings={moneySettings} rates={rates} amountInPrimary={primaryPrice} mainClassName="mt-2 truncate text-xs text-slate-300" subClassName="text-xs text-slate-500" />
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
+          <span>Attributed {formatMetric(attributed)}</span>
+          <span>Joined {formatMetric(joined)}</span>
+          <span>Pending {formatMetric(pending)}</span>
+        </div>
       </div>
     </label>
   );
@@ -1830,15 +2284,18 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
         price: Number(row.price ?? row.costAmount ?? 0),
         accountId: row.accountId ?? '',
         date: toInputDate(row.placementDate || row.startedAt),
+        customTitle: row.customTitleTemplate ?? '',
         notes: row.notes ?? '',
       }
-    : { telegramChannelId: '', assignedMemberId: null, promoIds: [], inviteLinkIds: [], advertisingChannelIds: [], price: 0, accountId: '', date: formatLocalDate(new Date()), notes: '' };
+    : { telegramChannelId: '', assignedMemberId: null, promoIds: [], inviteLinkIds: [], advertisingChannelIds: [], price: 0, accountId: '', date: formatLocalDate(new Date()), customTitle: '', notes: '' };
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<CampaignValues>({ defaultValues: mapInitialValues(initial) });
   const selectedChannelId = watch('telegramChannelId');
   const selectedPromoIds = watch('promoIds') || [];
   const selectedInviteLinkIds = watch('inviteLinkIds') || [];
   const selectedAdChannels = watch('advertisingChannelIds') || [];
+  const selectedDate = watch('date');
+  const customTitleValue = watch('customTitle');
 
   useEffect(() => {
     register('advertisingChannelIds');
@@ -1973,8 +2430,20 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
       inviteLinkIds: v.inviteLinkIds || [],
       price: Number(v.price),
       advertisingChannelIds: v.advertisingChannelIds || [],
+      customTitle: v.customTitle?.trim() || null,
     });
   })}>
+    <FormField label="Custom title">
+      <Input placeholder="[date] // custom campaign name" {...register('customTitle')} />
+      <p className="text-sm text-slate-500">
+        Optional. Use [date] to insert the campaign date automatically.
+      </p>
+      {customTitleValue?.trim() ? (
+        <p className="text-sm text-slate-400">
+          Preview: {resolveCampaignCustomTitle(customTitleValue, selectedDate || formatLocalDate(new Date()))}
+        </p>
+      ) : null}
+    </FormField>
     <FormField label="Own Telegram Channel" required error={errors.telegramChannelId ? 'Required field' : undefined}>
       <CustomSelect
         value={watch('telegramChannelId')}

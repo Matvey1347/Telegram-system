@@ -172,10 +172,22 @@ function formatMoneyValue(value: unknown, currency: string) {
   return `${formatNumber(parsed, 2)} ${currency}`;
 }
 
+function resolveCampaignCustomTitle(
+  customTitleTemplate?: string | null,
+  dateValue?: string | null,
+) {
+  const template = String(customTitleTemplate ?? '').trim();
+  if (!template) return '';
+  if (!dateValue) return template.replace(/\[date\]/gi, '').trim();
+  return template.replace(/\[date\]/gi, dateValue).trim();
+}
+
 function displayCampaignTitle(campaign: any) {
   const date = campaign?.placementDate || campaign?.startedAt || campaign?.createdAt
     ? new Date(campaign.placementDate || campaign.startedAt || campaign.createdAt).toISOString().slice(0, 10)
     : '';
+  const customTitle = resolveCampaignCustomTitle(campaign?.customTitleTemplate, date);
+  if (customTitle) return customTitle;
   let title = String(campaign?.title || '').trim();
   title = title.replace(/^Telegram ad campaign:\s*/i, '').trim();
   if (date) {

@@ -26,6 +26,7 @@ export default function AccountsPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: settings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
   const { data: rates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
+  const showInitialLoading = isLoading && !data;
 
   const createMutation = useMutation({
     mutationFn: accountsApi.create,
@@ -58,7 +59,7 @@ export default function AccountsPage() {
 
   return <AppShell>
     <PageHeader title="Accounts" subtitle="Manage balances by currency" action={<Button onClick={() => setCreateOpen(true)}>Create</Button>} />
-    {isLoading ? <LoadingState /> : null}
+    {showInitialLoading ? <LoadingState /> : null}
     {error ? <div className="text-red-300">Failed to load accounts</div> : null}
     <MasonryGrid>
       {data?.map((a) => <EntityCard key={a.id} title={<div className="flex items-center gap-2"><InlineIconPicker iconId={a.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: a.id, iconId })} /><AccountName account={a} /></div>} actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(a)} /><IconButton kind="delete" onClick={() => setDeleting(a)} /></div>}>

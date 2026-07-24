@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, RefreshCw, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy, RefreshCw, Trash2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { Pagination } from "@/components/ui/pagination";
 import {
   Button,
   ConfirmDeleteModal,
@@ -33,7 +34,6 @@ const KINDS: ApplicationLogKind[] = [
   "audit",
 ];
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-const PAGE_SIZES = ["25", "50", "100"];
 
 function parseList(value: string | null) {
   return value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
@@ -296,11 +296,6 @@ export default function SystemLogsPage() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const filterKey = useMemo(
-    () => JSON.stringify(filters),
-    [filters],
-  );
-
   const handleCopy = async (value: string, label = "Copied successfully.") => {
     try {
       await navigator.clipboard.writeText(value);
@@ -310,10 +305,11 @@ export default function SystemLogsPage() {
     }
   };
 
-  useEffect(() => {
+  const updateFilter = (key: string, value?: string | null) => {
     setCursor(undefined);
     setCursorStack([]);
-  }, [filterKey]);
+    setFilter(key, value);
+  };
 
   const filterOptions = useQuery({
     queryKey: ["application-log-filter-options"],
@@ -324,6 +320,7 @@ export default function SystemLogsPage() {
   const logsQuery = useQuery({
     queryKey: ["application-logs", filters, cursor],
     enabled: canView,
+    placeholderData: keepPreviousData,
     queryFn: () =>
       applicationLogsApi.list({
         ...filters,
@@ -367,7 +364,16 @@ export default function SystemLogsPage() {
   const items = logsQuery.data?.items ?? [];
   const currentPage = cursorStack.length + 1;
   const pageLimit = filters.limit || 50;
-  const showSkeleton = logsQuery.isLoading;
+  const showSkeleton = logsQuery.isLoading && !logsQuery.data;
+  const isPageTransitionLoading = logsQuery.isFetching && !!logsQuery.data;
+  const totalItemsForPagination =
+    logsQuery.data?.hasMore || currentPage > 1
+      ? currentPage * pageLimit + (logsQuery.data?.hasMore ? 1 : 0)
+      : items.length;
+  const totalPagesForPagination =
+    logsQuery.data?.hasMore || currentPage > 1
+      ? currentPage + (logsQuery.data?.hasMore ? 1 : 0)
+      : 1;
 
   const levelOptions = [
     { value: "", label: "All levels", tone: "muted" as const },
@@ -409,12 +415,6 @@ export default function SystemLogsPage() {
       tone: selectToneForMethod(method),
     })),
   ];
-  const pageSizeOptions = PAGE_SIZES.map((size) => ({
-    value: size,
-    label: `${size} rows`,
-    tone: "info" as const,
-  }));
-
   return (
     <AppShell>
       <div className="space-y-4">
@@ -472,194 +472,190 @@ export default function SystemLogsPage() {
           <Input
             placeholder="Search message or event"
             value={filters.search || ""}
-            onChange={(event) => setFilter("search", event.target.value || null)}
+            onChange={(event) =>
+              updateFilter("search", event.target.value || null)
+            }
           />
           <Input
             placeholder="Correlation ID"
             value={filters.correlationId || ""}
             onChange={(event) =>
-              setFilter("correlationId", event.target.value || null)
+              updateFilter("correlationId", event.target.value || null)
             }
           />
           <CustomSelect
             value={filters.levels?.[0] || ""}
-            onChange={(value) => setFilter("levels", value || null)}
+            onChange={(value) => updateFilter("levels", value || null)}
             options={levelOptions}
           />
           <CustomSelect
             value={filters.kinds?.[0] || ""}
-            onChange={(value) => setFilter("kinds", value || null)}
+            onChange={(value) => updateFilter("kinds", value || null)}
             options={kindOptions}
           />
           <CustomSelect
             value={filters.sources?.[0] || ""}
-            onChange={(value) => setFilter("sources", value || null)}
+            onChange={(value) => updateFilter("sources", value || null)}
             options={sourceOptions}
           />
           <CustomSelect
             value={filters.events?.[0] || ""}
-            onChange={(value) => setFilter("events", value || null)}
+            onChange={(value) => updateFilter("events", value || null)}
             options={eventOptions}
           />
           <CustomSelect
             value={filters.methods?.[0] || ""}
-            onChange={(value) => setFilter("methods", value || null)}
+            onChange={(value) => updateFilter("methods", value || null)}
             options={methodOptions}
           />
           <Input
             placeholder="Endpoint"
             value={filters.endpoint || ""}
-            onChange={(event) => setFilter("endpoint", event.target.value || null)}
+            onChange={(event) =>
+              updateFilter("endpoint", event.target.value || null)
+            }
           />
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-400">
-            {showSkeleton ? (
-              <>
-                <Skeleton className="h-9 w-20 rounded-full" />
-                <Skeleton className="h-9 w-28 rounded-full" />
-                <Skeleton className="h-9 w-24 rounded-full" />
-              </>
-            ) : (
-              <>
-                <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-sky-200">
-                  Page {currentPage}
-                </span>
-                <span className="rounded-full border border-neutral-800 bg-neutral-900 px-3 py-1 text-neutral-300">
-                  {items.length} visible rows
-                </span>
-                <span className="rounded-full border border-neutral-800 bg-neutral-900 px-3 py-1 text-neutral-300">
-                  limit {pageLimit}
-                </span>
-              </>
-            )}
+        {showSkeleton ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-400">
+              <Skeleton className="h-9 w-20 rounded-full" />
+              <Skeleton className="h-9 w-28 rounded-full" />
+              <Skeleton className="h-9 w-24 rounded-full" />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <CustomSelect
-              value={String(pageLimit)}
-              onChange={(value) => setFilter("limit", value)}
-              options={pageSizeOptions}
-              searchable={false}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                const previousCursor = cursorStack[cursorStack.length - 1];
-                setCursorStack((value) => value.slice(0, -1));
-                setCursor(previousCursor || undefined);
-              }}
-              disabled={!cursorStack.length || logsQuery.isFetching}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 text-neutral-200 transition hover:bg-neutral-800 disabled:opacity-40"
-              aria-label="Previous page"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!logsQuery.data?.nextCursor) return;
+        ) : (
+          <Pagination
+            page={currentPage}
+            pageSize={pageLimit}
+            totalItems={totalItemsForPagination}
+            totalPages={totalPagesForPagination}
+            hasNextPage={Boolean(logsQuery.data?.hasMore)}
+            hasPreviousPage={currentPage > 1}
+            onPageChange={(nextPage) => {
+              if (nextPage === currentPage || logsQuery.isFetching) {
+                return;
+              }
+
+              if (nextPage < currentPage) {
+                const nextStack = cursorStack.slice(0, Math.max(0, nextPage - 1));
+                const nextCursor =
+                  nextPage <= 1 ? undefined : nextStack[nextStack.length - 1];
+                setCursorStack(nextStack);
+                setCursor(nextCursor || undefined);
+                return;
+              }
+
+              if (nextPage === currentPage + 1 && logsQuery.data?.nextCursor) {
                 setCursorStack((value) => [...value, cursor || ""]);
                 setCursor(logsQuery.data.nextCursor || undefined);
-              }}
-              disabled={!logsQuery.data?.hasMore || logsQuery.isFetching}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 text-neutral-200 transition hover:bg-neutral-800 disabled:opacity-40"
-              aria-label="Next page"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        </div>
+              }
+            }}
+            onPageSizeChange={(nextPageSize) => {
+              updateFilter("limit", String(nextPageSize));
+            }}
+            loading={isPageTransitionLoading}
+            disabled={logsQuery.isFetching}
+          />
+        )}
 
         {showSkeleton ? (
           <LogTableSkeleton />
         ) : (
-        <div className="overflow-x-auto rounded-2xl border border-neutral-800 bg-neutral-950/70">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-neutral-800 bg-neutral-900/90 text-neutral-400">
-              <tr>
-                <th className="px-3 py-3">Time</th>
-                <th className="px-3 py-3">Level</th>
-                <th className="px-3 py-3">Kind</th>
-                <th className="px-3 py-3">Event</th>
-                <th className="px-3 py-3">Source</th>
-                <th className="px-3 py-3">Method</th>
-                <th className="px-3 py-3">Endpoint</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-3 py-3">Duration</th>
-                <th className="px-3 py-3">Message</th>
-                <th className="px-3 py-3">Correlation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr
-                  key={item.id}
-                  className={`cursor-pointer border-b border-neutral-800/80 transition ${logRowGlowClass(
-                    item,
-                  )}`}
-                  onClick={() => setSelected(item)}
-                >
-                  <td className="px-3 py-3 whitespace-nowrap text-neutral-300">
-                    {new Date(item.createdAt).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-3">
-                    <DataBadge
-                      value={item.level}
-                      className={badgeClassForLevel(item.level)}
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <DataBadge
-                      value={item.kind}
-                      className={badgeClassForKind(item.kind)}
-                    />
-                  </td>
-                  <td className="px-3 py-3 font-medium text-neutral-100">
-                    {item.event}
-                  </td>
-                  <td className="px-3 py-3 text-neutral-300">
-                    {item.source || "-"}
-                  </td>
-                  <td className="px-3 py-3">
-                    <DataBadge
-                      value={item.method || "-"}
-                      className={badgeClassForMethod(item.method)}
-                    />
-                  </td>
-                  <td className="px-3 py-3 text-neutral-200">
-                    {item.endpoint || item.path || "-"}
-                  </td>
-                  <td className="px-3 py-3">
-                    <DataBadge
-                      value={item.statusCode != null ? String(item.statusCode) : "-"}
-                      className={badgeClassForStatus(item.statusCode)}
-                    />
-                  </td>
-                  <td className="px-3 py-3 text-neutral-300">
-                    {item.durationMs != null ? `${item.durationMs} ms` : "-"}
-                  </td>
-                  <td className="max-w-[26rem] px-3 py-3 text-neutral-200">
-                    <div className="truncate">{item.message}</div>
-                  </td>
-                  <td className="px-3 py-3 text-neutral-400">
-                    {item.correlationId || "-"}
-                  </td>
-                </tr>
-              ))}
-              {!logsQuery.isLoading && !items.length ? (
-                <tr>
-                  <td
-                    colSpan={11}
-                    className="px-4 py-14 text-center text-sm text-neutral-500"
-                  >
-                    No logs matched the current filters.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+          <div className="relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950/70">
+            {isPageTransitionLoading ? (
+              <div className="absolute inset-0 z-10 bg-neutral-950/60 backdrop-blur-[1px]">
+                <LogTableSkeleton />
+              </div>
+            ) : null}
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-neutral-800 bg-neutral-900/90 text-neutral-400">
+                  <tr>
+                    <th className="px-3 py-3">Time</th>
+                    <th className="px-3 py-3">Level</th>
+                    <th className="px-3 py-3">Kind</th>
+                    <th className="px-3 py-3">Event</th>
+                    <th className="px-3 py-3">Source</th>
+                    <th className="px-3 py-3">Method</th>
+                    <th className="px-3 py-3">Endpoint</th>
+                    <th className="px-3 py-3">Status</th>
+                    <th className="px-3 py-3">Duration</th>
+                    <th className="px-3 py-3">Message</th>
+                    <th className="px-3 py-3">Correlation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr
+                      key={item.id}
+                      className={`cursor-pointer border-b border-neutral-800/80 transition ${logRowGlowClass(
+                        item,
+                      )}`}
+                      onClick={() => setSelected(item)}
+                    >
+                      <td className="px-3 py-3 whitespace-nowrap text-neutral-300">
+                        {new Date(item.createdAt).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-3">
+                        <DataBadge
+                          value={item.level}
+                          className={badgeClassForLevel(item.level)}
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <DataBadge
+                          value={item.kind}
+                          className={badgeClassForKind(item.kind)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-medium text-neutral-100">
+                        {item.event}
+                      </td>
+                      <td className="px-3 py-3 text-neutral-300">
+                        {item.source || "-"}
+                      </td>
+                      <td className="px-3 py-3">
+                        <DataBadge
+                          value={item.method || "-"}
+                          className={badgeClassForMethod(item.method)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 text-neutral-200">
+                        {item.endpoint || item.path || "-"}
+                      </td>
+                      <td className="px-3 py-3">
+                        <DataBadge
+                          value={item.statusCode != null ? String(item.statusCode) : "-"}
+                          className={badgeClassForStatus(item.statusCode)}
+                        />
+                      </td>
+                      <td className="px-3 py-3 text-neutral-300">
+                        {item.durationMs != null ? `${item.durationMs} ms` : "-"}
+                      </td>
+                      <td className="max-w-[26rem] px-3 py-3 text-neutral-200">
+                        <div className="truncate">{item.message}</div>
+                      </td>
+                      <td className="px-3 py-3 text-neutral-400">
+                        {item.correlationId || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {!logsQuery.isLoading && !items.length ? (
+                    <tr>
+                      <td
+                        colSpan={11}
+                        className="px-4 py-14 text-center text-sm text-neutral-500"
+                      >
+                        No logs matched the current filters.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         <Modal

@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  inviteLinkJoinedSubscribers,
-  sumInviteLinkJoinedSubscribers,
-} from '../common/analytics/invite-link-metrics';
+  effectiveCampaignAttributedSubscribers,
+  effectiveCampaignJoinedSubscribers,
+  effectiveCampaignPendingSubscribers,
+} from '../common/analytics/channel-financial-summary';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -67,8 +68,28 @@ export class AdHypothesesService {
     return { uniqueIds, campaigns };
   }
 
+  private async validateTelegramChannel(
+    workspaceId: string,
+    telegramChannelId?: string | null,
+  ) {
+    const normalizedId = String(telegramChannelId || '').trim();
+    if (!normalizedId) {
+      throw new BadRequestException('Telegram channel is required');
+    }
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: normalizedId, workspaceId },
+    });
+    if (!channel) {
+      throw new BadRequestException(
+        'Telegram channel must exist and belong to selected workspace',
+      );
+    }
+    return channel;
+  }
+
   private campaignInclude() {
     return {
+      assignedMember: WorkspaceService.assignedMemberInclude,
       telegramChannel: {
         include: {
           inviteLinks: {
@@ -76,9 +97,33 @@ export class AdHypothesesService {
           },
         },
       },
-      promo: true,
+      promo: { include: { icon: true, telegramChannel: true } },
+      promos: {
+        include: {
+          promo: { include: { icon: true, telegramChannel: true } },
+        },
+      },
       inviteLinks: {
-        select: { id: true, joinedCount: true, requestedCount: true },
+        select: {
+          id: true,
+          telegramChannelId: true,
+          adCampaignId: true,
+          name: true,
+          url: true,
+          joinedCount: true,
+          requestedCount: true,
+          isRevoked: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          creatorTelegramUserId: true,
+          creatorUsername: true,
+          creatorFirstName: true,
+          creatorLastName: true,
+          creatorPhotoUrl: true,
+          creatorMatchSource: true,
+          creatorMember: WorkspaceService.assignedMemberInclude,
+        },
       },
       advertisingTelegramChannels: {
         include: {
@@ -95,6 +140,8 @@ export class AdHypothesesService {
     return {
       assignedMember: WorkspaceService.assignedMemberInclude,
       createdByUser: WorkspaceService.createdByUserInclude,
+      icon: true,
+      telegramChannel: true,
       campaigns: {
         include: {
           adCampaign: {
@@ -131,32 +178,42 @@ export class AdHypothesesService {
       : null;
   }
 
-  private selectedInviteLinkJoined(campaign: any) {
-    const selectedLinkId = String(campaign.telegramInviteLinkId || '').trim();
-    if (!selectedLinkId) return null;
-    const inviteLinks = [
-      ...(Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : []),
-      ...(Array.isArray(campaign.telegramChannel?.inviteLinks)
-        ? campaign.telegramChannel.inviteLinks
-        : []),
-    ];
-    const selectedLink = inviteLinks.find((link: any) => link.id === selectedLinkId);
-    return selectedLink ? inviteLinkJoinedSubscribers(selectedLink) : null;
+  private campaignJoined(campaign: any) {
+    return this.decimal(
+      effectiveCampaignJoinedSubscribers({
+        inviteLinks: Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+        joinedCount:
+          this.nullableNumber(campaign.analytics?.joinedCount) ??
+          campaign.joinedCount,
+        newSubscribers: campaign.newSubscribers,
+      }),
+    );
   }
 
-  private campaignJoined(campaign: any) {
-    const selectedLinkJoined = this.selectedInviteLinkJoined(campaign);
-    if (selectedLinkJoined != null) return selectedLinkJoined;
-    const inviteLinksJoined = Array.isArray(campaign.inviteLinks)
-      ? sumInviteLinkJoinedSubscribers(campaign.inviteLinks)
-      : null;
-    if (inviteLinksJoined != null && inviteLinksJoined > 0) {
-      return inviteLinksJoined;
-    }
-    const newSubscribers = this.nullableNumber(campaign.newSubscribers);
-    if (newSubscribers != null) return newSubscribers;
-    const analyticsJoined = this.nullableNumber(campaign.analytics?.joinedCount);
-    return this.decimal(analyticsJoined ?? campaign.joinedCount);
+  private campaignPending(campaign: any) {
+    return this.decimal(
+      effectiveCampaignPendingSubscribers({
+        inviteLinks: Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+        requestedCount:
+          this.nullableNumber(campaign.analytics?.requestedCount) ??
+          campaign.requestedCount,
+      }),
+    );
+  }
+
+  private campaignAttributed(campaign: any) {
+    return this.decimal(
+      effectiveCampaignAttributedSubscribers({
+        inviteLinks: Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+        joinedCount:
+          this.nullableNumber(campaign.analytics?.joinedCount) ??
+          campaign.joinedCount,
+        requestedCount:
+          this.nullableNumber(campaign.analytics?.requestedCount) ??
+          campaign.requestedCount,
+        newSubscribers: campaign.newSubscribers,
+      }),
+    );
   }
 
   private campaignLeft(campaign: any) {
@@ -208,6 +265,35 @@ export class AdHypothesesService {
     return 'acceptable';
   }
 
+  private hypothesisKpiStatus(
+    campaignSummaries: ReturnType<typeof this.campaignSummary>[],
+    avgCpa: number | null,
+    hypothesisChannel?: any,
+  ) {
+    if (hypothesisChannel?.id && avgCpa != null) {
+      return this.campaignKpiStatus(
+        { telegramChannel: hypothesisChannel },
+        avgCpa,
+      );
+    }
+
+    const channels = campaignSummaries
+      .map((campaign) => campaign.targetChannel)
+      .filter((channel): channel is NonNullable<typeof campaignSummaries[number]['targetChannel']> => Boolean(channel?.id));
+    const uniqueChannelIds = [...new Set(channels.map((channel) => channel.id))];
+
+    if (uniqueChannelIds.length === 1 && avgCpa != null) {
+      return this.campaignKpiStatus(
+        { telegramChannel: channels[0] },
+        avgCpa,
+      );
+    }
+
+    return this.aggregateKpiStatus(
+      campaignSummaries.map((campaign) => campaign.kpiStatus),
+    );
+  }
+
   private effectiveKpiStatus(storedStatus: unknown, calculatedStatus: KpiStatus) {
     return storedStatus && storedStatus !== 'unknown'
       ? (storedStatus as KpiStatus)
@@ -229,9 +315,12 @@ export class AdHypothesesService {
 
   private campaignSummary(campaign: any) {
     const spend = this.decimal(campaign.priceInPrimaryCurrency);
+    const nativeSpend = this.decimal(campaign.price ?? campaign.costAmount);
     const joinedSubscribers = this.campaignJoined(campaign);
+    const pendingSubscribers = this.campaignPending(campaign);
+    const attributedSubscribers = joinedSubscribers + pendingSubscribers;
     const leftSubscribers = this.campaignLeft(campaign);
-    const cpa = joinedSubscribers > 0 ? spend / joinedSubscribers : null;
+    const cpa = attributedSubscribers > 0 ? spend / attributedSubscribers : null;
     const views = this.nullableNumber(campaign.sourcePostViews);
     const reactions = null;
     const engagementRate =
@@ -248,7 +337,10 @@ export class AdHypothesesService {
       status: campaign.status,
       currency: campaign.currency,
       spend,
+      nativeSpend,
       joinedSubscribers,
+      pendingSubscribers,
+      attributedSubscribers,
       leftSubscribers,
       cpa,
       views,
@@ -271,16 +363,48 @@ export class AdHypothesesService {
       source: this.sourceLabel(campaign),
       sourcePostUrl: campaign.sourcePostUrl,
       kpiStatus: effectiveKpiStatus,
+      excludeFromAnalytics: Boolean(campaign.excludeFromAnalytics),
     };
   }
 
-  private aggregateSummary(campaignSummaries: ReturnType<typeof this.campaignSummary>[]) {
+  private aggregateSummary(
+    campaignSummaries: ReturnType<typeof this.campaignSummary>[],
+    hypothesisChannel?: any,
+  ) {
     const totalSpend = campaignSummaries.reduce(
       (sum, campaign) => sum + campaign.spend,
       0,
     );
+    const currencies = [
+      ...new Set(
+        campaignSummaries
+          .map((campaign) => String(campaign.currency || '').trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ];
+    const displayCurrency = currencies.length === 1 ? currencies[0] : null;
+    const totalSpendDisplay =
+      displayCurrency != null
+        ? campaignSummaries.reduce(
+            (sum, campaign) =>
+              sum +
+              (String(campaign.currency || '').trim().toUpperCase() ===
+              displayCurrency
+                ? Number(campaign.nativeSpend || 0)
+                : 0),
+            0,
+          )
+        : null;
     const totalJoinedSubscribers = campaignSummaries.reduce(
       (sum, campaign) => sum + campaign.joinedSubscribers,
+      0,
+    );
+    const totalPendingSubscribers = campaignSummaries.reduce(
+      (sum, campaign) => sum + campaign.pendingSubscribers,
+      0,
+    );
+    const totalAttributedSubscribers = campaignSummaries.reduce(
+      (sum, campaign) => sum + campaign.attributedSubscribers,
       0,
     );
     const totalViews = campaignSummaries.reduce(
@@ -305,15 +429,28 @@ export class AdHypothesesService {
       campaignSummaries
         .filter((campaign) => campaign.cpa != null)
         .sort((a, b) => Number(b.cpa) - Number(a.cpa))[0] || null;
-    const kpiStatus = this.aggregateKpiStatus(
-      campaignSummaries.map((campaign) => campaign.kpiStatus),
+    const avgCpa =
+      totalAttributedSubscribers > 0
+        ? totalSpend / totalAttributedSubscribers
+        : null;
+    const kpiStatus = this.hypothesisKpiStatus(
+      campaignSummaries,
+      avgCpa,
+      hypothesisChannel,
     );
     return {
       campaignsCount: campaignSummaries.length,
       totalSpend,
+      displayCurrency,
+      totalSpendDisplay,
       totalJoinedSubscribers,
-      avgCpa:
-        totalJoinedSubscribers > 0 ? totalSpend / totalJoinedSubscribers : null,
+      totalPendingSubscribers,
+      totalAttributedSubscribers,
+      avgCpa,
+      avgCpaDisplay:
+        totalAttributedSubscribers > 0 && totalSpendDisplay != null
+          ? totalSpendDisplay / totalAttributedSubscribers
+          : null,
       activeSubscribersEstimate,
       activeCpa:
         activeSubscribersEstimate > 0 ? totalSpend / activeSubscribersEstimate : null,
@@ -336,26 +473,220 @@ export class AdHypothesesService {
     };
   }
 
-  private enrichHypothesis(hypothesis: any, detailed = false) {
-    const campaignRows = (hypothesis.campaigns || []).map(
-      (link: any) => link.adCampaign,
+  private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number }>(
+    rows: T[],
+  ) {
+    let peakJoinedCount = 0;
+    let peakTotalAttributed = 0;
+    return rows.map((row) => {
+      const joinedCount = Number(row.joinedCount || 0);
+      const requestedCount = Number(row.requestedCount || 0);
+      const totalAttributed = joinedCount + requestedCount;
+      peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
+      peakTotalAttributed = Math.max(peakTotalAttributed, totalAttributed);
+      const drawdownFromPeak = Math.max(0, peakTotalAttributed - totalAttributed);
+      const drawdownPercent =
+        peakTotalAttributed > 0
+          ? (drawdownFromPeak / peakTotalAttributed) * 100
+          : 0;
+      return {
+        syncedAt: row.syncedAt,
+        joinedCount,
+        requestedCount,
+        totalAttributed,
+        peakJoinedCount,
+        drawdownFromPeak,
+        drawdownPercent,
+      };
+    });
+  }
+
+  private inviteLinkHistorySummary<
+    T extends {
+      joinedCount: number;
+      requestedCount: number;
+      totalAttributed: number;
+      peakJoinedCount: number;
+      drawdownFromPeak: number;
+      drawdownPercent: number;
+    },
+  >(points: T[]) {
+    const current = points[points.length - 1] ?? null;
+    const peakJoinedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.peakJoinedCount || 0)),
+      0,
     );
+    const peakRequestedCount = points.reduce(
+      (max, point) => Math.max(max, Number(point.requestedCount || 0)),
+      0,
+    );
+    const peakTotalAttributed = points.reduce(
+      (max, point) => Math.max(max, Number(point.totalAttributed || 0)),
+      0,
+    );
+    return {
+      currentJoinedCount: Number(current?.joinedCount || 0),
+      currentRequestedCount: Number(current?.requestedCount || 0),
+      currentTotalAttributed:
+        Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
+      peakJoinedCount,
+      peakRequestedCount,
+      peakTotalAttributed,
+      drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
+      drawdownPercent: Number(current?.drawdownPercent || 0),
+      hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,
+    };
+  }
+
+  private buildHypothesisInviteLinkHistoryPayload(
+    hypothesis: {
+      id: string;
+      name: string;
+      campaigns: Array<{
+        id: string;
+        telegramChannelId: string;
+        inviteLinks: Array<{
+          id: string;
+          name: string;
+          url: string;
+          joinedCount: number;
+          requestedCount?: number | null;
+          isRevoked?: boolean | null;
+        }>;
+      }>;
+    },
+    rowsAsc: Array<{
+      adCampaignId: string | null;
+      inviteLinkId: string;
+      syncedAt: Date;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked: boolean | null;
+    }>,
+  ) {
+    const flattenedInviteLinks = hypothesis.campaigns.flatMap((campaign) =>
+      campaign.inviteLinks.map((link) => ({
+        ...link,
+        adCampaignId: campaign.id,
+        telegramChannelId: campaign.telegramChannelId,
+        requestedCount: Number(link.requestedCount ?? 0),
+        isRevoked: Boolean(link.isRevoked),
+      })),
+    );
+    const grouped = new Map<
+      string,
+      { syncedAt: Date; joinedCount: number; requestedCount: number }
+    >();
+    for (const row of rowsAsc) {
+      const key = row.syncedAt.toISOString();
+      const current = grouped.get(key);
+      if (current) {
+        current.joinedCount += Number(row.joinedCount || 0);
+        current.requestedCount += Number(row.requestedCount || 0);
+      } else {
+        grouped.set(key, {
+          syncedAt: row.syncedAt,
+          joinedCount: Number(row.joinedCount || 0),
+          requestedCount: Number(row.requestedCount || 0),
+        });
+      }
+    }
+    if (!grouped.size) {
+      grouped.set(new Date().toISOString(), {
+        syncedAt: new Date(),
+        joinedCount: flattenedInviteLinks.reduce(
+          (sum, link) => sum + Number(link.joinedCount || 0),
+          0,
+        ),
+        requestedCount: flattenedInviteLinks.reduce(
+          (sum, link) => sum + Number(link.requestedCount || 0),
+          0,
+        ),
+      });
+    }
+    const aggregatePoints = this.inviteLinkHistoryPoints([...grouped.values()]);
+
+    const rowsByInviteLinkId = new Map<
+      string,
+      Array<{ syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked: boolean | null }>
+    >();
+    for (const row of rowsAsc) {
+      const list = rowsByInviteLinkId.get(row.inviteLinkId) ?? [];
+      list.push(row);
+      rowsByInviteLinkId.set(row.inviteLinkId, list);
+    }
+
+    return {
+      hypothesis: {
+        id: hypothesis.id,
+        name: hypothesis.name,
+      },
+      inviteLinks: flattenedInviteLinks.map((link) => {
+        const points = this.inviteLinkHistoryPoints(
+          rowsByInviteLinkId.get(link.id)?.map((row) => ({
+            syncedAt: row.syncedAt,
+            joinedCount: Number(row.joinedCount || 0),
+            requestedCount: Number(row.requestedCount || 0),
+          })) ?? [
+            {
+              syncedAt: new Date(),
+              joinedCount: Number(link.joinedCount || 0),
+              requestedCount: Number(link.requestedCount || 0),
+            },
+          ],
+        );
+        return {
+          ...link,
+          summary: this.inviteLinkHistorySummary(points),
+        };
+      }),
+      points: aggregatePoints,
+      summary: {
+        ...this.inviteLinkHistorySummary(aggregatePoints),
+        inviteLinksCount: flattenedInviteLinks.length,
+        campaignsCount: hypothesis.campaigns.length,
+      },
+    };
+  }
+
+  private enrichHypothesis(hypothesis: any, detailed = false) {
+    const campaignRows = (hypothesis.campaigns || []).map((link: any) => ({
+      ...link.adCampaign,
+      promos: Array.isArray(link.adCampaign?.promos)
+        ? link.adCampaign.promos
+            .map((promoLink: any) => promoLink?.promo)
+            .filter(Boolean)
+        : [],
+    }));
     const campaignSummaries = campaignRows.map((campaign: any) =>
       this.campaignSummary(campaign),
     );
-    const summary = this.aggregateSummary(campaignSummaries);
+    const summary = this.aggregateSummary(
+      campaignSummaries,
+      hypothesis.telegramChannel,
+    );
     const base = {
       id: hypothesis.id,
       name: hypothesis.name,
       description: hypothesis.description,
       status: hypothesis.status,
       conclusion: hypothesis.conclusion,
+      iconId: hypothesis.iconId,
+      icon: hypothesis.icon ?? null,
+      telegramChannelId: hypothesis.telegramChannelId ?? null,
+      telegramChannel: hypothesis.telegramChannel ?? null,
       createdAt: hypothesis.createdAt,
       updatedAt: hypothesis.updatedAt,
       assignedMemberId: hypothesis.assignedMemberId,
       assignedMember: hypothesis.assignedMember,
       createdByUserId: hypothesis.createdByUserId,
       createdByUser: hypothesis.createdByUser,
+      allCampaignsExcludedFromAnalytics:
+        campaignRows.length > 0 &&
+        campaignRows.every((campaign: any) => Boolean(campaign.excludeFromAnalytics)),
+      excludedCampaignsCount: campaignRows.filter((campaign: any) =>
+        Boolean(campaign.excludeFromAnalytics),
+      ).length,
       campaignsCount: summary.campaignsCount,
       summary,
     };
@@ -401,10 +732,23 @@ export class AdHypothesesService {
 
   async create(userId: string, dto: CreateAdHypothesisDto) {
     const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
-    const { uniqueIds } = await this.validateCampaigns(
+    const telegramChannel = await this.validateTelegramChannel(
+      workspaceId,
+      dto.telegramChannelId,
+    );
+    const { uniqueIds, campaigns } = await this.validateCampaigns(
       workspaceId,
       dto.adCampaignIds,
     );
+    if (
+      campaigns.some(
+        (campaign: any) => campaign.telegramChannelId !== telegramChannel.id,
+      )
+    ) {
+      throw new BadRequestException(
+        'All selected campaigns must belong to the selected Telegram channel',
+      );
+    }
     const hypothesis = await (this.prisma.adHypothesis as any).create({
       data: {
         workspaceId,
@@ -412,6 +756,8 @@ export class AdHypothesesService {
         description: dto.description?.trim() || null,
         status: this.normalizeStatus(dto.status),
         conclusion: dto.conclusion?.trim() || null,
+        iconId: dto.iconId?.trim() || null,
+        telegramChannelId: telegramChannel.id,
         assignedMemberId,
         createdByUserId: userId,
         campaigns: {
@@ -433,16 +779,32 @@ export class AdHypothesesService {
     const workspaceId = await this.workspace(userId);
     const existing = await (this.prisma.adHypothesis as any).findFirst({
       where: { id: hypothesisId, workspaceId },
-      select: { id: true },
+      select: { id: true, telegramChannelId: true },
     });
     if (!existing) throw new NotFoundException('Ad hypothesis not found');
     const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
       await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
     ).assignedMemberId;
 
-    const uniqueIds = dto.adCampaignIds
-      ? (await this.validateCampaigns(workspaceId, dto.adCampaignIds)).uniqueIds
+    const nextTelegramChannelId =
+      dto.telegramChannelId === undefined
+        ? existing.telegramChannelId
+        : (await this.validateTelegramChannel(workspaceId, dto.telegramChannelId)).id;
+
+    const validatedCampaigns = dto.adCampaignIds
+      ? await this.validateCampaigns(workspaceId, dto.adCampaignIds)
       : null;
+    const uniqueIds = validatedCampaigns?.uniqueIds ?? null;
+
+    if (
+      validatedCampaigns?.campaigns.some(
+        (campaign: any) => campaign.telegramChannelId !== nextTelegramChannelId,
+      )
+    ) {
+      throw new BadRequestException(
+        'All selected campaigns must belong to the selected Telegram channel',
+      );
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await (tx.adHypothesis as any).update({
@@ -459,6 +821,10 @@ export class AdHypothesesService {
             dto.conclusion === undefined
               ? undefined
               : dto.conclusion?.trim() || null,
+          iconId:
+            dto.iconId === undefined ? undefined : dto.iconId?.trim() || null,
+          telegramChannelId:
+            dto.telegramChannelId === undefined ? undefined : nextTelegramChannelId,
           assignedMemberId,
         },
       });
@@ -495,5 +861,41 @@ export class AdHypothesesService {
   async getHypothesisSummary(userId: string, hypothesisId: string) {
     const hypothesis = await this.getById(userId, hypothesisId);
     return hypothesis.summary;
+  }
+
+  async inviteLinkHistory(userId: string, hypothesisId: string) {
+    const hypothesis = (await this.getById(userId, hypothesisId)) as any;
+    const campaignIds = (hypothesis.campaigns || []).map(
+      (campaign: any) => campaign.id,
+    );
+    const rowsAsc = campaignIds.length
+      ? await this.prisma.telegramInviteLinkSnapshot.findMany({
+          where: {
+            workspaceId: await this.workspace(userId),
+            adCampaignId: { in: campaignIds },
+          },
+          orderBy: [{ syncedAt: 'asc' }, { inviteLinkId: 'asc' }],
+          select: {
+            adCampaignId: true,
+            inviteLinkId: true,
+            syncedAt: true,
+            joinedCount: true,
+            requestedCount: true,
+            isRevoked: true,
+          },
+        })
+      : [];
+    return this.buildHypothesisInviteLinkHistoryPayload(
+      {
+        id: hypothesis.id,
+        name: hypothesis.name,
+        campaigns: (hypothesis.campaigns || []).map((campaign: any) => ({
+          id: campaign.id,
+          telegramChannelId: campaign.telegramChannelId,
+          inviteLinks: Array.isArray(campaign.inviteLinks) ? campaign.inviteLinks : [],
+        })),
+      },
+      rowsAsc,
+    );
   }
 }

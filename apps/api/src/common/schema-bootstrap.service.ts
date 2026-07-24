@@ -117,5 +117,20 @@ ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 ALTER TABLE "WorkspaceMember"
 ADD COLUMN IF NOT EXISTS "avatarIconId" TEXT;
 `);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "AdHypothesis"
+ADD COLUMN IF NOT EXISTS "iconId" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "AdHypothesis"
+ADD COLUMN IF NOT EXISTS "telegramChannelId" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "AdCampaign"
+ADD COLUMN IF NOT EXISTS "customTitleTemplate" TEXT;
+`);
   }
 }

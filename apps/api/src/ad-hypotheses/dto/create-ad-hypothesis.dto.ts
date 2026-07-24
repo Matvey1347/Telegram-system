@@ -1,6 +1,8 @@
 import { ArrayMinSize, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateAdHypothesisDto {
+  @IsOptional() @IsString() iconId?: string | null;
+  @IsOptional() @IsString() telegramChannelId?: string | null;
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsString()
   @MinLength(2)

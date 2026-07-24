@@ -1240,14 +1240,14 @@ export function FormField({
   children,
 }: PropsWithChildren<{ label: string; required?: boolean; error?: string }>) {
   return (
-    <label className="block text-sm">
+    <div className="block text-sm">
       <span className="mb-1 block text-neutral-300">
         {label}
         {required ? <span className="ml-1 text-red-400">*</span> : null}
       </span>
       {children}
       {error ? <p className="mt-1 text-xs text-red-400">{error}</p> : null}
-    </label>
+    </div>
   );
 }
 

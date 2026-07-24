@@ -16,6 +16,8 @@ export const AD_HYPOTHESIS_STATUSES = [
 ] as const;
 
 export class UpdateAdHypothesisDto {
+  @IsOptional() @IsString() iconId?: string | null;
+  @IsOptional() @IsString() telegramChannelId?: string | null;
   @IsOptional() @IsString() assignedMemberId?: string | null;
   @IsOptional()
   @IsString()

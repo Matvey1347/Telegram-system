@@ -118,10 +118,10 @@ function InviteLinkHistoryMiniPreview({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-slate-400">
-            peak {formatNumber(summary.peakJoinedCount)}
+            peak {formatNumber(summary.peakTotalAttributed)}
           </span>
           <span className="text-xs text-slate-400">
-            current {formatNumber(summary.currentJoinedCount)}
+            current {formatNumber(summary.currentTotalAttributed)}
           </span>
         </div>
         <span className="text-[11px] text-slate-500">
@@ -158,7 +158,8 @@ function InviteLinkHistoryMiniPreview({
               name="Joined"
               stroke="#60a5fa"
               strokeWidth={2}
-              dot={false}
+              dot={points.length <= 2}
+              activeDot={{ r: 4 }}
             />
             <Line
               type="monotone"
@@ -166,7 +167,8 @@ function InviteLinkHistoryMiniPreview({
               name="Pending"
               stroke="#f59e0b"
               strokeWidth={1.5}
-              dot={false}
+              dot={points.length <= 2}
+              activeDot={{ r: 4 }}
             />
           </LineChart>
         </ResponsiveContainer>
