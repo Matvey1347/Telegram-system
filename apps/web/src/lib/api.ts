@@ -587,6 +587,12 @@ export type Transaction = EntityAssignment & {
   member?: WorkspaceMember;
   adCampaign?: { id: string; title: string } | null;
   investment?: { id: string; notes?: string | null } | null;
+  purchasedTelegramChannel?: {
+    id: string;
+    title: string;
+    username?: string | null;
+    photoUrl?: string | null;
+  } | null;
 };
 export type Transfer = EntityAssignment & {
   id: string;
@@ -689,6 +695,22 @@ export type TelegramChannel = EntityAssignment & {
   acceptableCpa?: number | string | null;
   stopCpaFrom?: number | string | null;
   stopCpa?: number | string | null;
+  acquisitionType?: "CREATED" | "PURCHASED";
+  postsSyncFrom?: string | null;
+  inviteLinksSyncFrom?: string | null;
+  purchaseTransactionId?: string | null;
+  purchaseTransaction?: {
+    id: string;
+    amount: number | string;
+    currency: string;
+    amountInPrimaryCurrency: number | string;
+    date: string;
+    description?: string | null;
+    account?: {
+      id: string;
+      name: string;
+    } | null;
+  } | null;
   photoUrl?: string;
   sourceType?: string;
   lastPublicSyncedAt?: string;
@@ -763,6 +785,23 @@ export type TelegramChannelSyncNowPayload = Partial<
   telegramUserAccountId?: string;
   saveSelection?: boolean;
   postLimit?: number;
+};
+
+export type TelegramChannelImportPayload = {
+  input?: string;
+  username?: string;
+  telegramAccountId?: string;
+  acquisitionType?: "CREATED" | "PURCHASED";
+  postsSyncFrom?: string | null;
+  inviteLinksSyncFrom?: string | null;
+  purchaseTransactionId?: string | null;
+};
+
+export type TelegramAccountChannelImportItem = {
+  telegramChannelId: string;
+  acquisitionType?: "CREATED" | "PURCHASED";
+  postsSyncFrom?: string | null;
+  inviteLinksSyncFrom?: string | null;
 };
 
 export type ApiErrorPayload = StructuredApiError;
@@ -971,6 +1010,8 @@ export type TelegramChannelAudienceSnapshot = {
   createdAt: string;
 };
 export type TelegramChannelFinancialSummary = {
+  acquisitionCost?: number;
+  totalSpend?: number;
   totalAdSpend: number;
   campaignsCount: number;
   totalJoinedSubscribers: number;
@@ -1978,6 +2019,44 @@ export const transactionsApi = {
     hasExplicitPagination(params)
       ? (await getPaginated<Transaction>("/transactions", params)).items
       : getAllPaginatedItems<Transaction>("/transactions", params),
+  create: async (payload: {
+    assignedMemberId?: string | null;
+    accountId: string;
+    type: TransactionType;
+    amount: number;
+    exchangeRateToPrimary?: number;
+    categoryId: string;
+    memberId?: string;
+    iconId?: string | null;
+    telegramChannelId?: string | null;
+    description?: string;
+    date: string;
+  }) =>
+    (await api.post<Transaction>("/transactions", payload, quietMutationConfig))
+      .data,
+  update: async (
+    id: string,
+    payload: {
+      assignedMemberId?: string | null;
+      accountId?: string;
+      type?: TransactionType;
+      amount?: number;
+      exchangeRateToPrimary?: number;
+      categoryId?: string;
+      memberId?: string | null;
+      iconId?: string | null;
+      telegramChannelId?: string | null;
+      description?: string;
+      date?: string;
+    },
+  ) =>
+    (
+      await api.patch<Transaction>(
+        `/transactions/${id}`,
+        payload,
+        quietMutationConfig,
+      )
+    ).data,
 };
 export const transactionCategoriesApi = {
   list: async (type: TransactionType) =>
@@ -2041,21 +2120,21 @@ export const telegramChannelsApi = {
         silentFeedbackConfig,
       )
     ).data,
-  import: async (input: string) =>
+  import: async (payload: TelegramChannelImportPayload) =>
     (
       await api.post<ImportedTelegramSource>(
         "/telegram-channels/import",
-        { input },
+        payload,
         quietMutationConfig,
       )
     ).data,
   importWithProgress: async (
-    input: string,
+    payload: TelegramChannelImportPayload,
     onProgress: StreamProgressHandler<{ message?: string }>,
   ) =>
     streamProgressAction<ImportedTelegramSource, { message?: string }>(
       "/telegram-channels/import-stream",
-      { input },
+      payload,
       onProgress,
     ),
   export: async (id: string) =>
@@ -2575,22 +2654,25 @@ export const telegramUserAccountsApi = {
       TelegramUserAccountSyncDialogsResponse,
       { message?: string }
     >(`/telegram-user-accounts/${id}/sync-dialogs-stream`, {}, onProgress),
-  importChannels: async (id: string, channelIds: string[]) =>
+  importChannels: async (
+    id: string,
+    channels: TelegramAccountChannelImportItem[],
+  ) =>
     (
       await api.post<TelegramUserAccountSyncDialogsResponse>(
         `/telegram-user-accounts/${id}/channels/import`,
-        { channelIds },
+        { channels },
       )
     ).data,
   importChannelsWithProgress: async (
     id: string,
-    channelIds: string[],
+    channels: TelegramAccountChannelImportItem[],
     onProgress: StreamProgressHandler<{ message?: string }>,
   ) =>
     streamProgressAction<
       TelegramUserAccountSyncDialogsResponse,
       { message?: string }
-    >(`/telegram-user-accounts/${id}/channels/import-stream`, { channelIds }, onProgress),
+    >(`/telegram-user-accounts/${id}/channels/import-stream`, { channels }, onProgress),
   channels: async (id: string) =>
     (
       await api.get<TelegramSourceChannelAccess[]>(

@@ -13,6 +13,7 @@ import {
   Matches,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../common/pagination/pagination-query.dto';
@@ -87,12 +88,32 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @IsBoolean() syncIncludeChannelStats?: boolean;
   @IsOptional() @IsBoolean() syncIncludeManagedPosts?: boolean;
   @IsOptional() @IsBoolean() syncIncludeAudienceSnapshot?: boolean;
+  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?: 'CREATED' | 'PURCHASED';
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsDateString()
+  postsSyncFrom?: string | null;
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsDateString()
+  inviteLinksSyncFrom?: string | null;
+  @IsOptional() @IsString() purchaseTransactionId?: string | null;
 }
 
 export class ImportTelegramChannelDto {
   @IsOptional() @IsString() input?: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() telegramAccountId?: string;
+  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?: 'CREATED' | 'PURCHASED';
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsDateString()
+  postsSyncFrom?: string | null;
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsDateString()
+  inviteLinksSyncFrom?: string | null;
+  @IsOptional() @IsString() purchaseTransactionId?: string | null;
 }
 
 export class HistoricalSyncDto {

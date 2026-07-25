@@ -77,6 +77,11 @@ enum TelegramChannelAccessMode {
   UNKNOWN
 }
 
+enum TelegramChannelAcquisitionType {
+  CREATED
+  PURCHASED
+}
+
 enum TelegramDataSourceStatus {
   SUCCESS
   PARTIAL
@@ -453,6 +458,8 @@ model Transaction {
 
   adCampaign     AdCampaign?          @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
   investment     Investment?
+  purchasedTelegramChannel TelegramChannel?
+    @relation("TelegramChannelPurchaseTransaction")
   categoryRef    TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   member         WorkspaceMember?     @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
   icon           Icon?                @relation(fields: [iconId], references: [id], onDelete: SetNull)
@@ -572,6 +579,10 @@ model TelegramChannel {
   acceptableCpa             Decimal?
   stopCpaFrom               Decimal?
   stopCpa                   Decimal?
+  acquisitionType           TelegramChannelAcquisitionType @default(CREATED)
+  postsSyncFrom             DateTime?
+  inviteLinksSyncFrom       DateTime?
+  purchaseTransactionId     String? @unique
   isActive                  Boolean  @default(true)
   assignedMemberId          String?
   createdByUserId           String?
@@ -593,6 +604,12 @@ model TelegramChannel {
   workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assignedMember WorkspaceMember? @relation("TelegramChannelAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser  User?            @relation("TelegramChannelCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  purchaseTransaction Transaction? @relation(
+    "TelegramChannelPurchaseTransaction",
+    fields: [purchaseTransactionId],
+    references: [id],
+    onDelete: SetNull
+  )
 
   promos            Promo[]
   adCampaigns       AdCampaign[]
@@ -1133,6 +1150,7 @@ model TelegramInviteLink {
   creatorPhotoUrl        String?
   creatorMemberId        String?
   creatorMatchSource     TelegramInviteLinkCreatorMatchSource?
+  telegramCreatedAt      DateTime?
 
   telegramChannel TelegramChannel  @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   adCampaign      AdCampaign?      @relation(fields: [adCampaignId], references: [id], onDelete: SetNull)

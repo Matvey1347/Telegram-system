@@ -14,6 +14,7 @@ import {
   TelegramManagedPostStatus,
   TelegramManagedPostRemoteStatus,
   TelegramSourceType,
+  TransactionType,
   TelegramUserAccountStatus,
 } from '@prisma/client';
 import ExcelJS from 'exceljs';
@@ -138,6 +139,20 @@ type TelegramChannelSyncSelection = {
   syncIncludeAudienceSnapshot: boolean;
 };
 
+type TelegramImportPolicyInput = {
+  acquisitionType?: 'CREATED' | 'PURCHASED';
+  postsSyncFrom?: string | Date | null;
+  inviteLinksSyncFrom?: string | Date | null;
+  purchaseTransactionId?: string | null;
+};
+
+type ResolvedTelegramImportPolicy = {
+  acquisitionType: 'CREATED' | 'PURCHASED';
+  postsSyncFrom: Date | null;
+  inviteLinksSyncFrom: Date | null;
+  purchaseTransactionId: string | null;
+};
+
 const TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS = 50;
 
 const TELEGRAM_CAPTION_LIMIT = 1024;
@@ -211,8 +226,9 @@ type ManagedPostRevisionRecord = ManagedPostRevisionSource & {
 @Injectable()
 export class TelegramChannelsService {
   private readonly logger = new Logger(TelegramChannelsService.name);
-  private readonly defaultPostSyncLimit = 100;
-  private readonly initialPostBackfillLimit = 10_000;
+  private readonly rollingPostSyncWindow = 50;
+  private readonly defaultPostSyncLimit = 50;
+  private readonly initialPostBackfillLimit = 50;
   private readonly olderPostBackfillMaxPages = 5;
   private readonly managedPostRevisionRetentionMs =
     7 * 24 * 60 * 60 * 1000;
@@ -286,6 +302,10 @@ export class TelegramChannelsService {
   private telegramChannelSyncScopeColumnsAvailable: boolean | null = null;
   private ensureTelegramChannelSyncScopeColumnsPromise: Promise<void> | null =
     null;
+  private telegramChannelImportPolicyColumnsAvailable: boolean | null = null;
+  private ensureTelegramChannelImportPolicyColumnsPromise:
+    | Promise<void>
+    | null = null;
 
   constructor(
     private prisma: PrismaService,
@@ -360,6 +380,66 @@ export class TelegramChannelsService {
       await this.ensureTelegramChannelSyncScopeColumnsPromise;
     } finally {
       this.ensureTelegramChannelSyncScopeColumnsPromise = null;
+    }
+  }
+
+  async ensureTelegramChannelImportPolicyColumnsAvailable() {
+    if (this.telegramChannelImportPolicyColumnsAvailable === true) return;
+    if (this.ensureTelegramChannelImportPolicyColumnsPromise) {
+      return this.ensureTelegramChannelImportPolicyColumnsPromise;
+    }
+    this.ensureTelegramChannelImportPolicyColumnsPromise = (async () => {
+      await this.prisma.$executeRawUnsafe(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_type
+            WHERE typname = 'TelegramChannelAcquisitionType'
+          ) THEN
+            CREATE TYPE "TelegramChannelAcquisitionType" AS ENUM ('CREATED', 'PURCHASED');
+          END IF;
+        END $$;
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramChannel"
+        ADD COLUMN IF NOT EXISTS "acquisitionType" "TelegramChannelAcquisitionType" NOT NULL DEFAULT 'CREATED',
+        ADD COLUMN IF NOT EXISTS "postsSyncFrom" TIMESTAMP(3),
+        ADD COLUMN IF NOT EXISTS "inviteLinksSyncFrom" TIMESTAMP(3),
+        ADD COLUMN IF NOT EXISTS "purchaseTransactionId" TEXT
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramInviteLink"
+        ADD COLUMN IF NOT EXISTS "telegramCreatedAt" TIMESTAMP(3)
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "TelegramChannel_purchaseTransactionId_key"
+        ON "TelegramChannel"("purchaseTransactionId")
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'TelegramChannel_purchaseTransactionId_fkey'
+          ) THEN
+            ALTER TABLE "TelegramChannel"
+            ADD CONSTRAINT "TelegramChannel_purchaseTransactionId_fkey"
+            FOREIGN KEY ("purchaseTransactionId") REFERENCES "Transaction"("id")
+            ON DELETE SET NULL ON UPDATE CASCADE;
+          END IF;
+        END $$;
+      `);
+      this.telegramChannelImportPolicyColumnsAvailable = true;
+      this.logger.warn(
+        'TelegramChannel import-policy columns were missing in the database and were created automatically for compatibility.',
+      );
+    })();
+    try {
+      await this.ensureTelegramChannelImportPolicyColumnsPromise;
+    } finally {
+      this.ensureTelegramChannelImportPolicyColumnsPromise = null;
     }
   }
 
@@ -646,6 +726,119 @@ export class TelegramChannelsService {
 
   private normalizeChatId(value?: string | null) {
     return normalizeTelegramChannelId(value);
+  }
+
+  private toOptionalDate(value: string | Date | null | undefined) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('Invalid sync cutoff date.');
+    }
+    return date;
+  }
+
+  private async validatePurchaseTransaction(
+    workspaceId: string,
+    channelId: string | null,
+    purchaseTransactionId: string | null,
+  ) {
+    if (!purchaseTransactionId) return null;
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { id: purchaseTransactionId, workspaceId },
+      select: {
+        id: true,
+        workspaceId: true,
+        type: true,
+      },
+    });
+    if (!transaction) {
+      throw new BadRequestException(
+        'Purchase transaction was not found in this workspace.',
+      );
+    }
+    if (transaction.type !== TransactionType.expense) {
+      throw new BadRequestException(
+        'Purchase transaction must be an expense transaction.',
+      );
+    }
+    const linkedChannel = await (this.prisma.telegramChannel as any).findFirst({
+      where: { purchaseTransactionId },
+      select: { id: true },
+    });
+    if (linkedChannel?.id && linkedChannel.id !== channelId) {
+      throw new BadRequestException(
+        'This transaction is already linked to another Telegram channel.',
+      );
+    }
+    return transaction.id;
+  }
+
+  private async resolveImportPolicy(params: {
+    workspaceId: string;
+    channelId?: string | null;
+    input?: TelegramImportPolicyInput;
+    existing?: {
+      acquisitionType?: 'CREATED' | 'PURCHASED' | null;
+      postsSyncFrom?: Date | null;
+      inviteLinksSyncFrom?: Date | null;
+      purchaseTransactionId?: string | null;
+    } | null;
+    defaultNow?: Date;
+  }) {
+    await this.ensureTelegramChannelImportPolicyColumnsAvailable();
+    const { workspaceId, channelId = null, input, existing, defaultNow } = params;
+    const now = defaultNow ?? new Date();
+    const postsSyncFromInput = this.toOptionalDate(input?.postsSyncFrom);
+    const inviteLinksSyncFromInput = this.toOptionalDate(input?.inviteLinksSyncFrom);
+    const acquisitionType =
+      input?.acquisitionType === undefined
+        ? (existing?.acquisitionType ?? 'CREATED')
+        : input.acquisitionType === 'PURCHASED'
+          ? 'PURCHASED'
+          : 'CREATED';
+    const postsSyncFrom =
+      postsSyncFromInput === undefined
+        ? existing
+          ? (existing.postsSyncFrom ?? null)
+          : now
+        : postsSyncFromInput;
+    const inviteLinksSyncFrom =
+      inviteLinksSyncFromInput === undefined
+        ? existing
+          ? (existing.inviteLinksSyncFrom ?? null)
+          : now
+        : inviteLinksSyncFromInput;
+    const purchaseTransactionId =
+      input?.purchaseTransactionId === undefined
+        ? (existing?.purchaseTransactionId ?? null)
+        : input.purchaseTransactionId;
+
+    return {
+      acquisitionType,
+      postsSyncFrom,
+      inviteLinksSyncFrom,
+      purchaseTransactionId: await this.validatePurchaseTransaction(
+        workspaceId,
+        channelId,
+        purchaseTransactionId ?? null,
+      ),
+    } satisfies ResolvedTelegramImportPolicy;
+  }
+
+  async resolveChannelImportPolicy(params: {
+    workspaceId: string;
+    channelId?: string | null;
+    input?: TelegramImportPolicyInput;
+    existing?: {
+      acquisitionType?: 'CREATED' | 'PURCHASED' | null;
+      postsSyncFrom?: Date | null;
+      inviteLinksSyncFrom?: Date | null;
+      purchaseTransactionId?: string | null;
+    } | null;
+    defaultNow?: Date;
+  }) {
+    return this.resolveImportPolicy(params);
   }
 
   private isMissingTimePostsTable(error: unknown) {
@@ -3077,12 +3270,71 @@ export class TelegramChannelsService {
   }
 
   private async postSyncLimitForChannel(channelId: string) {
-    const existingPosts = await this.prisma.telegramPost.count({
-      where: { telegramChannelId: channelId },
-    });
+    const [existingPosts] = await Promise.all([
+      this.prisma.telegramPost.count({
+        where: { telegramChannelId: channelId },
+      }),
+      this.getTelegramChannelImportPolicyRow({
+        channelId,
+      }),
+    ]);
     return existingPosts > 0
       ? this.defaultPostSyncLimit
       : this.initialPostBackfillLimit;
+  }
+
+  private syncCutoffMetadata(channel: {
+    postsSyncFrom?: Date | null;
+    inviteLinksSyncFrom?: Date | null;
+  }) {
+    return {
+      postsSyncFrom: channel.postsSyncFrom?.toISOString() ?? null,
+      inviteLinksSyncFrom: channel.inviteLinksSyncFrom?.toISOString() ?? null,
+    };
+  }
+
+  private async getTelegramChannelImportPolicyRow(params: {
+    channelId: string;
+    workspaceId?: string;
+  }) {
+    await this.ensureTelegramChannelImportPolicyColumnsAvailable();
+    const baseSelect = Prisma.sql`
+      SELECT
+        "id",
+        "acquisitionType",
+        "postsSyncFrom",
+        "inviteLinksSyncFrom",
+        "purchaseTransactionId"
+      FROM "TelegramChannel"
+    `;
+    const rows = (params.workspaceId
+      ? await this.prisma.$queryRaw(Prisma.sql`
+          ${baseSelect}
+          WHERE "id" = ${params.channelId}
+            AND "workspaceId" = ${params.workspaceId}
+          LIMIT 1
+        `)
+      : await this.prisma.$queryRaw(Prisma.sql`
+          ${baseSelect}
+          WHERE "id" = ${params.channelId}
+          LIMIT 1
+        `)) as Array<{
+      id: string;
+      acquisitionType: 'CREATED' | 'PURCHASED' | null;
+      postsSyncFrom: Date | null;
+      inviteLinksSyncFrom: Date | null;
+      purchaseTransactionId: string | null;
+    }>;
+    return rows[0] ?? null;
+  }
+
+  private async getChannelSyncCutoffs(workspaceId: string, channelId: string) {
+    const channel = await this.getTelegramChannelImportPolicyRow({
+      channelId,
+      workspaceId,
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    return channel;
   }
 
   private async runInitialImportBackfill(params: {
@@ -3092,6 +3344,10 @@ export class TelegramChannelsService {
     accountId: string;
   }) {
     try {
+      const cutoffs = await this.getChannelSyncCutoffs(
+        params.workspaceId,
+        params.channelId,
+      );
       const historical = await this.syncHistorical(
         params.userId,
         params.channelId,
@@ -3126,6 +3382,7 @@ export class TelegramChannelsService {
       );
       return {
         success: true,
+        ...this.syncCutoffMetadata(cutoffs),
         historical,
         postsMetricsSync,
         olderPostsBackfill,
@@ -3315,6 +3572,7 @@ export class TelegramChannelsService {
     workspaceId: string,
     channels: Array<{
       id: string;
+      currentSubscribersCount?: number | null;
       activeSubscribersWindow?: number | null;
       targetCpaFrom?: Prisma.Decimal | number | null;
       targetCpa?: Prisma.Decimal | number | null;
@@ -3335,7 +3593,7 @@ export class TelegramChannelsService {
       return new Map<string, Record<string, unknown>>();
     }
     const channelIds = channels.map((channel) => channel.id);
-    const [campaigns, inviteLinks] = await Promise.all([
+    const [campaigns, inviteLinks, purchaseRows] = await Promise.all([
       this.prisma.adCampaign.findMany({
         where: {
           workspaceId,
@@ -3367,6 +3625,18 @@ export class TelegramChannelsService {
           requestedCount: true,
         },
       }),
+      this.prisma.$queryRaw<
+        Array<{ channelId: string; acquisitionCost: number | null }>
+      >(Prisma.sql`
+        SELECT
+          c."id" AS "channelId",
+          t."amountInPrimaryCurrency"::double precision AS "acquisitionCost"
+        FROM "TelegramChannel" c
+        LEFT JOIN "Transaction" t
+          ON t."id" = c."purchaseTransactionId"
+        WHERE c."workspaceId" = ${workspaceId}
+          AND c."id" IN (${Prisma.join(channelIds)})
+      `),
     ]);
 
     const inviteLinksByCampaignId = new Map<
@@ -3390,15 +3660,21 @@ export class TelegramChannelsService {
       campaignsByChannelId.set(campaign.telegramChannelId, list);
     }
 
+    const purchaseCostByChannelId = new Map(
+      purchaseRows.map((row) => [row.channelId, Number(row.acquisitionCost || 0)]),
+    );
+
     const summaries = new Map<string, Record<string, unknown>>();
 
     for (const channel of channels) {
       const audience = channel.audienceSnapshots?.[0];
       const channelCampaigns = campaignsByChannelId.get(channel.id) ?? [];
+      const acquisitionCost = purchaseCostByChannelId.get(channel.id) ?? 0;
       const totalAdSpend = channelCampaigns.reduce(
         (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
         0,
       );
+      const totalSpend = totalAdSpend + acquisitionCost;
       const normalizedCampaigns = channelCampaigns.map((campaign) => ({
         ...campaign,
         inviteLinks: inviteLinksByCampaignId.get(campaign.id) ?? [],
@@ -3453,6 +3729,8 @@ export class TelegramChannelsService {
         stopCpa: channel.stopCpa,
       });
       summaries.set(channel.id, {
+        acquisitionCost,
+        totalSpend,
         totalAdSpend,
         campaignsCount: channelCampaigns.length,
         totalJoinedSubscribers,
@@ -3577,6 +3855,8 @@ export class TelegramChannelsService {
       };
       const financialSummary =
         financialSummaryByChannel.get(channel.id) ?? {
+          acquisitionCost: 0,
+          totalSpend: 0,
           totalAdSpend: 0,
           campaignsCount: 0,
           totalJoinedSubscribers: 0,
@@ -3628,7 +3908,7 @@ export class TelegramChannelsService {
   async findOne(userId: string, id: string) {
     const workspaceId = await this.workspace(userId);
     const loadChannel = () =>
-      this.prisma.telegramChannel.findFirst({
+      (this.prisma.telegramChannel as any).findFirst({
         where: { id, workspaceId },
         include: {
           adminLinks: { include: { telegramUserAccountIntegration: true } },
@@ -3653,8 +3933,51 @@ export class TelegramChannelsService {
       ]);
     }
     if (!channel) throw new NotFoundException('Telegram channel not found');
+    const importPolicy = await this.getTelegramChannelImportPolicyRow({
+      channelId: channel.id,
+      workspaceId,
+    });
+    let purchaseTransaction:
+      | {
+          id: string;
+          amount: Prisma.Decimal;
+          currency: string;
+          amountInPrimaryCurrency: Prisma.Decimal;
+          date: Date;
+          description: string | null;
+          account: {
+            id: string;
+            name: string;
+          } | null;
+        }
+      | null = null;
+    const purchaseTransactionId = importPolicy?.purchaseTransactionId ?? null;
+    if (purchaseTransactionId) {
+      purchaseTransaction = await this.prisma.transaction.findFirst({
+        where: { id: purchaseTransactionId, workspaceId },
+        select: {
+          id: true,
+          amount: true,
+          currency: true,
+          amountInPrimaryCurrency: true,
+          date: true,
+          description: true,
+          account: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+    }
     return {
       ...channel,
+      acquisitionType: importPolicy?.acquisitionType ?? 'CREATED',
+      postsSyncFrom: importPolicy?.postsSyncFrom ?? null,
+      inviteLinksSyncFrom: importPolicy?.inviteLinksSyncFrom ?? null,
+      purchaseTransactionId,
+      purchaseTransaction,
       timePosts: timePostsByChannel.get(channel.id) ?? [],
     };
   }
@@ -3677,7 +4000,7 @@ export class TelegramChannelsService {
         userId,
         dto.assignedMemberId,
       );
-    return this.prisma.telegramChannel.create({
+    return (this.prisma.telegramChannel as any).create({
       data: {
         workspaceId,
         ...dto,
@@ -3694,7 +4017,13 @@ export class TelegramChannelsService {
 
   async update(userId: string, id: string, dto: UpdateTelegramChannelDto) {
     const workspaceId = await this.workspace(userId);
-    await this.findOne(userId, id);
+    const existing = await this.findOne(userId, id);
+    const importPolicy = await this.resolveImportPolicy({
+      workspaceId,
+      channelId: id,
+      input: dto,
+      existing,
+    });
     const assignedMemberId =
       dto.assignedMemberId === undefined
         ? undefined
@@ -3728,10 +4057,14 @@ export class TelegramChannelsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.telegramChannel.update({
+      await (tx.telegramChannel as any).update({
         where: { id },
         data: {
           ...channelUpdateData,
+          acquisitionType: importPolicy.acquisitionType,
+          postsSyncFrom: importPolicy.postsSyncFrom,
+          inviteLinksSyncFrom: importPolicy.inviteLinksSyncFrom,
+          purchaseTransactionId: importPolicy.purchaseTransactionId,
           username:
             dto.username === undefined
               ? undefined
@@ -3914,7 +4247,7 @@ export class TelegramChannelsService {
   async createPostGroup(userId: string, dto: CreatePostGroupDto) {
     const membership =
       await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
-    const channel = await this.prisma.telegramChannel.findFirst({
+    const channel = await (this.prisma.telegramChannel as any).findFirst({
       where: {
         id: dto.telegramChannelId,
         workspaceId: membership.workspaceId,
@@ -6268,7 +6601,7 @@ export class TelegramChannelsService {
         userId,
         dto.assignedMemberId,
       );
-    const channel = await this.prisma.telegramChannel.findFirst({
+    const channel = await (this.prisma.telegramChannel as any).findFirst({
       where: { id: channelId, workspaceId, isActive: true },
     });
     if (!channel) throw new NotFoundException('Telegram channel not found');
@@ -6502,6 +6835,25 @@ export class TelegramChannelsService {
       telegramChatId,
     );
     const existing = this.pickCanonicalChannel(matchingChannels);
+    const defaultCutoff = new Date();
+    const importPolicy = await this.resolveImportPolicy({
+      workspaceId,
+      channelId: existing?.id ?? null,
+      input: dto,
+      existing: existing
+        ? {
+            acquisitionType: (existing as { acquisitionType?: 'CREATED' | 'PURCHASED' | null }).acquisitionType ?? null,
+            postsSyncFrom: (existing as { postsSyncFrom?: Date | null }).postsSyncFrom ?? null,
+            inviteLinksSyncFrom:
+              (existing as { inviteLinksSyncFrom?: Date | null }).inviteLinksSyncFrom ??
+              null,
+            purchaseTransactionId:
+              (existing as { purchaseTransactionId?: string | null }).purchaseTransactionId ??
+              null,
+          }
+        : null,
+      defaultNow: defaultCutoff,
+    });
     const payload = {
       ...this.channelIdentityPatch({
         ...info,
@@ -6512,6 +6864,10 @@ export class TelegramChannelsService {
       }),
       sourceType: 'telegram',
       lastPublicSyncedAt: new Date(),
+      acquisitionType: importPolicy.acquisitionType,
+      postsSyncFrom: importPolicy.postsSyncFrom,
+      inviteLinksSyncFrom: importPolicy.inviteLinksSyncFrom,
+      purchaseTransactionId: importPolicy.purchaseTransactionId,
     };
     await this.notifyImportProgress(
       onProgress,
@@ -7089,9 +7445,15 @@ export class TelegramChannelsService {
       phoneMasked: string | null;
     },
   ) {
-    const channel = await this.prisma.telegramChannel.findFirst({
+    const channel = (await (this.prisma.telegramChannel as any).findFirst({
       where: { id: channelId, workspaceId, isActive: true },
-    });
+    })) as {
+      id: string;
+      username: string | null;
+      telegramChatId: string | null;
+      postsSyncFrom?: Date | null;
+      inviteLinksSyncFrom?: Date | null;
+    } | null;
     if (!channel) throw new NotFoundException('Telegram channel not found');
     const channelReference = this.mtprotoChannelReference(channel);
     if (!channelReference.telegramChatId && !channelReference.username)
@@ -7178,6 +7540,8 @@ export class TelegramChannelsService {
       ...this.accountCredentials(account),
       channel: channelReference,
       postLimit: dto.postLimit || this.defaultPostSyncLimit,
+      postsFrom: channel.postsSyncFrom ?? null,
+      inviteLinksCreatedFrom: channel.inviteLinksSyncFrom ?? null,
       onInviteLinksProgress: async (item) => {
         await this.notifyInviteLinksProgress(
           onProgress,
@@ -7390,6 +7754,7 @@ export class TelegramChannelsService {
     const result = {
       message: 'Historical MTProto sync completed',
       source: 'mtproto',
+      ...this.syncCutoffMetadata(channel),
       imported,
       updated,
       postsUpdated,
@@ -7444,10 +7809,15 @@ export class TelegramChannelsService {
     progressStep = { current: 3, total: 8 },
   ) {
     const startedAt = Date.now();
-    const channel = await this.prisma.telegramChannel.findFirst({
+    const channel = (await (this.prisma.telegramChannel as any).findFirst({
       where: { id: channelId, workspaceId, isActive: true },
-    });
+    })) as {
+      id: string;
+      username: string | null;
+      telegramChatId: string | null;
+    } | null;
     if (!channel) throw new NotFoundException('Telegram channel not found');
+    const importPolicy = await this.getChannelSyncCutoffs(workspaceId, channelId);
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
@@ -7497,6 +7867,7 @@ export class TelegramChannelsService {
       );
       const result = {
         source: 'mtproto',
+        ...this.syncCutoffMetadata(importPolicy),
         syncedPosts: metrics.length,
         audienceSnapshot,
       };
@@ -7545,6 +7916,23 @@ export class TelegramChannelsService {
     progressStep = { current: 3, total: 8 },
   ) {
     const affectedDays = new Set<string>();
+    const incomingMessageIds = metrics.map((post) => String(post.telegramMessageId));
+    const stalePosts = await this.prisma.telegramPost.findMany({
+      where: incomingMessageIds.length
+        ? {
+            workspaceId,
+            telegramChannelId: channelId,
+            telegramMessageId: { notIn: incomingMessageIds },
+          }
+        : {
+            workspaceId,
+            telegramChannelId: channelId,
+          },
+      select: {
+        id: true,
+        postDate: true,
+      },
+    });
     for (const [index, post] of metrics.entries()) {
       if (index > 0 && index % 100 === 0) {
         await this.notifyDetailedTaskProgress(
@@ -7602,6 +7990,16 @@ export class TelegramChannelsService {
         },
       });
       affectedDays.add(post.postDate.toISOString().slice(0, 10));
+    }
+    if (stalePosts.length) {
+      for (const stalePost of stalePosts) {
+        affectedDays.add(stalePost.postDate.toISOString().slice(0, 10));
+      }
+      await this.prisma.telegramPost.deleteMany({
+        where: {
+          id: { in: stalePosts.map((post) => post.id) },
+        },
+      });
     }
     await this.notifyDetailedTaskProgress(
       onProgress,
@@ -8315,78 +8713,13 @@ export class TelegramChannelsService {
     channelId: string,
     dto: { telegramUserAccountId?: string; maxPages?: number },
   ) {
-    const channel = await this.prisma.telegramChannel.findFirst({
-      where: { id: channelId, workspaceId, isActive: true },
-    });
-    if (!channel) throw new NotFoundException('Telegram channel not found');
-    const account = await this.connectedAccount(
-      workspaceId,
-      channelId,
-      dto.telegramUserAccountId,
-    );
-    const channelReference = this.mtprotoChannelReference(channel);
-    if (!channelReference.telegramChatId && !channelReference.username)
-      throw new BadRequestException('Channel must have username or chatId');
-
-    const oldestStored = await this.prisma.telegramPost.findFirst({
-      where: { telegramChannelId: channel.id },
-      orderBy: [{ postDate: 'asc' }, { telegramMessageId: 'asc' }],
-      select: { telegramMessageId: true, postDate: true },
-    });
-    if (!oldestStored?.telegramMessageId) {
-      return { source: 'mtproto', syncedPosts: 0, pagesFetched: 0 };
-    }
-    let beforeMessageId = oldestStored.telegramMessageId;
-    const backfillStart = oldestStored;
-
-    let syncedPosts = 0;
-    let pagesFetched = 0;
-    const maxPages = Math.max(1, dto.maxPages || 1);
-    for (let page = 0; page < maxPages; page += 1) {
-      const metrics = await this.mtprotoClient.getChannelPostsMetrics({
-        ...this.accountCredentials(account),
-        channel: channelReference,
-        postLimit: this.initialPostBackfillLimit,
-        beforeMessageId,
-      });
-      if (!metrics.length) break;
-      await this.persistPostMetrics(workspaceId, channel.id, metrics);
-      syncedPosts += metrics.length;
-      pagesFetched += 1;
-
-      const nextBeforeMessageId = this.oldestMessageId(metrics);
-      const next = this.toFiniteMessageId(nextBeforeMessageId);
-      const current = this.toFiniteMessageId(beforeMessageId);
-      if (
-        !nextBeforeMessageId ||
-        next == null ||
-        current == null ||
-        next >= current
-      )
-        break;
-      beforeMessageId = nextBeforeMessageId;
-    }
-
-    if (syncedPosts > 0) {
-      await this.sourceAccessService.recordDataSource({
-        workspaceId,
-        channelId,
-        sourceId: account.id,
-        sourceType: TelegramSourceType.MTPROTO,
-        dataType: TelegramChannelDataType.POSTS,
-        status: TelegramDataSourceStatus.SUCCESS,
-        sourceDisplayName: this.sourceDisplayName(account),
-        metadata: { olderSyncedPosts: syncedPosts, pagesFetched },
-      });
-    }
-
     return {
       source: 'mtproto',
-      syncedPosts,
-      pagesFetched,
-      fromMessageId: backfillStart.telegramMessageId,
-      fromDate: backfillStart.postDate,
-      nextBeforeMessageId: beforeMessageId,
+      syncedPosts: 0,
+      pagesFetched: 0,
+      skipped: true,
+      message:
+        'Older posts backfill is disabled because the channel keeps only the latest 50 posts for analytics.',
     };
   }
 

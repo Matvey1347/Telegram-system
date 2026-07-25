@@ -18,6 +18,7 @@
 4. Check whether a shared abstraction already exists in `packages/shared`, `apps/api/src/telegram/shared`, `apps/web/src/lib`, or `apps/web/src/providers`.
 5. Review `git status` and relevant `git diff`.
 6. Never destroy or overwrite the user's uncommitted changes. Changes are allowed when contracts and tests are updated with them.
+7. If you temporarily start local dev servers or background processes for verification, stop them before handoff and mention that they were stopped.
 
 ## Change classification
 

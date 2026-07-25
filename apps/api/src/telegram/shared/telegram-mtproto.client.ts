@@ -138,6 +138,7 @@ type TelegramLongLike =
 export class TelegramMtprotoClient {
   private readonly logger = new Logger(TelegramMtprotoClient.name);
   private readonly maxPostBackfillLimit = 10_000;
+  private readonly postCutoffPageSize = 100;
   private readonly inviteLinksPageSize = 100;
   private readonly maxInviteLinkPages = 200;
   private readonly defaultTelegramPaletteSize = 7;
@@ -1737,6 +1738,8 @@ export class TelegramMtprotoClient {
     channelRef?: string;
     channel?: StoredTelegramChannelReference;
     postLimit?: number;
+    postsFrom?: Date | null;
+    inviteLinksCreatedFrom?: Date | null;
     onInviteLinksProgress?: InviteLinksProgressCallback;
     onInviteLinkLoaded?: InviteLinkLoadedCallback;
   }) {
@@ -1748,11 +1751,17 @@ export class TelegramMtprotoClient {
       const entity = resolved
         ? resolved.entity
         : await client.getEntity(params.channelRef as string);
-      const limit = Math.max(
-        1,
-        Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
-      );
-      const posts = await client.getMessages(entity, { limit });
+      const posts = params.postsFrom
+        ? await this.getChannelMessagesFromCutoff(client, entity, {
+            postLimit: params.postLimit,
+            postsFrom: params.postsFrom,
+          })
+        : await client.getMessages(entity, {
+            limit: Math.max(
+              1,
+              Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
+            ),
+          });
       const dailyMap = new Map<
         string,
         {
@@ -1791,6 +1800,7 @@ export class TelegramMtprotoClient {
         this.asImportableTelegramEntity(entity, 'channel'),
         params.onInviteLinksProgress,
         params.onInviteLinkLoaded,
+        params.inviteLinksCreatedFrom ?? null,
       );
       const inviteLinks = inviteLinksResult.links.map((inv) => ({
         url: inv.url,
@@ -2104,6 +2114,7 @@ export class TelegramMtprotoClient {
     adminUser: Api.User;
     knownUsers: Map<string, Api.User>;
     revoked: boolean;
+    createdFrom?: Date | null;
     warnings: string[];
     onInviteLinkLoaded?: (
       link: TelegramInviteLinksResult['links'][number],
@@ -2115,6 +2126,7 @@ export class TelegramMtprotoClient {
     let offsetLink = '';
     let previousCursor = '';
     let pagesLoaded = 0;
+    let stoppedByCutoff = false;
     const photoUrlCache = new Map<string, string | null>();
 
     const creatorSnapshot = async (creator: Api.User | null, fallback: Api.User) => {
@@ -2157,18 +2169,41 @@ export class TelegramMtprotoClient {
       }
       const invites = Array.isArray(response?.invites) ? response.invites : [];
       if (!invites.length) break;
+      const pageDates = invites
+        .map((invite) => this.toTelegramDate(this.unwrapExportedChatInvite(invite)?.date))
+        .filter((date): date is Date => Boolean(date))
+        .map((date) => date.getTime());
+      const pageSortedNewToOld =
+        pageDates.length > 1 &&
+        pageDates.every((value, index) => index === 0 || value <= pageDates[index - 1]!);
 
       for (const invite of invites) {
         const resolvedInvite = this.unwrapExportedChatInvite(invite);
         const url = String(resolvedInvite?.link || '').trim();
         if (!url || seenUrls.has(url)) continue;
-        seenUrls.add(url);
         const creatorTelegramUserId =
           this.toBigInt(resolvedInvite?.adminId)?.toString() ??
           String(params.adminUser.id);
         const creatorUser =
           params.knownUsers.get(creatorTelegramUserId) ?? params.adminUser;
         const snapshot = await creatorSnapshot(creatorUser, params.adminUser);
+        const createdAt = this.toTelegramDate(resolvedInvite?.date);
+        if (params.createdFrom) {
+          if (!createdAt) {
+            params.warnings.push(
+              `Skipped invite link ${url} because Telegram did not return createdAt and the channel uses an invite-link cutoff.`,
+            );
+            continue;
+          }
+          if (createdAt.getTime() < params.createdFrom.getTime()) {
+            stoppedByCutoff = true;
+            if (pageSortedNewToOld) {
+              break;
+            }
+            continue;
+          }
+        }
+        seenUrls.add(url);
         links.push({
           url,
           title:
@@ -2177,7 +2212,7 @@ export class TelegramMtprotoClient {
               ? resolvedInvite.title
               : null,
           ...snapshot,
-          createdAt: this.toTelegramDate(resolvedInvite?.date),
+          createdAt,
           startDate: this.toTelegramDate(resolvedInvite?.startDate),
           expireDate: this.toTelegramDate(resolvedInvite?.expireDate),
           usageLimit: this.toFiniteNumber(resolvedInvite?.usageLimit),
@@ -2189,6 +2224,7 @@ export class TelegramMtprotoClient {
         });
         await params.onInviteLinkLoaded?.(links[links.length - 1]!);
       }
+      if (stoppedByCutoff && pageSortedNewToOld) break;
 
       const lastInvite = invites[invites.length - 1];
       const nextOffsetDate = this.toFiniteNumber(lastInvite?.date) ?? 0;
@@ -2214,6 +2250,7 @@ export class TelegramMtprotoClient {
     entity: ImportableTelegramEntity,
     onProgress?: InviteLinksProgressCallback,
     onInviteLinkLoaded?: InviteLinkLoadedCallback,
+    createdFrom?: Date | null,
   ): Promise<TelegramInviteLinksResult> {
     const warnings: string[] = [];
     const channelTelegramId = this.entityIdToString(entity) || 'unknown';
@@ -2365,6 +2402,7 @@ export class TelegramMtprotoClient {
             adminUser,
             knownUsers,
             revoked: false,
+            createdFrom,
             warnings,
             onInviteLinkLoaded: async (link) => {
               loadedLinksCount += 1;
@@ -2389,6 +2427,7 @@ export class TelegramMtprotoClient {
             adminUser,
             knownUsers,
             revoked: true,
+            createdFrom,
             warnings,
             onInviteLinkLoaded: async (link) => {
               loadedLinksCount += 1;
@@ -2461,6 +2500,7 @@ export class TelegramMtprotoClient {
             adminUser: fallbackAdminUser,
             knownUsers,
             revoked: false,
+            createdFrom,
             warnings,
             onInviteLinkLoaded: async (link) => {
               if (linksByUrl.has(link.url)) return;
@@ -2486,6 +2526,7 @@ export class TelegramMtprotoClient {
             adminUser: fallbackAdminUser,
             knownUsers,
             revoked: true,
+            createdFrom,
             warnings,
             onInviteLinkLoaded: async (link) => {
               if (linksByUrl.has(link.url)) return;
@@ -2574,6 +2615,8 @@ export class TelegramMtprotoClient {
         client,
         this.asImportableTelegramEntity(entity, 'channel'),
         params.onProgress,
+        undefined,
+        null,
       );
     } finally {
       await this.closeClient(client);
@@ -2964,6 +3007,7 @@ export class TelegramMtprotoClient {
     channel?: StoredTelegramChannelReference;
     postLimit?: number;
     beforeMessageId?: string | number | null;
+    postsFrom?: Date | null;
   }) {
     const client = await this.createClient(params);
     try {
@@ -2973,15 +3017,22 @@ export class TelegramMtprotoClient {
       const entity = resolved
         ? resolved.entity
         : await client.getEntity(params.channelRef as string);
-      const limit = Math.max(
-        1,
-        Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
-      );
-      const offsetId =
-        this.toFiniteNumber(params.beforeMessageId) != null
-          ? Number(this.toFiniteNumber(params.beforeMessageId))
-          : 0;
-      const messages = await client.getMessages(entity, { limit, offsetId });
+      const messages = params.postsFrom
+        ? await this.getChannelMessagesFromCutoff(client, entity, {
+            postLimit: params.postLimit,
+            beforeMessageId: params.beforeMessageId,
+            postsFrom: params.postsFrom,
+          })
+        : await client.getMessages(entity, {
+            limit: Math.max(
+              1,
+              Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
+            ),
+            offsetId:
+              this.toFiniteNumber(params.beforeMessageId) != null
+                ? Number(this.toFiniteNumber(params.beforeMessageId))
+                : 0,
+          });
 
       return (messages as any[])
         .filter((message) => message?.id && message?.date)
@@ -3036,6 +3087,62 @@ export class TelegramMtprotoClient {
     } finally {
       await this.closeClient(client);
     }
+  }
+
+  private async getChannelMessagesFromCutoff(
+    client: TelegramClient,
+    entity: unknown,
+    params: {
+      postLimit?: number;
+      beforeMessageId?: string | number | null;
+      postsFrom: Date;
+    },
+  ) {
+    const hardCap = Math.max(
+      1,
+      Math.min(this.maxPostBackfillLimit, params.postLimit || 100),
+    );
+    const pageSize = Math.min(this.postCutoffPageSize, hardCap);
+    let offsetId =
+      this.toFiniteNumber(params.beforeMessageId) != null
+        ? Number(this.toFiniteNumber(params.beforeMessageId))
+        : 0;
+    let processed = 0;
+    let previousOldestId: number | null = null;
+    const accepted: any[] = [];
+
+    while (processed < hardCap) {
+      const remaining = hardCap - processed;
+      const page = (await client.getMessages(entity as any, {
+        limit: Math.min(pageSize, remaining),
+        offsetId,
+      })) as any[];
+      if (!page.length) break;
+      processed += page.length;
+      let reachedCutoff = false;
+      for (const message of page) {
+        if (!message?.id || !message?.date) continue;
+        const postDate = this.toTelegramDate(message.date);
+        if (!postDate) continue;
+        if (postDate.getTime() < params.postsFrom.getTime()) {
+          reachedCutoff = true;
+          break;
+        }
+        accepted.push(message);
+      }
+      const pageIds = page
+        .map((message) => this.toFiniteNumber(message?.id))
+        .filter((value): value is number => value != null);
+      const oldestId =
+        pageIds.length > 0 ? Math.min(...pageIds) : null;
+      if (reachedCutoff || oldestId == null || oldestId === previousOldestId) {
+        break;
+      }
+      previousOldestId = oldestId;
+      offsetId = oldestId;
+    }
+
+    return accepted;
   }
 
   async downloadChannelMessageMedia(params: {

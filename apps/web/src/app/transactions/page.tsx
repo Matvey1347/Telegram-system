@@ -6,14 +6,14 @@ import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountDisplayName } from '@/lib/account-display';
-import { Account, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
+import { Account, TelegramChannel, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, telegramChannelsApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, ErrorState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { useAppToast } from '@/providers/toast-provider';
 
-type Values = { accountId: string; type: 'income' | 'expense'; amount: number; categoryId: string; memberId?: string; description?: string; date: string; iconId?: string | null };
+type Values = { accountId: string; type: 'income' | 'expense'; amount: number; categoryId: string; memberId?: string; telegramChannelId?: string; description?: string; date: string; iconId?: string | null };
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -36,6 +36,21 @@ function memberOptionProps(member: WorkspaceMember) {
     'data-icon-emoji': member.avatarIcon?.emoji ?? undefined,
     'data-icon-fallback': member.user.name,
   };
+}
+
+function channelOptionProps(channel: TelegramChannel) {
+  return {
+    'data-icon-url': channel.photoUrl ?? undefined,
+    'data-icon-fallback': channel.title,
+  };
+}
+
+function isBuyChannelsCategory(category?: TransactionCategory | null) {
+  if (!category) return false;
+  return (
+    category.type === 'expense' &&
+    category.name.trim().toLowerCase() === 'buy channels (legacy)'
+  );
 }
 
 export default function TransactionsPage() {
@@ -91,9 +106,9 @@ export default function TransactionsPage() {
         <FormField label="Search"><Input value={filters.search} onChange={(e) => setFilter('search', e.target.value)} placeholder="Description" /></FormField>
       </div>
     </Card>
-    {error ? <div className="text-red-300">Failed to load transactions</div> : null}
+    {error ? <ErrorState text="Failed to load transactions" /> : null}
     {isLoading ? <TableLoadingState text="Loading transactions" columns={5} rows={6} /> : null}
-    {!isLoading ? (
+    {!isLoading && !error ? (
       <div className="table-scroll w-full rounded-lg border border-neutral-800">
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -242,6 +257,7 @@ function getTransactionTitle(transaction: Transaction) {
   return transaction.description?.trim()
     || transaction.adCampaign?.title?.trim()
     || transaction.investment?.notes?.trim()
+    || transaction.purchasedTelegramChannel?.title?.trim()
     || transaction.member?.user?.name?.trim()
     || transaction.categoryRef?.name
     || transaction.category
@@ -256,11 +272,12 @@ function transactionDefaults(initial?: Transaction): Values {
         amount: Number(initial.amount),
         categoryId: initial.categoryId ?? initial.categoryRef?.id ?? '',
         memberId: initial.memberId ?? '',
+        telegramChannelId: initial.purchasedTelegramChannel?.id ?? '',
         description: initial.description ?? '',
         date: formatLocalDate(new Date(initial.date)),
         iconId: initial.iconId ?? null,
       }
-    : { accountId: '', type: 'expense', amount: 0, categoryId: '', memberId: '', description: '', date: formatLocalDate(new Date()), iconId: null };
+    : { accountId: '', type: 'expense', amount: 0, categoryId: '', memberId: '', telegramChannelId: '', description: '', date: formatLocalDate(new Date()), iconId: null };
 }
 
 function TransactionModal({ open, onClose, onSubmit, title, accounts, members, initial }: { open: boolean; onClose: () => void; onSubmit: (v: Values) => void; title: string; accounts: Account[]; members: WorkspaceMember[]; initial?: Transaction }) {
@@ -270,9 +287,16 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   const accountId = watch('accountId');
   const categoryId = watch('categoryId');
   const memberId = watch('memberId') ?? '';
+  const telegramChannelId = watch('telegramChannelId') ?? '';
   const { data: categories } = useQuery({ queryKey: ['transaction-categories', type], queryFn: () => transactionCategoriesApi.list(type), enabled: open && !!type });
+  const { data: telegramChannels } = useQuery({ queryKey: ['telegram-channels', 'transactions-modal'], queryFn: telegramChannelsApi.list, enabled: open });
   const selectedCategory = useMemo(() => categories?.find((c) => c.id === categoryId), [categories, categoryId]);
   const isInvestment = type === 'income' && selectedCategory?.key === 'investment';
+  const isBuyChannels = isBuyChannelsCategory(selectedCategory);
+  const ownChannels = useMemo(
+    () => (telegramChannels ?? []).filter((channel) => channel.isActive !== false),
+    [telegramChannels],
+  );
   const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
 
   useEffect(() => {
@@ -287,6 +311,12 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
       setValue('memberId', '');
     }
   }, [isInvestment, setValue]);
+
+  useEffect(() => {
+    if (!isBuyChannels) {
+      setValue('telegramChannelId', '');
+    }
+  }, [isBuyChannels, setValue]);
 
   useEffect(() => {
     if (!isInvestment) return;
@@ -363,6 +393,26 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
             >
               <option value="" disabled hidden>Select member</option>
               {members.map((m) => <option key={m.id} value={m.id} {...memberOptionProps(m)}>{m.user.name}</option>)}
+            </Select>
+          </FormField>
+        ) : null}
+        {isBuyChannels ? (
+          <FormField label="Channel">
+            <Select
+              {...register('telegramChannelId')}
+              value={telegramChannelId}
+              onChange={(event) => setValue('telegramChannelId', event.target.value, { shouldDirty: true, shouldValidate: true })}
+            >
+              <option value="">No channel</option>
+              {ownChannels.map((channel: TelegramChannel) => (
+                <option
+                  key={channel.id}
+                  value={channel.id}
+                  {...channelOptionProps(channel)}
+                >
+                  {channel.title}{channel.username ? ` (@${channel.username})` : ''}
+                </option>
+              ))}
             </Select>
           </FormField>
         ) : null}

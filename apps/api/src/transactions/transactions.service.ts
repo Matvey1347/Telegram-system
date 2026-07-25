@@ -17,6 +17,10 @@ import { FinanceCategoriesService } from '../finance-categories/finance-categori
 
 @Injectable()
 export class TransactionsService {
+  private telegramChannelPurchaseColumnsAvailable: boolean | null = null;
+  private ensureTelegramChannelPurchaseColumnsPromise: Promise<boolean> | null =
+    null;
+
   constructor(
     private prisma: PrismaService,
     private workspaceService: WorkspaceService,
@@ -75,6 +79,224 @@ export class TransactionsService {
     }
 
     return category;
+  }
+
+  private async ensureTelegramChannelPurchaseColumnsAvailable() {
+    if (this.telegramChannelPurchaseColumnsAvailable === true) {
+      return true;
+    }
+    if (this.ensureTelegramChannelPurchaseColumnsPromise) {
+      return this.ensureTelegramChannelPurchaseColumnsPromise;
+    }
+    if (typeof this.prisma.$executeRawUnsafe !== 'function') {
+      return false;
+    }
+    this.ensureTelegramChannelPurchaseColumnsPromise = (async () => {
+      await this.prisma.$executeRawUnsafe(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_type
+            WHERE typname = 'TelegramChannelAcquisitionType'
+          ) THEN
+            CREATE TYPE "TelegramChannelAcquisitionType" AS ENUM ('CREATED', 'PURCHASED');
+          END IF;
+        END
+        $$;
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramChannel"
+        ADD COLUMN IF NOT EXISTS "purchaseTransactionId" TEXT
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        ALTER TABLE "TelegramChannel"
+        ADD COLUMN IF NOT EXISTS "acquisitionType" "TelegramChannelAcquisitionType" NOT NULL DEFAULT 'CREATED'
+      `);
+      await this.prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS "TelegramChannel_purchaseTransactionId_key"
+        ON "TelegramChannel"("purchaseTransactionId")
+      `);
+      this.telegramChannelPurchaseColumnsAvailable = true;
+      return true;
+    })();
+    try {
+      return await this.ensureTelegramChannelPurchaseColumnsPromise;
+    } finally {
+      this.ensureTelegramChannelPurchaseColumnsPromise = null;
+    }
+  }
+
+  private async findLinkedPurchaseChannelByTransaction(
+    workspaceId: string,
+    transactionId: string,
+  ) {
+    await this.ensureTelegramChannelPurchaseColumnsAvailable();
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        title: string;
+        username: string | null;
+        photoUrl: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT "id", "title", "username", "photoUrl"
+      FROM "TelegramChannel"
+      WHERE "workspaceId" = ${workspaceId}
+        AND "purchaseTransactionId" = ${transactionId}
+      LIMIT 1
+    `);
+    return rows[0] ?? null;
+  }
+
+  private async findPurchaseChannelById(workspaceId: string, channelId: string) {
+    await this.ensureTelegramChannelPurchaseColumnsAvailable();
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        title: string;
+        username: string | null;
+        photoUrl: string | null;
+        purchaseTransactionId: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT "id", "title", "username", "photoUrl", "purchaseTransactionId"
+      FROM "TelegramChannel"
+      WHERE "workspaceId" = ${workspaceId}
+        AND "id" = ${channelId}
+      LIMIT 1
+    `);
+    return rows[0] ?? null;
+  }
+
+  private async resolvePurchaseChannelLink(params: {
+    workspaceId: string;
+    category: { key?: string | null; name?: string | null; type: 'income' | 'expense' };
+    telegramChannelId?: string | null;
+    transactionId?: string;
+  }) {
+    const normalizedCategoryName = String(params.category.name ?? '')
+      .trim()
+      .toLowerCase();
+    const isBuyChannelsCategory =
+      params.category.type === 'expense' &&
+      (
+        params.category.key === 'buy_channels' ||
+        normalizedCategoryName === 'buy channels' ||
+        normalizedCategoryName === 'buy channels (legacy)'
+      );
+    const requestedChannelId = params.telegramChannelId ?? null;
+
+    if (!isBuyChannelsCategory) {
+      if (requestedChannelId) {
+        throw new BadRequestException(
+          'telegramChannelId is only allowed for Buy Channels expenses',
+        );
+      }
+      return null;
+    }
+
+    if (!requestedChannelId) {
+      return null;
+    }
+
+    const channel = await this.findPurchaseChannelById(
+      params.workspaceId,
+      requestedChannelId,
+    );
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    if (
+      channel.purchaseTransactionId &&
+      channel.purchaseTransactionId !== params.transactionId
+    ) {
+      throw new BadRequestException(
+        'This Telegram channel is already linked to another purchase transaction.',
+      );
+    }
+    return channel;
+  }
+
+  private async syncPurchaseChannelLink(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+    transactionId: string,
+    nextChannelId?: string | null,
+  ) {
+    await this.ensureTelegramChannelPurchaseColumnsAvailable();
+    if (nextChannelId) {
+      await tx.$executeRaw(
+        Prisma.sql`
+          UPDATE "TelegramChannel"
+          SET "purchaseTransactionId" = NULL
+          WHERE "workspaceId" = ${workspaceId}
+            AND "purchaseTransactionId" = ${transactionId}
+            AND "id" <> ${nextChannelId}
+        `,
+      );
+    } else {
+      await tx.$executeRaw(
+        Prisma.sql`
+          UPDATE "TelegramChannel"
+          SET "purchaseTransactionId" = NULL
+          WHERE "workspaceId" = ${workspaceId}
+            AND "purchaseTransactionId" = ${transactionId}
+        `,
+      );
+    }
+
+    if (!nextChannelId) return;
+
+    await tx.$executeRaw(
+      Prisma.sql`
+        UPDATE "TelegramChannel"
+        SET
+          "purchaseTransactionId" = ${transactionId},
+          "acquisitionType" = 'PURCHASED'
+        WHERE "workspaceId" = ${workspaceId}
+          AND "id" = ${nextChannelId}
+      `,
+    );
+  }
+
+  private async attachPurchasedTelegramChannels<
+    T extends { id: string },
+  >(workspaceId: string, transactions: T[]) {
+    if (!transactions.length) return transactions;
+    const ids = transactions.map((transaction) => transaction.id);
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        purchaseTransactionId: string;
+        id: string;
+        title: string;
+        username: string | null;
+        photoUrl: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT
+        "purchaseTransactionId",
+        "id",
+        "title",
+        "username",
+        "photoUrl"
+      FROM "TelegramChannel"
+      WHERE "workspaceId" = ${workspaceId}
+        AND "purchaseTransactionId" IN (${Prisma.join(ids)})
+    `);
+    const byTransactionId = new Map(
+      rows.map((row) => [
+        row.purchaseTransactionId,
+        {
+          id: row.id,
+          title: row.title,
+          username: row.username,
+          photoUrl: row.photoUrl,
+        },
+      ]),
+    );
+    return transactions.map((transaction) => ({
+      ...transaction,
+      purchasedTelegramChannel: byTransactionId.get(transaction.id) ?? null,
+    }));
   }
 
   async findAll(userId: string, query: TransactionQueryDto = {}) {
@@ -157,7 +379,11 @@ export class TransactionsService {
       }),
       this.prisma.transaction.count({ where }),
     ]);
-    return createPaginatedResponse(items, totalItems, pagination);
+    const enrichedItems = await this.attachPurchasedTelegramChannels(
+      workspaceId,
+      items,
+    );
+    return createPaginatedResponse(enrichedItems, totalItems, pagination);
   }
 
   async findOne(userId: string, id: string) {
@@ -208,7 +434,10 @@ export class TransactionsService {
       },
     });
     if (!row) throw new NotFoundException('Transaction not found');
-    return row;
+    const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
+      row,
+    ]);
+    return enriched;
   }
 
   async create(userId: string, dto: CreateTransactionDto) {
@@ -233,70 +462,88 @@ export class TransactionsService {
       });
       if (!icon) throw new NotFoundException('Icon not found');
     }
+    const purchaseChannel = await this.resolvePurchaseChannelLink({
+      workspaceId,
+      category,
+      telegramChannelId: dto.telegramChannelId,
+    });
+
     const exchangeRateToPrimary =
       dto.exchangeRateToPrimary ??
       (await this.resolveRateToPrimary(workspaceId, account.currency));
-
-    return this.prisma.transaction.create({
-      data: {
+    const created = await this.prisma.$transaction(async (tx) => {
+      const transaction = await tx.transaction.create({
+        data: {
+          workspaceId,
+          accountId: dto.accountId,
+          type: dto.type,
+          amount: dto.amount,
+          exchangeRateToPrimary,
+          amountInPrimaryCurrency: dto.amount * exchangeRateToPrimary,
+          date: new Date(dto.date),
+          description: dto.description,
+          categoryId: category.id,
+          category: category.name,
+          memberId: dto.memberId,
+          currency: account.currency,
+          iconId: dto.iconId ?? undefined,
+          assignedMemberId,
+          createdByUserId: userId,
+        },
+        include: {
+          account: {
+            include: {
+              assignedMember: WorkspaceService.assignedMemberInclude,
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
+              },
+            },
+          },
+          categoryRef: {
+            include: {
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
+              },
+            },
+          },
+          member: { include: { user: true } },
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          icon: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              emoji: true,
+              imageUrl: true,
+            },
+          },
+        },
+      });
+      await this.syncPurchaseChannelLink(
+        tx,
         workspaceId,
-        accountId: dto.accountId,
-        type: dto.type,
-        amount: dto.amount,
-        exchangeRateToPrimary,
-        amountInPrimaryCurrency: dto.amount * exchangeRateToPrimary,
-        date: new Date(dto.date),
-        description: dto.description,
-        categoryId: category.id,
-        category: category.name,
-        memberId: dto.memberId,
-        currency: account.currency,
-        iconId: dto.iconId ?? undefined,
-        assignedMemberId,
-        createdByUserId: userId,
-      },
-      include: {
-        account: {
-          include: {
-            assignedMember: WorkspaceService.assignedMemberInclude,
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
-              },
-            },
-          },
-        },
-        categoryRef: {
-          include: {
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
-              },
-            },
-          },
-        },
-        member: { include: { user: true } },
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        icon: {
-          select: {
-            id: true,
-            type: true,
-            name: true,
-            emoji: true,
-            imageUrl: true,
-          },
-        },
-      },
+        transaction.id,
+        purchaseChannel?.id ?? null,
+      );
+      return transaction;
     });
+    const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
+      created,
+    ]);
+    return enriched;
   }
 
   async update(userId: string, id: string, dto: UpdateTransactionDto) {
@@ -342,64 +589,92 @@ export class TransactionsService {
       });
       if (!icon) throw new NotFoundException('Icon not found');
     }
+    const purchaseChannel = await this.resolvePurchaseChannelLink({
+      workspaceId,
+      category,
+      telegramChannelId:
+        dto.telegramChannelId === undefined
+          ? (
+              await this.findLinkedPurchaseChannelByTransaction(
+                workspaceId,
+                existing.id,
+              )
+            )?.id ?? null
+          : dto.telegramChannelId,
+      transactionId: existing.id,
+    });
+
     const rate =
       dto.exchangeRateToPrimary ??
       (await this.resolveRateToPrimary(workspaceId, account.currency));
-
-    return this.prisma.transaction.update({
-      where: { id },
-      data: {
-        ...dto,
-        categoryId: category.id,
-        category: category.name,
-        memberId,
-        date: dto.date ? new Date(dto.date) : undefined,
-        amountInPrimaryCurrency: amount * rate,
-        iconId: dto.iconId === undefined ? undefined : dto.iconId,
-        assignedMemberId,
-      },
-      include: {
-        account: {
-          include: {
-            assignedMember: WorkspaceService.assignedMemberInclude,
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
+    const { telegramChannelId: _telegramChannelId, ...transactionDto } = dto;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const transaction = await tx.transaction.update({
+        where: { id },
+        data: {
+          ...transactionDto,
+          categoryId: category.id,
+          category: category.name,
+          memberId,
+          date: dto.date ? new Date(dto.date) : undefined,
+          amountInPrimaryCurrency: amount * rate,
+          iconId: dto.iconId === undefined ? undefined : dto.iconId,
+          assignedMemberId,
+        },
+        include: {
+          account: {
+            include: {
+              assignedMember: WorkspaceService.assignedMemberInclude,
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
               },
             },
           },
-        },
-        categoryRef: {
-          include: {
-            icon: {
-              select: {
-                id: true,
-                type: true,
-                name: true,
-                emoji: true,
-                imageUrl: true,
+          categoryRef: {
+            include: {
+              icon: {
+                select: {
+                  id: true,
+                  type: true,
+                  name: true,
+                  emoji: true,
+                  imageUrl: true,
+                },
               },
             },
           },
-        },
-        member: { include: { user: true } },
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        createdByUser: WorkspaceService.createdByUserInclude,
-        icon: {
-          select: {
-            id: true,
-            type: true,
-            name: true,
-            emoji: true,
-            imageUrl: true,
+          member: { include: { user: true } },
+          assignedMember: WorkspaceService.assignedMemberInclude,
+          createdByUser: WorkspaceService.createdByUserInclude,
+          icon: {
+            select: {
+              id: true,
+              type: true,
+              name: true,
+              emoji: true,
+              imageUrl: true,
+            },
           },
         },
-      },
+      });
+      await this.syncPurchaseChannelLink(
+        tx,
+        workspaceId,
+        transaction.id,
+        purchaseChannel?.id ?? null,
+      );
+      return transaction;
     });
+    const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
+      updated,
+    ]);
+    return enriched;
   }
 
   async remove(userId: string, id: string) {
@@ -409,6 +684,9 @@ export class TransactionsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Transaction not found');
-    return this.prisma.transaction.delete({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      await this.syncPurchaseChannelLink(tx, workspaceId, id, null);
+      return tx.transaction.delete({ where: { id } });
+    });
   }
 }

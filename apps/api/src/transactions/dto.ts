@@ -24,6 +24,7 @@ export class CreateTransactionDto {
   @IsString() categoryId!: string;
   @IsOptional() @IsString() memberId?: string;
   @IsOptional() @IsString() iconId?: string | null;
+  @IsOptional() @IsString() telegramChannelId?: string | null;
   @IsOptional() @IsString() description?: string;
   @IsDateString() date!: string;
 }
@@ -41,6 +42,7 @@ export class UpdateTransactionDto {
   @IsOptional() @IsString() categoryId?: string;
   @IsOptional() @IsString() memberId?: string | null;
   @IsOptional() @IsString() iconId?: string | null;
+  @IsOptional() @IsString() telegramChannelId?: string | null;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsDateString() date?: string;
 }

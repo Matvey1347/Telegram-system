@@ -19,6 +19,7 @@ import {
 @Injectable()
 export class TelegramChannelAnalyticsService {
   private readonly logger = new Logger(TelegramChannelAnalyticsService.name);
+  private readonly rollingPostsWindow = 50;
   private telegramChannelSyncScopeColumnsAvailable: boolean | null = null;
   private telegramInviteLinkRequestedCountColumnAvailable: boolean | null =
     null;
@@ -249,7 +250,7 @@ export class TelegramChannelAnalyticsService {
     const channel = await this.findChannelById(channelId);
     if (!channel) throw new NotFoundException('Telegram channel not found');
 
-    const postsWindow = Math.max(1, channel.activeSubscribersWindow || 5);
+    const postsWindow = this.rollingPostsWindow;
     const posts = await this.prisma.telegramPost.findMany({
       where: {
         workspaceId: channel.workspaceId,
@@ -421,7 +422,11 @@ export class TelegramChannelAnalyticsService {
   async getChannelFinancialSummary(channelId: string) {
     const channel = await this.findChannelById(channelId);
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const [campaignRows, audience, channelInviteLinks] = await Promise.all([
+    const purchaseTransactionId = (
+      channel as { purchaseTransactionId?: string | null }
+    ).purchaseTransactionId;
+    const [campaignRows, audience, channelInviteLinks, purchaseTransaction] =
+      await Promise.all([
       this.findCampaignsForFinancialSummary({
         workspaceId: channel.workspaceId,
         telegramChannelId: channel.id,
@@ -431,12 +436,25 @@ export class TelegramChannelAnalyticsService {
         workspaceId: channel.workspaceId,
         telegramChannelId: channel.id,
       }),
+      purchaseTransactionId
+        ? this.prisma.transaction.findFirst({
+            where: {
+              id: purchaseTransactionId,
+              workspaceId: channel.workspaceId,
+            },
+            select: { amountInPrimaryCurrency: true },
+          })
+        : Promise.resolve(null),
     ]);
     const campaigns = campaignRows as any[];
+    const acquisitionCost = Number(
+      purchaseTransaction?.amountInPrimaryCurrency || 0,
+    );
     const totalAdSpend = campaigns.reduce(
       (sum, campaign) => sum + Number(campaign.priceInPrimaryCurrency || 0),
       0,
     );
+    const totalSpend = totalAdSpend + acquisitionCost;
     const totalJoinedSubscribers = campaigns.reduce(
       (sum, campaign) => sum + effectiveCampaignJoinedSubscribers(campaign),
       0,
@@ -487,6 +505,8 @@ export class TelegramChannelAnalyticsService {
     const kpiLabel = resolveChannelKpiLabel(kpiStatus);
 
     return {
+      acquisitionCost,
+      totalSpend,
       totalAdSpend,
       campaignsCount: campaigns.length,
       totalJoinedSubscribers,

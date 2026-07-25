@@ -176,7 +176,7 @@ export function MtprotoAccountsPanel({
         const response =
           await telegramUserAccountsApi.importChannelsWithProgress(
             account.id,
-            channelIds,
+            channelIds.map((telegramChannelId) => ({ telegramChannelId })),
             (item: { message?: string }, current, total) => {
               setProgress({
                 id: progressId,

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  Prisma,
   TelegramChannelDataType,
   TelegramSourceType,
   TelegramUserAccountStatus,
@@ -823,7 +824,12 @@ export class TelegramUserAccountsService {
       apiHash,
       session,
     });
-    const selectedIds = new Set(dto.channelIds.map((value) => String(value)));
+    const selectedIds = new Set(
+      dto.channels.map((value) => String(value.telegramChannelId)),
+    );
+    const requestedPolicies = new Map(
+      dto.channels.map((value) => [String(value.telegramChannelId), value] as const),
+    );
     const selectedChannels = dialogs.filter((channel) =>
       selectedIds.has(channel.id),
     );
@@ -838,11 +844,29 @@ export class TelegramUserAccountsService {
       totalSteps,
       'Preparing selected Telegram channels',
     );
+    await this.telegramChannelsService.ensureTelegramChannelImportPolicyColumnsAvailable();
 
-    const existingChannels = await this.prisma.telegramChannel.findMany({
-      where: { workspaceId, isActive: true },
-      select: { id: true, username: true, telegramChatId: true },
-    });
+    const existingChannels = (await this.prisma.$queryRaw(Prisma.sql`
+      SELECT
+        "id",
+        "username",
+        "telegramChatId",
+        "acquisitionType",
+        "postsSyncFrom",
+        "inviteLinksSyncFrom",
+        "purchaseTransactionId"
+      FROM "TelegramChannel"
+      WHERE "workspaceId" = ${workspaceId}
+        AND "isActive" = true
+    `)) as Array<{
+      id: string;
+      username: string | null;
+      telegramChatId: string | null;
+      acquisitionType: 'CREATED' | 'PURCHASED' | null;
+      postsSyncFrom: Date | null;
+      inviteLinksSyncFrom: Date | null;
+      purchaseTransactionId: string | null;
+    }>;
     const findExistingId = (channel: (typeof dialogs)[number]) =>
       existingChannels.find(
         (existing) =>
@@ -867,6 +891,7 @@ export class TelegramUserAccountsService {
       >['permissions'];
       canBeUsedForAnalytics: boolean;
     }> = [];
+    const defaultCutoff = new Date();
     for (const channel of selectedChannels) {
       currentStep += 1;
       await this.notifyProgress(
@@ -877,8 +902,18 @@ export class TelegramUserAccountsService {
       );
       const { rawPermissions, normalized } = this.channelAccessPayload(channel);
       const existingId = findExistingId(channel);
+      const existingChannel =
+        existingChannels.find((candidate) => candidate.id === existingId) ?? null;
+      const importPolicy =
+        await this.telegramChannelsService.resolveChannelImportPolicy({
+          workspaceId,
+          channelId: existingId ?? null,
+          input: requestedPolicies.get(channel.id),
+          existing: existingChannel,
+          defaultNow: defaultCutoff,
+        });
       const workspaceChannel = existingId
-        ? await this.prisma.telegramChannel.update({
+        ? await (this.prisma.telegramChannel as any).update({
             where: { id: existingId },
             data: {
               title: channel.title,
@@ -887,7 +922,7 @@ export class TelegramUserAccountsService {
               isActive: true,
             },
           })
-        : await this.prisma.telegramChannel.create({
+        : await (this.prisma.telegramChannel as any).create({
             data: {
               workspaceId,
               title: channel.title,
@@ -897,6 +932,17 @@ export class TelegramUserAccountsService {
               lastPublicSyncedAt: new Date(),
             },
           });
+      await this.prisma.$executeRaw(
+        Prisma.sql`
+          UPDATE "TelegramChannel"
+          SET
+            "acquisitionType" = ${importPolicy.acquisitionType}::"TelegramChannelAcquisitionType",
+            "postsSyncFrom" = ${importPolicy.postsSyncFrom},
+            "inviteLinksSyncFrom" = ${importPolicy.inviteLinksSyncFrom},
+            "purchaseTransactionId" = ${importPolicy.purchaseTransactionId}
+          WHERE "id" = ${workspaceChannel.id}
+        `,
+      );
       await this.prisma.telegramChannelAdminLink.upsert({
         where: {
           workspaceId_telegramChannelId_telegramUserAccountIntegrationId: {

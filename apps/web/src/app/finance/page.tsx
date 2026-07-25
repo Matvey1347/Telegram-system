@@ -19,7 +19,7 @@ import {
 import { formatMoney, formatRate } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { AccountName } from '@/components/accounts/account-name';
-import { Button, Card, DateRangeInput, EmptyState, EntityCard, FormField, MasonryGrid, PageHeader, Skeleton } from '@/components/ui/primitives';
+import { Button, Card, DateRangeInput, EmptyState, EntityCard, ErrorState, FormField, MasonryGrid, PageHeader, Skeleton } from '@/components/ui/primitives';
 
 type DateFilters = { dateFrom: string; dateTo: string };
 type CategoryStats = { count: number; totalPrimary: number };
@@ -101,10 +101,6 @@ export default function FinancePage() {
         </div>
       </Card>
 
-      {transactionsError ? <div className="mb-4 text-red-300">Failed to load transactions</div> : null}
-      {transfersError ? <div className="mb-4 text-red-300">Failed to load transfers</div> : null}
-      {categoriesError ? <div className="mb-4 text-red-300">Failed to load categories</div> : null}
-
       <div className="space-y-6">
         <FinanceSection title="Accounts" href="/accounts" isLoading={loadingAccounts} skeleton="cards">
           <MasonryGrid>
@@ -124,7 +120,7 @@ export default function FinancePage() {
           {!loadingAccounts && !accountsError && !accounts?.length ? <EmptyState text="No accounts yet" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Transactions" href="/transactions" isLoading={loadingTransactions} skeleton="table">
+        <FinanceSection title="Transactions" href="/transactions" isLoading={loadingTransactions} error={transactionsError ? 'Failed to load transactions' : undefined} skeleton="table">
           <div className="table-scroll w-full rounded-lg border border-neutral-800">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -167,7 +163,7 @@ export default function FinancePage() {
           {!loadingTransactions && !transactionsError && !transactions?.length ? <EmptyState text="No transactions" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Categories" href="/categories" isLoading={loadingCategories} skeleton="cards">
+        <FinanceSection title="Categories" href="/categories" isLoading={loadingCategories} error={categoriesError ? 'Failed to load categories' : undefined} skeleton="cards">
           <div className="mb-6 flex flex-wrap items-center gap-3">
             {([
               { value: 'expense', label: 'Expenses', icon: CircleMinus },
@@ -214,7 +210,7 @@ export default function FinancePage() {
           {!loadingCategories && !categoriesError && !categories?.length ? <EmptyState text="No categories" /> : null}
         </FinanceSection>
 
-        <FinanceSection title="Transfers" href="/transfers" isLoading={loadingTransfers} skeleton="table">
+        <FinanceSection title="Transfers" href="/transfers" isLoading={loadingTransfers} error={transfersError ? 'Failed to load transfers' : undefined} skeleton="table">
           <div className="table-scroll w-full rounded-lg border border-neutral-800">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -243,14 +239,14 @@ export default function FinancePage() {
   );
 }
 
-function FinanceSection({ title, href, children, isLoading, skeleton }: { title: string; href: string; children: ReactNode; isLoading?: boolean; skeleton?: 'cards' | 'table' }) {
+function FinanceSection({ title, href, children, isLoading, error, skeleton }: { title: string; href: string; children: ReactNode; isLoading?: boolean; error?: string; skeleton?: 'cards' | 'table' }) {
   return (
     <section>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-white">{title}</h2>
         <Link href={href}><Button variant="secondary">Open</Button></Link>
       </div>
-      {isLoading ? <FinanceSectionSkeleton variant={skeleton} /> : children}
+      {error ? <ErrorState text={error} /> : isLoading ? <FinanceSectionSkeleton variant={skeleton} /> : children}
     </section>
   );
 }
@@ -320,6 +316,7 @@ function getTransactionTitle(transaction: Transaction) {
   return transaction.description?.trim()
     || transaction.adCampaign?.title?.trim()
     || transaction.investment?.notes?.trim()
+    || transaction.purchasedTelegramChannel?.title?.trim()
     || transaction.member?.user?.name?.trim()
     || transaction.categoryRef?.name
     || transaction.category

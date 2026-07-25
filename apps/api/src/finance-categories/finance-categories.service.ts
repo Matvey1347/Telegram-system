@@ -17,6 +17,22 @@ export class FinanceCategoriesService {
 
   async ensureSystemCategories(workspaceId: string, tx?: PrismaClient) {
     const client = tx ?? this.prisma;
+    const buyChannelsCandidates = await (client as any).transactionCategory.findMany({
+      where: {
+        workspaceId,
+        type: 'expense',
+        OR: [
+          { key: 'buy_channels' },
+          { name: { equals: 'Buy Channels', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const existingBuyChannels =
+      buyChannelsCandidates.find(
+        (category: { key?: string | null }) => category.key === 'buy_channels',
+      ) ?? buyChannelsCandidates[0];
+
     await (client as any).transactionCategory.upsert({
       where: {
         workspaceId_type_key: {
@@ -54,6 +70,50 @@ export class FinanceCategoriesService {
         iconId: undefined,
       },
     });
+
+    if (existingBuyChannels) {
+      await (client as any).transactionCategory.update({
+        where: { id: existingBuyChannels.id },
+        data: {
+          key: 'buy_channels',
+          isSystem: true,
+          name: 'Buy Channels',
+        },
+      });
+    } else {
+      await (client as any).transactionCategory.upsert({
+        where: {
+          workspaceId_type_key: {
+            workspaceId,
+            type: 'expense',
+            key: 'buy_channels',
+          },
+        },
+        update: { isSystem: true, name: 'Buy Channels' },
+        create: {
+          workspaceId,
+          type: 'expense',
+          key: 'buy_channels',
+          isSystem: true,
+          name: 'Buy Channels',
+          iconId: undefined,
+        },
+      });
+    }
+
+    const duplicateBuyChannels = buyChannelsCandidates.filter(
+      (category: { id: string }) => category.id !== existingBuyChannels?.id,
+    );
+    for (const duplicate of duplicateBuyChannels) {
+      await (client as any).transactionCategory.update({
+        where: { id: duplicate.id },
+        data: {
+          key: null,
+          name: 'Buy Channels (legacy)',
+          isSystem: false,
+        },
+      });
+    }
   }
 
   async list(userId: string, type?: 'income' | 'expense') {

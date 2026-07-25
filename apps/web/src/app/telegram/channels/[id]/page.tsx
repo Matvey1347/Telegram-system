@@ -53,6 +53,7 @@ import {
   LoadingState,
   Modal,
   PageHeader,
+  Skeleton,
   TimeInput,
   TooltipBubble,
 } from "@/components/ui/primitives";
@@ -300,7 +301,7 @@ export default function TelegramChannelAnalyticsPage() {
   );
   const [settings, setSettings] = useState<SettingsState>({
     seedSubscribersCount: "0",
-    activeSubscribersWindow: "5",
+    activeSubscribersWindow: "50",
     knownFakeSubscribersCount: "0",
     ownViewsPerPost: "0",
     ownReactionsPerPost: "0",
@@ -312,7 +313,7 @@ export default function TelegramChannelAnalyticsPage() {
     stopCpa: "",
     timePosts: [],
   });
-  const postsPagination = usePagination({ initialPageSize: 25 });
+  const postsPagination = usePagination({ initialPageSize: 50 });
   const inviteLinksPagination = usePagination({ initialPageSize: 25 });
   const campaignsPagination = usePagination({ initialPageSize: 25 });
 
@@ -333,19 +334,25 @@ export default function TelegramChannelAnalyticsPage() {
     queryFn: () =>
       getTelegramChannelAnalytics(id, rangeParams.from, rangeParams.to),
   });
-  const { data: channel } = useQuery({
+  const { data: channel, isLoading: isChannelLoading } = useQuery({
     queryKey: ["telegram-channel", id],
     queryFn: () => telegramChannelsApi.get(id),
   });
-  const { data: audience } = useQuery({
+  const { data: audience, isLoading: isAudienceLoading } = useQuery({
     queryKey: ["telegram-channel-audience", id],
     queryFn: () => telegramChannelsApi.audience(id),
   });
-  const { data: financialSummary } = useQuery({
+  const {
+    data: financialSummary,
+    isLoading: isFinancialSummaryLoading,
+  } = useQuery({
     queryKey: ["telegram-channel-financial-summary", id],
     queryFn: () => telegramChannelsApi.financialSummary(id),
   });
-  const { data: audienceSnapshots = [] } = useQuery({
+  const {
+    data: audienceSnapshots = [],
+    isLoading: isAudienceSnapshotsLoading,
+  } = useQuery({
     queryKey: ["telegram-channel-audience-snapshots", id],
     queryFn: () => telegramChannelsApi.audienceSnapshots(id, 80),
   });
@@ -418,7 +425,7 @@ export default function TelegramChannelAnalyticsPage() {
     setSyncSelection(syncSelectionFromChannel(source));
     setSettings({
       seedSubscribersCount: String(source.seedSubscribersCount ?? 0),
-      activeSubscribersWindow: String(source.activeSubscribersWindow ?? 5),
+      activeSubscribersWindow: "50",
       knownFakeSubscribersCount: String(source.knownFakeSubscribersCount ?? 0),
       ownViewsPerPost: String(source.ownViewsPerPost ?? 0),
       ownReactionsPerPost: String(source.ownReactionsPerPost ?? 0),
@@ -675,6 +682,11 @@ export default function TelegramChannelAnalyticsPage() {
     [data?.channelStatsPoints, mtprotoStats],
   );
   const activeChannel = (channel || data?.channel) as TelegramChannel | undefined;
+  const isInitialPageLoading =
+    (!data && isLoading) || (!activeChannel && isChannelLoading);
+  const showAudiencePanelSkeleton = !audience && isAudienceLoading;
+  const showFinancialPanelSkeleton =
+    !financialSummary && isFinancialSummaryLoading;
   const ownViewsPerPost = Math.max(
     0,
     toNumber(
@@ -984,8 +996,14 @@ export default function TelegramChannelAnalyticsPage() {
   return (
     <AppShell>
       <PageHeader
-        title={data?.channel?.title || "Channel Analytics"}
-        subtitle={channelSubtitle(data?.channel)}
+        title={
+          isInitialPageLoading
+            ? "Channel Analytics"
+            : activeChannel?.title || "Channel Analytics"
+        }
+        subtitle={
+          isInitialPageLoading ? undefined : channelSubtitle(activeChannel)
+        }
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <KpiSettingsControl
@@ -1045,45 +1063,66 @@ export default function TelegramChannelAnalyticsPage() {
           </div>
         }
       />
-      <div className="mt-3">
-        <ChannelAccessBadge accessMode={data?.channel?.accessMode} />
-      </div>
-      {isLoading ? <LoadingState /> : null}
-      <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
-        <div className="min-w-0 space-y-3">
-          {data?.channel ? (
-            <ChannelPreview
-              channel={{
-                ...data.channel,
-                currentSubscribersCount: computed.subscribers,
-              }}
-              className="!mb-0"
-            />
-          ) : null}
-          <RangePicker
-            rangeMode={rangeMode}
-            setRangeMode={setRangeMode}
-            customFrom={customFrom}
-            customTo={customTo}
-            setCustomFrom={setCustomFrom}
-            setCustomTo={setCustomTo}
-          />
-        </div>
-        <ChannelMetricsDeck metrics={statCards} />
-      </section>
+      {isInitialPageLoading ? (
+        <ChannelAnalyticsHeroSkeleton />
+      ) : (
+        <>
+          <div className="mt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <ChannelAccessBadge accessMode={activeChannel?.accessMode} />
+              {activeChannel?.acquisitionType === "PURCHASED" ? (
+                <span className="inline-flex rounded border border-cyan-700/70 bg-cyan-950/25 px-2 py-0.5 text-xs text-cyan-200">
+                  Purchased
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
+            <div className="min-w-0 space-y-3">
+              {activeChannel ? (
+                <ChannelPreview
+                  channel={{
+                    ...activeChannel,
+                    currentSubscribersCount: computed.subscribers,
+                  }}
+                  className="!mb-0"
+                />
+              ) : null}
+              <RangePicker
+                rangeMode={rangeMode}
+                setRangeMode={setRangeMode}
+                customFrom={customFrom}
+                customTo={customTo}
+                setCustomFrom={setCustomFrom}
+                setCustomTo={setCustomTo}
+              />
+            </div>
+            <ChannelMetricsDeck metrics={statCards} />
+          </section>
+        </>
+      )}
 
       <section className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(460px,100%),1fr))] gap-4">
-        <AudienceOverview audience={audience} />
-        <FinancialOverview
-          summary={financialSummary}
-          currencySettings={currencySettings}
-          rates={rates}
-          hasKpi={hasKpiSettings(activeChannel)}
-          settings={settings}
-        />
+        {showAudiencePanelSkeleton ? (
+          <OverviewPanelSkeleton title="Audience overview" />
+        ) : (
+          <AudienceOverview audience={audience} />
+        )}
+        {showFinancialPanelSkeleton ? (
+          <OverviewPanelSkeleton title="KPI / Financial overview" />
+        ) : (
+          <FinancialOverview
+            summary={financialSummary}
+            channel={activeChannel}
+            currencySettings={currencySettings}
+            rates={rates}
+            hasKpi={hasKpiSettings(activeChannel)}
+            settings={settings}
+          />
+        )}
       </section>
 
-      {hasAudienceChart || mtprotoGraphs.length ? (
+      {hasAudienceChart || mtprotoGraphs.length || isAudienceSnapshotsLoading ? (
         <section className="mt-6">
           <SectionToggle
             title="Charts"
@@ -1094,6 +1133,18 @@ export default function TelegramChannelAnalyticsPage() {
           />
           {openSections.charts ? (
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-4">
+              {!hasAudienceChart &&
+              !mtprotoGraphs.length &&
+              isAudienceSnapshotsLoading ? (
+                <SimplePanel title="Charts">
+                  <div className="h-64 rounded-lg bg-slate-900/40 p-2">
+                    <div className="space-y-3 p-3">
+                      <Skeleton className="h-4 w-28" />
+                      <Skeleton className="h-48 w-full" />
+                    </div>
+                  </div>
+                </SimplePanel>
+              ) : null}
               {hasAudienceChart ? (
                 <AudienceSnapshotsPanel snapshots={audienceSnapshots} />
               ) : null}
@@ -1426,6 +1477,67 @@ function SimplePanel({
   );
 }
 
+function ChannelAnalyticsHeroSkeleton() {
+  return (
+    <>
+      <div className="mt-3">
+        <Skeleton className="h-9 w-24 rounded-lg" />
+      </div>
+      <section className="mt-5 grid gap-4 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
+        <div className="min-w-0 space-y-3">
+          <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-4">
+            <div className="flex items-center gap-4">
+              <Skeleton className="h-20 w-20 rounded-full" />
+              <div className="flex-1 space-y-3">
+                <Skeleton className="h-8 w-56" />
+                <Skeleton className="h-5 w-40" />
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-4">
+            <div className="flex gap-3">
+              <Skeleton className="h-14 w-24 rounded-xl" />
+              <Skeleton className="h-14 w-24 rounded-xl" />
+              <Skeleton className="h-14 w-28 rounded-xl" />
+            </div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-700 bg-slate-950/20 p-4">
+          <div className="space-y-3">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-6 w-full" />
+            <Skeleton className="h-6 w-4/5" />
+            <div className="grid grid-cols-2 gap-3 pt-2 sm:grid-cols-4">
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+            </div>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function OverviewPanelSkeleton({ title }: { title: string }) {
+  return (
+    <SimplePanel title={title}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(136px,100%),1fr))] gap-2">
+        {Array.from({ length: 8 }, (_, index) => (
+          <div
+            key={index}
+            className="min-h-[58px] rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-2"
+          >
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="mt-3 h-6 w-20" />
+          </div>
+        ))}
+      </div>
+    </SimplePanel>
+  );
+}
+
 function OverviewGrid({ children }: { children: ReactNode }) {
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(min(136px,100%),1fr))] gap-2">
@@ -1524,21 +1636,30 @@ function AudienceOverview({ audience }: { audience: any }) {
 
 function FinancialOverview({
   summary,
+  channel,
   currencySettings,
   rates,
   hasKpi,
   settings,
 }: {
   summary: any;
+  channel: any;
   currencySettings: any;
   rates: any[] | undefined;
   hasKpi: boolean;
   settings: SettingsState;
 }) {
   const primaryCurrency = currencySettings?.primaryCurrency || "USD";
+  const purchaseAmount = toNumber(
+    summary?.acquisitionCost ??
+      channel?.purchaseTransaction?.amountInPrimaryCurrency,
+  );
+  const adSpend = toNumber(summary?.totalAdSpend);
+  const totalSpend = toNumber(summary?.totalSpend ?? adSpend + purchaseAmount);
   const hasPaidLaunches =
-    toNumber(summary?.campaignsCount) > 0 || toNumber(summary?.totalAdSpend) > 0;
-  if (!hasKpi && !hasPaidLaunches) return null;
+    toNumber(summary?.campaignsCount) > 0 || adSpend > 0;
+  const hasPurchaseExpense = purchaseAmount > 0;
+  if (!hasKpi && !hasPaidLaunches && !hasPurchaseExpense) return null;
   const moneyValue = (value: unknown) =>
     value == null ? (
       "-"
@@ -1554,9 +1675,19 @@ function FinancialOverview({
     );
   const metrics = [
     {
+      key: "totalSpend",
+      show: totalSpend > 0,
+      node: <SnapshotItem label="Total spend" value={moneyValue(-totalSpend)} />,
+    },
+    {
+      key: "purchase",
+      show: hasPurchaseExpense,
+      node: <SnapshotItem label="Channel purchase" value={moneyValue(purchaseAmount)} />,
+    },
+    {
       key: "spend",
-      show: hasPositiveValue(summary?.totalAdSpend),
-      node: <SnapshotItem label="Total ad spend" value={moneyValue(summary?.totalAdSpend)} />,
+      show: adSpend > 0,
+      node: <SnapshotItem label="Ad spend" value={moneyValue(-adSpend)} />,
     },
     {
       key: "campaigns",
@@ -1610,7 +1741,7 @@ function FinancialOverview({
   const showKpiStatus = hasKpi && summary?.kpiStatus && summary.kpiStatus !== "unknown";
   return (
     <SimplePanel title="KPI / Financial overview">
-      {hasKpi && !hasPaidLaunches ? (
+      {hasKpi && !hasPaidLaunches && !hasPurchaseExpense ? (
         <div className="mb-2 rounded-lg border border-slate-800 bg-slate-900/30 px-3 py-2 text-xs text-slate-300">
           No paid launches yet.
         </div>

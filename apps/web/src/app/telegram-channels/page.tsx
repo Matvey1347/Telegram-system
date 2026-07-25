@@ -827,22 +827,59 @@ function ChannelFinanceMiniSummary({
   )
     ? Number(summary?.paidActiveSubscribersEstimate)
     : null;
+  const totalSubscribers = hasNumber(
+    audience?.subscribersCount ?? channel.currentSubscribersCount,
+  )
+    ? Number(audience?.subscribersCount ?? channel.currentSubscribersCount)
+    : null;
+  const acquisitionCost = hasNumber(summary?.acquisitionCost)
+    ? Number(summary?.acquisitionCost)
+    : 0;
+  const adSpend = hasNumber(summary?.totalAdSpend)
+    ? Number(summary?.totalAdSpend)
+    : 0;
+  const financeTotal = hasNumber(summary?.totalSpend)
+    ? Number(summary?.totalSpend)
+    : hasNumber(summary?.totalAdSpend)
+      ? Number(summary?.totalAdSpend)
+      : 0;
+  const subscribersBaseForCost =
+    attributedSubscribers != null && attributedSubscribers > 0
+      ? attributedSubscribers
+      : totalSubscribers;
   const inactiveSubscribers =
-    joinedSubscribers != null && paidActiveSubscribers != null
-      ? Math.max(joinedSubscribers - paidActiveSubscribers, 0)
+    (joinedSubscribers != null || totalSubscribers != null) &&
+    paidActiveSubscribers != null
+      ? Math.max(
+          (joinedSubscribers != null ? joinedSubscribers : totalSubscribers || 0) -
+            paidActiveSubscribers,
+          0,
+        )
       : null;
   const inactiveCpa =
-    inactiveSubscribers && hasPositiveNumber(summary?.totalAdSpend)
-      ? Number(summary?.totalAdSpend) / inactiveSubscribers
+    inactiveSubscribers && financeTotal > 0
+      ? financeTotal / inactiveSubscribers
       : null;
-  if (hasPositiveNumber(summary?.totalAdSpend)) {
+  if (financeTotal > 0) {
     metrics.push({
-      label: "Finance",
+      label: "Total spend",
       value: moneyValue(
-        -Number(summary?.totalAdSpend),
+        -financeTotal,
         "font-semibold text-rose-200",
       ),
       prominent: true,
+    });
+  }
+  if (adSpend > 0) {
+    metrics.push({
+      label: "Ad spend",
+      value: moneyValue(-adSpend, "font-semibold text-rose-200"),
+    });
+  }
+  if (acquisitionCost > 0) {
+    metrics.push({
+      label: "Bought for",
+      value: moneyValue(acquisitionCost, "font-semibold text-slate-100"),
     });
   }
   if (hasPositiveNumber(summary?.avgCpa)) {
@@ -854,6 +891,13 @@ function ChannelFinanceMiniSummary({
         "Attributed subscribers = joined subscribers + pending join requests.\n\n" +
         "This is not the total current Telegram subscriber count.",
     });
+  } else if (financeTotal > 0 && subscribersBaseForCost != null && subscribersBaseForCost > 0) {
+    metrics.push({
+      label: "CPA / sub",
+      value: moneyValue(financeTotal / subscribersBaseForCost),
+      tip:
+        "For bought channels, CPA / sub uses total channel cost divided by current subscribers.",
+    });
   }
   if (hasPositiveNumber(summary?.activeCpa)) {
     metrics.push({
@@ -863,6 +907,14 @@ function ChannelFinanceMiniSummary({
       tip:
         "CPA / active: ad spend divided by estimated active paid subscribers.\n\n" +
         `Active subscriber: a joined paid subscriber still estimated active, based on the ${channel.activeSubscribersWindow || 5}-post active window.`,
+    });
+  } else if (financeTotal > 0 && paidActiveSubscribers != null && paidActiveSubscribers > 0) {
+    metrics.push({
+      label: "CPA / active",
+      value: moneyValue(financeTotal / paidActiveSubscribers),
+      prominent: true,
+      tip:
+        "For bought channels, CPA / active uses total channel cost divided by current active audience estimate.",
     });
   }
   if (hasPositiveNumber(inactiveCpa)) {
@@ -909,10 +961,17 @@ function ChannelFinanceMiniSummary({
     metric.label.startsWith("CPA /"),
   );
   const topMetrics = visibleMetrics.filter(
-    (metric) => metric.label === "Finance",
+    (metric) =>
+      metric.label === "Total spend" ||
+      metric.label === "Ad spend" ||
+      metric.label === "Bought for",
   );
   const supportingMetrics = visibleMetrics.filter(
-    (metric) => !metric.label.startsWith("CPA /") && metric.label !== "Finance",
+    (metric) =>
+      !metric.label.startsWith("CPA /") &&
+      metric.label !== "Total spend" &&
+      metric.label !== "Ad spend" &&
+      metric.label !== "Bought for",
   );
   const kpiTargets = [
     formatCompactKpiRange(
@@ -1675,7 +1734,7 @@ export default function TelegramChannelsPage() {
       });
       try {
         const source = await telegramChannelsApi.importWithProgress(
-          input,
+          { input },
           (item: { message?: string }, current, total) => {
             setProgress({
               id: progressId,
@@ -2090,6 +2149,13 @@ export default function TelegramChannelsPage() {
                 <EntityCard key={channel.id} title="" actions={null}>
                   <ChannelPreview
                     channel={channel}
+                    badges={
+                      channel.acquisitionType === "PURCHASED" ? (
+                        <span className="inline-flex rounded border border-cyan-700/70 bg-cyan-950/25 px-2 py-0.5 text-xs text-cyan-200">
+                          Purchased
+                        </span>
+                      ) : null
+                    }
                     rightAction={
                       <IconButton
                         kind="delete"

@@ -9,7 +9,7 @@ import { accountDisplayName } from '@/lib/account-display';
 import { Account, Transfer, TransferQuery, accountsApi, currenciesApi, transfersApi } from '@/lib/api';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
 import { MoneyStack } from '@/components/ui/money-stack';
-import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, ErrorState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
 import { formatRate } from '@/lib/money';
 import { useAppToast } from '@/providers/toast-provider';
 
@@ -81,9 +81,9 @@ export default function TransfersPage() {
         <FormField label="Sort"><Select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}><option value="date_desc">Newest</option><option value="date_asc">Oldest</option></Select></FormField>
       </div>
     </Card>
-    {error ? <div className="text-red-300">Failed to load transfers</div> : null}
+    {error ? <ErrorState text="Failed to load transfers" /> : null}
     {isLoading ? <TableLoadingState text="Loading transfers" columns={9} rows={6} /> : null}
-    {!isLoading ? (
+    {!isLoading && !error ? (
       <div className="table-scroll w-full rounded-lg border border-neutral-800">
         <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">

@@ -6,9 +6,10 @@ type ChannelPreviewProps = {
   subtitle?: string;
   avatarKind?: 'channel' | 'mtproto' | 'person';
   className?: string;
+  badges?: React.ReactNode;
 };
 
-export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'channel', className = '' }: ChannelPreviewProps) {
+export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'channel', className = '', badges }: ChannelPreviewProps) {
   const title = String(channel?.title || '-');
   const subscribers = channel?.currentSubscribersCount == null ? null : Number(channel.currentSubscribersCount);
   const fallbackSubtitle =
@@ -26,6 +27,7 @@ export function ChannelPreview({ channel, rightAction, subtitle, avatarKind = 'c
         <div className="min-w-0">
           <p className="truncate text-lg font-semibold leading-none text-white">{title}</p>
           {subtitle || fallbackSubtitle ? <p className="mt-1 truncate text-sm text-slate-300">{subtitle || fallbackSubtitle}</p> : null}
+          {badges ? <div className="mt-2 flex flex-wrap items-center gap-2">{badges}</div> : null}
         </div>
       </div>
       {rightAction ? <div className="shrink-0">{rightAction}</div> : null}

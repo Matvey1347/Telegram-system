@@ -1256,6 +1256,18 @@ export function FormError({ message }: { message?: string }) {
   return <p className="mt-2 text-sm text-red-400">{message}</p>;
 }
 
+export function ErrorState({
+  text = "Something went wrong.",
+}: {
+  text?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-rose-700 bg-rose-950/30 p-4 text-sm text-rose-200">
+      {text}
+    </div>
+  );
+}
+
 export function LoadingState({ text = "Loading..." }: { text?: string }) {
   return (
     <div
