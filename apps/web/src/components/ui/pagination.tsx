@@ -53,7 +53,7 @@ export function Pagination({
   disabled = false,
 }: PaginationProps) {
   const isDisabled = disabled || loading || totalItems === 0;
-  const shouldRender = totalItems > 25 && totalPages > 1;
+  const shouldRender = totalItems > pageSize && totalPages > 1;
 
   if (!shouldRender) {
     return null;

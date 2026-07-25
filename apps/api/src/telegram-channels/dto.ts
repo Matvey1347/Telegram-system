@@ -216,9 +216,13 @@ export class PostGroupsQueryDto extends PaginationQueryDto {
 
 export class TelegramChannelListQueryDto extends PaginationQueryDto {}
 
-export class TelegramChannelPostsQueryDto extends PaginationQueryDto {}
+export class TelegramChannelPostsQueryDto extends PaginationQueryDto {
+  @IsOptional() @IsString() search?: string;
+}
 
-export class TelegramChannelInviteLinksQueryDto extends PaginationQueryDto {}
+export class TelegramChannelInviteLinksQueryDto extends PaginationQueryDto {
+  @IsOptional() @IsString() search?: string;
+}
 
 export class TelegramManagedPostsQueryDto extends PaginationQueryDto {}
 

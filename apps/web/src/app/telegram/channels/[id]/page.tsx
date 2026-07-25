@@ -292,9 +292,12 @@ export default function TelegramChannelAnalyticsPage() {
   const [syncSelection, setSyncSelection] = useState<TelegramChannelSyncSelection>(
     DEFAULT_SYNC_SELECTION,
   );
-  const [rangeMode, setRangeMode] = useState<"30d" | "all" | "custom">("all");
+  const [rangeMode, setRangeMode] = useState<"30d" | "all" | "custom">("30d");
   const [customFrom, setCustomFrom] = useState(thirtyDaysAgoIso);
   const [customTo, setCustomTo] = useState(todayIso);
+  const [postsSearch, setPostsSearch] = useState("");
+  const [inviteLinksSearch, setInviteLinksSearch] = useState("");
+  const [campaignsSearch, setCampaignsSearch] = useState("");
   const [lastSyncResult, setLastSyncResult] = useState<any>(null);
   const [openSections, setOpenSections] = useState<ChannelSectionState>(() =>
     readStoredChannelSections(id),
@@ -313,9 +316,9 @@ export default function TelegramChannelAnalyticsPage() {
     stopCpa: "",
     timePosts: [],
   });
-  const postsPagination = usePagination({ initialPageSize: 50 });
-  const inviteLinksPagination = usePagination({ initialPageSize: 25 });
-  const campaignsPagination = usePagination({ initialPageSize: 25 });
+  const postsPagination = usePagination({ initialPageSize: 10 });
+  const inviteLinksPagination = usePagination({ initialPageSize: 10 });
+  const campaignsPagination = usePagination({ initialPageSize: 10 });
 
   const rangeParams = useMemo(() => {
     if (rangeMode === "all") return { from: "2000-01-01", to: todayIso };
@@ -366,11 +369,13 @@ export default function TelegramChannelAnalyticsPage() {
       id,
       postsPagination.page,
       postsPagination.pageSize,
+      postsSearch,
     ],
     queryFn: () =>
       getTelegramChannelPosts(id, {
         page: postsPagination.page,
         pageSize: postsPagination.pageSize,
+        search: postsSearch.trim() || undefined,
       }),
     enabled: openSections.posts,
   });
@@ -380,11 +385,13 @@ export default function TelegramChannelAnalyticsPage() {
       id,
       inviteLinksPagination.page,
       inviteLinksPagination.pageSize,
+      inviteLinksSearch,
     ],
     queryFn: () =>
       getTelegramChannelInviteLinks(id, {
         page: inviteLinksPagination.page,
         pageSize: inviteLinksPagination.pageSize,
+        search: inviteLinksSearch.trim() || undefined,
       }),
     enabled: openSections.inviteLinks,
   });
@@ -394,12 +401,14 @@ export default function TelegramChannelAnalyticsPage() {
       id,
       campaignsPagination.page,
       campaignsPagination.pageSize,
+      campaignsSearch,
     ],
     queryFn: () =>
       adCampaignsApi.listPage({
         telegramChannelId: id,
         page: campaignsPagination.page,
         pageSize: campaignsPagination.pageSize,
+        search: campaignsSearch.trim() || undefined,
       }),
     enabled: openSections.campaigns,
   });
@@ -418,6 +427,18 @@ export default function TelegramChannelAnalyticsPage() {
       JSON.stringify(openSections),
     );
   }, [id, openSections]);
+
+  useEffect(() => {
+    postsPagination.resetPage();
+  }, [postsSearch]);
+
+  useEffect(() => {
+    inviteLinksPagination.resetPage();
+  }, [inviteLinksSearch]);
+
+  useEffect(() => {
+    campaignsPagination.resetPage();
+  }, [campaignsSearch]);
 
   useEffect(() => {
     const source = channel || data?.channel;
@@ -1169,13 +1190,29 @@ export default function TelegramChannelAnalyticsPage() {
           />
           {openSections.campaigns ? (
             <>
+              <div className="mb-3 max-w-md">
+                <FormField label="Search">
+                  <Input
+                    value={campaignsSearch}
+                    onChange={(event) => setCampaignsSearch(event.target.value)}
+                    placeholder="Campaign, promo, source, hypothesis"
+                  />
+                </FormField>
+              </div>
               {isCampaignsLoading ? <LoadingState /> : null}
-              {!isCampaignsLoading ? (
+              {!isCampaignsLoading && campaignRows.length ? (
                 <CampaignsTable
                   campaigns={campaignRows}
                   currencySettings={currencySettings}
                   rates={rates}
                 />
+              ) : null}
+              {!isCampaignsLoading && !campaignRows.length ? (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3 text-sm text-slate-300">
+                  {campaignsSearch.trim()
+                    ? "No campaigns found for this search."
+                    : "No campaigns found."}
+                </div>
               ) : null}
               {campaignsData?.pagination ? (
                 <Pagination
@@ -1207,6 +1244,15 @@ export default function TelegramChannelAnalyticsPage() {
           />
           {openSections.posts ? (
             <>
+              <div className="mb-3 max-w-md">
+                <FormField label="Search">
+                  <Input
+                    value={postsSearch}
+                    onChange={(event) => setPostsSearch(event.target.value)}
+                    placeholder="Post text or message ID"
+                  />
+                </FormField>
+              </div>
               {isPostsLoading ? <LoadingState /> : null}
               {postsError ? (
                 <div className="rounded-lg border border-rose-700 p-3 text-sm text-rose-200">
@@ -1248,6 +1294,13 @@ export default function TelegramChannelAnalyticsPage() {
                   ) : null}
                 </>
               ) : null}
+              {!isPostsLoading && !postsError && !visiblePosts.length ? (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3 text-sm text-slate-300">
+                  {postsSearch.trim()
+                    ? "No posts found for this search."
+                    : "No posts found."}
+                </div>
+              ) : null}
             </>
           ) : null}
         </section>
@@ -1267,10 +1320,27 @@ export default function TelegramChannelAnalyticsPage() {
           />
           {openSections.inviteLinks ? (
             <>
+              <div className="mb-3 max-w-md">
+                <FormField label="Search">
+                  <Input
+                    value={inviteLinksSearch}
+                    onChange={(event) =>
+                      setInviteLinksSearch(event.target.value)
+                    }
+                    placeholder="Invite link, URL, creator"
+                  />
+                </FormField>
+              </div>
               {isInviteLinksLoading ? (
                 <LoadingState />
-              ) : (
+              ) : topInviteLinks.length ? (
                 <InviteLinksTable links={topInviteLinks} />
+              ) : (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3 text-sm text-slate-300">
+                  {inviteLinksSearch.trim()
+                    ? "No invite links found for this search."
+                    : "No invite links found."}
+                </div>
               )}
               {inviteLinksData?.pagination ? (
                 <Pagination

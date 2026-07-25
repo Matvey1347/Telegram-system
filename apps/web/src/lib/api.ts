@@ -2714,9 +2714,18 @@ export const advertisingChannelsApi = crud<AdvertisingChannel>(
 );
 export const adCampaignsApi = {
   ...quietCrud<AdCampaign>("/ad-campaigns"),
-  listPage: async (params?: PaginationParams & { telegramChannelId?: string }) =>
-    getPaginated<AdCampaign>("/ad-campaigns", params),
-  list: async (params?: PaginationParams & { telegramChannelId?: string }) =>
+  listPage: async (
+    params?: PaginationParams & {
+      telegramChannelId?: string;
+      search?: string;
+    },
+  ) => getPaginated<AdCampaign>("/ad-campaigns", params),
+  list: async (
+    params?: PaginationParams & {
+      telegramChannelId?: string;
+      search?: string;
+    },
+  ) =>
     hasExplicitPagination(params)
       ? (await getPaginated<AdCampaign>("/ad-campaigns", params)).items
       : getAllPaginatedItems<AdCampaign>("/ad-campaigns", params),
@@ -2885,7 +2894,7 @@ export async function getTelegramChannelAnalytics(
 
 export async function getTelegramChannelPosts(
   channelId: string,
-  params?: PaginationParams,
+  params?: PaginationParams & { search?: string },
 ) {
   return getPaginated<TelegramPostAnalyticsItem>(
     `/telegram-channels/${channelId}/posts`,
@@ -2895,7 +2904,7 @@ export async function getTelegramChannelPosts(
 
 export async function getTelegramChannelInviteLinks(
   channelId: string,
-  params?: PaginationParams,
+  params?: PaginationParams & { search?: string },
 ) {
   return getPaginated<TelegramInviteLink>(
     `/telegram-channels/${channelId}/invite-links`,

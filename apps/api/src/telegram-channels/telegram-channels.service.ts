@@ -8983,7 +8983,37 @@ export class TelegramChannelsService {
   ) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
-    const where = { workspaceId, telegramChannelId: channelId };
+    const search = query.search?.trim();
+    const where: any = {
+      workspaceId,
+      telegramChannelId: channelId,
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { url: { contains: search, mode: 'insensitive' } },
+              {
+                creatorUsername: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                creatorFirstName: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                creatorLastName: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+    };
     const pagination = normalizePagination(query);
     const [links, totalItems] = await Promise.all([
       this.findInviteLinksWithRequestedCountFallback({
@@ -9055,7 +9085,30 @@ export class TelegramChannelsService {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const pagination = normalizePagination(query);
-    const where = { workspaceId, telegramChannelId: channelId };
+    const search = query.search?.trim();
+    const where: any = {
+      workspaceId,
+      telegramChannelId: channelId,
+      ...(search
+        ? {
+            OR: [
+              { text: { contains: search, mode: 'insensitive' } },
+              {
+                formattedText: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                telegramMessageId: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+    };
     const [items, totalItems] = await Promise.all([
       this.prisma.telegramPost.findMany({
         where,

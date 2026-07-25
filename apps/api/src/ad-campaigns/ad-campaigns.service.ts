@@ -1078,10 +1078,55 @@ export class AdCampaignsService {
 
   async findAll(userId: string, query: AdCampaignQueryDto = {}) {
     const workspaceId = await this.workspace(userId);
-    const where = {
+    const search = query.search?.trim();
+    const where: any = {
       workspaceId,
       telegramChannelId: query.telegramChannelId || undefined,
       assignedMemberId: query.assignedMemberId || undefined,
+      ...(search
+        ? {
+            OR: [
+              { title: { contains: search, mode: 'insensitive' } },
+              { notes: { contains: search, mode: 'insensitive' } },
+              {
+                promo: {
+                  title: { contains: search, mode: 'insensitive' },
+                },
+              },
+              {
+                advertisingChannels: {
+                  some: {
+                    advertisingSource: {
+                      OR: [
+                        {
+                          title: {
+                            contains: search,
+                            mode: 'insensitive',
+                          },
+                        },
+                        {
+                          name: {
+                            contains: search,
+                            mode: 'insensitive',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                hypothesisLinks: {
+                  some: {
+                    hypothesis: {
+                      name: { contains: search, mode: 'insensitive' },
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
     };
     const pagination = normalizePagination(query);
     const loadRows = async (withCampaignPromos: boolean) => {

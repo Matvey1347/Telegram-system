@@ -90,7 +90,7 @@ type ChartTooltipProps = {
 export default function DashboardPage() {
   const qc = useQueryClient();
   const defaultCustomPeriod = useMemo(defaultPeriod, []);
-  const [rangeMode, setRangeMode] = useState<'30d' | 'all' | 'custom'>('all');
+  const [rangeMode, setRangeMode] = useState<'30d' | 'all' | 'custom'>('30d');
   const [customPeriod, setCustomPeriod] = useState(defaultCustomPeriod);
   const period = useMemo(
     () =>

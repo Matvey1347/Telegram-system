@@ -35,7 +35,17 @@ const workspaceScopedQueryKeys = new Set<string>([
   'workspace-selected',
   'workspace-members',
   'telegram-channels',
+  'telegram-channel',
+  'telegram-channel-analytics',
+  'telegram-channel-analytics-sources',
+  'telegram-channel-posts',
+  'telegram-channel-audience',
+  'telegram-channel-financial-summary',
+  'telegram-channel-audience-snapshots',
+  'telegram-channel-invite-links',
+  'telegram-channel-campaigns',
   'telegram-managed-posts',
+  'telegram-managed-post-link-targets',
   'post-groups',
   'post-group',
   'prompt-notes',
@@ -52,6 +62,9 @@ const workspaceScopedQueryKeys = new Set<string>([
   'ad-campaigns',
   'ad-hypotheses',
   'dashboard-summary',
+  'application-logs',
+  'application-log-filter-options',
+  'global-search',
 ]);
 
 export const QUERY_PERSIST_STORAGE_KEY = 'telegram-system-react-query-cache';

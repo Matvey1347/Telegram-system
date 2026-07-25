@@ -10,7 +10,7 @@ type UsePaginationOptions = {
 
 export function usePagination(options: UsePaginationOptions = {}) {
   const [page, setPage] = useState(options.initialPage ?? 1);
-  const [pageSize, setPageSize] = useState(options.initialPageSize ?? 25);
+  const [pageSize, setPageSize] = useState(options.initialPageSize ?? 10);
 
   useEffect(() => {
     if (options.totalPages == null) {

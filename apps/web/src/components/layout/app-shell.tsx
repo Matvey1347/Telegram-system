@@ -153,13 +153,28 @@ export function AppShell({ children }: PropsWithChildren) {
     setSelectedWorkspaceId(nextWorkspaceId);
   }, [selectedWorkspaceId, workspaces]);
 
-  const switchWorkspace = (workspaceId: string) => {
+  const resetWorkspaceQueries = async () => {
+    await qc.cancelQueries({
+      predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
+    });
+    await qc.resetQueries({
+      predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
+    });
+    qc.removeQueries({
+      predicate: (query) =>
+        isWorkspaceScopedQuery(query.queryKey) &&
+        query.getObserversCount() === 0,
+    });
+  };
+
+  const switchWorkspace = async (workspaceId: string) => {
+    if (!workspaceId || workspaceId === activeWorkspaceId) return;
     localStorage.setItem('selected-workspace-id', workspaceId);
     setSelectedWorkspaceId(workspaceId);
     clearPersistedQueryCache();
-    qc.removeQueries({ predicate: (query) => isWorkspaceScopedQuery(query.queryKey) });
-    qc.invalidateQueries({ queryKey: ['auth', 'me'] });
-    qc.invalidateQueries({ queryKey: ['workspaces'] });
+    await resetWorkspaceQueries();
+    await qc.resetQueries({ queryKey: ['auth', 'me'] });
+    await qc.invalidateQueries({ queryKey: ['workspaces'] });
   };
 
   const handleLogout = () => {
@@ -497,7 +512,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <button onClick={handleLogout} className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"><LogOut size={16} /> Logout</button>
         </div>
       </aside>
-      <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div className="w-full min-w-0">{children}</div></main>
+      <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div key={activeWorkspaceId || 'no-workspace'} className="w-full min-w-0">{children}</div></main>
     </div>
   );
 }
