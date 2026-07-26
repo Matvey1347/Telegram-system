@@ -7,6 +7,9 @@ export async function invalidateTelegramAccessQueries(queryClient: QueryClient) 
     queryClient.invalidateQueries({ queryKey: ["telegram-source-channels"] }),
     queryClient.invalidateQueries({ queryKey: ["telegram-channel-sources"] }),
     queryClient.invalidateQueries({
+      queryKey: ["telegram-publishing-capabilities"],
+    }),
+    queryClient.invalidateQueries({
       queryKey: ["telegram-channel-analytics-sources"],
     }),
     queryClient.invalidateQueries({ queryKey: ["telegram-channels"] }),

@@ -277,6 +277,11 @@ model TelegramUserAccountIntegration {
   lastName                  String?
   photoUrl                  String?
   nameColor                 Int?
+  isPremium                 Boolean                   @default(false)
+  premiumCheckedAt          DateTime?
+  captionLengthMax          Int                       @default(1024)
+  messageLengthMax          Int                       @default(4096)
+  premiumCapabilities       Json?
   status                    TelegramUserAccountStatus @default(pending)
   lastErrorMessage          String?
   lastCheckedAt             DateTime?
@@ -1265,6 +1270,9 @@ model TelegramManagedPost {
   lastTelegramSyncNote String?
   sourceType           TelegramSourceType?
   sourceId             String?
+  sourceWasPremium     Boolean?
+  captionLengthMaxUsed Int?
+  messageLengthMaxUsed Int?
   publishMode          String?
   lastError            String?
   assignedMemberId     String
@@ -1312,6 +1320,9 @@ model TelegramManagedPostRevision {
   lastTelegramSyncNote String?
   sourceType           TelegramSourceType?
   sourceId             String?
+  sourceWasPremium     Boolean?
+  captionLengthMaxUsed Int?
+  messageLengthMaxUsed Int?
   publishMode          String?
   lastError            String?
   assignedMemberId     String

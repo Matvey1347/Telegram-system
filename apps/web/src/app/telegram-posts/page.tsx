@@ -50,6 +50,7 @@ import {
   workspaceMembersApi,
   type BulkActionResult,
   type BulkActionResultItem,
+  type Icon,
   type PostGroup,
   type PromptNote,
   type TelegramChannel,
@@ -724,35 +725,14 @@ function TelegramPostWorkspace({
     queryKey: ["prompt-notes", { telegramChannelId: channelId }],
     queryFn: () => promptNotesApi.list({ telegramChannelId: channelId }),
   });
-  const groupIconIds = useMemo(
-    () => [
-      ...new Set(
-        (postGroups.data || [])
-          .map((group) => group.icon)
-          .filter((iconId): iconId is string => Boolean(iconId)),
-      ),
-    ],
-    [postGroups.data],
-  );
-  const groupIconQueries = useQueries({
-    queries: groupIconIds.map((iconId) => ({
-      queryKey: ["icon", iconId],
-      queryFn: () => iconsApi.get(iconId),
-    })),
-  });
-  const iconsById = useMemo(
-    () =>
-      new Map(
-        groupIconQueries
-          .map((query) => query.data)
-          .filter((item) => Boolean(item))
-          .map((item) => [item!.id, item!]),
-      ),
-    [groupIconQueries],
-  );
   const members = useQuery({
     queryKey: ["workspace-members"],
     queryFn: workspaceMembersApi.list,
+  });
+  const publishingCapabilities = useQuery({
+    queryKey: ["telegram-publishing-capabilities", channelId],
+    queryFn: () => telegramChannelsApi.publishingCapabilities(channelId),
+    enabled: Boolean(channelId),
   });
 
   useEffect(() => {
@@ -1014,7 +994,12 @@ function TelegramPostWorkspace({
     editing && savingPostIds.includes(editing.id),
   );
   const editorIsSaving = editingIsSaving || Boolean(creatingPostId);
-  const hasLongImageText = imageUrls.length > 0 && text.length > 1024;
+  const effectiveCaptionLengthMax =
+    publishingCapabilities.data?.captionLengthMax ?? 1024;
+  const effectiveMessageLengthMax =
+    publishingCapabilities.data?.messageLengthMax ?? TELEGRAM_TEXT_MESSAGE_LIMIT;
+  const hasLongImageText =
+    imageUrls.length > 0 && text.length > effectiveCaptionLengthMax;
   const publishedLongImageTextMode =
     isPublished && hasLongImageText
       ? editing?.publishMode === "CAPTION_THEN_TEXT"
@@ -1022,7 +1007,7 @@ function TelegramPostWorkspace({
         : "IMAGES_THEN_TEXT"
       : null;
   const hasLongTextOnly =
-    imageUrls.length === 0 && text.length > TELEGRAM_TEXT_MESSAGE_LIMIT;
+    imageUrls.length === 0 && text.length > effectiveMessageLengthMax;
   const publishDisabledReason = busy
     ? "Saving or publishing is already in progress."
     : creatingPostId
@@ -2769,7 +2754,7 @@ function TelegramPostWorkspace({
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-2">
                                       {post.icon ? (
-                                        <PostIcon iconId={post.icon} label={post.title} bare />
+                                        <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} bare />
                                       ) : (
                                         <span className="text-sm leading-none">📝</span>
                                       )}
@@ -2842,7 +2827,7 @@ function TelegramPostWorkspace({
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   {post.icon ? (
-                                    <PostIcon iconId={post.icon} label={post.title} bare />
+                                    <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} bare />
                                   ) : (
                                     <span className="text-sm leading-none">📝</span>
                                   )}
@@ -2955,6 +2940,8 @@ function TelegramPostWorkspace({
             text={text}
             imageUrls={imageUrls}
             longTextMode={longTextMode}
+            captionLengthMax={effectiveCaptionLengthMax}
+            messageLengthMax={effectiveMessageLengthMax}
           />
           <Card className="relative min-w-0 space-y-3 overflow-visible">
             {editorIsSaving ? (
@@ -3056,9 +3043,7 @@ function TelegramPostWorkspace({
                   options={[
                     { value: "", label: "No group", iconEmoji: "📂" },
                     ...(postGroups.data || []).map((group) => {
-                      const groupIcon = group.icon
-                        ? iconsById.get(group.icon)
-                        : null;
+                      const groupIcon = group.iconData ?? null;
                       return {
                         value: group.id,
                         label: group.title,
@@ -3272,7 +3257,7 @@ function TelegramPostWorkspace({
                   Telegram text messages are limited to 4096 characters after
                   formatting. Current length: {text.length}. This post will be
                   published as{" "}
-                  {Math.ceil(text.length / TELEGRAM_TEXT_MESSAGE_LIMIT)}{" "}
+                  {Math.ceil(text.length / effectiveMessageLengthMax)}{" "}
                   separate messages.
                 </p>
               </div>
@@ -3952,6 +3937,14 @@ function TelegramPostWorkspace({
               channelPhotoUrl={channelPhotoUrl}
               text={restorePreviewRevision.text || ""}
               imageUrls={restorePreviewRevision.imageUrls}
+              captionLengthMax={
+                restorePreviewRevision.captionLengthMaxUsed ??
+                effectiveCaptionLengthMax
+              }
+              messageLengthMax={
+                restorePreviewRevision.messageLengthMaxUsed ??
+                effectiveMessageLengthMax
+              }
               longTextMode={
                 restorePreviewRevision.publishMode === "CAPTION_THEN_TEXT"
                   ? "CAPTION_THEN_TEXT"
@@ -4580,24 +4573,26 @@ function ChannelMultiSelect({
 
 function PostIcon({
   iconId,
+  icon,
   label,
   size = "xs",
   bare = false,
 }: {
   iconId?: string | null;
+  icon?: Icon | null;
   label: string;
   size?: "xs" | "sm" | "md";
   bare?: boolean;
 }) {
-  const icon = useQuery({
+  const iconQuery = useQuery({
     queryKey: ["icon", iconId],
     queryFn: () => iconsApi.get(iconId as string),
-    enabled: Boolean(iconId),
+    enabled: Boolean(iconId) && !icon,
   });
   if (!iconId) return null;
   return (
     <IconAvatar
-      icon={icon.data}
+      icon={icon ?? iconQuery.data}
       label={label}
       size={size}
       bordered={!bare}
@@ -4779,24 +4774,6 @@ function PostGroupsWorkspace({
     setSelectedGroupId(initialGroupId);
     openedFromSearchRef.current = initialGroupId;
   }, [groupsList, initialGroupId]);
-  const groupIconIds = useMemo(
-    () =>
-      [...new Set(groupsList.map((group) => group.icon).filter(Boolean))] as string[],
-    [groupsList],
-  );
-  const groupIconQueries = useQueries({
-    queries: groupIconIds.map((iconId) => ({
-      queryKey: ["icon", iconId],
-      queryFn: () => iconsApi.get(iconId),
-    })),
-  });
-  const groupIconsById = useMemo(() => {
-    const map = new Map<string, Awaited<ReturnType<typeof iconsApi.get>>>();
-    groupIconQueries.forEach((query, index) => {
-      if (query.data) map.set(groupIconIds[index], query.data);
-    });
-    return map;
-  }, [groupIconIds, groupIconQueries]);
   const allGroupIds = useMemo(
     () => groupsList.map((group) => group.id),
     [groupsList],
@@ -4874,7 +4851,7 @@ function PostGroupsWorkspace({
     window.setTimeout(() => clearProgress(progressId), delayMs);
   };
   const progressMetaForGroup = (group: PostGroup) => {
-    const icon = group.icon ? groupIconsById.get(group.icon) : undefined;
+    const icon = group.iconData ?? undefined;
     return {
       id: `move-group:${group.id}`,
       title: `Move ${group.title}`,
@@ -5129,7 +5106,7 @@ function PostGroupsWorkspace({
           <div className="grid gap-4 xl:grid-cols-[minmax(280px,0.7fr)_minmax(0,1.3fr)]">
             <Card className="space-y-4">
               <div className="flex items-start gap-3">
-                <PostIcon iconId={group.icon} label={group.title} size="md" />
+                <PostIcon iconId={group.icon} icon={group.iconData} label={group.title} size="md" />
                 <div className="min-w-0">
                   <h2 className="text-xl font-semibold text-white">
                     {group.title}
@@ -5483,7 +5460,7 @@ function PostGroupsWorkspace({
                     onClick={() => setSelectedGroupId(group.id)}
                     className="flex min-w-0 flex-1 items-start gap-3 text-left"
                   >
-                    <PostIcon iconId={group.icon} label={group.title} size="sm" />
+                    <PostIcon iconId={group.icon} icon={group.iconData} label={group.title} size="sm" />
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate font-semibold text-white">
                         {group.title}
@@ -5918,7 +5895,7 @@ function GroupFormModal({
                         )
                       }
                     />
-                    <PostIcon iconId={post.icon} label={post.title} />
+                    <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-white">
                         {post.title}
@@ -6013,7 +5990,7 @@ function AddPostsModal({
                   )
                 }
               />
-              <PostIcon iconId={post.icon} label={post.title} />
+              <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} />
               <span className="min-w-0 flex-1 truncate text-sm">
                 {post.title}
               </span>
@@ -6164,7 +6141,7 @@ function PostUsageModal({
       <div className="space-y-3">
         <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
           <div className="flex items-center gap-2">
-            {post.icon ? <PostIcon iconId={post.icon} label={post.title} /> : null}
+            {post.icon ? <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} /> : null}
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-white">
                 {post.title}
@@ -6193,7 +6170,7 @@ function PostUsageModal({
                 className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
               >
                 {usagePost.icon ? (
-                  <PostIcon iconId={usagePost.icon} label={usagePost.title} />
+                  <PostIcon iconId={usagePost.icon} icon={usagePost.iconData} label={usagePost.title} />
                 ) : (
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-sm">
                     📝

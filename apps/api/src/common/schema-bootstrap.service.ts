@@ -104,6 +104,29 @@ ADD COLUMN IF NOT EXISTS "loginStartedAt" TIMESTAMP(3);
 `);
 
     await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramUserAccountIntegration"
+ADD COLUMN IF NOT EXISTS "isPremium" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "premiumCheckedAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "captionLengthMax" INTEGER NOT NULL DEFAULT 1024,
+ADD COLUMN IF NOT EXISTS "messageLengthMax" INTEGER NOT NULL DEFAULT 4096,
+ADD COLUMN IF NOT EXISTS "premiumCapabilities" JSONB;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramManagedPost"
+ADD COLUMN IF NOT EXISTS "sourceWasPremium" BOOLEAN,
+ADD COLUMN IF NOT EXISTS "captionLengthMaxUsed" INTEGER,
+ADD COLUMN IF NOT EXISTS "messageLengthMaxUsed" INTEGER;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramManagedPostRevision"
+ADD COLUMN IF NOT EXISTS "sourceWasPremium" BOOLEAN,
+ADD COLUMN IF NOT EXISTS "captionLengthMaxUsed" INTEGER,
+ADD COLUMN IF NOT EXISTS "messageLengthMaxUsed" INTEGER;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
 ALTER TABLE "Transaction"
 ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);

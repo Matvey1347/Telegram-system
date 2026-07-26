@@ -7,6 +7,7 @@ import {
   TelegramSourceType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { TelegramPublishingCapabilities } from '@telegram-system/shared';
 
 export type TelegramSourcePermissions = {
   canPostMessages: boolean;
@@ -50,6 +51,8 @@ const dataTypeLabels: Record<TelegramChannelDataType, string> = {
   OTHER: 'Other',
 };
 const TELEGRAM_BROADCAST_STATS_MIN_SUBSCRIBERS = 50;
+const BOT_API_CAPTION_LIMIT = 1024;
+const BOT_API_MESSAGE_LIMIT = 4096;
 
 @Injectable()
 export class TelegramSourceAccessService {
@@ -254,6 +257,10 @@ export class TelegramSourceAccessService {
       )
       .map((row) => {
         const permissions = this.permissionsFromRow(row);
+        const account =
+          row.sourceType === TelegramSourceType.MTPROTO
+            ? accountById.get(row.sourceId)
+            : null;
         return {
           sourceId: row.sourceId,
           sourceType: row.sourceType,
@@ -269,12 +276,117 @@ export class TelegramSourceAccessService {
           permissions,
           rawPermissions: row.rawPermissions,
           lastCheckedAt: row.lastCheckedAt,
+          isPremium:
+            row.sourceType === TelegramSourceType.MTPROTO
+              ? Boolean(account?.isPremium)
+              : false,
+          captionLengthMax:
+            row.sourceType === TelegramSourceType.MTPROTO
+              ? account?.captionLengthMax ?? BOT_API_CAPTION_LIMIT
+              : BOT_API_CAPTION_LIMIT,
+          messageLengthMax:
+            row.sourceType === TelegramSourceType.MTPROTO
+              ? account?.messageLengthMax ?? BOT_API_MESSAGE_LIMIT
+              : BOT_API_MESSAGE_LIMIT,
+          premiumCheckedAt:
+            row.sourceType === TelegramSourceType.MTPROTO
+              ? account?.premiumCheckedAt ?? null
+              : null,
           canBeUsedForAnalytics: this.canBeUsedForAnalytics(
             permissions,
             row.role,
           ),
         };
       });
+  }
+
+  async publishingCapabilitiesForChannel(
+    workspaceId: string,
+    channelId: string,
+  ): Promise<TelegramPublishingCapabilities> {
+    const sources = await this.sourcesForChannel(workspaceId, channelId);
+    const source =
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.MTPROTO &&
+          item.permissions.canPostMessages,
+      ) ??
+      sources.find(
+        (item) =>
+          item.sourceType === TelegramSourceType.BOT &&
+          item.permissions.canPostMessages,
+      ) ??
+      null;
+
+    if (!source) {
+      return {
+        source: null,
+        captionLengthMax: BOT_API_CAPTION_LIMIT,
+        messageLengthMax: BOT_API_MESSAGE_LIMIT,
+        maxUploadFileSizeMb: null,
+        supportsCustomEmoji: false,
+        checkedAt: null,
+        isFallback: true,
+      };
+    }
+
+    if (source.sourceType === TelegramSourceType.BOT) {
+      return {
+        source: {
+          sourceId: source.sourceId,
+          sourceType: 'BOT',
+          displayName: source.displayName,
+          avatarUrl: source.avatarUrl ?? null,
+          isPremium: false,
+        },
+        captionLengthMax: BOT_API_CAPTION_LIMIT,
+        messageLengthMax: BOT_API_MESSAGE_LIMIT,
+        maxUploadFileSizeMb: null,
+        supportsCustomEmoji: false,
+        checkedAt: null,
+        isFallback: false,
+      };
+    }
+
+    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
+      where: { id: source.sourceId, workspaceId, isActive: true },
+      select: {
+        id: true,
+        isPremium: true,
+        captionLengthMax: true,
+        messageLengthMax: true,
+        premiumCheckedAt: true,
+        premiumCapabilities: true,
+      },
+    });
+
+    const premiumCapabilities =
+      (account?.premiumCapabilities as
+        | {
+            maxUploadFileSizeMb?: number;
+            supportsCustomEmoji?: boolean;
+            limitsSource?: string;
+          }
+        | null
+        | undefined) ?? null;
+
+    return {
+      source: {
+        sourceId: source.sourceId,
+        sourceType: 'MTPROTO',
+        displayName: source.displayName,
+        avatarUrl: source.avatarUrl ?? null,
+        isPremium: Boolean(account?.isPremium),
+      },
+      captionLengthMax: account?.captionLengthMax ?? BOT_API_CAPTION_LIMIT,
+      messageLengthMax: account?.messageLengthMax ?? BOT_API_MESSAGE_LIMIT,
+      maxUploadFileSizeMb: premiumCapabilities?.maxUploadFileSizeMb ?? null,
+      supportsCustomEmoji: Boolean(
+        premiumCapabilities?.supportsCustomEmoji ?? account?.isPremium,
+      ),
+      checkedAt: account?.premiumCheckedAt?.toISOString() ?? null,
+      isFallback: premiumCapabilities?.limitsSource === 'fallback',
+    };
   }
 
   async analyticsSources(workspaceId: string, channelId: string) {

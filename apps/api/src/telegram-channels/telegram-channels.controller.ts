@@ -563,6 +563,13 @@ export class TelegramChannelsController {
   sources(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.channelSources(user.sub, id);
   }
+  @Get(':id/publishing-capabilities')
+  publishingCapabilities(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.publishingCapabilities(user.sub, id);
+  }
   @Get(':id/analytics-sources')
   analyticsSources(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.analyticsSources(user.sub, id);

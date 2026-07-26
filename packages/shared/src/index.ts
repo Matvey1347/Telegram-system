@@ -5,5 +5,6 @@ export * from './types/post-groups';
 export * from './types/operations';
 export * from './types/application-logs';
 export * from './types/telegram-managed-posts';
+export * from './types/telegram-capabilities';
 export * from './telegram-spoilers';
 export * from './pagination';

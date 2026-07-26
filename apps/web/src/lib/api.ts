@@ -18,6 +18,7 @@ import type {
   ManagedPostsSyncResult,
   TelegramManagedPostCalendarResult,
   ScheduleManagedPostsBatchPayload,
+  TelegramPublishingCapabilities,
 } from "@telegram-system/shared";
 import {
   clearAccessToken,
@@ -848,6 +849,7 @@ export type TelegramManagedPost = {
   assignedMemberId: string;
   assignedMember: WorkspaceMember;
   icon?: string | null;
+  iconData?: Icon | null;
   groupId?: string | null;
   groupPosition?: number | null;
   sidebarPosition?: number | null;
@@ -863,6 +865,9 @@ export type TelegramManagedPost = {
   telegramRemoteStatus: TelegramManagedPostRemoteStatus;
   lastTelegramSyncedAt?: string | null;
   lastTelegramSyncNote?: string | null;
+  sourceWasPremium?: boolean | null;
+  captionLengthMaxUsed?: number | null;
+  messageLengthMaxUsed?: number | null;
   publishMode?: string | null;
   lastError?: string | null;
   createdAt: string;
@@ -884,10 +889,14 @@ export type TelegramManagedPostRevision = {
   telegramRemoteStatus: TelegramManagedPostRemoteStatus;
   lastTelegramSyncedAt?: string | null;
   lastTelegramSyncNote?: string | null;
+  sourceWasPremium?: boolean | null;
+  captionLengthMaxUsed?: number | null;
+  messageLengthMaxUsed?: number | null;
   publishMode?: string | null;
   lastError?: string | null;
   assignedMemberId: string;
   icon?: string | null;
+  iconData?: Icon | null;
   groupId?: string | null;
   groupPosition?: number | null;
   sidebarPosition?: number | null;
@@ -898,6 +907,7 @@ export type TelegramManagedPostLinkTarget = {
   id: string;
   title: string;
   icon?: string | null;
+  iconData?: Icon | null;
   status: TelegramManagedPostStatus;
   telegramRemoteStatus: TelegramManagedPostRemoteStatus;
   groupId?: string | null;
@@ -946,6 +956,7 @@ export type PostGroup = {
   title: string;
   description?: string | null;
   icon?: string | null;
+  iconData?: Icon | null;
   isSystem?: boolean;
   systemKey?: string | null;
   createdByMemberId: string;
@@ -1144,6 +1155,15 @@ export type TelegramUserAccount = {
   lastName?: string;
   photoUrl?: string;
   nameColor?: number;
+  isPremium: boolean;
+  premiumCheckedAt?: string | null;
+  captionLengthMax: number;
+  messageLengthMax: number;
+  premiumCapabilities?: {
+    maxUploadFileSizeMb: number;
+    supportsCustomEmoji: boolean;
+    limitsSource: "telegram_config" | "fallback";
+  } | null;
   status:
     | "pending"
     | "needs_code"
@@ -1203,6 +1223,10 @@ export type TelegramSourceChannelAccess = {
   permissions: TelegramSourcePermissions;
   rawPermissions?: unknown;
   lastCheckedAt?: string | null;
+  isPremium?: boolean;
+  captionLengthMax?: number;
+  messageLengthMax?: number;
+  premiumCheckedAt?: string | null;
   canBeUsedForAnalytics: boolean;
 };
 export type TelegramSyncedDialogChannel = {
@@ -1228,6 +1252,10 @@ export type TelegramChannelSourceAccess = {
   sourceType: TelegramSourceType;
   displayName: string;
   avatarUrl?: string | null;
+  isPremium?: boolean;
+  captionLengthMax?: number;
+  messageLengthMax?: number;
+  premiumCheckedAt?: string | null;
   role: TelegramChannelSourceRole;
   permissions: TelegramSourcePermissions;
   rawPermissions?: unknown;
@@ -2190,6 +2218,12 @@ export const telegramChannelsApi = {
     (
       await api.get<TelegramManagedPost[]>(
         `/telegram-channels/${channelId}/managed-posts`,
+      )
+    ).data,
+  publishingCapabilities: async (channelId: string) =>
+    (
+      await api.get<TelegramPublishingCapabilities>(
+        `/telegram-channels/${channelId}/publishing-capabilities`,
       )
     ).data,
   managedPostsCalendar: async (

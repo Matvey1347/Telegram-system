@@ -13,9 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
-  iconsApi,
   telegramChannelsApi,
   type TelegramManagedPost,
   type TelegramManagedPostLinkTarget,
@@ -184,27 +183,6 @@ export function TelegramTextEditor({
   const effectiveLinkTargets = availableInternalPosts
     ? localLinkTargets()
     : (linkTargets.data || []);
-  const targetIconIds = [
-    ...new Set(
-      effectiveLinkTargets
-        .map((target) => target.icon)
-        .filter((iconId): iconId is string => Boolean(iconId)),
-    ),
-  ];
-  const targetIconQueries = useQueries({
-    queries: targetIconIds.map((iconId) => ({
-      queryKey: ["icon", iconId],
-      queryFn: () => iconsApi.get(iconId),
-      enabled: linkEditorOpen,
-    })),
-  });
-  const targetIcons = new Map(
-    targetIconQueries
-      .map((query) => query.data)
-      .filter((icon) => Boolean(icon))
-      .map((icon) => [icon!.id, icon!]),
-  );
-
   const scrollTextareaToSelection = useCallback(
     (textarea: HTMLTextAreaElement, start: number, selectionText: string) => {
       const style = window.getComputedStyle(textarea);
@@ -596,9 +574,9 @@ export function TelegramTextEditor({
                     onClick={() => applyInternalLink(target)}
                     className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-neutral-800"
                   >
-                    {target.icon && targetIcons.get(target.icon) ? (
+                    {target.iconData ? (
                       <IconAvatar
-                        icon={targetIcons.get(target.icon)}
+                        icon={target.iconData}
                         label={target.title}
                         size="xs"
                         bordered={false}

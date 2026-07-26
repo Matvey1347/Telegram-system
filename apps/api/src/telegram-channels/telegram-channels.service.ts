@@ -27,6 +27,7 @@ import type {
   SyncOperationResult,
   SyncStepResult,
   TelegramChannelSyncProgressItem,
+  TelegramPublishingCapabilities,
   TelegramManagedPostCalendarResult,
   TelegramManagedPostOrigin,
 } from '@telegram-system/shared';
@@ -185,6 +186,11 @@ type ManagedPostPublishRender = {
   publishMode: string;
 };
 
+type TelegramPostRenderingLimits = {
+  captionLengthMax: number;
+  messageLengthMax: number;
+};
+
 type ManagedPostSyncMessage = {
   id: string;
   text: string;
@@ -258,6 +264,13 @@ export class TelegramChannelsService {
         createdByMember: WorkspaceService.assignedMemberInclude,
       },
     },
+  } as const;
+  private readonly iconSelect = {
+    id: true,
+    type: true,
+    name: true,
+    emoji: true,
+    imageUrl: true,
   } as const;
   private readonly inviteLinkReadSelectWithoutRequestedCount = {
     id: true,
@@ -1335,6 +1348,19 @@ export class TelegramChannelsService {
           'MTProto account';
   }
 
+  private capabilityTtlMs() {
+    const ttlHours = Math.max(
+      1,
+      Number(process.env.TELEGRAM_ACCOUNT_CAPABILITY_TTL_HOURS || 24) || 24,
+    );
+    return ttlHours * 60 * 60 * 1000;
+  }
+
+  private isCapabilityStale(value?: Date | null) {
+    if (!value) return true;
+    return Date.now() - value.getTime() > this.capabilityTtlMs();
+  }
+
   private async bestMtprotoAccountId(
     workspaceId: string,
     channelId: string,
@@ -1370,6 +1396,51 @@ export class TelegramChannelsService {
         authTag: account.sessionAuthTag || '',
       }),
     };
+  }
+
+  private async refreshMtprotoAccountCapabilities(
+    account: {
+      id: string;
+      label: string;
+      apiId: string;
+      apiHashEncrypted: string;
+      apiHashIv: string;
+      apiHashAuthTag: string;
+      sessionEncrypted: string | null;
+      sessionIv: string | null;
+      sessionAuthTag: string | null;
+    },
+  ) {
+    const profile = await this.mtprotoClient.getAccountProfile(
+      this.accountCredentials(account),
+    );
+    return this.prisma.telegramUserAccountIntegration.update({
+      where: { id: account.id },
+      data: {
+        telegramUserId: profile.id,
+        username: profile.username,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        photoUrl: profile.photoUrl ?? null,
+        nameColor: profile.nameColor ?? null,
+        label:
+          (profile.username &&
+            `@${String(profile.username).replace('@', '')}`) ||
+          profile.firstName ||
+          account.label,
+        isPremium: profile.capabilities.isPremium,
+        premiumCheckedAt: new Date(profile.capabilities.checkedAt),
+        captionLengthMax: profile.capabilities.captionLengthMax,
+        messageLengthMax: profile.capabilities.messageLengthMax,
+        premiumCapabilities: {
+          maxUploadFileSizeMb: profile.capabilities.maxUploadFileSizeMb,
+          supportsCustomEmoji: profile.capabilities.supportsCustomEmoji,
+          limitsSource: profile.capabilities.limitsSource,
+        } as Prisma.InputJsonValue,
+        lastCheckedAt: new Date(),
+        lastErrorMessage: null,
+      },
+    });
   }
 
   private async buildInviteAttributionMaps(workspaceId: string) {
@@ -2790,6 +2861,10 @@ export class TelegramChannelsService {
   private renderManagedPostText(
     text: string,
     imageUrls: string[],
+    limits: TelegramPostRenderingLimits = {
+      captionLengthMax: TELEGRAM_CAPTION_LIMIT,
+      messageLengthMax: TELEGRAM_TEXT_MESSAGE_LIMIT,
+    },
     longTextMode: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT' = 'IMAGES_THEN_TEXT',
   ): ManagedPostPublishRender {
     const html = telegramMarkupToHtml(text);
@@ -2799,33 +2874,33 @@ export class TelegramChannelsService {
     let textHtmlParts = [html];
     let publishMode = imageUrls.length ? 'IMAGE_WITH_CAPTION' : 'TEXT_ONLY';
 
-    if (imageUrls.length && plainText.length > TELEGRAM_CAPTION_LIMIT) {
+    if (imageUrls.length && plainText.length > limits.captionLengthMax) {
       publishMode = longTextMode;
       if (longTextMode === 'CAPTION_THEN_TEXT') {
         const [caption, remainder] = this.splitTelegramMarkupOnce(
           text,
-          TELEGRAM_CAPTION_LIMIT,
+          limits.captionLengthMax,
         );
         captionHtml = telegramMarkupToHtml(caption);
         followupHtmlParts = this.splitTelegramMarkup(
           remainder,
-          TELEGRAM_TEXT_MESSAGE_LIMIT,
+          limits.messageLengthMax,
         ).map((part) => telegramMarkupToHtml(part));
       } else {
         captionHtml = '';
         followupHtmlParts = this.splitTelegramMarkup(
           text,
-          TELEGRAM_TEXT_MESSAGE_LIMIT,
+          limits.messageLengthMax,
         ).map((part) => telegramMarkupToHtml(part));
       }
     } else if (
       !imageUrls.length &&
-      plainText.length > TELEGRAM_TEXT_MESSAGE_LIMIT
+      plainText.length > limits.messageLengthMax
     ) {
       publishMode = 'TEXT_PARTS';
       textHtmlParts = this.splitTelegramMarkup(
         text,
-        TELEGRAM_TEXT_MESSAGE_LIMIT,
+        limits.messageLengthMax,
       ).map((part) => telegramMarkupToHtml(part));
     }
 
@@ -2868,6 +2943,17 @@ export class TelegramChannelsService {
       lastTelegramSyncNote: post.lastTelegramSyncNote,
       sourceType: post.sourceType,
       sourceId: post.sourceId,
+      sourceWasPremium:
+        (post as ManagedPostRevisionSource & { sourceWasPremium?: boolean | null })
+          .sourceWasPremium ?? null,
+      captionLengthMaxUsed:
+        (post as ManagedPostRevisionSource & {
+          captionLengthMaxUsed?: number | null;
+        }).captionLengthMaxUsed ?? null,
+      messageLengthMaxUsed:
+        (post as ManagedPostRevisionSource & {
+          messageLengthMaxUsed?: number | null;
+        }).messageLengthMaxUsed ?? null,
       publishMode: post.publishMode,
       lastError: post.lastError,
       assignedMemberId: post.assignedMemberId,
@@ -3258,6 +3344,12 @@ export class TelegramChannelsService {
     const rendered = this.renderManagedPostText(
       resolvedText,
       post.imageUrls,
+      {
+        captionLengthMax: (post as { captionLengthMaxUsed?: number | null })
+          .captionLengthMaxUsed ?? TELEGRAM_CAPTION_LIMIT,
+        messageLengthMax: (post as { messageLengthMaxUsed?: number | null })
+          .messageLengthMaxUsed ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
+      },
       post.publishMode === 'CAPTION_THEN_TEXT'
         ? 'CAPTION_THEN_TEXT'
         : 'IMAGES_THEN_TEXT',
@@ -4106,6 +4198,18 @@ export class TelegramChannelsService {
     return this.sourceAccessService.sourcesForChannel(workspaceId, channelId);
   }
 
+  async publishingCapabilities(
+    userId: string,
+    channelId: string,
+  ): Promise<TelegramPublishingCapabilities> {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    return this.sourceAccessService.publishingCapabilitiesForChannel(
+      workspaceId,
+      channelId,
+    );
+  }
+
   async analyticsSources(userId: string, channelId: string) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
@@ -4284,6 +4388,48 @@ export class TelegramChannelsService {
     telegramChannel: true,
   } as const;
 
+  private async loadIconsByIds(iconIds: Array<string | null | undefined>) {
+    const ids = [...new Set(iconIds.filter((id): id is string => Boolean(id)))];
+    if (!ids.length) return new Map<string, { id: string; type: "emoji" | "image"; name: string; emoji: string | null; imageUrl: string | null }>();
+    const icons = await this.prisma.icon.findMany({
+      where: { id: { in: ids } },
+      select: this.iconSelect,
+    });
+    return new Map(icons.map((icon) => [icon.id, icon]));
+  }
+
+  private async attachManagedPostIcons<
+    T extends { icon?: string | null },
+  >(posts: T[]) {
+    const iconsById = await this.loadIconsByIds(posts.map((post) => post.icon));
+    return posts.map((post) => ({
+      ...post,
+      iconData: post.icon ? iconsById.get(post.icon) ?? null : null,
+    }));
+  }
+
+  private async attachPostGroupIcons<
+    T extends { icon?: string | null; posts?: Array<{ icon?: string | null }> },
+  >(groups: T[]) {
+    const nestedPostIcons = groups.flatMap((group) =>
+      (group.posts ?? []).map((post) => post.icon),
+    );
+    const iconsById = await this.loadIconsByIds([
+      ...groups.map((group) => group.icon),
+      ...nestedPostIcons,
+    ]);
+    return groups.map((group) => ({
+      ...group,
+      iconData: group.icon ? iconsById.get(group.icon) ?? null : null,
+      posts: group.posts
+        ? group.posts.map((post) => ({
+            ...post,
+            iconData: post.icon ? iconsById.get(post.icon) ?? null : null,
+          }))
+        : group.posts,
+    }));
+  }
+
   private async resolvePostGroupCreatorMemberId(
     workspaceId: string,
     preferredMemberId?: string | null,
@@ -4359,12 +4505,15 @@ export class TelegramChannelsService {
       },
     });
     if (!group) throw new NotFoundException('Post group not found');
-    return {
-      ...group,
-      statusSummary: postGroupStatusSummary(
-        group.posts.map((post) => post.status),
-      ),
-    };
+    const [hydratedGroup] = await this.attachPostGroupIcons([
+      {
+        ...group,
+        statusSummary: postGroupStatusSummary(
+          group.posts.map((post) => post.status),
+        ),
+      },
+    ]);
+    return hydratedGroup;
   }
 
   private async normalizePostGroupPositions(
@@ -4423,7 +4572,11 @@ export class TelegramChannelsService {
       postsCount: posts.length,
       statusSummary: postGroupStatusSummary(posts.map((post) => post.status)),
     }));
-    return createPaginatedResponse(items, totalItems, pagination);
+    return createPaginatedResponse(
+      await this.attachPostGroupIcons(items),
+      totalItems,
+      pagination,
+    );
   }
 
   async postGroup(userId: string, groupId: string) {
@@ -4654,20 +4807,24 @@ export class TelegramChannelsService {
     await this.findOne(userId, channelId);
     try {
       await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
-      return await this.prisma.telegramManagedPost.findMany({
-        where: { workspaceId, telegramChannelId: channelId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        include: this.managedPostInclude,
-      });
+      return this.attachManagedPostIcons(
+        await this.prisma.telegramManagedPost.findMany({
+          where: { workspaceId, telegramChannelId: channelId },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          include: this.managedPostInclude,
+        }),
+      );
     } catch (error) {
       if (!this.isMissingTelegramManagedPostOriginColumns(error)) throw error;
       await this.ensureTelegramManagedPostOriginColumnsAvailable();
       await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
-      return this.prisma.telegramManagedPost.findMany({
-        where: { workspaceId, telegramChannelId: channelId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        include: this.managedPostInclude,
-      });
+      return this.attachManagedPostIcons(
+        await this.prisma.telegramManagedPost.findMany({
+          where: { workspaceId, telegramChannelId: channelId },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          include: this.managedPostInclude,
+        }),
+      );
     }
   }
 
@@ -5888,7 +6045,7 @@ export class TelegramChannelsService {
       orderBy: [{ updatedAt: 'desc' }, { title: 'asc' }],
       take: query.limit ?? 30,
     });
-    return posts.map((post) => {
+    return (await this.attachManagedPostIcons(posts)).map((post) => {
       const primaryId = this.primaryTelegramMessageId({
         messageIds: post.telegramMessageIds,
         imageCount: post.imageUrls.length,
@@ -5900,6 +6057,7 @@ export class TelegramChannelsService {
         id: post.id,
         title: post.title,
         icon: post.icon,
+        iconData: post.iconData,
         status: post.status,
         telegramRemoteStatus: post.telegramRemoteStatus,
         groupId: post.groupId,
@@ -6342,13 +6500,66 @@ export class TelegramChannelsService {
         post.text || '',
         scheduleAt,
       );
+      const [resolvedPlainText] = HTMLParser.parse(
+        telegramMarkupToHtml(resolvedText),
+      );
+      if (
+        source.sourceType === TelegramSourceType.MTPROTO &&
+        post.imageUrls.length > 0 &&
+        resolvedPlainText.length > TELEGRAM_CAPTION_LIMIT
+      ) {
+        const account = await this.connectedAccount(
+          workspaceId,
+          channelId,
+          source.sourceId,
+        );
+        if (this.isCapabilityStale(account.premiumCheckedAt)) {
+          const refreshedAccount =
+            await this.refreshMtprotoAccountCapabilities(account);
+          (source as {
+            isPremium?: boolean;
+            captionLengthMax?: number;
+            messageLengthMax?: number;
+            premiumCheckedAt?: Date | null;
+          }).isPremium = refreshedAccount.isPremium;
+          (source as {
+            captionLengthMax?: number;
+            messageLengthMax?: number;
+            premiumCheckedAt?: Date | null;
+          }).captionLengthMax = refreshedAccount.captionLengthMax;
+          (source as {
+            captionLengthMax?: number;
+            messageLengthMax?: number;
+            premiumCheckedAt?: Date | null;
+          }).messageLengthMax = refreshedAccount.messageLengthMax;
+          (source as { premiumCheckedAt?: Date | null }).premiumCheckedAt =
+            refreshedAccount.premiumCheckedAt;
+        }
+      }
+      const renderLimits =
+        source.sourceType === TelegramSourceType.MTPROTO
+          ? {
+              captionLengthMax: (source as { captionLengthMax?: number | null })
+                .captionLengthMax ?? TELEGRAM_CAPTION_LIMIT,
+              messageLengthMax: (source as { messageLengthMax?: number | null })
+                .messageLengthMax ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
+            }
+          : {
+              captionLengthMax: TELEGRAM_CAPTION_LIMIT,
+              messageLengthMax: TELEGRAM_TEXT_MESSAGE_LIMIT,
+            };
       const {
         html,
         captionHtml,
         followupHtmlParts,
         textHtmlParts,
         publishMode,
-      } = this.renderManagedPostText(resolvedText, post.imageUrls, longTextMode);
+      } = this.renderManagedPostText(
+        resolvedText,
+        post.imageUrls,
+        renderLimits,
+        longTextMode,
+      );
       let ids: string[];
       if (source.sourceType === TelegramSourceType.MTPROTO) {
         const account = await this.connectedAccount(
@@ -6493,6 +6704,12 @@ export class TelegramChannelsService {
           telegramMessageUrls: publishedUrls,
           sourceType: source.sourceType,
           sourceId: source.sourceId,
+          sourceWasPremium:
+            source.sourceType === TelegramSourceType.MTPROTO
+              ? Boolean((source as { isPremium?: boolean | null }).isPremium)
+              : false,
+          captionLengthMaxUsed: renderLimits.captionLengthMax,
+          messageLengthMaxUsed: renderLimits.messageLengthMax,
           publishMode,
           lastError: null,
           lastTelegramSyncedAt: new Date(),

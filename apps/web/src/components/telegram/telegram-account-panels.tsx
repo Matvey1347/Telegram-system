@@ -245,6 +245,13 @@ export function MtprotoAccountsPanel({
                 }}
                 avatarKind="mtproto"
                 subtitle={fullName || `Phone: ${account.phoneMasked || "-"}`}
+                badges={
+                  account.isPremium ? (
+                    <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-amber-200">
+                      Premium
+                    </span>
+                  ) : null
+                }
                 rightAction={
                   <IconButton
                     kind="delete"

@@ -10,10 +10,9 @@ type TelegramPostPreviewProps = {
   formattedHtml?: string | null;
   imageUrls: string[];
   longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
+  captionLengthMax?: number;
+  messageLengthMax?: number;
 };
-
-const TELEGRAM_CAPTION_LIMIT = 1024;
-const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 
 const escapeHtml = (value: string) =>
   value
@@ -188,6 +187,8 @@ export function TelegramPostPreview({
   formattedHtml,
   imageUrls,
   longTextMode = "IMAGES_THEN_TEXT",
+  captionLengthMax = 1024,
+  messageLengthMax = 4096,
 }: TelegramPostPreviewProps) {
   const hasContent = text.trim() || imageUrls.length;
   const time = new Intl.DateTimeFormat("en", {
@@ -196,16 +197,16 @@ export function TelegramPostPreview({
     hour12: false,
   }).format(new Date());
   const messages =
-    imageUrls.length && text.length > TELEGRAM_CAPTION_LIMIT
+    imageUrls.length && text.length > captionLengthMax
       ? longTextMode === "CAPTION_THEN_TEXT"
         ? (() => {
             const [caption, remainderText] = splitPreviewTextOnce(
               text,
-              TELEGRAM_CAPTION_LIMIT,
+              captionLengthMax,
             );
             const remainder = splitPreviewText(
               remainderText,
-              TELEGRAM_TEXT_MESSAGE_LIMIT,
+              messageLengthMax,
             );
             return [
               { text: caption, imageUrls },
@@ -214,13 +215,13 @@ export function TelegramPostPreview({
           })()
         : [
             { text: "", imageUrls },
-            ...splitPreviewText(text, TELEGRAM_TEXT_MESSAGE_LIMIT).map(
+            ...splitPreviewText(text, messageLengthMax).map(
               (part) => ({ text: part, imageUrls: [] }),
             ),
           ]
       : imageUrls.length
         ? [{ text, imageUrls }]
-        : splitPreviewText(text, TELEGRAM_TEXT_MESSAGE_LIMIT).map((part) => ({
+        : splitPreviewText(text, messageLengthMax).map((part) => ({
             text: part,
             imageUrls: [],
           }));

@@ -28,6 +28,7 @@ import {
   type TelegramTitleCandidate,
 } from './telegram-import.helpers';
 import type { TelegramChannelSyncProgressItem } from '@telegram-system/shared';
+import type { TelegramAccountCapabilities } from '@telegram-system/shared';
 
 type ApiCredentials = { apiId: string; apiHash: string };
 type SessionParams = ApiCredentials & { session?: string };
@@ -64,6 +65,15 @@ type ResolvedStoredTelegramChannel = {
     inviteLink: string | null;
     resolvedBy: 'dialog-id' | 'stored-peer' | 'username' | 'invite-link';
   };
+};
+export type TelegramAccountProfile = {
+  id: string;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  photoUrl: string | null;
+  nameColor: number | null;
+  capabilities: TelegramAccountCapabilities;
 };
 export type TelegramInviteLinksResult = {
   scope: 'ALL_ADMINS' | 'PARTIAL_ADMINS';
@@ -136,6 +146,9 @@ type InviteLinkLoadedCallback = (
 ) => void | Promise<void>;
 
 const execFile = promisify(execFileCallback);
+const DEFAULT_MT_PROTO_CAPTION_LIMIT = 1024;
+const PREMIUM_MT_PROTO_CAPTION_LIMIT = 4096;
+const DEFAULT_TELEGRAM_MESSAGE_LIMIT = 4096;
 type TelegramLongLike =
   | bigint
   | number
@@ -404,6 +417,80 @@ export class TelegramMtprotoClient {
       return Math.abs(userIdNum) % this.defaultTelegramPaletteSize;
     }
     return 0;
+  }
+
+  private normalizeTelegramLimit(value: unknown, fallback: number) {
+    const numeric = this.toFiniteNumber(value);
+    if (
+      numeric == null ||
+      !Number.isInteger(numeric) ||
+      numeric < 1 ||
+      numeric > 100_000
+    ) {
+      return fallback;
+    }
+    return numeric;
+  }
+
+  private toMegabytes(value: unknown) {
+    const numeric = this.toFiniteNumber(value);
+    if (numeric == null || numeric <= 0) return null;
+    return Math.max(1, Math.round(numeric / (1024 * 1024)));
+  }
+
+  private async getAccountProfileFromClient(
+    client: TelegramClient,
+    fallbackUser?: Api.User | null,
+  ): Promise<TelegramAccountProfile> {
+    const meRaw = fallbackUser ?? ((await client.getMe()) as Api.User);
+    const me = (await this.getSelfUserWithDetails(client, meRaw)) || meRaw;
+    const isPremium = Boolean(me.premium);
+    const fallbackCaptionLengthMax = isPremium
+      ? PREMIUM_MT_PROTO_CAPTION_LIMIT
+      : DEFAULT_MT_PROTO_CAPTION_LIMIT;
+    const checkedAt = new Date().toISOString();
+    let config: Awaited<ReturnType<TelegramClient["invoke"]>> | null = null;
+    let limitsSource: TelegramAccountCapabilities["limitsSource"] =
+      'telegram_config';
+
+    try {
+      config = await client.invoke(new Api.help.GetConfig());
+    } catch {
+      limitsSource = 'fallback';
+    }
+
+    const captionLengthMax = this.normalizeTelegramLimit(
+      (config as { captionLengthMax?: unknown } | null)?.captionLengthMax,
+      fallbackCaptionLengthMax,
+    );
+    const messageLengthMax = this.normalizeTelegramLimit(
+      (config as { messageLengthMax?: unknown } | null)?.messageLengthMax,
+      DEFAULT_TELEGRAM_MESSAGE_LIMIT,
+    );
+    const maxUploadFileSizeMb =
+      this.toMegabytes((config as { uploadMaxFilepartsPremium?: unknown } | null)?.uploadMaxFilepartsPremium) ??
+      this.toMegabytes((config as { uploadMaxFilepartsDefault?: unknown } | null)?.uploadMaxFilepartsDefault) ??
+      0;
+
+    return {
+      id: String(me.id),
+      username: me.username || null,
+      firstName: me.firstName || null,
+      lastName: me.lastName || null,
+      photoUrl: me.username
+        ? `https://t.me/i/userpic/320/${me.username}.jpg`
+        : null,
+      nameColor: this.extractNameColor(me),
+      capabilities: {
+        isPremium,
+        captionLengthMax,
+        messageLengthMax,
+        maxUploadFileSizeMb,
+        supportsCustomEmoji: isPremium,
+        checkedAt,
+        limitsSource,
+      },
+    };
   }
 
   private async createClient({ apiId, apiHash, session }: SessionParams) {
@@ -1540,20 +1627,10 @@ export class TelegramMtprotoClient {
           );
         }
         const authUser = result.user as Api.User;
-        const user =
-          (await this.getSelfUserWithDetails(client, authUser)) || authUser;
+        const profile = await this.getAccountProfileFromClient(client, authUser);
         return {
           session: this.saveSession(client),
-          me: {
-            id: String(user.id),
-            username: user.username || null,
-            firstName: user.firstName || null,
-            lastName: user.lastName || null,
-            photoUrl: user.username
-              ? `https://t.me/i/userpic/320/${user.username}.jpg`
-              : null,
-            nameColor: this.extractNameColor(user),
-          },
+          me: profile,
           needsPassword: false,
           tempSession: this.saveSession(client),
         };
@@ -1594,47 +1671,40 @@ export class TelegramMtprotoClient {
           },
         },
       )) as Api.User;
-      const user =
-        (await this.getSelfUserWithDetails(client, authUser)) || authUser;
+      const profile = await this.getAccountProfileFromClient(client, authUser);
 
       return {
         session: this.saveSession(client),
-        me: {
-          id: String(user.id),
-          username: user.username || null,
-          firstName: user.firstName || null,
-          lastName: user.lastName || null,
-          photoUrl: user.username
-            ? `https://t.me/i/userpic/320/${user.username}.jpg`
-            : null,
-          nameColor: this.extractNameColor(user),
-        },
+        me: profile,
       };
     } finally {
       await this.closeClient(client);
     }
   }
 
-  async getMe(params: { apiId: string; apiHash: string; session: string }) {
+  async getAccountProfile(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+  }) {
     const client = await this.createClient(params);
     try {
-      const meRaw = await client.getMe();
-      const me = (await this.getSelfUserWithDetails(client, meRaw)) || meRaw;
-      let photoUrl: string | null = null;
-      if (me.username) {
-        photoUrl = `https://t.me/i/userpic/320/${me.username}.jpg`;
-      }
-      return {
-        id: String(me.id),
-        username: me.username || null,
-        firstName: me.firstName || null,
-        lastName: me.lastName || null,
-        photoUrl,
-        nameColor: this.extractNameColor(me),
-      };
+      return await this.getAccountProfileFromClient(client);
     } finally {
       await this.closeClient(client);
     }
+  }
+
+  async getMe(params: { apiId: string; apiHash: string; session: string }) {
+    const profile = await this.getAccountProfile(params);
+    return {
+      id: profile.id,
+      username: profile.username,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      photoUrl: profile.photoUrl,
+      nameColor: profile.nameColor,
+    };
   }
 
   async getAdminChannels(params: {
@@ -1661,6 +1731,39 @@ export class TelegramMtprotoClient {
             unknown
           > | null,
         }));
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
+  async getAdminChannelsWithProfile(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const [dialogs, profile] = await Promise.all([
+        client.getDialogs({ limit: 200 }),
+        this.getAccountProfileFromClient(client),
+      ]);
+      const channels = dialogs
+        .filter((d: any) => {
+          if (!d?.isChannel) return false;
+          const entity = d.entity;
+          return !!(entity?.creator || entity?.adminRights);
+        })
+        .map((d: any) => ({
+          id: String(d.id),
+          title: d.title || 'Untitled',
+          username: d.entity?.username || null,
+          isCreator: !!d.entity?.creator,
+          adminRights: this.toJsonSafe(d.entity?.adminRights) as Record<
+            string,
+            unknown
+          > | null,
+        }));
+      return { channels, profile };
     } finally {
       await this.closeClient(client);
     }
