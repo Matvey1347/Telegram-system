@@ -1,5 +1,9 @@
 import { Type } from 'class-transformer';
 import { TelegramChannelAdAnalysisStatus } from '@prisma/client';
+import type {
+  ScheduleManagedPostsBatchItem,
+  ScheduleManagedPostsBatchPayload,
+} from '@telegram-system/shared';
 import {
   IsArray,
   IsBoolean,
@@ -269,6 +273,37 @@ export class PublishTelegramManagedPostDto {
   @IsOptional()
   @IsIn(['IMAGES_THEN_TEXT', 'CAPTION_THEN_TEXT'])
   longTextMode?: string;
+}
+
+export class ManagedPostsCalendarQueryDto {
+  @IsDateString()
+  from!: string;
+
+  @IsDateString()
+  to!: string;
+}
+
+export class ScheduleManagedPostsBatchItemDto
+  implements ScheduleManagedPostsBatchItem
+{
+  @IsString()
+  postId!: string;
+
+  @IsDateString()
+  scheduledAt!: string;
+
+  @IsOptional()
+  @IsIn(['IMAGES_THEN_TEXT', 'CAPTION_THEN_TEXT'])
+  longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT';
+}
+
+export class ScheduleManagedPostsBatchDto
+  implements ScheduleManagedPostsBatchPayload
+{
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ScheduleManagedPostsBatchItemDto)
+  items!: ScheduleManagedPostsBatchItemDto[];
 }
 
 export class CreateTelegramChannelAdAnalysisDto {

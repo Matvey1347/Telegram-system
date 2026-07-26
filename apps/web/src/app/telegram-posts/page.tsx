@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -57,6 +57,16 @@ import {
   type TelegramChannelTimePost,
 } from "@/lib/api";
 import {
+  buildCalendarDayScheduleSlots,
+  getCalendarSchedulablePosts,
+  localTimeKey,
+} from "@/lib/telegram-calendar-scheduler";
+import type {
+  ManagedPostsSyncResult,
+  ScheduleManagedPostsBatchItem,
+  TelegramManagedPostCalendarResult,
+} from "@telegram-system/shared";
+import {
   Button,
   Card,
   ConfirmDeleteModal,
@@ -78,6 +88,8 @@ import { useAppToast } from "@/providers/toast-provider";
 type PublishingMode = "draft" | "publish" | "schedule";
 type LongTextMode = "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 type PostStatusTab = "PUBLISHED" | "SCHEDULED" | "DRAFT";
+type PostViewMode = "editor" | "calendar";
+type InitialPostView = PostViewMode | null;
 type PendingPostSave = {
   id: string;
   title: string;
@@ -100,6 +112,8 @@ const postGroupPreferenceKey = (channelId: string) =>
   `telegram-posts-new-post-group:${channelId}`;
 const workspaceViewPreferenceKey = (channelId: string) =>
   `telegram-posts-workspace-view:${channelId}`;
+const postViewPreferenceKey = (channelId: string) =>
+  `telegram-posts-post-view:${channelId}`;
 
 function localNowParts() {
   const now = new Date();
@@ -196,6 +210,76 @@ function scheduleDateForPreset(time: string) {
   return localDateTimeParts(candidate).date;
 }
 
+const CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function startOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function endOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function addMonths(value: Date, amount: number) {
+  return new Date(value.getFullYear(), value.getMonth() + amount, 1);
+}
+
+function toLocalDateKey(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function monthLabel(value: Date) {
+  return value.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function calendarGridStart(value: Date) {
+  const first = startOfMonth(value);
+  const day = first.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const start = new Date(first);
+  start.setDate(first.getDate() + diff);
+  return start;
+}
+
+function buildCalendarDays(value: Date) {
+  const start = calendarGridStart(value);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
+function sameMonth(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth()
+  );
+}
+
+function timeLabel(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function calendarStatusTone(status: "SCHEDULED" | "PUBLISHED") {
+  return status === "SCHEDULED"
+    ? "bg-amber-500/18 text-amber-100 ring-1 ring-amber-400/15"
+    : "bg-emerald-500/12 text-neutral-50 ring-1 ring-white/5";
+}
+
+function calendarStatusIcon(status: "SCHEDULED" | "PUBLISHED") {
+  return status === "SCHEDULED" ? "🕒" : "✅";
+}
+
 export default function TelegramPostsPage() {
   const pathname = usePathname();
   const router = useRouter();
@@ -207,6 +291,12 @@ export default function TelegramPostsPage() {
   const postId = searchParams.get("postId") || "";
   const groupId = searchParams.get("groupId") || "";
   const noteId = searchParams.get("noteId") || "";
+  const initialPostView = (() => {
+    const value = searchParams.get("postView");
+    if (value === "calendar") return "calendar";
+    if (value === "editor") return "editor";
+    return null;
+  })();
   const channels = useQuery({
     queryKey: ["telegram-channels"],
     queryFn: () => telegramChannelsApi.list(),
@@ -217,30 +307,16 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
-  const syncManagedPosts = useMutation<{
-    checked: number;
-    updated: number;
-    publishedEarly: number;
-    movedToDraft: number;
-    broken: number;
-    missing: number;
-  }>({
-    mutationFn: async (): Promise<{
-      checked: number;
-      updated: number;
-      publishedEarly: number;
-      movedToDraft: number;
-      broken: number;
-      missing: number;
-    }> => {
+  const syncManagedPosts = useMutation<ManagedPostsSyncResult>({
+    mutationFn: async (): Promise<ManagedPostsSyncResult> => {
       const currentChannel = channel!;
       const progressId = `managed-posts-sync:${currentChannel.id}`;
       setProgress({
         id: progressId,
-        title: "Sync posts from Telegram",
+        title: "Pulling scheduled posts from Telegram",
         current: 0,
         total: 0,
-        message: "Starting post sync…",
+        message: "Checking Telegram and importing scheduled posts…",
         iconUrl: currentChannel.photoUrl || undefined,
       });
       try {
@@ -249,10 +325,11 @@ export default function TelegramPostsPage() {
           (item, current, total) => {
             setProgress({
               id: progressId,
-              title: "Sync posts from Telegram",
+              title: "Pulling scheduled posts from Telegram",
               current,
               total,
-              message: item.message || "Syncing posts from Telegram…",
+              message:
+                item.message || "Pulling scheduled posts from Telegram…",
               iconUrl: currentChannel.photoUrl || undefined,
             });
           },
@@ -264,10 +341,13 @@ export default function TelegramPostsPage() {
         const successCount = Math.max(0, (result.checked || 0) - failedCount);
         setProgress({
           id: progressId,
-          title: "Sync posts from Telegram",
+          title: "Pulling scheduled posts from Telegram",
           current: result.checked || 0,
           total: result.checked || 0,
-          message: "Post sync completed",
+          message:
+            result.importedScheduled > 0
+              ? `Imported ${result.importedScheduled} scheduled posts from Telegram`
+              : "Telegram sync completed",
           completed: true,
           successCount,
           failedCount,
@@ -287,12 +367,21 @@ export default function TelegramPostsPage() {
           queryKey: ["telegram-managed-posts", channel?.id],
         }),
         queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts-calendar", channel?.id],
+        }),
+        queryClient.invalidateQueries({
           queryKey: ["post-groups", channel?.id],
         }),
         queryClient.invalidateQueries({
           queryKey: ["telegram-managed-post-link-targets", channel?.id],
         }),
       ]);
+      if (result.importedScheduled > 0) {
+        pushToast(
+          `Telegram sync completed. Imported ${result.importedScheduled} scheduled posts from Telegram.`,
+          "success",
+        );
+      }
     },
   });
   useEffect(() => {
@@ -417,6 +506,7 @@ export default function TelegramPostsPage() {
             initialPostId={postId}
             initialGroupId={groupId}
             initialNoteId={noteId}
+            initialPostView={initialPostView}
             channels={availableChannels}
             onPostSelect={(selectedPostId) => {
               router.replace(
@@ -443,6 +533,7 @@ function TelegramPostWorkspace({
   initialPostId,
   initialGroupId,
   initialNoteId,
+  initialPostView,
   channels,
   onPostSelect,
 }: {
@@ -456,12 +547,13 @@ function TelegramPostWorkspace({
   initialPostId: string;
   initialGroupId: string;
   initialNoteId: string;
+  initialPostView: InitialPostView;
   channels: TelegramChannel[];
   onPostSelect: (postId: string | null) => void;
 }) {
   const restoredPostIdRef = useRef("");
   const queryClient = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { pushToast, setProgress, clearProgress } = useAppToast();
   const [workspaceView, setWorkspaceView] = useState<"posts" | "groups">(
     () => {
       if (typeof window === "undefined") return "posts";
@@ -472,6 +564,26 @@ function TelegramPostWorkspace({
         : "posts";
     },
   );
+  const [postView, setPostView] = useState<PostViewMode>(() => {
+    if (typeof window === "undefined") return "editor";
+    if (initialPostView) return initialPostView;
+    return window.localStorage.getItem(postViewPreferenceKey(channelId)) ===
+      "calendar"
+      ? "calendar"
+      : "editor";
+  });
+  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() =>
+    toLocalDateKey(new Date()),
+  );
+  const [calendarBatchSelectedPostIds, setCalendarBatchSelectedPostIds] =
+    useState<string[]>([]);
+  const [calendarPostSearch, setCalendarPostSearch] = useState("");
+  const [calendarBatchTimeChoiceByPostId, setCalendarBatchTimeChoiceByPostId] =
+    useState<Record<string, string>>({});
+  const [calendarBatchCustomTimeByPostId, setCalendarBatchCustomTimeByPostId] =
+    useState<Record<string, string>>({});
+  const [calendarBatchBusy, setCalendarBatchBusy] = useState(false);
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
   const [assignedMemberId, setAssignedMemberId] = useState<string | null>(null);
@@ -518,6 +630,7 @@ function TelegramPostWorkspace({
   const sidebarReorderQueueRef = useRef<Promise<void>>(Promise.resolve());
   const postOpenTimerRef = useRef<number | null>(null);
   const telegramLinkClickTimerRef = useRef<number | null>(null);
+  const calendarSyncRefreshKeyRef = useRef("");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deletingPost, setDeletingPost] = useState<TelegramManagedPost | null>(
     null,
@@ -537,6 +650,24 @@ function TelegramPostWorkspace({
   const posts = useQuery({
     queryKey: ["telegram-managed-posts", channelId],
     queryFn: () => telegramChannelsApi.managedPosts(channelId),
+  });
+  const calendarRange = useMemo(
+    () => ({
+      from: startOfMonth(calendarMonth).toISOString(),
+      to: endOfMonth(calendarMonth).toISOString(),
+    }),
+    [calendarMonth],
+  );
+  const calendarData = useQuery({
+    queryKey: [
+      "telegram-managed-posts-calendar",
+      channelId,
+      calendarRange.from,
+      calendarRange.to,
+    ],
+    queryFn: () =>
+      telegramChannelsApi.managedPostsCalendar(channelId, calendarRange),
+    enabled: workspaceView === "posts" && postView === "calendar",
   });
   const postHistory = useQuery({
     queryKey: ["telegram-managed-post-history", channelId, editing?.id],
@@ -590,6 +721,37 @@ function TelegramPostWorkspace({
     });
   }, [channelId, postGroups.data, posts.data, queryClient]);
 
+  useEffect(() => {
+    if (workspaceView !== "posts" || postView !== "calendar") return;
+    if (!calendarData.data) return;
+    const refreshKey = JSON.stringify({
+      channelId,
+      from: calendarData.data.from,
+      to: calendarData.data.to,
+      items: calendarData.data.items.length,
+      scheduledInRange: calendarData.data.summary.scheduledInRange,
+      publishedInRange: calendarData.data.summary.publishedInRange,
+      futureScheduledTotal: calendarData.data.summary.futureScheduledTotal,
+      lastScheduledAt: calendarData.data.summary.lastScheduledAt,
+    });
+    if (calendarSyncRefreshKeyRef.current === refreshKey) return;
+    calendarSyncRefreshKeyRef.current = refreshKey;
+    void Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["telegram-managed-posts", channelId],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["post-groups", channelId],
+      }),
+    ]);
+  }, [
+    calendarData.data,
+    channelId,
+    postView,
+    queryClient,
+    workspaceView,
+  ]);
+
   useEffect(
     () => () => {
       if (postOpenTimerRef.current) {
@@ -613,6 +775,20 @@ function TelegramPostWorkspace({
 
   const currentMemberId =
     members.data?.find((member) => member.isCurrentUser)?.id ?? null;
+  const telegramImportedSystemGroup = useMemo(
+    () =>
+      (postGroups.data || []).find(
+        (group) => group.systemKey === "TELEGRAM_IMPORTED",
+      ) || null,
+    [postGroups.data],
+  );
+  const effectivePostGroup = (post: TelegramManagedPost) =>
+    post.group ??
+    (post.origin === "TELEGRAM" && !post.groupId
+      ? telegramImportedSystemGroup
+      : null);
+  const effectivePostGroupId = (post: TelegramManagedPost) =>
+    effectivePostGroup(post)?.id ?? post.groupId ?? null;
   const effectivePostMember = (post: TelegramManagedPost) =>
     post.assignedMember ?? null;
   const effectivePostMemberId = (post: TelegramManagedPost) =>
@@ -823,13 +999,15 @@ function TelegramPostWorkspace({
     const ungrouped: TelegramManagedPost[] = [];
 
     visiblePosts.forEach((post) => {
-      if (!post.groupId || !post.group) {
+      const group = effectivePostGroup(post);
+      const groupId = effectivePostGroupId(post);
+      if (!groupId || !group) {
         ungrouped.push(post);
         return;
       }
-      const section = grouped.get(post.groupId);
+      const section = grouped.get(groupId);
       if (section) section.posts.push(post);
-      else grouped.set(post.groupId, { group: post.group, posts: [post] });
+      else grouped.set(groupId, { group, posts: [post] });
     });
 
     return {
@@ -849,7 +1027,194 @@ function TelegramPostWorkspace({
       })),
       ungrouped,
     };
-  }, [visiblePosts]);
+  }, [telegramImportedSystemGroup, visiblePosts]);
+  const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
+  const calendarItemsByDay = useMemo(() => {
+    const grouped = new Map<
+      string,
+      TelegramManagedPostCalendarResult["items"]
+    >();
+    for (const item of calendarData.data?.items || []) {
+      const key = toLocalDateKey(
+        item.status === "SCHEDULED"
+          ? item.scheduledAt || item.publishedAt || new Date()
+          : item.publishedAt || item.scheduledAt || new Date(),
+      );
+      grouped.set(key, [...(grouped.get(key) || []), item]);
+    }
+    for (const [key, items] of grouped) {
+      grouped.set(
+        key,
+        [...items].sort((left, right) => {
+          const leftDate = new Date(
+            left.status === "SCHEDULED"
+              ? left.scheduledAt || 0
+              : left.publishedAt || 0,
+          ).getTime();
+          const rightDate = new Date(
+            right.status === "SCHEDULED"
+              ? right.scheduledAt || 0
+              : right.publishedAt || 0,
+          ).getTime();
+          return leftDate - rightDate;
+        }),
+      );
+    }
+    return grouped;
+  }, [calendarData.data]);
+  const selectedCalendarItems = calendarItemsByDay.get(selectedCalendarDate) || [];
+  const calendarPresetScheduleSlots = useMemo(
+    () =>
+      buildCalendarDayScheduleSlots({
+        dateKey: selectedCalendarDate,
+        timePosts: channelTimePosts,
+        items: selectedCalendarItems,
+      }),
+    [channelTimePosts, selectedCalendarDate, selectedCalendarItems],
+  );
+  const calendarScheduleSlots = calendarPresetScheduleSlots;
+  const calendarPresetSlotByTime = useMemo(
+    () =>
+      new Map(
+        calendarPresetScheduleSlots.map((slot) => [slot.time, slot] as const),
+      ),
+    [calendarPresetScheduleSlots],
+  );
+  const calendarSchedulablePosts = useMemo(
+    () => getCalendarSchedulablePosts(posts.data || []),
+    [posts.data],
+  );
+  const calendarFilteredSchedulablePosts = useMemo(() => {
+    const search = calendarPostSearch.trim().toLocaleLowerCase();
+    if (!search) return calendarSchedulablePosts;
+    return calendarSchedulablePosts.filter((post) => {
+      const title = post.title.toLocaleLowerCase();
+      const groupTitle = effectivePostGroup(post)?.title?.toLocaleLowerCase() || "";
+      return title.includes(search) || groupTitle.includes(search);
+    });
+  }, [calendarPostSearch, calendarSchedulablePosts, telegramImportedSystemGroup]);
+  const calendarSchedulablePostsById = useMemo(
+    () => new Map(calendarSchedulablePosts.map((post) => [post.id, post])),
+    [calendarSchedulablePosts],
+  );
+  const calendarGroupedSchedulablePosts = useMemo(() => {
+    const grouped = new Map<string, { group: PostGroup; posts: TelegramManagedPost[] }>();
+    const ungrouped: TelegramManagedPost[] = [];
+    for (const post of calendarFilteredSchedulablePosts) {
+      const group = effectivePostGroup(post);
+      const groupId = effectivePostGroupId(post);
+      if (!groupId || !group) {
+        ungrouped.push(post);
+        continue;
+      }
+      const current = grouped.get(groupId);
+      if (current) {
+        current.posts.push(post);
+      } else {
+        grouped.set(groupId, { group, posts: [post] });
+      }
+    }
+    return { groups: [...grouped.values()], ungrouped };
+  }, [calendarFilteredSchedulablePosts, telegramImportedSystemGroup]);
+  const calendarBatchSelectedPosts = useMemo(
+    () =>
+      calendarBatchSelectedPostIds
+        .map((postId) => calendarSchedulablePostsById.get(postId))
+        .filter((post): post is TelegramManagedPost => Boolean(post)),
+    [calendarBatchSelectedPostIds, calendarSchedulablePostsById],
+  );
+  const calendarBatchPlan = useMemo(() => {
+    const assignments: ScheduleManagedPostsBatchItem[] = [];
+    const assignedPostIds: string[] = [];
+    const invalidPostIds: string[] = [];
+    const duplicatePostIds: string[] = [];
+    const usedTimes = new Map<string, string>();
+    const selectedSlotByTime = new Map(
+      calendarScheduleSlots.map((slot) => [slot.time, slot]),
+    );
+
+    for (const postId of calendarBatchSelectedPostIds) {
+      const choice = calendarBatchTimeChoiceByPostId[postId] || "";
+      if (!choice) {
+        invalidPostIds.push(postId);
+        continue;
+      }
+      let resolvedTime = "";
+      if (choice.startsWith("slot:")) {
+        resolvedTime = choice.slice(5);
+        const slot = selectedSlotByTime.get(resolvedTime);
+        if (!slot || slot.state !== "available") {
+          invalidPostIds.push(postId);
+          continue;
+        }
+      } else if (choice === "custom") {
+        const customTime = calendarBatchCustomTimeByPostId[postId] || "";
+        if (!isValidTimeInputValue(customTime)) {
+          invalidPostIds.push(postId);
+          continue;
+        }
+        const candidate = new Date(`${selectedCalendarDate}T${customTime}:00`);
+        if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= Date.now()) {
+          invalidPostIds.push(postId);
+          continue;
+        }
+        const slot = selectedSlotByTime.get(customTime);
+        if (slot?.state === "occupied" || slot?.state === "past") {
+          invalidPostIds.push(postId);
+          continue;
+        }
+        resolvedTime = customTime;
+      } else {
+        invalidPostIds.push(postId);
+        continue;
+      }
+      if (usedTimes.has(resolvedTime)) {
+        duplicatePostIds.push(postId, usedTimes.get(resolvedTime)!);
+        continue;
+      }
+      usedTimes.set(resolvedTime, postId);
+      assignments.push({
+        postId,
+        scheduledAt: new Date(`${selectedCalendarDate}T${resolvedTime}:00`).toISOString(),
+      });
+      assignedPostIds.push(postId);
+    }
+
+    return {
+      assignments,
+      assignedPostIds,
+      overflowPostIds: [],
+      invalidPostIds: [...new Set(invalidPostIds)],
+      duplicatePostIds: [...new Set(duplicatePostIds)],
+    };
+  }, [
+    calendarBatchCustomTimeByPostId,
+    calendarBatchSelectedPostIds,
+    calendarBatchTimeChoiceByPostId,
+    calendarScheduleSlots,
+    selectedCalendarDate,
+  ]);
+  const availableCalendarScheduleSlots = useMemo(
+    () => calendarScheduleSlots.filter((slot) => slot.state === "available"),
+    [calendarScheduleSlots],
+  );
+  const selectedCalendarDateLabel = new Date(
+    `${selectedCalendarDate}T12:00:00`,
+  ).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  useEffect(() => {
+    setCalendarBatchSelectedPostIds((current) =>
+      current.filter((postId) => calendarSchedulablePostsById.has(postId)),
+    );
+  }, [calendarSchedulablePostsById]);
+  useEffect(() => {
+    setCalendarBatchTimeChoiceByPostId({});
+    setCalendarBatchCustomTimeByPostId({});
+  }, [selectedCalendarDate]);
   const groupedPendingPostSaves = useMemo(() => {
     const grouped = new Map<string, PendingPostSave[]>();
     const ungrouped: PendingPostSave[] = [];
@@ -873,7 +1238,7 @@ function TelegramPostWorkspace({
           fallback: index,
         })),
         ...(posts.data || [])
-          .filter((post) => !post.groupId)
+          .filter((post) => !effectivePostGroupId(post))
           .map((post, index) => ({
             key: `post:${post.id}`,
             position: post.sidebarPosition,
@@ -887,7 +1252,7 @@ function TelegramPostWorkspace({
             left.fallback - right.fallback,
         )
         .map((item) => item.key),
-    [postGroups.data, posts.data],
+    [postGroups.data, posts.data, telegramImportedSystemGroup],
   );
   const sidebarSections = useMemo<PostSidebarSection[]>(() => {
     const groupsById = new Map(
@@ -972,6 +1337,139 @@ function TelegramPostWorkspace({
   const changeWorkspaceView = (next: "posts" | "groups") => {
     setWorkspaceView(next);
     window.localStorage.setItem(workspaceViewPreferenceKey(channelId), next);
+  };
+
+  const changePostView = (next: PostViewMode) => {
+    setPostView(next);
+    window.localStorage.setItem(postViewPreferenceKey(channelId), next);
+  };
+
+  const toggleCalendarBatchPostSelection = (postId: string) => {
+    setCalendarBatchSelectedPostIds((current) => {
+      if (current.includes(postId)) {
+        setCalendarBatchTimeChoiceByPostId((choices) => {
+          const next = { ...choices };
+          delete next[postId];
+          return next;
+        });
+        setCalendarBatchCustomTimeByPostId((times) => {
+          const next = { ...times };
+          delete next[postId];
+          return next;
+        });
+        return current.filter((value) => value !== postId);
+      }
+      return [...current, postId];
+    });
+  };
+
+  const selectCalendarBatchFit = () => {
+    const selectedIds = calendarSchedulablePosts
+      .filter((post) =>
+        calendarFilteredSchedulablePosts.some((visible) => visible.id === post.id),
+      )
+      .slice(0, availableCalendarScheduleSlots.length)
+      .map((post) => post.id);
+    setCalendarBatchSelectedPostIds(selectedIds);
+    setCalendarBatchTimeChoiceByPostId(
+      Object.fromEntries(
+        selectedIds.map((postId, index) => [
+          postId,
+          `slot:${availableCalendarScheduleSlots[index]?.time || ""}`,
+        ]),
+      ),
+    );
+    setCalendarBatchCustomTimeByPostId({});
+  };
+
+  const clearCalendarBatchSelection = () => {
+    setCalendarBatchSelectedPostIds([]);
+    setCalendarBatchTimeChoiceByPostId({});
+    setCalendarBatchCustomTimeByPostId({});
+  };
+
+  const scheduleCalendarBatch = async () => {
+    const assignments = calendarBatchPlan.assignments;
+    if (!assignments.length || calendarBatchBusy) return;
+    const progressId = `calendar-batch:${channelId}:${selectedCalendarDate}`;
+    setCalendarBatchBusy(true);
+    setProgress({
+      id: progressId,
+      title: "Schedule posts for day",
+      current: 0,
+      total: assignments.length,
+      message: `Scheduling ${assignments.length} posts for ${selectedCalendarDateLabel}…`,
+      iconUrl: channelPhotoUrl || undefined,
+    });
+    try {
+      const result = await telegramChannelsApi.scheduleManagedPostsBatch(
+        channelId,
+        { items: assignments },
+        (item, current, total) => {
+          setProgress({
+            id: progressId,
+            title: "Schedule posts for day",
+            current,
+            total,
+            message: item.message || "Scheduling posts…",
+            iconUrl: channelPhotoUrl || undefined,
+          });
+        },
+      );
+      setProgress({
+        id: progressId,
+        title: "Schedule posts for day",
+        current: result.total,
+        total: result.total,
+        message:
+          result.failedCount > 0
+            ? `Finished scheduling for ${selectedCalendarDateLabel}`
+            : `Scheduled for ${selectedCalendarDateLabel}`,
+        completed: true,
+        successCount: result.successCount,
+        failedCount: result.failedCount,
+        skippedCount: result.skippedCount,
+        iconUrl: channelPhotoUrl || undefined,
+      });
+      window.setTimeout(() => clearProgress(progressId), 2800);
+      const successfulIds = new Set(
+        result.results
+          .filter((item) => item.success && item.action === "SCHEDULED")
+          .map((item) => item.postId),
+      );
+      setCalendarBatchSelectedPostIds((current) =>
+        current.filter((postId) => !successfulIds.has(postId)),
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts-calendar", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["post-groups", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channelId],
+        }),
+      ]);
+      pushToast(
+        result.failedCount
+          ? `${result.successCount} posts scheduled, ${result.failedCount} failed.`
+          : `${result.successCount} posts scheduled for ${selectedCalendarDateLabel}.`,
+        result.failedCount ? "info" : "success",
+      );
+    } catch (scheduleError) {
+      clearProgress(progressId);
+      pushToast(
+        apiErrorMessage(scheduleError, "Could not schedule posts for this day"),
+        "error",
+        7000,
+      );
+    } finally {
+      setCalendarBatchBusy(false);
+    }
   };
 
   const toggleGroupCollapsed = (groupId: string) => {
@@ -1094,6 +1592,19 @@ function TelegramPostWorkspace({
   }, [channelId]);
 
   useEffect(() => {
+    const saved = window.localStorage.getItem(postViewPreferenceKey(channelId));
+    setPostView(
+      initialPostView
+        ? initialPostView
+        : saved === "calendar"
+          ? "calendar"
+          : "editor",
+    );
+    setCalendarMonth(startOfMonth(new Date()));
+    setSelectedCalendarDate(toLocalDateKey(new Date()));
+  }, [channelId, initialPostView]);
+
+  useEffect(() => {
     try {
       const raw = window.localStorage.getItem(
         `telegram-posts-collapsed-groups:${channelId}`,
@@ -1213,8 +1724,9 @@ function TelegramPostWorkspace({
     setIcon(post.icon ?? null);
     iconRef.current = post.icon ?? null;
     setIconPending(false);
-    setPostGroupId(post.groupId ?? null);
-    rememberPostGroup(post.groupId ?? null);
+    const nextGroupId = effectivePostGroupId(post);
+    setPostGroupId(nextGroupId);
+    rememberPostGroup(nextGroupId);
     setMode(post.status === "SCHEDULED" ? "schedule" : "draft");
     const scheduledLocalParts = post.scheduledAt
       ? localDateTimeParts(post.scheduledAt)
@@ -1413,7 +1925,7 @@ function TelegramPostWorkspace({
 
   const openPostInNewTab = (post: TelegramManagedPost) => {
     window.open(
-      `/telegram-posts?channelId=${channelId}&postId=${post.id}`,
+      `/telegram-posts?channelId=${channelId}&postId=${post.id}&postView=editor`,
       "_blank",
       "noopener,noreferrer",
     );
@@ -1746,14 +2258,44 @@ function TelegramPostWorkspace({
             Groups
           </button>
         </div>
-        <PromptNotesStrip
-          channelId={channelId}
-          notes={promptNotes.data || []}
-          isLoading={promptNotes.isLoading}
-          channels={channels}
-          currentMemberId={currentMemberId}
-          initialNoteId={initialNoteId}
-        />
+        {workspaceView === "posts" ? (
+          <div className="inline-flex shrink-0 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+            <button
+              type="button"
+              onClick={() => changePostView("editor")}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
+                postView === "editor"
+                  ? "bg-blue-600 text-white"
+                  : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              <FileText size={15} />
+              Editor
+            </button>
+            <button
+              type="button"
+              onClick={() => changePostView("calendar")}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm ${
+                postView === "calendar"
+                  ? "bg-blue-600 text-white"
+                  : "text-neutral-400 hover:text-white"
+              }`}
+            >
+              <Clock3 size={15} />
+              Calendar
+            </button>
+          </div>
+        ) : null}
+        <div className="ml-auto">
+          <PromptNotesButton
+            channelId={channelId}
+            notes={promptNotes.data || []}
+            isLoading={promptNotes.isLoading}
+            channels={channels}
+            currentMemberId={currentMemberId}
+            initialNoteId={initialNoteId}
+          />
+        </div>
       </div>
       {workspaceView === "groups" ? (
         <PostGroupsWorkspace
@@ -1766,6 +2308,511 @@ function TelegramPostWorkspace({
             onPostSelect(post.id);
           }}
         />
+      ) : postView === "calendar" ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.72fr)]">
+          <Card className="min-w-0 p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-3xl font-semibold tracking-tight text-white">
+                  {monthLabel(calendarMonth)}
+                </h2>
+                <p className="mt-1 text-sm text-neutral-400">
+                  Scheduled through{" "}
+                  {calendarData.data?.summary.lastScheduledAt
+                    ? new Date(
+                        calendarData.data.summary.lastScheduledAt,
+                      ).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })
+                    : "No posts scheduled"}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((current) => addMonths(current, -1))}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-800 bg-neutral-950 text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
+                >
+                  <ChevronRight size={16} className="rotate-180" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = startOfMonth(new Date());
+                    setCalendarMonth(today);
+                    setSelectedCalendarDate(toLocalDateKey(new Date()));
+                  }}
+                  className="inline-flex h-10 items-center rounded-xl border border-neutral-800 bg-neutral-950 px-4 text-sm font-medium text-white transition hover:border-neutral-700 hover:bg-neutral-900"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth((current) => addMonths(current, 1))}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-800 bg-neutral-950 text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    queryClient.invalidateQueries({
+                      queryKey: ["telegram-managed-posts-calendar", channelId],
+                    })
+                  }
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950 px-4 text-sm font-medium text-neutral-200 transition hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
+                >
+                  <RefreshCw size={15} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-neutral-800 bg-[#1b1b1b]">
+              <div className="min-w-[700px]">
+                <div className="grid grid-cols-7 border-b border-neutral-800">
+                  {CALENDAR_WEEKDAYS.map((day) => (
+                    <div
+                      key={day}
+                      className="px-2 py-2 text-center text-[11px] font-medium text-neutral-400 sm:px-4 sm:py-3 sm:text-sm"
+                    >
+                      {day}
+                    </div>
+                  ))}
+                </div>
+                {calendarData.isLoading ? (
+                  <div className="p-8">
+                    <LoadingState />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-7">
+                    {calendarDays.map((day) => {
+                    const dateKey = toLocalDateKey(day);
+                    const items = calendarItemsByDay.get(dateKey) || [];
+                    const scheduledCount = items.filter(
+                      (item) => item.status === "SCHEDULED",
+                    ).length;
+                    const publishedCount = items.filter(
+                      (item) => item.status === "PUBLISHED",
+                    ).length;
+                    const isCurrentMonth = sameMonth(day, calendarMonth);
+                    const isToday = dateKey === toLocalDateKey(new Date());
+                    const isSelected = dateKey === selectedCalendarDate;
+                    return (
+                      <button
+                        key={dateKey}
+                        type="button"
+                        onClick={() => setSelectedCalendarDate(dateKey)}
+                        className={`min-h-[96px] border-b border-r border-neutral-800 px-2 py-2 text-left align-top transition sm:min-h-[172px] sm:px-3 sm:py-3 ${
+                          isSelected
+                            ? "bg-[#262626]"
+                            : "bg-[#1f1f1f] hover:bg-[#252525]"
+                        }`}
+                      >
+                        <div className="flex h-full flex-col">
+                          <div className="mb-2 flex items-start justify-between sm:mb-3">
+                            <span
+                              className={`text-[1.45rem] font-semibold leading-none sm:text-[2.05rem] ${
+                                isCurrentMonth ? "text-white" : "text-neutral-600"
+                              }`}
+                            >
+                              {day.getDate()}
+                            </span>
+                            {isToday ? (
+                              <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-medium text-white sm:text-xs">
+                                Today
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 space-y-1.5 sm:space-y-2">
+                            {scheduledCount ? (
+                              <div className="text-[11px] font-medium text-amber-300">
+                                Scheduled {scheduledCount}
+                              </div>
+                            ) : null}
+                            {publishedCount ? (
+                              <div className="text-[11px] font-medium text-emerald-300">
+                                Published {publishedCount}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+          <Card className="min-w-0 p-4">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-white">
+                {selectedCalendarDateLabel}
+              </h3>
+              <p className="mt-1 text-sm text-neutral-400">
+                {Intl.DateTimeFormat().resolvedOptions().timeZone}
+              </p>
+            </div>
+            <div className="space-y-3">
+              {selectedCalendarItems.length ? (
+                selectedCalendarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={(event) => {
+                      if (wantsNewTab(event)) {
+                        window.open(
+                          `/telegram-posts?channelId=${channelId}&postId=${item.id}&postView=editor`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                        return;
+                      }
+                      changePostView("editor");
+                      const post = posts.data?.find((entry) => entry.id === item.id);
+                      if (post) {
+                        selectPost(post);
+                        onPostSelect(post.id);
+                      }
+                    }}
+                    className="w-full rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 text-left transition hover:border-blue-700"
+                  >
+                    {(() => {
+                      const linkedPost = posts.data?.find((entry) => entry.id === item.id);
+                      const matchedSlot =
+                        item.status === "SCHEDULED" && item.scheduledAt
+                          ? calendarPresetSlotByTime.get(localTimeKey(item.scheduledAt))
+                          : undefined;
+                      return (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          {linkedPost?.icon ? (
+                            <PostIcon
+                              iconId={linkedPost.icon}
+                              label={item.title}
+                              bare
+                            />
+                          ) : (
+                            <span className="text-base leading-none">
+                              {calendarStatusIcon(item.status)}
+                            </span>
+                          )}
+                          <div className="truncate text-sm font-medium text-white">
+                            {item.title}
+                          </div>
+                        </div>
+                        <div className="mt-1 text-xs text-neutral-400">
+                          {item.status === "SCHEDULED" ? "Scheduled" : "Published"} ·{" "}
+                          {timeLabel(
+                            item.status === "SCHEDULED"
+                              ? item.scheduledAt
+                              : item.publishedAt,
+                          )}
+                        </div>
+                        {matchedSlot ? (
+                          <div className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-700/40 bg-emerald-950/30 px-2 py-1 text-[11px] text-emerald-200">
+                            <span className="shrink-0">
+                              {(channelTimePosts.find(
+                                (slot) => slot.id === matchedSlot.id,
+                              )?.icon?.emoji || "⚡")}
+                            </span>
+                            <span className="truncate">
+                              Slot match: {matchedSlot.time} {matchedSlot.title}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                      {item.origin === "TELEGRAM" ? (
+                        <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-amber-200">
+                          Created in Telegram
+                        </span>
+                      ) : null}
+                    </div>
+                      );
+                    })()}
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-neutral-800 px-4 py-8 text-center text-sm text-neutral-500">
+                  No posts on this day
+                </div>
+              )}
+            </div>
+            <div className="mt-6 border-t border-neutral-800 pt-5">
+              <div>
+                <h4 className="text-sm font-semibold text-white">
+                  Schedule multiple posts
+                </h4>
+                <p className="mt-1 text-xs text-neutral-400">
+                  Uses this channel&apos;s configured publishing slots for the selected
+                  day.
+                </p>
+              </div>
+              {!calendarSchedulablePosts.length ? (
+                <div className="mt-4 rounded-xl border border-dashed border-neutral-800 px-4 py-5 text-sm text-neutral-500">
+                  No drafts yet. Create a draft first.
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={selectCalendarBatchFit}
+                      disabled={
+                        calendarBatchBusy ||
+                        !availableCalendarScheduleSlots.length
+                      }
+                    >
+                      Select fit
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={clearCalendarBatchSelection}
+                      disabled={calendarBatchBusy || !calendarBatchSelectedPostIds.length}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-neutral-500">
+                        Posts to schedule
+                      </div>
+                      <div className="text-xs text-neutral-500">
+                        {calendarBatchSelectedPosts.length} selected
+                      </div>
+                    </div>
+                    <Input
+                      value={calendarPostSearch}
+                      onChange={(event) => setCalendarPostSearch(event.target.value)}
+                      placeholder="Search posts or groups..."
+                    />
+                    {!calendarFilteredSchedulablePosts.length ? (
+                      <div className="rounded-xl border border-dashed border-neutral-800 px-4 py-5 text-sm text-neutral-500">
+                        No posts match this search.
+                      </div>
+                    ) : (
+                      <div className="max-h-64 space-y-2 overflow-auto rounded-xl border border-neutral-800 p-2">
+                        {calendarGroupedSchedulablePosts.groups.map((section) => (
+                          <div
+                            key={section.group.id}
+                            className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-950/30 p-2"
+                          >
+                            <div className="flex items-center gap-2 px-1">
+                              <PostIcon
+                                iconId={section.group.icon}
+                                label={section.group.title}
+                                bare
+                              />
+                              <span className="truncate text-sm font-medium text-white">
+                                {section.group.title}
+                              </span>
+                              <span className="text-xs text-neutral-500">
+                                {section.posts.length}
+                              </span>
+                            </div>
+                            {section.posts.map((post) => {
+                              const selected = calendarBatchSelectedPostIds.includes(post.id);
+                              return (
+                                <div
+                                  key={post.id}
+                                  className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                                    selected
+                                      ? "border-blue-700 bg-blue-950/20"
+                                      : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleCalendarBatchPostSelection(post.id)}
+                                    aria-pressed={selected}
+                                    aria-label={
+                                      selected
+                                        ? `Unselect ${post.title}`
+                                        : `Select ${post.title}`
+                                    }
+                                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                                      selected
+                                        ? "border-blue-500 bg-blue-500 text-white"
+                                        : "border-neutral-700 text-neutral-500"
+                                    }`}
+                                  >
+                                    {selected ? "✓" : ""}
+                                  </button>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      {post.icon ? (
+                                        <PostIcon iconId={post.icon} label={post.title} bare />
+                                      ) : (
+                                        <span className="text-sm leading-none">📝</span>
+                                      )}
+                                      <span className="truncate text-sm font-medium text-white">
+                                        {post.title}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 text-xs text-neutral-500">
+                                      {post.status === "FAILED" ? "Failed" : "Draft"} · created{" "}
+                                      {new Date(post.createdAt).toLocaleDateString()}
+                                    </div>
+                                    {selected ? (
+                                      <CalendarPostTimePicker
+                                        post={post}
+                                        selectedCalendarDate={selectedCalendarDate}
+                                        availableCalendarScheduleSlots={availableCalendarScheduleSlots}
+                                        calendarScheduleSlots={calendarScheduleSlots}
+                                        channelTimePosts={channelTimePosts}
+                                        selectedPostIds={calendarBatchSelectedPostIds}
+                                        timeChoiceByPostId={calendarBatchTimeChoiceByPostId}
+                                        customTimeByPostId={calendarBatchCustomTimeByPostId}
+                                        onTimeChoiceChange={setCalendarBatchTimeChoiceByPostId}
+                                        onCustomTimeChange={setCalendarBatchCustomTimeByPostId}
+                                      />
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                        {calendarGroupedSchedulablePosts.ungrouped.map((post) => {
+                          const selected = calendarBatchSelectedPostIds.includes(post.id);
+                          return (
+                            <div
+                              key={post.id}
+                              className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                                selected
+                                  ? "border-blue-700 bg-blue-950/20"
+                                  : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleCalendarBatchPostSelection(post.id)}
+                                aria-pressed={selected}
+                                aria-label={
+                                  selected
+                                    ? `Unselect ${post.title}`
+                                    : `Select ${post.title}`
+                                }
+                                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                                  selected
+                                    ? "border-blue-500 bg-blue-500 text-white"
+                                    : "border-neutral-700 text-neutral-500"
+                                }`}
+                              >
+                                {selected ? "✓" : ""}
+                              </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  {post.icon ? (
+                                    <PostIcon iconId={post.icon} label={post.title} bare />
+                                  ) : (
+                                    <span className="text-sm leading-none">📝</span>
+                                  )}
+                                  <span className="truncate text-sm font-medium text-white">
+                                    {post.title}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-xs text-neutral-500">
+                                  {post.status === "FAILED" ? "Failed" : "Draft"} ·{" "}
+                                  created {new Date(post.createdAt).toLocaleDateString()}
+                                </div>
+                                {selected ? (
+                                  <CalendarPostTimePicker
+                                    post={post}
+                                    selectedCalendarDate={selectedCalendarDate}
+                                    availableCalendarScheduleSlots={availableCalendarScheduleSlots}
+                                    calendarScheduleSlots={calendarScheduleSlots}
+                                    channelTimePosts={channelTimePosts}
+                                    selectedPostIds={calendarBatchSelectedPostIds}
+                                    timeChoiceByPostId={calendarBatchTimeChoiceByPostId}
+                                    customTimeByPostId={calendarBatchCustomTimeByPostId}
+                                    onTimeChoiceChange={setCalendarBatchTimeChoiceByPostId}
+                                    onCustomTimeChange={setCalendarBatchCustomTimeByPostId}
+                                  />
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-neutral-500">
+                        Schedule preview
+                      </div>
+                      <div className="text-xs text-neutral-500">
+                        {calendarBatchPlan.assignments.length}/
+                        {calendarBatchSelectedPostIds.length} will be scheduled
+                      </div>
+                    </div>
+                    {calendarBatchPlan.assignments.length ? (
+                      <div className="mt-3 space-y-2">
+                        {calendarBatchPlan.assignments.map((assignment) => {
+                          const post = calendarSchedulablePostsById.get(assignment.postId);
+                          const slot = calendarScheduleSlots.find(
+                            (item) => item.scheduledAt === assignment.scheduledAt,
+                          );
+                          return (
+                            <div
+                              key={`${assignment.postId}:${assignment.scheduledAt}`}
+                              className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 px-3 py-2 text-sm"
+                            >
+                              <div className="min-w-0 truncate text-white">
+                                {post?.title || assignment.postId}
+                              </div>
+                              <div className="shrink-0 text-right text-xs text-neutral-400">
+                                <div>{slot?.time || timeLabel(assignment.scheduledAt)}</div>
+                                <div className="mt-0.5 text-[10px] uppercase tracking-wide text-neutral-500">
+                                  {slot?.source === "custom" ? "Custom" : "Slot"}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-sm text-neutral-500">
+                        Select posts and assign a slot or custom time to each one.
+                      </div>
+                    )}
+                    {calendarBatchPlan.invalidPostIds.length ? (
+                      <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                        {calendarBatchPlan.invalidPostIds.length} selected post
+                        {calendarBatchPlan.invalidPostIds.length === 1 ? "" : "s"}{" "}
+                        still need a valid slot or custom time.
+                      </div>
+                    ) : null}
+                    {calendarBatchPlan.duplicatePostIds.length ? (
+                      <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                        Duplicate times detected for{" "}
+                        {calendarBatchPlan.duplicatePostIds.length} selected post
+                        {calendarBatchPlan.duplicatePostIds.length === 1 ? "" : "s"}.
+                      </div>
+                    ) : null}
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        onClick={scheduleCalendarBatch}
+                        disabled={
+                          calendarBatchBusy || !calendarBatchPlan.assignments.length
+                        }
+                      >
+                        {calendarBatchBusy
+                          ? "Scheduling…"
+                          : `Schedule ${calendarBatchPlan.assignments.length} posts`}
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </Card>
+        </div>
       ) : (
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(270px,0.7fr)_minmax(420px,1.25fr)_minmax(280px,0.72fr)]">
           <TelegramPostPreview
@@ -2925,7 +3972,24 @@ function promptNoteDisplayTitle(note: PromptNote) {
   return note.title.trim();
 }
 
-function PromptNotesStrip({
+function CalendarSummaryCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3">
+      <div className="text-xs uppercase tracking-[0.18em] text-neutral-500">
+        {label}
+      </div>
+      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function PromptNotesButton({
   channelId,
   notes,
   isLoading,
@@ -2947,6 +4011,7 @@ function PromptNotesStrip({
   const [editing, setEditing] = useState<PromptNote | null>(null);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(
     () => () => {
@@ -2965,6 +4030,7 @@ function PromptNotesStrip({
     if (!note) return;
     setCreating(false);
     setEditing(note);
+    setOpen(true);
     openedFromSearchRef.current = initialNoteId;
   }, [initialNoteId, notes]);
 
@@ -3005,84 +4071,99 @@ function PromptNotesStrip({
       await invalidate();
       pushToast("Prompt note deleted.", "success");
       setEditing(null);
+      setOpen(false);
     },
   });
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 p-1.5">
-      <div className="hidden shrink-0 px-2 text-xs font-medium text-neutral-400 xl:block">
-        Prompts
-      </div>
-      {isLoading ? (
-        <div className="flex items-center gap-2 px-2 text-xs text-neutral-400">
-          <LoaderCircle size={14} className="animate-spin" />
-          Loading…
-        </div>
-      ) : notes.length ? (
-        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 overflow-visible pb-0.5">
-          {notes.map((note) => {
-            const displayTitle = promptNoteDisplayTitle(note);
-            return (
-            <button
-              key={note.id}
-              type="button"
-              onClick={() => openWithDelay(note)}
-              onDoubleClick={() => copyOnDoubleClick(note)}
-              className={`group relative flex h-10 shrink-0 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-950 px-2 text-left transition hover:border-blue-700 hover:bg-blue-950/20 ${
-                displayTitle ? "min-w-36 max-w-56" : "w-10 justify-center"
-              }`}
-            >
-              {copiedId === note.id ? (
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-blue-200">
-                  <Check size={14} />
-                </span>
-              ) : note.icon ? (
-                <IconAvatar
-                  icon={note.icon}
-                  label={displayTitle || "Prompt"}
-                  size="xs"
-                  className="!h-6 !w-6"
-                />
-              ) : (
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-sm">
-                  {note.emoji || "📝"}
-                </span>
-              )}
-              {displayTitle ? (
-                <>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium text-white">
-                      {displayTitle}
-                    </span>
-                  </span>
-                  <Copy
-                    size={12}
-                    className="shrink-0 text-neutral-600 opacity-0 transition group-hover:opacity-100"
-                  />
-                </>
-              ) : null}
-              <TooltipBubble
-                side="bottom"
-                align="center"
-                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
-              >
-                Double-click to copy
-              </TooltipBubble>
-            </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="min-w-0 flex-1 truncate px-2 text-xs text-neutral-500">
-          No prompts for this channel
-        </div>
-      )}
-      <Button className="h-10 shrink-0 px-3 py-1.5" onClick={() => setCreating(true)}>
-        <span className="inline-flex items-center gap-1.5">
-          <Plus size={14} />
-          Add note
+    <>
+      <Button
+        variant="secondary"
+        className="h-10 shrink-0 px-3 py-1.5"
+        onClick={() => setOpen(true)}
+      >
+        <span className="inline-flex items-center gap-2">
+          <span className="text-sm">✏️</span>
+          Notes
         </span>
       </Button>
+      <Modal
+        open={open}
+        title="Prompt notes"
+        onClose={() => {
+          setOpen(false);
+          setCreating(false);
+          setEditing(null);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-neutral-400">
+              Notes for this channel
+            </div>
+            <Button onClick={() => setCreating(true)}>
+              <span className="inline-flex items-center gap-1.5">
+                <Plus size={14} />
+                Add note
+              </span>
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="flex items-center gap-2 px-2 text-sm text-neutral-400">
+              <LoaderCircle size={14} className="animate-spin" />
+              Loading…
+            </div>
+          ) : notes.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {notes.map((note) => {
+                const displayTitle = promptNoteDisplayTitle(note);
+                return (
+                  <button
+                    key={note.id}
+                    type="button"
+                    onClick={() => openWithDelay(note)}
+                    onDoubleClick={() => copyOnDoubleClick(note)}
+                    className="group flex min-h-16 items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-3 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
+                  >
+                    {copiedId === note.id ? (
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-blue-200">
+                        <Check size={14} />
+                      </span>
+                    ) : note.icon ? (
+                      <IconAvatar
+                        icon={note.icon}
+                        label={displayTitle || "Prompt"}
+                        size="xs"
+                        className="!h-7 !w-7"
+                      />
+                    ) : (
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-sm">
+                        {note.emoji || "📝"}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-white">
+                        {displayTitle || "Untitled prompt"}
+                      </span>
+                    </span>
+                    <TooltipBubble
+                      side="bottom"
+                      align="center"
+                      className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
+                    >
+                      Double-click to copy
+                    </TooltipBubble>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-neutral-800 px-4 py-6 text-center text-sm text-neutral-500">
+              No prompts for this channel
+            </div>
+          )}
+        </div>
+      </Modal>
       <PromptNoteEditorModal
         key={editing?.id || (creating ? "new" : "closed")}
         open={creating || Boolean(editing)}
@@ -3097,7 +4178,7 @@ function PromptNotesStrip({
         onSaved={invalidate}
         onDelete={(note) => removeNote.mutate(note.id)}
       />
-    </div>
+    </>
   );
 }
 
@@ -3881,24 +4962,28 @@ function PostGroupsWorkspace({
               >
                 <MoveRight size={14} />
               </button>
-              <button
-                type="button"
-                onClick={() => setGroupForm(group)}
-                className={groupIconActionButtonClass}
-                title="Edit group"
-                aria-label="Edit group"
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setDeletingGroup(group)}
-                className={groupDangerActionButtonClass}
-                title="Delete group"
-                aria-label="Delete group"
-              >
-                <Trash2 size={14} />
-              </button>
+              {!group.isSystem ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setGroupForm(group)}
+                    className={groupIconActionButtonClass}
+                    title="Edit group"
+                    aria-label="Edit group"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeletingGroup(group)}
+                    className={groupDangerActionButtonClass}
+                    title="Delete group"
+                    aria-label="Delete group"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -3919,9 +5004,15 @@ function PostGroupsWorkspace({
               </div>
               <div>
                 <p className="mb-1 text-xs uppercase text-neutral-500">
-                  Created by
+                  {group.isSystem ? "Group type" : "Created by"}
                 </p>
-                <MemberBadge member={group.createdByMember} />
+                {group.isSystem ? (
+                  <span className="inline-flex rounded-full border border-amber-600/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">
+                    System group
+                  </span>
+                ) : (
+                  <MemberBadge member={group.createdByMember} />
+                )}
               </div>
               <div>
                 <p className="mb-1 text-xs uppercase text-neutral-500">
@@ -4261,7 +5352,13 @@ function PostGroupsWorkspace({
                         {group.title}
                       </h3>
                       <div className="mt-1">
-                        <MemberBadge member={group.createdByMember} />
+                        {group.isSystem ? (
+                          <span className="inline-flex rounded-full border border-amber-600/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200">
+                            System group
+                          </span>
+                        ) : (
+                          <MemberBadge member={group.createdByMember} />
+                        )}
                       </div>
                     </div>
                   </button>
@@ -4275,15 +5372,17 @@ function PostGroupsWorkspace({
                     >
                       <MoveRight size={14} />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeletingGroup(group)}
-                      className={groupDangerActionButtonClass}
-                      title="Delete group"
-                      aria-label={`Delete ${group.title}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {!group.isSystem ? (
+                      <button
+                        type="button"
+                        onClick={() => setDeletingGroup(group)}
+                        className={groupDangerActionButtonClass}
+                        title="Delete group"
+                        aria-label={`Delete ${group.title}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -4485,6 +5584,135 @@ function GroupSummary({ summary }: { summary: PostGroup["statusSummary"] }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CalendarPostTimePicker({
+  post,
+  selectedCalendarDate,
+  availableCalendarScheduleSlots,
+  calendarScheduleSlots,
+  channelTimePosts,
+  selectedPostIds,
+  timeChoiceByPostId,
+  customTimeByPostId,
+  onTimeChoiceChange,
+  onCustomTimeChange,
+}: {
+  post: TelegramManagedPost;
+  selectedCalendarDate: string;
+  availableCalendarScheduleSlots: Array<{
+    id: string;
+    title: string;
+    time: string;
+    iconId?: string | null;
+    state: "available" | "occupied" | "past";
+  }>;
+  calendarScheduleSlots: Array<{
+    time: string;
+    state: "available" | "occupied" | "past";
+  }>;
+  channelTimePosts: TelegramChannelTimePost[];
+  selectedPostIds: string[];
+  timeChoiceByPostId: Record<string, string>;
+  customTimeByPostId: Record<string, string>;
+  onTimeChoiceChange: Dispatch<SetStateAction<Record<string, string>>>;
+  onCustomTimeChange: Dispatch<SetStateAction<Record<string, string>>>;
+}) {
+  const selectedChoice = timeChoiceByPostId[post.id] || "";
+  const customTime = customTimeByPostId[post.id] || "";
+  const slotState = calendarScheduleSlots.find(
+    (slot) => slot.time === customTime,
+  )?.state;
+  const duplicate =
+    customTime &&
+    Object.entries(customTimeByPostId).some(
+      ([otherPostId, value]) =>
+        otherPostId !== post.id &&
+        selectedPostIds.includes(otherPostId) &&
+        timeChoiceByPostId[otherPostId] === "custom" &&
+        value === customTime,
+    );
+  const invalidPast =
+    isValidTimeInputValue(customTime) &&
+    new Date(`${selectedCalendarDate}T${customTime}:00`).getTime() <=
+      Date.now();
+  const invalidOccupied =
+    customTime && (slotState === "occupied" || slotState === "past");
+  const errorMessage =
+    selectedChoice === "custom"
+      ? !customTime
+        ? "Enter time for this post."
+        : !isValidTimeInputValue(customTime)
+          ? "Use HH:MM."
+          : duplicate
+            ? "This time is already used by another selected post."
+            : invalidPast
+              ? "Time must be later than now."
+              : invalidOccupied
+                ? "This time is not available for the selected day."
+                : ""
+      : "";
+
+  return (
+    <>
+      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_132px]">
+        <CustomSelect
+          value={selectedChoice}
+          onChange={(value) =>
+            onTimeChoiceChange((current) => ({
+              ...current,
+              [post.id]: value,
+            }))
+          }
+          dropdownDirection="up"
+          placeholder="Choose slot or custom time"
+          searchable={false}
+          options={[
+            ...availableCalendarScheduleSlots
+              .filter((slot) => {
+                if (selectedChoice === `slot:${slot.time}`) return true;
+                return !Object.entries(timeChoiceByPostId).some(
+                  ([otherPostId, value]) =>
+                    otherPostId !== post.id && value === `slot:${slot.time}`,
+                );
+              })
+              .map((slot) => ({
+                value: `slot:${slot.time}`,
+                label: `${slot.time}  ${slot.title}`.trim(),
+                iconEmoji:
+                  channelTimePosts.find((item) => item.id === slot.id)?.icon?.emoji ||
+                  "•",
+                tone: "success" as const,
+              })),
+            {
+              value: "custom",
+              label: "Custom time",
+              iconEmoji: "🕒",
+              tone: "info" as const,
+            },
+          ]}
+        />
+        {selectedChoice === "custom" ? (
+          <TimeInput
+            value={customTime}
+            onChange={(event) =>
+              onCustomTimeChange((current) => ({
+                ...current,
+                [post.id]: event.target.value,
+              }))
+            }
+          />
+        ) : (
+          <div className="flex items-center justify-end rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 text-xs text-neutral-500">
+            Slot
+          </div>
+        )}
+      </div>
+      {errorMessage ? (
+        <div className="mt-2 text-xs text-rose-300">{errorMessage}</div>
+      ) : null}
+    </>
   );
 }
 

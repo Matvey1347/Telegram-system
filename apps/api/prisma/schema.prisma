@@ -136,6 +136,11 @@ enum TelegramManagedPostRemoteStatus {
   UNKNOWN
 }
 
+enum TelegramManagedPostOrigin {
+  SYSTEM
+  TELEGRAM
+}
+
 enum ApplicationLogLevel {
   debug
   info
@@ -458,8 +463,7 @@ model Transaction {
 
   adCampaign     AdCampaign?          @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
   investment     Investment?
-  purchasedTelegramChannel TelegramChannel?
-    @relation("TelegramChannelPurchaseTransaction")
+  purchasedTelegramChannel TelegramChannel? @relation("TelegramChannelPurchaseTransaction")
   categoryRef    TransactionCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   member         WorkspaceMember?     @relation("MemberInvestmentTransactions", fields: [memberId], references: [id], onDelete: SetNull)
   icon           Icon?                @relation(fields: [iconId], references: [id], onDelete: SetNull)
@@ -604,12 +608,7 @@ model TelegramChannel {
   workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assignedMember WorkspaceMember? @relation("TelegramChannelAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser  User?            @relation("TelegramChannelCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  purchaseTransaction Transaction? @relation(
-    "TelegramChannelPurchaseTransaction",
-    fields: [purchaseTransactionId],
-    references: [id],
-    onDelete: SetNull
-  )
+  purchaseTransaction Transaction? @relation("TelegramChannelPurchaseTransaction", fields: [purchaseTransactionId], references: [id], onDelete: SetNull)
 
   promos            Promo[]
   adCampaigns       AdCampaign[]
@@ -1254,6 +1253,8 @@ model TelegramManagedPost {
   title                String
   text                 String?
   imageUrls            String[]                        @default([])
+  origin               TelegramManagedPostOrigin      @default(SYSTEM)
+  remoteImportKey      String?
   status               TelegramManagedPostStatus       @default(DRAFT)
   scheduledAt          DateTime?
   publishedAt          DateTime?
@@ -1287,6 +1288,8 @@ model TelegramManagedPost {
   @@index([groupId, groupPosition])
   @@index([telegramChannelId, sidebarPosition])
   @@index([status, scheduledAt])
+  @@index([workspaceId, telegramChannelId, origin, status, scheduledAt])
+  @@unique([workspaceId, telegramChannelId, remoteImportKey])
 }
 
 model TelegramManagedPostRevision {
@@ -1297,6 +1300,8 @@ model TelegramManagedPostRevision {
   title                String
   text                 String?
   imageUrls            String[]                        @default([])
+  origin               TelegramManagedPostOrigin      @default(SYSTEM)
+  remoteImportKey      String?
   status               TelegramManagedPostStatus
   scheduledAt          DateTime?
   publishedAt          DateTime?
@@ -1336,6 +1341,8 @@ model PostGroup {
   title             String
   description       String?
   icon              String?
+  isSystem          Boolean @default(false)
+  systemKey         String?
   createdByMemberId String
   sidebarPosition   Int?
 
@@ -1353,6 +1360,7 @@ model PostGroup {
   @@index([telegramChannelId])
   @@index([createdByMemberId])
   @@index([telegramChannelId, sidebarPosition])
+  @@unique([telegramChannelId, systemKey])
 }
 
 model TelegramPostMetricSnapshot {

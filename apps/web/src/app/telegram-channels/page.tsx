@@ -838,6 +838,8 @@ function ChannelFinanceMiniSummary({
   const adSpend = hasNumber(summary?.totalAdSpend)
     ? Number(summary?.totalAdSpend)
     : 0;
+  const hasAdExpense = adSpend > 0;
+  const hasPurchaseExpense = acquisitionCost > 0;
   const financeTotal = hasNumber(summary?.totalSpend)
     ? Number(summary?.totalSpend)
     : hasNumber(summary?.totalAdSpend)
@@ -860,7 +862,7 @@ function ChannelFinanceMiniSummary({
     inactiveSubscribers && financeTotal > 0
       ? financeTotal / inactiveSubscribers
       : null;
-  if (financeTotal > 0) {
+  if (hasAdExpense && hasPurchaseExpense && financeTotal > 0) {
     metrics.push({
       label: "Total spend",
       value: moneyValue(
@@ -870,13 +872,13 @@ function ChannelFinanceMiniSummary({
       prominent: true,
     });
   }
-  if (adSpend > 0) {
+  if (hasAdExpense) {
     metrics.push({
       label: "Ad spend",
       value: moneyValue(-adSpend, "font-semibold text-rose-200"),
     });
   }
-  if (acquisitionCost > 0) {
+  if (hasPurchaseExpense) {
     metrics.push({
       label: "Bought for",
       value: moneyValue(acquisitionCost, "font-semibold text-slate-100"),
@@ -941,10 +943,11 @@ function ChannelFinanceMiniSummary({
   if (
     attributedSubscribers != null &&
     attributedSubscribers > 0 &&
-    attributedSubscribers !== joinedSubscribers
+    hasPositiveNumber(summary?.totalJoinedSubscribers) &&
+    hasPositiveNumber(summary?.totalPendingSubscribers)
   ) {
     metrics.push({
-      label: "Attributed",
+      label: "Total",
       value: formatNumber(attributedSubscribers),
     });
   }
@@ -956,17 +959,16 @@ function ChannelFinanceMiniSummary({
   }
   const showQuality =
     isOwnChannel && audience?.dataQuality && audience.dataQuality !== "normal";
-  const visibleMetrics = metrics.slice(0, 6);
-  const cpaMetrics = visibleMetrics.filter((metric) =>
+  const cpaMetrics = metrics.filter((metric) =>
     metric.label.startsWith("CPA /"),
-  );
-  const topMetrics = visibleMetrics.filter(
+  ).slice(0, 3);
+  const topMetrics = metrics.filter(
     (metric) =>
       metric.label === "Total spend" ||
       metric.label === "Ad spend" ||
       metric.label === "Bought for",
   );
-  const supportingMetrics = visibleMetrics.filter(
+  const supportingMetrics = metrics.filter(
     (metric) =>
       !metric.label.startsWith("CPA /") &&
       metric.label !== "Total spend" &&
@@ -1139,6 +1141,9 @@ function KpiPreviewTooltip({
     summary?.avgCpa == null || !Number.isFinite(Number(summary.avgCpa))
       ? null
       : Number(summary.avgCpa);
+  const joined = Number(summary?.totalJoinedSubscribers || 0);
+  const pending = Number(summary?.totalPendingSubscribers || 0);
+  const total = Number(summary?.totalAttributedSubscribers || 0);
   return (
     <span className={`group relative inline-flex cursor-help ${className}`}>
       {children}
@@ -1160,8 +1165,15 @@ function KpiPreviewTooltip({
         </span>
         {summary ? (
           <span className="mt-1 block text-slate-400">
-            Joined {formatNumber(summary.totalJoinedSubscribers || 0)} · Pending{" "}
-            {formatNumber(summary.totalPendingSubscribers || 0)}
+            {[
+              joined > 0 ? `Joined ${formatNumber(joined)}` : null,
+              pending > 0 ? `Pending ${formatNumber(pending)}` : null,
+              joined > 0 && pending > 0 && total > 0
+                ? `Total ${formatNumber(total)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No attributed subscribers yet"}
           </span>
         ) : null}
         {summary?.kpiStatus && summary.kpiStatus !== "unknown" ? (

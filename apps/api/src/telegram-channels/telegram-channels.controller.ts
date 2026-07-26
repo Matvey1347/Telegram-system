@@ -23,6 +23,7 @@ import {
   HistoricalSyncDto,
   ImportTelegramChannelDto,
   ManagedPostLinkTargetsQueryDto,
+  ManagedPostsCalendarQueryDto,
   TelegramChannelInviteLinksQueryDto,
   TelegramChannelListQueryDto,
   TelegramChannelPostsQueryDto,
@@ -39,6 +40,7 @@ import {
   ScheduleTelegramManagedPostDto,
   SetManagedPostTelegramUrlDto,
   PublishTelegramManagedPostDto,
+  ScheduleManagedPostsBatchDto,
   SyncNowDto,
   UpdateTelegramChannelDto,
   UpdateTelegramChannelAdAnalysisDto,
@@ -254,6 +256,14 @@ export class TelegramChannelsController {
   ) {
     return this.service.managedPosts(user.sub, id);
   }
+  @Get(':id/managed-posts/calendar')
+  managedPostsCalendar(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query() query: ManagedPostsCalendarQueryDto,
+  ) {
+    return this.service.managedPostsCalendar(user.sub, id, query);
+  }
   @Post(':id/managed-posts/sync')
   syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {
     return this.service.syncManagedPosts(user.sub, id);
@@ -358,6 +368,28 @@ export class TelegramChannelsController {
     @Body() dto: ScheduleTelegramManagedPostDto,
   ) {
     return this.service.scheduleManagedPost(user.sub, id, postId, dto);
+  }
+  @Post(':id/managed-posts/schedule-batch')
+  scheduleManagedPostsBatch(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ScheduleManagedPostsBatchDto,
+  ) {
+    return this.service.scheduleManagedPostsBatch(user.sub, id, dto);
+  }
+  @Post(':id/managed-posts/schedule-batch-stream')
+  scheduleManagedPostsBatchStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ScheduleManagedPostsBatchDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(
+      res,
+      (onProgress) =>
+        this.service.scheduleManagedPostsBatch(user.sub, id, dto, onProgress),
+      'telegram_channel.managed_posts_schedule_batch_stream',
+    );
   }
   @Delete(':id/managed-posts/:postId')
   deleteManagedPost(
@@ -549,6 +581,13 @@ export class TelegramChannelsController {
     @Query() query: TelegramChannelInviteLinksQueryDto,
   ) {
     return this.service.inviteLinks(user.sub, id, query);
+  }
+  @Get(':id/invite-links/select') inviteLinksForSelect(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Query() query: Pick<TelegramChannelInviteLinksQueryDto, 'search'>,
+  ) {
+    return this.service.inviteLinksForSelect(user.sub, id, query);
   }
   @Get(':id/invite-links/:inviteLinkId/history')
   inviteLinkHistory(

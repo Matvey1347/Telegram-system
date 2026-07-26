@@ -15,6 +15,9 @@ import type {
   TelegramChannelAccessMode,
   PaginatedResponse,
   PaginationMeta,
+  ManagedPostsSyncResult,
+  TelegramManagedPostCalendarResult,
+  ScheduleManagedPostsBatchPayload,
 } from "@telegram-system/shared";
 import {
   clearAccessToken,
@@ -841,6 +844,7 @@ export type TelegramManagedPost = {
   id: string;
   workspaceId: string;
   telegramChannelId: string;
+  origin: "SYSTEM" | "TELEGRAM";
   assignedMemberId: string;
   assignedMember: WorkspaceMember;
   icon?: string | null;
@@ -942,6 +946,8 @@ export type PostGroup = {
   title: string;
   description?: string | null;
   icon?: string | null;
+  isSystem?: boolean;
+  systemKey?: string | null;
   createdByMemberId: string;
   sidebarPosition?: number | null;
   createdByMember: WorkspaceMember;
@@ -2186,16 +2192,19 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts`,
       )
     ).data,
+  managedPostsCalendar: async (
+    channelId: string,
+    params: { from: string; to: string },
+  ) =>
+    (
+      await api.get<TelegramManagedPostCalendarResult>(
+        `/telegram-channels/${channelId}/managed-posts/calendar`,
+        { params },
+      )
+    ).data,
   syncManagedPosts: async (channelId: string) =>
     (
-      await api.post<{
-        checked: number;
-        updated: number;
-        publishedEarly: number;
-        movedToDraft: number;
-        broken: number;
-        missing: number;
-      }>(
+      await api.post<ManagedPostsSyncResult>(
         `/telegram-channels/${channelId}/managed-posts/sync`,
       )
     ).data,
@@ -2203,17 +2212,11 @@ export const telegramChannelsApi = {
     channelId: string,
     onProgress: BulkProgressHandler,
   ) =>
-    streamProgressAction<
-      {
-        checked: number;
-        updated: number;
-        publishedEarly: number;
-        movedToDraft: number;
-        broken: number;
-        missing: number;
-      },
-      BulkActionResultItem
-    >(`/telegram-channels/${channelId}/managed-posts/sync-stream`, {}, onProgress),
+    streamProgressAction<ManagedPostsSyncResult, BulkActionResultItem>(
+      `/telegram-channels/${channelId}/managed-posts/sync-stream`,
+      {},
+      onProgress,
+    ),
   setManagedPostTelegramUrl: async (
     channelId: string,
     postId: string,
@@ -2528,6 +2531,23 @@ export const telegramChannelsApi = {
           : undefined,
       )
     ).data,
+  scheduleManagedPostsBatch: async (
+    channelId: string,
+    payload: ScheduleManagedPostsBatchPayload,
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/${channelId}/managed-posts/schedule-batch-stream`,
+          payload,
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult>(
+            `/telegram-channels/${channelId}/managed-posts/schedule-batch`,
+            payload,
+          )
+        ).data,
   deleteManagedPost: async (channelId: string, postId: string) =>
     (
       await api.delete<TelegramManagedPost>(
@@ -2907,6 +2927,28 @@ export async function getTelegramChannelInviteLinks(
   params?: PaginationParams & { search?: string },
 ) {
   return getPaginated<TelegramInviteLink>(
+    `/telegram-channels/${channelId}/invite-links`,
+    params,
+  );
+}
+
+export async function getTelegramChannelInviteLinksForSelect(
+  channelId: string,
+  params?: { search?: string },
+) {
+  return (
+    await api.get<TelegramInviteLink[]>(
+      `/telegram-channels/${channelId}/invite-links/select`,
+      { params },
+    )
+  ).data;
+}
+
+export async function getAllTelegramChannelInviteLinks(
+  channelId: string,
+  params?: { search?: string },
+) {
+  return getAllPaginatedItems<TelegramInviteLink>(
     `/telegram-channels/${channelId}/invite-links`,
     params,
   );

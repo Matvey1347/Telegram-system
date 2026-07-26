@@ -529,25 +529,28 @@ function PerformanceCell({
   const unsubscribedPercent =
     peakJoined > 0 ? (Math.max(0, left) / peakJoined) * 100 : 0;
   const historySummary = campaign.inviteLinkHistory?.summary ?? null;
-  const historyPeakJoined = Number(historySummary?.peakJoinedCount ?? 0);
+  const historyPeakAttributed = Number(historySummary?.peakTotalAttributed ?? 0);
+  const historyCurrentAttributed = Number(
+    historySummary?.currentTotalAttributed ?? 0,
+  );
   const historyCurrentJoined = Number(historySummary?.currentJoinedCount ?? 0);
   const historyDropPercent = Number(historySummary?.drawdownPercent ?? 0);
   const historyDropAbsolute = Number(historySummary?.drawdownFromPeak ?? 0);
-  const resolvedPeakJoined =
-    historyPeakJoined > 0 ? historyPeakJoined : peakJoined;
+  const resolvedPeakAttributed =
+    historyPeakAttributed > 0 ? historyPeakAttributed : attributed;
+  const resolvedCurrentAttributed =
+    historyCurrentAttributed > 0 ? historyCurrentAttributed : attributed;
   const resolvedCurrentJoined =
     historyCurrentJoined > 0 ? historyCurrentJoined : joined;
   const resolvedDropPercent =
     historySummary != null ? historyDropPercent : unsubscribedPercent;
   const resolvedDropAbsolute =
     historySummary != null ? historyDropAbsolute : Math.max(0, left);
-  const showPeakJoined = peakJoined > joined;
-  const showUnsubscribed = left > 0;
-  const showTrendDelta = resolvedPeakJoined > resolvedCurrentJoined;
+  const showTrendDelta = resolvedPeakAttributed > resolvedCurrentAttributed;
   const peakPrimaryCostPerJoined =
-    resolvedPeakJoined > 0 ? primaryCost / resolvedPeakJoined : null;
+    resolvedPeakAttributed > 0 ? primaryCost / resolvedPeakAttributed : null;
   const peakCostPerJoined =
-    resolvedPeakJoined > 0 ? cost / resolvedPeakJoined : null;
+    resolvedPeakAttributed > 0 ? cost / resolvedPeakAttributed : null;
   const showPeakCost =
     showTrendDelta &&
     peakPrimaryCostPerJoined != null &&
@@ -654,7 +657,7 @@ function PerformanceCell({
           <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
             {showTrendDelta ? (
               <span className="rounded border border-slate-700/80 bg-black/20 px-2 py-0.5 text-slate-200">
-                Peak {formatMetric(resolvedPeakJoined)}
+                Peak {formatMetric(resolvedPeakAttributed)}
               </span>
             ) : null}
             {resolvedDropPercent > 0 ? (

@@ -22,7 +22,7 @@ import {
   adCampaignsApi,
   adHypothesesApi,
   advertisingChannelsApi,
-  getTelegramChannelInviteLinks,
+  getTelegramChannelInviteLinksForSelect,
   getTelegramChannelPromos,
   iconsApi,
   promosApi,
@@ -2316,7 +2316,11 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
   }, [selectedAdChannels, selectedChannelId, setValue]);
 
   const { data: promos } = useQuery({ queryKey: ['channel-promos', selectedChannelId], queryFn: () => getTelegramChannelPromos(selectedChannelId), enabled: !!selectedChannelId });
-  const { data: inviteLinks } = useQuery({ queryKey: ['channel-invite-links', selectedChannelId], queryFn: () => getTelegramChannelInviteLinks(selectedChannelId), enabled: !!selectedChannelId });
+  const { data: inviteLinks } = useQuery({
+    queryKey: ['channel-invite-links-select', selectedChannelId],
+    queryFn: () => getTelegramChannelInviteLinksForSelect(selectedChannelId),
+    enabled: !!selectedChannelId,
+  });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
   const { data: people } = useQuery({ queryKey: ['advertising-people'], queryFn: advertisingChannelsApi.list });
 
@@ -2344,7 +2348,7 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     return mergeCampaignSelectOptions(liveOptions, initialOptions);
   }, [availablePromos, initial]);
   const inviteLinkOptions = useMemo(() => {
-    const liveOptions = (inviteLinks?.items || []).map((inviteLink: TelegramInviteLink) => ({
+    const liveOptions = (inviteLinks || []).map((inviteLink: TelegramInviteLink) => ({
       value: inviteLink.id,
       label: inviteLink.name,
       iconUrl:

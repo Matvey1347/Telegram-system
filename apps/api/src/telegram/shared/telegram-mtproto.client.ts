@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
 import { Api, TelegramClient } from 'telegram';
+import { returnBigInt } from 'telegram/Helpers';
 import { Logger as GramJsLogger, LogLevel } from 'telegram/extensions/Logger';
 import { HTMLParser } from 'telegram/extensions/html';
 import { normalizeTelegramChannelId } from './telegram-post-url';
@@ -95,6 +96,16 @@ export type TelegramInviteLinksResult = {
     revoked: boolean;
   }>;
   warnings: string[];
+};
+
+export type TelegramScheduledMessage = {
+  id: string;
+  text: string;
+  html: string;
+  date: string | null;
+  hasMedia: boolean;
+  mediaKind: string | null;
+  groupedId: string | null;
 };
 
 type InviteAdminSummary = TelegramInviteLinksResult['admins'][number];
@@ -2968,21 +2979,8 @@ export class TelegramMtprotoClient {
       const scheduled = Array.isArray((scheduledResult as any)?.messages)
         ? (scheduledResult as any).messages
         : [];
-      const serialize = (message: any, isScheduled: boolean) => ({
-        id: String(message.id),
-        text: String(message.message || ''),
-        html: HTMLParser.unparse(
-          String(message.message || ''),
-          message.entities || [],
-        ),
-        date: this.toTelegramDate(message.date)?.toISOString() ?? null,
-        isScheduled,
-        hasMedia: Boolean(message.media),
-        mediaKind: message.media?.className
-          ? String(message.media.className)
-          : null,
-        groupedId: message.groupedId != null ? String(message.groupedId) : null,
-      });
+      const serialize = (message: any, isScheduled: boolean) =>
+        this.serializeManagedPostMessage(message, isScheduled);
       return {
         published: (published as any[])
           .filter((message) => message?.id && message?.date)
@@ -2997,6 +2995,55 @@ export class TelegramMtprotoClient {
     } finally {
       await this.closeClient(client);
     }
+  }
+
+  async getScheduledHistory(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef?: string;
+    channel?: StoredTelegramChannelReference;
+  }): Promise<TelegramScheduledMessage[]> {
+    const client = await this.createClient(params);
+    try {
+      const resolved = params.channel
+        ? await this.resolveStoredChannel(client, params.channel)
+        : null;
+      const peer =
+        resolved?.peer || (await client.getInputEntity(params.channelRef as string));
+      const result = await client.invoke(
+        new Api.messages.GetScheduledHistory({
+          peer,
+          hash: returnBigInt(0),
+        }),
+      );
+      const messages = Array.isArray((result as any)?.messages)
+        ? (result as any).messages
+        : [];
+      return messages
+        .filter((message) => message?.id && message?.date)
+        .map((message) => this.serializeManagedPostMessage(message, true));
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
+  private serializeManagedPostMessage(message: any, isScheduled: boolean) {
+    return {
+      id: String(message.id),
+      text: String(message.message || ''),
+      html: HTMLParser.unparse(
+        String(message.message || ''),
+        message.entities || [],
+      ),
+      date: this.toTelegramDate(message.date)?.toISOString() ?? null,
+      isScheduled,
+      hasMedia: Boolean(message.media),
+      mediaKind: message.media?.className
+        ? String(message.media.className)
+        : null,
+      groupedId: message.groupedId != null ? String(message.groupedId) : null,
+    };
   }
 
   async getChannelPostsMetrics(params: {

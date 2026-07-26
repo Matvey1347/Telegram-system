@@ -4,5 +4,6 @@ export * from './constants/campaign-statuses';
 export * from './types/post-groups';
 export * from './types/operations';
 export * from './types/application-logs';
+export * from './types/telegram-managed-posts';
 export * from './telegram-spoilers';
 export * from './pagination';
