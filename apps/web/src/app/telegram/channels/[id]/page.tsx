@@ -20,6 +20,7 @@ import {
   CircleHelp,
   Database,
   Eye,
+  LoaderCircle,
   Pencil,
   RefreshCw,
   Smile,
@@ -362,6 +363,7 @@ export default function TelegramChannelAnalyticsPage() {
   const {
     data: postsData,
     isLoading: isPostsLoading,
+    isFetching: isPostsFetching,
     error: postsError,
   } = useQuery({
     queryKey: [
@@ -379,7 +381,11 @@ export default function TelegramChannelAnalyticsPage() {
       }),
     enabled: openSections.posts,
   });
-  const { data: inviteLinksData, isLoading: isInviteLinksLoading } = useQuery({
+  const {
+    data: inviteLinksData,
+    isLoading: isInviteLinksLoading,
+    isFetching: isInviteLinksFetching,
+  } = useQuery({
     queryKey: [
       "telegram-channel-invite-links",
       id,
@@ -395,7 +401,11 @@ export default function TelegramChannelAnalyticsPage() {
       }),
     enabled: openSections.inviteLinks,
   });
-  const { data: campaignsData, isLoading: isCampaignsLoading } = useQuery({
+  const {
+    data: campaignsData,
+    isLoading: isCampaignsLoading,
+    isFetching: isCampaignsFetching,
+  } = useQuery({
     queryKey: [
       "telegram-channel-campaigns",
       id,
@@ -1198,6 +1208,12 @@ export default function TelegramChannelAnalyticsPage() {
                     placeholder="Campaign, promo, source, hypothesis"
                   />
                 </FormField>
+                {isCampaignsFetching ? (
+                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-400">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Searching campaigns...
+                  </div>
+                ) : null}
               </div>
               {isCampaignsLoading ? <LoadingState /> : null}
               {!isCampaignsLoading && campaignRows.length ? (
@@ -1252,6 +1268,12 @@ export default function TelegramChannelAnalyticsPage() {
                     placeholder="Post text or message ID"
                   />
                 </FormField>
+                {isPostsFetching ? (
+                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-400">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Searching posts...
+                  </div>
+                ) : null}
               </div>
               {isPostsLoading ? <LoadingState /> : null}
               {postsError ? (
@@ -1330,6 +1352,12 @@ export default function TelegramChannelAnalyticsPage() {
                     placeholder="Invite link, URL, creator"
                   />
                 </FormField>
+                {isInviteLinksFetching ? (
+                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-400">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Searching invite links...
+                  </div>
+                ) : null}
               </div>
               {isInviteLinksLoading ? (
                 <LoadingState />
