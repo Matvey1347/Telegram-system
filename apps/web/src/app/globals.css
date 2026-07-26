@@ -111,6 +111,8 @@ button:disabled,
 
 .telegram-message-bubble {
   position: relative;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .telegram-message-bubble::before {
@@ -130,6 +132,14 @@ button:disabled,
   text-underline-offset: 2px;
 }
 
+.telegram-preview-text > :first-child {
+  margin-top: 0;
+}
+
+.telegram-preview-text > :last-child {
+  margin-bottom: 0;
+}
+
 .telegram-preview-text code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -142,7 +152,7 @@ button:disabled,
 
 .telegram-preview-text .tg-code-block {
   position: relative;
-  margin: 5px 0 2px;
+  margin: 3px 0 0;
   overflow-x: auto;
   border-left: 3px solid #6ab2e7;
   border-radius: 5px;
@@ -206,7 +216,7 @@ button:disabled,
 
 .telegram-preview-text .tg-native-pre {
   position: relative;
-  margin: 6px 0 2px;
+  margin: 3px 0 0;
   overflow-x: auto;
   border-left: 4px solid #83c6ff;
   border-radius: 10px;
@@ -275,13 +285,18 @@ button:disabled,
   padding-top: 10px;
 }
 
+.telegram-preview-text .tg-quote-gap {
+  display: block;
+  height: 0.72em;
+}
+
 .telegram-preview-text blockquote {
   position: relative;
-  margin: 6px 0 2px;
+  margin: 3px 0 0;
   border-left: 3px solid #4fae4e;
-  border-radius: 4px;
-  background: rgb(79 174 78 / 9%);
-  padding: 3px 28px 3px 9px;
+  border-radius: 5px;
+  background: rgb(79 174 78 / 10%);
+  padding: 4px 28px 4px 9px;
 }
 
 .telegram-preview-text blockquote:not(.expandable)::after {

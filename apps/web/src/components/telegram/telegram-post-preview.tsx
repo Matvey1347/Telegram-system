@@ -93,13 +93,34 @@ function previewHtml(raw: string) {
 
   const lines = value.split("\n");
   const rendered: string[] = [];
+  let textLines: string[] = [];
+  let pendingBreakBeforeQuote = false;
   let quoteType: "regular" | "expandable" | null = null;
   let quoteLines: string[] = [];
+  const flushText = () => {
+    if (!textLines.length) return;
+    const linesToRender = [...textLines];
+    let trailingEmptyLines = 0;
+    while (
+      linesToRender.length &&
+      linesToRender[linesToRender.length - 1]?.trim() === ""
+    ) {
+      linesToRender.pop();
+      trailingEmptyLines += 1;
+    }
+    if (linesToRender.length) {
+      rendered.push(linesToRender.join("<br>"));
+    }
+    pendingBreakBeforeQuote = trailingEmptyLines > 0;
+    textLines = [];
+  };
   const flush = () => {
     if (!quoteType) return;
+    flushText();
     rendered.push(
-      `<blockquote${quoteType === "expandable" ? ' class="expandable"' : ""}>${quoteLines.join("<br>")}</blockquote>`,
+      `${pendingBreakBeforeQuote ? '<span class="tg-quote-gap" aria-hidden="true"></span>' : ""}<blockquote${quoteType === "expandable" ? ' class="expandable"' : ""}>${quoteLines.join("<br>")}</blockquote>`,
     );
+    pendingBreakBeforeQuote = false;
     quoteType = null;
     quoteLines = [];
   };
@@ -109,7 +130,7 @@ function previewHtml(raw: string) {
     const nextType = expandable ? "expandable" : regular ? "regular" : null;
     if (!nextType) {
       flush();
-      rendered.push(line);
+      textLines.push(line);
       continue;
     }
     if (quoteType && quoteType !== nextType) flush();
@@ -117,8 +138,9 @@ function previewHtml(raw: string) {
     quoteLines.push((expandable || regular)?.[1] || "");
   }
   flush();
+  flushText();
   return rendered
-    .join("\n")
+    .join("")
     .replace(
       /\u0000(\d+)\u0000/g,
       (_match, index: string) => tokens[Number(index)] || "",
@@ -260,7 +282,13 @@ function TelegramMessageBubble({
     <div className="telegram-message-bubble overflow-hidden rounded-[18px] rounded-bl-[5px] bg-[#182533] shadow-md">
       {imageUrls.length ? <TelegramMediaGrid imageUrls={imageUrls} /> : null}
       {text.trim() ? (
-        <div className="px-3.5 pb-2.5 pt-3">
+        <div
+          className={
+            imageUrls.length
+              ? "px-4 pb-2.5 pt-2.5"
+              : "px-3.5 pb-2.5 pt-3"
+          }
+        >
           {formattedHtml ? (
             <div
               className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5]"
@@ -411,16 +439,16 @@ function TelegramMediaGrid({ imageUrls }: { imageUrls: string[] }) {
       {visible.map((url, index) => (
         <div
           key={`${url}-${index}`}
-          className={`relative overflow-hidden bg-black ${
+          className={`relative overflow-hidden bg-[#101b27] ${
             visible.length === 1
-              ? "aspect-[4/3]"
+              ? "aspect-[4/5]"
               : visible.length === 3 && index === 0
                 ? "row-span-2 aspect-auto min-h-56"
                 : "aspect-square"
           }`}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={url} alt="" className="h-full w-full object-contain" />
+          <img src={url} alt="" className="h-full w-full object-cover" />
           {index === 3 && imageUrls.length > 4 ? (
             <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-2xl font-semibold text-white">
               +{imageUrls.length - 4}

@@ -66,6 +66,10 @@ import {
   buildTelegramPostsUrl,
   type TelegramPostsRouteView,
 } from "@/lib/telegram-posts-url";
+import {
+  buildAutoGroupedPostTitle,
+  getNextGroupedPostNumber,
+} from "@/lib/telegram-post-title";
 import type {
   ManagedPostsSyncResult,
   ScheduleManagedPostsBatchItem,
@@ -621,6 +625,7 @@ function TelegramPostWorkspace({
   const [calendarBatchBusy, setCalendarBatchBusy] = useState(false);
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
+  const [titleManuallyEdited, setTitleManuallyEdited] = useState(false);
   const [assignedMemberId, setAssignedMemberId] = useState<string | null>(null);
   const [memberSelectionTouched, setMemberSelectionTouched] = useState(false);
   const [text, setText] = useState("");
@@ -828,6 +833,29 @@ function TelegramPostWorkspace({
     post.assignedMember ?? null;
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
+  const pendingGroupedPostCount = useMemo(() => {
+    const grouped = new Map<string, number>();
+    for (const pending of pendingPostSaves) {
+      if (!pending.groupId) continue;
+      grouped.set(pending.groupId, (grouped.get(pending.groupId) || 0) + 1);
+    }
+    return grouped;
+  }, [pendingPostSaves]);
+  const nextGroupedPostNumber = useMemo(
+    () =>
+      getNextGroupedPostNumber({
+        groupId: postGroupId,
+        posts: posts.data || [],
+        pendingGroupPostCount: postGroupId
+          ? (pendingGroupedPostCount.get(postGroupId) ?? 0)
+          : 0,
+      }),
+    [pendingGroupedPostCount, postGroupId, posts.data],
+  );
+  const autoGroupedPostTitle = useMemo(
+    () => buildAutoGroupedPostTitle(nextGroupedPostNumber),
+    [nextGroupedPostNumber],
+  );
   const liveEditingPost =
     editing && posts.data
       ? posts.data.find((post) => post.id === editing.id) || null
@@ -1700,10 +1728,18 @@ function TelegramPostWorkspace({
 
   const reset = () => {
     const now = localNowParts();
+    const nextGroupId = rememberedPostGroupId;
     changeWorkspaceView("posts");
     restoredPostIdRef.current = "";
     setEditing(null);
-    setTitle("");
+    setTitle(buildAutoGroupedPostTitle(getNextGroupedPostNumber({
+      groupId: nextGroupId,
+      posts: posts.data || [],
+      pendingGroupPostCount: nextGroupId
+        ? (pendingGroupedPostCount.get(nextGroupId) ?? 0)
+        : 0,
+    })));
+    setTitleManuallyEdited(false);
     setAssignedMemberId(null);
     setMemberSelectionTouched(false);
     setText("");
@@ -1712,7 +1748,7 @@ function TelegramPostWorkspace({
     iconRef.current = null;
     setIconPending(false);
     setIconPickerGeneration((current) => current + 1);
-    setPostGroupId(rememberedPostGroupId);
+    setPostGroupId(nextGroupId);
     setMode("draft");
     setScheduleDate(now.date);
     setScheduleTime(now.time);
@@ -1755,6 +1791,7 @@ function TelegramPostWorkspace({
     restoredPostIdRef.current = post.id;
     setEditing(post);
     setTitle(post.title);
+    setTitleManuallyEdited(true);
     setAssignedMemberId(effectivePostMemberId(post));
     setMemberSelectionTouched(false);
     setText(post.text || "");
@@ -2270,6 +2307,13 @@ function TelegramPostWorkspace({
     setPostGroupId(normalized);
     rememberPostGroup(normalized);
   };
+
+  useEffect(() => {
+    if (editing || titleManuallyEdited) return;
+    const nextAutoTitle = autoGroupedPostTitle;
+    if (title === nextAutoTitle) return;
+    setTitle(nextAutoTitle);
+  }, [autoGroupedPostTitle, editing, title, titleManuallyEdited]);
 
   return (
     <>
@@ -3032,7 +3076,10 @@ function TelegramPostWorkspace({
                 <Input
                   value={title}
                   disabled={busy}
-                  onChange={(event) => setTitle(event.target.value)}
+                  onChange={(event) => {
+                    setTitleManuallyEdited(true);
+                    setTitle(event.target.value);
+                  }}
                 />
               </FormField>
               <FormField label="Member">
