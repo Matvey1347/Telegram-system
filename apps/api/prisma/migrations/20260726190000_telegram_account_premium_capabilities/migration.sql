@@ -1,16 +1,16 @@
 ALTER TABLE "TelegramUserAccountIntegration"
-ADD COLUMN "isPremium" BOOLEAN NOT NULL DEFAULT false,
-ADD COLUMN "premiumCheckedAt" TIMESTAMP(3),
-ADD COLUMN "captionLengthMax" INTEGER NOT NULL DEFAULT 1024,
-ADD COLUMN "messageLengthMax" INTEGER NOT NULL DEFAULT 4096,
-ADD COLUMN "premiumCapabilities" JSONB;
+ADD COLUMN IF NOT EXISTS "isPremium" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "premiumCheckedAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "captionLengthMax" INTEGER NOT NULL DEFAULT 1024,
+ADD COLUMN IF NOT EXISTS "messageLengthMax" INTEGER NOT NULL DEFAULT 4096,
+ADD COLUMN IF NOT EXISTS "premiumCapabilities" JSONB;
 
 ALTER TABLE "TelegramManagedPost"
-ADD COLUMN "sourceWasPremium" BOOLEAN,
-ADD COLUMN "captionLengthMaxUsed" INTEGER,
-ADD COLUMN "messageLengthMaxUsed" INTEGER;
+ADD COLUMN IF NOT EXISTS "sourceWasPremium" BOOLEAN,
+ADD COLUMN IF NOT EXISTS "captionLengthMaxUsed" INTEGER,
+ADD COLUMN IF NOT EXISTS "messageLengthMaxUsed" INTEGER;
 
 ALTER TABLE "TelegramManagedPostRevision"
-ADD COLUMN "sourceWasPremium" BOOLEAN,
-ADD COLUMN "captionLengthMaxUsed" INTEGER,
-ADD COLUMN "messageLengthMaxUsed" INTEGER;
+ADD COLUMN IF NOT EXISTS "sourceWasPremium" BOOLEAN,
+ADD COLUMN IF NOT EXISTS "captionLengthMaxUsed" INTEGER,
+ADD COLUMN IF NOT EXISTS "messageLengthMaxUsed" INTEGER;

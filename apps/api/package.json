@@ -7,6 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "db:deploy:safe": "node scripts/prisma-recover-failed-migration.mjs && prisma migrate deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "prisma": "prisma",
     "start": "nest start",

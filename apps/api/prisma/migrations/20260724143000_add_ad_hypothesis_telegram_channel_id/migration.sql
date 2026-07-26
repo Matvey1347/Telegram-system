@@ -1,5 +1,5 @@
 ALTER TABLE "AdHypothesis"
-ADD COLUMN "telegramChannelId" TEXT;
+ADD COLUMN IF NOT EXISTS "telegramChannelId" TEXT;
 
 CREATE INDEX IF NOT EXISTS "AdHypothesis_telegramChannelId_idx"
 ON "AdHypothesis"("telegramChannelId");

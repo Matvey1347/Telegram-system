@@ -22,6 +22,7 @@
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
     "db:migrate": "pnpm --filter api exec prisma migrate dev",
+    "db:deploy:safe": "pnpm --filter api run db:deploy:safe",
     "db:generate": "pnpm --filter api exec prisma generate",
     "db:studio": "pnpm --filter api exec prisma studio",
     "db:seed": "pnpm --filter api exec prisma db seed",
