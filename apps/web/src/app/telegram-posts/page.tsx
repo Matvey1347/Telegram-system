@@ -2499,14 +2499,14 @@ function TelegramPostWorkspace({
                         key={dateKey}
                         type="button"
                         onClick={() => setSelectedCalendarDate(dateKey)}
-                        className={`min-h-[82px] border-b border-r border-neutral-800 px-2 py-1.5 text-left align-top transition sm:min-h-[128px] sm:px-2.5 sm:py-2 ${
+                        className={`min-h-[56px] border-b border-r border-neutral-800 px-2 py-1 text-left align-top transition sm:min-h-[72px] sm:px-2 sm:py-1.5 ${
                           isSelected
                             ? "bg-[#262626]"
                             : "bg-[#1f1f1f] hover:bg-[#252525]"
                         }`}
                       >
                         <div className="flex h-full flex-col">
-                          <div className="mb-1.5 flex items-start justify-between sm:mb-2">
+                          <div className="mb-1 flex items-start justify-between">
                             <span
                               className={`text-[1.3rem] font-semibold leading-none sm:text-[1.75rem] ${
                                 isCurrentMonth ? "text-white" : "text-neutral-600"

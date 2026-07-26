@@ -1,6 +1,6 @@
 'use client';
 
-import { PropsWithChildren } from 'react';
+import { PropsWithChildren, Suspense } from 'react';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { ClientErrorReporter } from './client-error-reporter';
 import { QueryProvider } from './query-provider';
@@ -11,13 +11,21 @@ export function AppProvider({ children }: PropsWithChildren) {
   return (
     <QueryProvider>
       <ToastProvider>
-        <TabIdentityProvider>
-          <ClientErrorReporter>
-            <ProtectedRoute>
-              {children}
-            </ProtectedRoute>
-          </ClientErrorReporter>
-        </TabIdentityProvider>
+        <Suspense
+          fallback={
+            <ClientErrorReporter>
+              <ProtectedRoute>{children}</ProtectedRoute>
+            </ClientErrorReporter>
+          }
+        >
+          <TabIdentityProvider>
+            <ClientErrorReporter>
+              <ProtectedRoute>
+                {children}
+              </ProtectedRoute>
+            </ClientErrorReporter>
+          </TabIdentityProvider>
+        </Suspense>
       </ToastProvider>
     </QueryProvider>
   );
