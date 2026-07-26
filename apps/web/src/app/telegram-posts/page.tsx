@@ -62,6 +62,10 @@ import {
   getCalendarSchedulablePosts,
   localTimeKey,
 } from "@/lib/telegram-calendar-scheduler";
+import {
+  buildTelegramPostsUrl,
+  type TelegramPostsRouteView,
+} from "@/lib/telegram-posts-url";
 import type {
   ManagedPostsSyncResult,
   ScheduleManagedPostsBatchItem,
@@ -89,7 +93,7 @@ import { useAppToast } from "@/providers/toast-provider";
 type PublishingMode = "draft" | "publish" | "schedule";
 type LongTextMode = "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 type PostStatusTab = "PUBLISHED" | "SCHEDULED" | "DRAFT";
-type PostViewMode = "editor" | "calendar";
+type PostViewMode = TelegramPostsRouteView;
 type InitialPostView = PostViewMode | null;
 type PendingPostSave = {
   id: string;
@@ -113,9 +117,6 @@ const postGroupPreferenceKey = (channelId: string) =>
   `telegram-posts-new-post-group:${channelId}`;
 const workspaceViewPreferenceKey = (channelId: string) =>
   `telegram-posts-workspace-view:${channelId}`;
-const postViewPreferenceKey = (channelId: string) =>
-  `telegram-posts-post-view:${channelId}`;
-
 function localNowParts() {
   const now = new Date();
   return localDateTimeParts(now);
@@ -144,6 +145,15 @@ function wantsNewTab(
   event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
 ) {
   return event.metaKey || event.ctrlKey;
+}
+
+function shouldIgnoreModifiedPostOpen(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest(
+      'button, input, select, textarea, [role="button"], [role="checkbox"], [role="combobox"]',
+    ),
+  );
 }
 
 function isBrokenPublishedPost(post: TelegramManagedPost) {
@@ -298,6 +308,7 @@ export default function TelegramPostsPage() {
     if (value === "editor") return "editor";
     return null;
   })();
+  const currentRoutePostView: PostViewMode = initialPostView || "editor";
   const channels = useQuery({
     queryKey: ["telegram-channels"],
     queryFn: () => telegramChannelsApi.list(),
@@ -413,6 +424,9 @@ export default function TelegramPostsPage() {
       if (!fallbackChannelId) return;
       params.set("channelId", fallbackChannelId);
       params.delete("postId");
+      if (!params.get("groupId")) {
+        params.set("postView", currentRoutePostView);
+      }
       router.replace(`${pathname}?${params.toString()}`);
       return;
     }
@@ -422,8 +436,23 @@ export default function TelegramPostsPage() {
       : availableChannels[0]?.id;
     if (!fallbackChannelId) return;
     params.set("channelId", fallbackChannelId);
+    if (!params.get("groupId")) {
+      params.set("postView", currentRoutePostView);
+    }
     router.replace(`${pathname}?${params.toString()}`);
-  }, [availableChannels, channelId, pathname, router, searchParams]);
+  }, [availableChannels, channelId, currentRoutePostView, pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (!channelId || groupId || initialPostView) return;
+    router.replace(
+      buildTelegramPostsUrl({
+        channelId,
+        postId: postId || null,
+        noteId: noteId || null,
+        postView: "editor",
+      }),
+    );
+  }, [channelId, groupId, initialPostView, noteId, postId, router]);
 
   const navigateToChannel = (nextChannelId: string) => {
     if (typeof window !== "undefined") {
@@ -432,24 +461,16 @@ export default function TelegramPostsPage() {
         nextChannelId,
       );
     }
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("channelId", nextChannelId);
-    params.delete("postId");
-    router.push(`${pathname}?${params.toString()}`);
+    router.push(
+      buildTelegramPostsUrl({
+        channelId: nextChannelId,
+        postView: groupId ? null : currentRoutePostView,
+      }),
+    );
   };
 
   return (
     <AppShell>
-      <PageTabHead
-        title={
-          channel
-            ? `${channel.title} · Telegram posts · Telegram System`
-            : "Telegram posts · Telegram System"
-        }
-        iconUrl={channel?.photoUrl || null}
-        emoji={initialPostView === "calendar" ? "🗓️" : "✈️"}
-        color={initialPostView === "calendar" ? "#7c2d12" : "#1d4ed8"}
-      />
       <PageHeader
         title="Telegram posts"
         subtitle="Create drafts, publish now, or schedule directly in Telegram"
@@ -486,7 +507,12 @@ export default function TelegramPostsPage() {
               <Button
                 className="shrink-0"
                 onClick={() => {
-                  router.replace(`/telegram-posts?channelId=${channel.id}`);
+                  router.replace(
+                    buildTelegramPostsUrl({
+                      channelId: channel.id,
+                      postView: "editor",
+                    }),
+                  );
                   setNewPostToken((value) => value + 1);
                 }}
               >
@@ -521,9 +547,11 @@ export default function TelegramPostsPage() {
             channels={availableChannels}
             onPostSelect={(selectedPostId) => {
               router.replace(
-                selectedPostId
-                  ? `/telegram-posts?channelId=${channel.id}&postId=${selectedPostId}`
-                  : `/telegram-posts?channelId=${channel.id}`,
+                buildTelegramPostsUrl({
+                  channelId: channel.id,
+                  postId: selectedPostId,
+                  postView: "editor",
+                }),
               );
             }}
           />
@@ -562,6 +590,7 @@ function TelegramPostWorkspace({
   channels: TelegramChannel[];
   onPostSelect: (postId: string | null) => void;
 }) {
+  const router = useRouter();
   const restoredPostIdRef = useRef("");
   const queryClient = useQueryClient();
   const { pushToast, setProgress, clearProgress } = useAppToast();
@@ -576,12 +605,7 @@ function TelegramPostWorkspace({
     },
   );
   const [postView, setPostView] = useState<PostViewMode>(() => {
-    if (typeof window === "undefined") return "editor";
-    if (initialPostView) return initialPostView;
-    return window.localStorage.getItem(postViewPreferenceKey(channelId)) ===
-      "calendar"
-      ? "calendar"
-      : "editor";
+    return initialPostView || "editor";
   });
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() =>
@@ -1092,8 +1116,11 @@ function TelegramPostWorkspace({
     [calendarPresetScheduleSlots],
   );
   const calendarSchedulablePosts = useMemo(
-    () => getCalendarSchedulablePosts(posts.data || []),
-    [posts.data],
+    () =>
+      getCalendarSchedulablePosts(posts.data || [], {
+        channelTelegramChatId,
+      }),
+    [channelTelegramChatId, posts.data],
   );
   const calendarFilteredSchedulablePosts = useMemo(() => {
     const search = calendarPostSearch.trim().toLocaleLowerCase();
@@ -1352,7 +1379,14 @@ function TelegramPostWorkspace({
 
   const changePostView = (next: PostViewMode) => {
     setPostView(next);
-    window.localStorage.setItem(postViewPreferenceKey(channelId), next);
+    router.replace(
+      buildTelegramPostsUrl({
+        channelId,
+        postId: editing?.id || initialPostId || null,
+        noteId: initialNoteId || null,
+        postView: next,
+      }),
+    );
   };
 
   const toggleCalendarBatchPostSelection = (postId: string) => {
@@ -1603,14 +1637,7 @@ function TelegramPostWorkspace({
   }, [channelId]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(postViewPreferenceKey(channelId));
-    setPostView(
-      initialPostView
-        ? initialPostView
-        : saved === "calendar"
-          ? "calendar"
-          : "editor",
-    );
+    setPostView(initialPostView || "editor");
     setCalendarMonth(startOfMonth(new Date()));
     setSelectedCalendarDate(toLocalDateKey(new Date()));
   }, [channelId, initialPostView]);
@@ -1936,7 +1963,11 @@ function TelegramPostWorkspace({
 
   const openPostInNewTab = (post: TelegramManagedPost) => {
     window.open(
-      `/telegram-posts?channelId=${channelId}&postId=${post.id}&postView=editor`,
+      buildTelegramPostsUrl({
+        channelId,
+        postId: post.id,
+        postView: "editor",
+      }),
       "_blank",
       "noopener,noreferrer",
     );
@@ -2247,8 +2278,8 @@ function TelegramPostWorkspace({
           workspaceView === "groups"
             ? "Groups"
             : postView === "calendar"
-              ? "Calendar Posts"
-              : "Editor Post"
+              ? "Calendar"
+              : "Posts"
         } · ${channelTitle} · Telegram System`}
         iconUrl={channelPhotoUrl || null}
         emoji={
@@ -2499,7 +2530,11 @@ function TelegramPostWorkspace({
                     onClick={(event) => {
                       if (wantsNewTab(event)) {
                         window.open(
-                          `/telegram-posts?channelId=${channelId}&postId=${item.id}&postView=editor`,
+                          buildTelegramPostsUrl({
+                            channelId,
+                            postId: item.id,
+                            postView: "editor",
+                          }),
                           "_blank",
                           "noopener,noreferrer",
                         );
@@ -2654,6 +2689,16 @@ function TelegramPostWorkspace({
                               return (
                                 <div
                                   key={post.id}
+                                  onClick={(event) => {
+                                    if (
+                                      !wantsNewTab(event) ||
+                                      shouldIgnoreModifiedPostOpen(event.target)
+                                    ) {
+                                      return;
+                                    }
+                                    event.preventDefault();
+                                    openPostInNewTab(post);
+                                  }}
                                   className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
                                     selected
                                       ? "border-blue-700 bg-blue-950/20"
@@ -2717,6 +2762,16 @@ function TelegramPostWorkspace({
                           return (
                             <div
                               key={post.id}
+                              onClick={(event) => {
+                                if (
+                                  !wantsNewTab(event) ||
+                                  shouldIgnoreModifiedPostOpen(event.target)
+                                ) {
+                                  return;
+                                }
+                                event.preventDefault();
+                                openPostInNewTab(post);
+                              }}
                               className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
                                 selected
                                   ? "border-blue-700 bg-blue-950/20"
@@ -5703,6 +5758,7 @@ function CalendarPostTimePicker({
           dropdownDirection="up"
           placeholder="Choose slot or custom time"
           searchable={false}
+          dropdownClassName="min-w-[280px] sm:min-w-[320px]"
           options={[
             ...availableCalendarScheduleSlots
               .filter((slot) => {

@@ -1028,7 +1028,7 @@ export default function TelegramChannelAnalyticsPage() {
   return (
     <AppShell>
       <PageTabHead
-        title={`Channel Analytics · ${
+        title={`Analytics · ${
           isInitialPageLoading
             ? "Telegram channel"
             : activeChannel?.title || "Telegram channel"

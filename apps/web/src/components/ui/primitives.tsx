@@ -814,6 +814,7 @@ export function CustomSelect({
   disabled = false,
   dropdownDirection = "down",
   searchable = true,
+  dropdownClassName = "",
 }: {
   value?: string;
   onChange: (value: string) => void;
@@ -822,6 +823,7 @@ export function CustomSelect({
   disabled?: boolean;
   dropdownDirection?: "up" | "down";
   searchable?: boolean;
+  dropdownClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -907,7 +909,7 @@ export function CustomSelect({
         <div
           className={`absolute z-50 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl ${
             dropdownDirection === "up" ? "bottom-full mb-1" : "mt-1"
-          }`}
+          } ${dropdownClassName}`.trim()}
         >
           {searchable ? (
             <div className="border-b border-neutral-800 p-2">

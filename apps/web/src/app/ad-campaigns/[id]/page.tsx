@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RotateCw } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
+import { PageTabHead } from '@/components/layout/page-tab-head';
 import { Button, Card, LoadingState, PageHeader } from '@/components/ui/primitives';
 import { TelegramEntityAvatar } from '@/components/telegram/telegram-entity-avatar';
 import { adCampaignsApi, currenciesApi } from '@/lib/api';
@@ -79,6 +80,11 @@ export default function AdCampaignDetailPage() {
 
   return (
     <AppShell>
+      {campaign ? (
+        <PageTabHead
+          title={`Campaign · ${displayCampaignTitle(campaign)} · Telegram System`}
+        />
+      ) : null}
       <PageHeader
         title={campaign ? displayCampaignTitle(campaign) : 'Ad Campaign'}
         subtitle={campaign?.telegramChannel?.title || 'Campaign analytics'}

@@ -126,12 +126,56 @@ export function mergeCalendarScheduleSlots(
   );
 }
 
-export function getCalendarSchedulablePosts(posts: TelegramManagedPost[]) {
+function getInternalLinkTargetIds(text?: string | null) {
+  if (!text) return [];
+  return [
+    ...new Set(
+      [...text.matchAll(/\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g)].map(
+        (match) => match[1],
+      ),
+    ),
+  ];
+}
+
+function isInternalLinkTargetReady(
+  post: TelegramManagedPost | undefined,
+  channelTelegramChatId?: string | null,
+) {
+  return Boolean(
+    post &&
+      post.status === "PUBLISHED" &&
+      post.telegramRemoteStatus === "PUBLISHED" &&
+      post.telegramMessageIds.length > 0 &&
+      channelTelegramChatId &&
+      !post.lastError,
+  );
+}
+
+export function getCalendarSchedulablePosts(
+  posts: TelegramManagedPost[],
+  params?: {
+    channelTelegramChatId?: string | null;
+  },
+) {
+  const postById = new Map(posts.map((post) => [post.id, post] as const));
+
   return [...posts]
     .filter(
-      (post) =>
+      (post) => {
+        const internalLinkTargetIds = getInternalLinkTargetIds(post.text);
+        const hasBlockingDependencies = internalLinkTargetIds.some((targetId) =>
+          !isInternalLinkTargetReady(
+            postById.get(targetId),
+            params?.channelTelegramChatId,
+          ),
+        );
+
+        return (
         post.origin !== "TELEGRAM" &&
-        (post.status === "DRAFT" || post.status === "FAILED"),
+        (post.status === "DRAFT" || post.status === "FAILED") &&
+        !hasBlockingDependencies
+        );
+      },
     )
     .sort(
       (left, right) =>

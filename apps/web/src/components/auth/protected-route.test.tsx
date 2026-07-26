@@ -21,10 +21,12 @@ const { usePathname } = await import("next/navigation");
 describe("ProtectedRoute", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState({}, "", "/");
   });
 
   it("renders the registration page without redirecting guests to login", async () => {
     vi.mocked(usePathname).mockReturnValue("/register");
+    window.history.replaceState({}, "", "/register");
     useAuthMock.mockReturnValue({
       token: null,
       isTokenReady: true,
@@ -48,6 +50,7 @@ describe("ProtectedRoute", () => {
 
   it("redirects guests from protected pages to login", async () => {
     vi.mocked(usePathname).mockReturnValue("/settings");
+    window.history.replaceState({}, "", "/settings");
     useAuthMock.mockReturnValue({
       token: null,
       isTokenReady: true,

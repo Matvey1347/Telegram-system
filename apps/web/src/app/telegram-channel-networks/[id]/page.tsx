@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
+import { PageTabHead } from "@/components/layout/page-tab-head";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import {
   Button,
@@ -108,6 +109,9 @@ export default function TelegramChannelNetworkDetailPage() {
 
   return (
     <AppShell>
+      {network ? (
+        <PageTabHead title={`Network · ${network.name} · Telegram System`} />
+      ) : null}
       <PageHeader
         title={network?.name || "Telegram Channel Network"}
         subtitle={network?.description || "Network analytics"}

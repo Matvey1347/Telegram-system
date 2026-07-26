@@ -70,6 +70,41 @@ describe("telegram-calendar-scheduler", () => {
     ]);
   });
 
+  it("filters out posts whose internal tg-post dependencies are not published and synced", () => {
+    const posts: TelegramManagedPost[] = [
+      makePost({
+        id: "blocked-draft",
+        status: "DRAFT",
+        origin: "SYSTEM",
+        text: "[Go](tg-post:dependency-draft)",
+      }),
+      makePost({
+        id: "ready-draft",
+        status: "DRAFT",
+        origin: "SYSTEM",
+        text: "[Go](tg-post:dependency-published)",
+      }),
+      makePost({
+        id: "dependency-draft",
+        status: "DRAFT",
+        origin: "SYSTEM",
+      }),
+      makePost({
+        id: "dependency-published",
+        status: "PUBLISHED",
+        origin: "SYSTEM",
+        telegramRemoteStatus: "PUBLISHED",
+        telegramMessageIds: ["101"],
+      }),
+    ];
+
+    expect(
+      getCalendarSchedulablePosts(posts, {
+        channelTelegramChatId: "-1001234567890",
+      }).map((post) => post.id),
+    ).toEqual(["ready-draft", "dependency-draft"]);
+  });
+
   it("builds assignments in selection order and reports overflow when slots run out", () => {
     const posts: TelegramManagedPost[] = [
       makePost({ id: "post-1" }),
