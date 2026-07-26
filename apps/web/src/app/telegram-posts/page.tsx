@@ -2470,16 +2470,16 @@ function TelegramPostWorkspace({
                         key={dateKey}
                         type="button"
                         onClick={() => setSelectedCalendarDate(dateKey)}
-                        className={`min-h-[96px] border-b border-r border-neutral-800 px-2 py-2 text-left align-top transition sm:min-h-[172px] sm:px-3 sm:py-3 ${
+                        className={`min-h-[82px] border-b border-r border-neutral-800 px-2 py-1.5 text-left align-top transition sm:min-h-[128px] sm:px-2.5 sm:py-2 ${
                           isSelected
                             ? "bg-[#262626]"
                             : "bg-[#1f1f1f] hover:bg-[#252525]"
                         }`}
                       >
                         <div className="flex h-full flex-col">
-                          <div className="mb-2 flex items-start justify-between sm:mb-3">
+                          <div className="mb-1.5 flex items-start justify-between sm:mb-2">
                             <span
-                              className={`text-[1.45rem] font-semibold leading-none sm:text-[2.05rem] ${
+                              className={`text-[1.3rem] font-semibold leading-none sm:text-[1.75rem] ${
                                 isCurrentMonth ? "text-white" : "text-neutral-600"
                               }`}
                             >
@@ -2491,14 +2491,14 @@ function TelegramPostWorkspace({
                               </span>
                             ) : null}
                           </div>
-                          <div className="mt-1 space-y-1.5 sm:space-y-2">
+                          <div className="mt-0.5 space-y-1 sm:space-y-1.5">
                             {scheduledCount ? (
-                              <div className="text-[11px] font-medium text-amber-300">
+                              <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
                                 Scheduled {scheduledCount}
                               </div>
                             ) : null}
                             {publishedCount ? (
-                              <div className="text-[11px] font-medium text-emerald-300">
+                              <div className="text-[10px] font-medium text-emerald-300 sm:text-[11px]">
                                 Published {publishedCount}
                               </div>
                             ) : null}
