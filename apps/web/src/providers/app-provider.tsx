@@ -1,6 +1,7 @@
 'use client';
 
 import { PropsWithChildren } from 'react';
+import { PageTabHead } from '@/components/layout/page-tab-head';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { ClientErrorReporter } from './client-error-reporter';
 import { QueryProvider } from './query-provider';
@@ -11,7 +12,10 @@ export function AppProvider({ children }: PropsWithChildren) {
     <QueryProvider>
       <ToastProvider>
         <ClientErrorReporter>
-          <ProtectedRoute>{children}</ProtectedRoute>
+          <ProtectedRoute>
+            <PageTabHead />
+            {children}
+          </ProtectedRoute>
         </ClientErrorReporter>
       </ToastProvider>
     </QueryProvider>

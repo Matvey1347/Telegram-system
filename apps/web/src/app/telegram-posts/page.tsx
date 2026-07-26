@@ -37,6 +37,7 @@ import {
 import { IconAvatar } from "@/components/icons/icon-avatar";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { AppShell } from "@/components/layout/app-shell";
+import { PageTabHead } from "@/components/layout/page-tab-head";
 import { TelegramImageUpload } from "@/components/telegram/telegram-image-upload";
 import { TelegramTextEditor } from "@/components/telegram/telegram-text-editor";
 import { TelegramPostPreview } from "@/components/telegram/telegram-post-preview";
@@ -439,6 +440,16 @@ export default function TelegramPostsPage() {
 
   return (
     <AppShell>
+      <PageTabHead
+        title={
+          channel
+            ? `${channel.title} · Telegram posts · Telegram System`
+            : "Telegram posts · Telegram System"
+        }
+        iconUrl={channel?.photoUrl || null}
+        emoji={initialPostView === "calendar" ? "🗓️" : "✈️"}
+        color={initialPostView === "calendar" ? "#7c2d12" : "#1d4ed8"}
+      />
       <PageHeader
         title="Telegram posts"
         subtitle="Create drafts, publish now, or schedule directly in Telegram"
@@ -2231,6 +2242,30 @@ function TelegramPostWorkspace({
 
   return (
     <>
+      <PageTabHead
+        title={`${
+          workspaceView === "groups"
+            ? "Groups"
+            : postView === "calendar"
+              ? "Calendar Posts"
+              : "Editor Post"
+        } · ${channelTitle} · Telegram System`}
+        iconUrl={channelPhotoUrl || null}
+        emoji={
+          workspaceView === "groups"
+            ? "🗂️"
+            : postView === "calendar"
+              ? "🗓️"
+              : "✈️"
+        }
+        color={
+          workspaceView === "groups"
+            ? "#475569"
+            : postView === "calendar"
+              ? "#7c2d12"
+              : "#1d4ed8"
+        }
+      />
       <div className="mb-4 flex min-w-0 flex-wrap items-center gap-3">
         <div className="inline-flex shrink-0 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
           <button

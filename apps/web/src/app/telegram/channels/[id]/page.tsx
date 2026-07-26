@@ -38,6 +38,7 @@ import {
 } from "recharts";
 import { AdCampaignsTable } from "@/components/ad-campaigns/campaigns-table";
 import { AppShell } from "@/components/layout/app-shell";
+import { PageTabHead } from "@/components/layout/page-tab-head";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { ChannelPreview } from "@/components/telegram/channel-preview";
 import { ChannelAccessBadge, telegramChannelAccessLabel } from "@/components/telegram/channel-access-badge";
@@ -1026,6 +1027,16 @@ export default function TelegramChannelAnalyticsPage() {
 
   return (
     <AppShell>
+      <PageTabHead
+        title={`Channel Analytics · ${
+          isInitialPageLoading
+            ? "Telegram channel"
+            : activeChannel?.title || "Telegram channel"
+        } · Telegram System`}
+        iconUrl={activeChannel?.photoUrl || null}
+        emoji="📊"
+        color="#0f766e"
+      />
       <PageHeader
         title={
           isInitialPageLoading
