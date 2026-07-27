@@ -5,6 +5,7 @@ import {
   PropsWithChildren,
   isValidElement,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -828,6 +829,11 @@ export function CustomSelect({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties | null>(
+    null,
+  );
   const selected = options.find((o) => o.value === value);
   const filteredOptions = searchable
     ? options.filter((option) =>
@@ -852,7 +858,10 @@ export function CustomSelect({
     const onDocPointerDown = (event: PointerEvent) => {
       if (!rootRef.current) return;
       const target = event.target as Node;
-      if (!rootRef.current.contains(target)) {
+      if (
+        !rootRef.current.contains(target) &&
+        !dropdownRef.current?.contains(target)
+      ) {
         setOpen(false);
         setSearch("");
       }
@@ -861,6 +870,48 @@ export function CustomSelect({
     return () =>
       document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const updateDropdownStyle = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const gap = 4;
+      const viewportPadding = 8;
+      const maxWidth = window.innerWidth - viewportPadding * 2;
+      const width = Math.min(rect.width, maxWidth);
+      const left = Math.min(
+        Math.max(rect.left, viewportPadding),
+        window.innerWidth - width - viewportPadding,
+      );
+
+      setDropdownStyle(
+        dropdownDirection === "up"
+          ? {
+              position: "fixed",
+              left,
+              bottom: Math.max(window.innerHeight - rect.top + gap, gap),
+              width,
+            }
+          : {
+              position: "fixed",
+              left,
+              top: Math.min(rect.bottom + gap, window.innerHeight - gap),
+              width,
+            },
+      );
+    };
+
+    updateDropdownStyle();
+    window.addEventListener("resize", updateDropdownStyle);
+    window.addEventListener("scroll", updateDropdownStyle, true);
+    return () => {
+      window.removeEventListener("resize", updateDropdownStyle);
+      window.removeEventListener("scroll", updateDropdownStyle, true);
+    };
+  }, [dropdownDirection, open]);
 
   const toneClass = (tone?: SelectOption["tone"]) =>
     tone === "success"
@@ -876,6 +927,7 @@ export function CustomSelect({
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => {
@@ -905,72 +957,75 @@ export function CustomSelect({
           className={`text-neutral-400 transition-transform ${dropdownDirection === "up" && open ? "rotate-180" : ""}`}
         />
       </button>
-      {open ? (
-        <div
-          className={`absolute z-50 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl ${
-            dropdownDirection === "up" ? "bottom-full mb-1" : "mt-1"
-          } ${dropdownClassName}`.trim()}
-        >
-          {searchable ? (
-            <div className="border-b border-neutral-800 p-2">
-              <input
-                autoFocus
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setOpen(false);
-                    setSearch("");
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    pickFirstFilteredOption();
-                  }
-                }}
-                placeholder="Search..."
-                className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
-              />
-            </div>
-          ) : null}
-          <div className="max-h-60 overflow-auto">
-            {filteredOptions.map((opt) => {
-              const isSelected = opt.value === value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                    setSearch("");
-                  }}
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-neutral-800"
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <OptionIcon
-                      iconUrl={opt.iconUrl}
-                      iconEmoji={opt.iconEmoji}
-                      fallback={opt.iconFallback}
-                    />
-                    <span className={`truncate ${toneClass(opt.tone)}`}>
-                      {opt.label}
-                    </span>
-                  </span>
-                  {isSelected ? (
-                    <Check size={14} className="text-blue-300" />
-                  ) : null}
-                </button>
-              );
-            })}
-            {!filteredOptions.length ? (
-              <p className="px-3 py-3 text-center text-sm text-neutral-500">
-                No options found
-              </p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {open && dropdownStyle
+        ? createPortal(
+            <div
+              ref={dropdownRef}
+              className={`z-[120] overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl ${dropdownClassName}`.trim()}
+              style={dropdownStyle}
+            >
+              {searchable ? (
+                <div className="border-b border-neutral-800 p-2">
+                  <input
+                    autoFocus
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setOpen(false);
+                        setSearch("");
+                        return;
+                      }
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        pickFirstFilteredOption();
+                      }
+                    }}
+                    placeholder="Search..."
+                    className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
+                  />
+                </div>
+              ) : null}
+              <div className="max-h-60 overflow-auto">
+                {filteredOptions.map((opt) => {
+                  const isSelected = opt.value === value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        onChange(opt.value);
+                        setOpen(false);
+                        setSearch("");
+                      }}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-neutral-800"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <OptionIcon
+                          iconUrl={opt.iconUrl}
+                          iconEmoji={opt.iconEmoji}
+                          fallback={opt.iconFallback}
+                        />
+                        <span className={`truncate ${toneClass(opt.tone)}`}>
+                          {opt.label}
+                        </span>
+                      </span>
+                      {isSelected ? (
+                        <Check size={14} className="text-blue-300" />
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {!filteredOptions.length ? (
+                  <p className="px-3 py-3 text-center text-sm text-neutral-500">
+                    No options found
+                  </p>
+                ) : null}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

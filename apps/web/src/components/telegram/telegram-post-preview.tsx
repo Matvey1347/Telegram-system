@@ -1,7 +1,29 @@
 "use client";
 
+import {
+  Bold,
+  Code,
+  Italic,
+  Quote,
+  Strikethrough,
+  Underline,
+} from "lucide-react";
+import {
+  type FormEvent,
+  type MouseEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { ChevronRight, Eye, MessageCircle } from "lucide-react";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
+import {
+  editorHtmlToTelegramMarkup,
+  telegramMarkupToEditorHtml,
+} from "./telegram-text-editor-format";
 
 type TelegramPostPreviewProps = {
   channelTitle: string;
@@ -9,6 +31,9 @@ type TelegramPostPreviewProps = {
   text: string;
   formattedHtml?: string | null;
   imageUrls: string[];
+  onTextChange?: ((value: string) => void) | null;
+  onUndo?: (() => void) | null;
+  onRedo?: (() => void) | null;
   longTextMode?: "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
   captionLengthMax?: number;
   messageLengthMax?: number;
@@ -186,6 +211,9 @@ export function TelegramPostPreview({
   text,
   formattedHtml,
   imageUrls,
+  onTextChange,
+  onUndo,
+  onRedo,
   longTextMode = "IMAGES_THEN_TEXT",
   captionLengthMax = 1024,
   messageLengthMax = 4096,
@@ -225,6 +253,7 @@ export function TelegramPostPreview({
             text: part,
             imageUrls: [],
           }));
+  const previewEditable = Boolean(onTextChange && !formattedHtml && messages.length === 1);
 
   return (
     <aside className="min-w-0">
@@ -254,6 +283,10 @@ export function TelegramPostPreview({
                   formattedHtml={index === 0 ? formattedHtml : null}
                   imageUrls={message.imageUrls}
                   time={time}
+                  editable={previewEditable && index === 0}
+                  onTextChange={previewEditable && index === 0 ? onTextChange || undefined : undefined}
+                  onUndo={previewEditable && index === 0 ? onUndo || undefined : undefined}
+                  onRedo={previewEditable && index === 0 ? onRedo || undefined : undefined}
                 />
               ))}
             </div>
@@ -273,11 +306,19 @@ function TelegramMessageBubble({
   formattedHtml,
   imageUrls,
   time,
+  editable = false,
+  onTextChange,
+  onUndo,
+  onRedo,
 }: {
   text: string;
   formattedHtml?: string | null;
   imageUrls: string[];
   time: string;
+  editable?: boolean;
+  onTextChange?: (value: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   return (
     <div className="telegram-message-bubble overflow-hidden rounded-[18px] rounded-bl-[5px] bg-[#182533] shadow-md">
@@ -297,6 +338,13 @@ function TelegramMessageBubble({
                 __html: normalizeTelegramFormattedHtml(formattedHtml),
               }}
               onClick={handlePreviewContentClick}
+            />
+          ) : editable && onTextChange ? (
+            <EditableTelegramPreviewText
+              value={text}
+              onChange={onTextChange}
+              onUndo={onUndo}
+              onRedo={onRedo}
             />
           ) : (
             <div
@@ -323,6 +371,364 @@ function TelegramMessageBubble({
   );
 }
 
+function EditableTelegramPreviewText({
+  value,
+  onChange,
+  onUndo,
+  onRedo,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const savedRangeRef = useRef<Range | null>(null);
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const lastMarkupRef = useRef(value);
+  const pendingExternalHistorySelectionResetRef = useRef(false);
+  const [toolbar, setToolbar] = useState<{ top: number; left: number } | null>(null);
+  const usesExternalHistory = Boolean(onUndo && onRedo);
+
+  const isSelectionInsidePreview = useCallback(() => {
+    const element = contentRef.current;
+    const selection = window.getSelection();
+    if (!element || !selection || !selection.rangeCount) return false;
+    return element.contains(selection.getRangeAt(0).commonAncestorContainer);
+  }, []);
+
+  useEffect(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    const nextHtml = telegramMarkupToEditorHtml(value);
+    if (lastMarkupRef.current === value && element.innerHTML === nextHtml) return;
+    element.innerHTML = nextHtml;
+    lastMarkupRef.current = value;
+    if (pendingExternalHistorySelectionResetRef.current) {
+      pendingExternalHistorySelectionResetRef.current = false;
+      window.setTimeout(() => {
+        collapseSelectionToPreviewEnd();
+        setToolbar(null);
+      }, 0);
+    }
+  }, [value]);
+
+  const applyMarkup = useCallback(
+    (nextValue: string, options?: { recordHistory?: boolean; clearRedo?: boolean }) => {
+      if (nextValue === lastMarkupRef.current) return;
+      if (options?.recordHistory !== false) {
+        undoStackRef.current.push(lastMarkupRef.current);
+      }
+      if (options?.clearRedo !== false) {
+        redoStackRef.current = [];
+      }
+      lastMarkupRef.current = nextValue;
+      onChange(nextValue);
+    },
+    [onChange],
+  );
+
+  const emitChange = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    const nextValue = editorHtmlToTelegramMarkup(element.innerHTML);
+    if (usesExternalHistory) {
+      if (nextValue === lastMarkupRef.current) return;
+      lastMarkupRef.current = nextValue;
+      onChange(nextValue);
+      return;
+    }
+    applyMarkup(nextValue);
+  }, [applyMarkup, onChange, usesExternalHistory]);
+
+  const refreshToolbar = useCallback(() => {
+    const selection = window.getSelection();
+    const element = contentRef.current;
+    if (!selection || !selection.rangeCount || !element) {
+      setToolbar(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (selection.isCollapsed || !element.contains(range.commonAncestorContainer)) {
+      setToolbar(null);
+      return;
+    }
+    savedRangeRef.current = range.cloneRange();
+    const rect = range.getBoundingClientRect();
+    setToolbar({
+      top: Math.max(rect.top - 44, 12),
+      left: rect.left + rect.width / 2,
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      refreshToolbar();
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [refreshToolbar]);
+
+  const restoreSelection = useCallback(() => {
+    const selection = window.getSelection();
+    const range = savedRangeRef.current;
+    if (!selection || !range) return null;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return range;
+  }, []);
+
+  const collapseSelectionToPreviewEnd = useCallback(() => {
+    const element = contentRef.current;
+    const selection = window.getSelection();
+    if (!element || !selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+    element.focus();
+  }, []);
+
+  const restoreMarkupInDom = useCallback((nextValue: string) => {
+    const element = contentRef.current;
+    if (!element) return;
+    element.innerHTML = telegramMarkupToEditorHtml(nextValue);
+    collapseSelectionToPreviewEnd();
+  }, [collapseSelectionToPreviewEnd]);
+
+  const undo = useCallback(() => {
+    if (usesExternalHistory) {
+      pendingExternalHistorySelectionResetRef.current = true;
+      onUndo?.();
+      setToolbar(null);
+      return;
+    }
+    const previous = undoStackRef.current.pop();
+    if (previous == null) {
+      onUndo?.();
+      collapseSelectionToPreviewEnd();
+      setToolbar(null);
+      return;
+    }
+    redoStackRef.current.push(lastMarkupRef.current);
+    lastMarkupRef.current = previous;
+    restoreMarkupInDom(previous);
+    onChange(previous);
+    setToolbar(null);
+  }, [collapseSelectionToPreviewEnd, onChange, onUndo, restoreMarkupInDom, usesExternalHistory]);
+
+  const redo = useCallback(() => {
+    if (usesExternalHistory) {
+      pendingExternalHistorySelectionResetRef.current = true;
+      onRedo?.();
+      setToolbar(null);
+      return;
+    }
+    const next = redoStackRef.current.pop();
+    if (next == null) {
+      onRedo?.();
+      collapseSelectionToPreviewEnd();
+      setToolbar(null);
+      return;
+    }
+    undoStackRef.current.push(lastMarkupRef.current);
+    lastMarkupRef.current = next;
+    restoreMarkupInDom(next);
+    onChange(next);
+    setToolbar(null);
+  }, [collapseSelectionToPreviewEnd, onChange, onRedo, restoreMarkupInDom, usesExternalHistory]);
+
+  useEffect(() => {
+    const handleDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (!isSelectionInsidePreview() && document.activeElement !== contentRef.current) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        return;
+      }
+      if (key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    };
+
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, true);
+    };
+  }, [isSelectionInsidePreview, redo, undo]);
+
+  const wrapSelection = useCallback(
+    (tag: "strong" | "em" | "u" | "s" | "code" | "blockquote") => {
+      const range = restoreSelection();
+      if (!range) return;
+      const selectedText = range.toString();
+      if (!selectedText.trim()) return;
+
+      const wrapper = document.createElement(tag);
+      if (tag === "blockquote") {
+        wrapper.textContent = selectedText;
+      } else {
+        wrapper.textContent = selectedText;
+      }
+
+      range.deleteContents();
+      range.insertNode(wrapper);
+
+      const selection = window.getSelection();
+      if (selection) {
+        const nextRange = document.createRange();
+        nextRange.selectNodeContents(wrapper);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
+      }
+      emitChange();
+      refreshToolbar();
+    },
+    [emitChange, refreshToolbar, restoreSelection],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        return;
+      }
+      if (key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    },
+    [redo, undo],
+  );
+
+  const handleBeforeInput = useCallback(
+    (event: FormEvent<HTMLDivElement>) => {
+      const nativeEvent = event.nativeEvent as InputEvent;
+      if (nativeEvent.inputType === "historyUndo") {
+        event.preventDefault();
+        undo();
+        return;
+      }
+      if (nativeEvent.inputType === "historyRedo") {
+        event.preventDefault();
+        redo();
+      }
+    },
+    [redo, undo],
+  );
+
+  return (
+    <>
+      {toolbar && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed z-[320] flex -translate-x-1/2 items-center gap-0.5 rounded-xl border border-[#324557] bg-[#0e1621]/95 p-1 shadow-2xl backdrop-blur"
+              style={{ top: toolbar.top, left: toolbar.left }}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <PreviewFormatButton
+                label="Bold"
+                icon={Bold}
+                onClick={() => wrapSelection("strong")}
+              />
+              <PreviewFormatButton
+                label="Italic"
+                icon={Italic}
+                onClick={() => wrapSelection("em")}
+              />
+              <PreviewFormatButton
+                label="Underline"
+                icon={Underline}
+                onClick={() => wrapSelection("u")}
+              />
+              <PreviewFormatButton
+                label="Strikethrough"
+                icon={Strikethrough}
+                onClick={() => wrapSelection("s")}
+              />
+              <PreviewFormatButton
+                label="Code"
+                icon={Code}
+                onClick={() => wrapSelection("code")}
+              />
+              <PreviewFormatButton
+                label="Quote"
+                icon={Quote}
+                onClick={() => wrapSelection("blockquote")}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
+      <div
+        ref={contentRef}
+        contentEditable
+        tabIndex={0}
+        suppressContentEditableWarning
+        className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5] outline-none"
+        onClick={handlePreviewContentClick}
+        onBeforeInput={handleBeforeInput}
+        onInput={emitChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => {
+          window.setTimeout(() => refreshToolbar(), 0);
+        }}
+        onBlur={() => {
+          emitChange();
+          window.setTimeout(() => refreshToolbar(), 0);
+        }}
+        onMouseUp={() => {
+          window.setTimeout(() => refreshToolbar(), 0);
+        }}
+      />
+    </>
+  );
+}
+
+function PreviewFormatButton({
+  label,
+  icon: Icon,
+  onClick,
+}: {
+  label: string;
+  icon: typeof Bold;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#9fb0c0] transition hover:bg-[#1d3144] hover:text-white"
+    >
+      <Icon size={15} />
+    </button>
+  );
+}
+
 function MessageMeta({ time }: { time: string }) {
   return (
     <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-[#9fb0c0]">
@@ -333,7 +739,7 @@ function MessageMeta({ time }: { time: string }) {
   );
 }
 
-function handlePreviewContentClick(event: React.MouseEvent<HTMLDivElement>) {
+function handlePreviewContentClick(event: MouseEvent<HTMLDivElement>) {
   const target = event.target as HTMLElement;
   const copyButton = target.closest("[data-copy-code]");
   if (copyButton) {

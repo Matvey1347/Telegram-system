@@ -12,7 +12,15 @@ import {
   Underline,
   X,
 } from "lucide-react";
-import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   telegramChannelsApi,
@@ -34,6 +42,12 @@ type TelegramTextEditorProps = {
   highlightInternalLinkTargetId?: string | null;
   highlightRequestKey?: number;
   availableInternalPosts?: TelegramManagedPost[];
+};
+
+export type TelegramTextEditorHandle = {
+  undo: () => void;
+  redo: () => void;
+  commitExternalChange: (nextValue: string) => void;
 };
 
 type WrapAction = {
@@ -95,7 +109,7 @@ const actions: WrapAction[] = [
   },
 ];
 
-export function TelegramTextEditor({
+export const TelegramTextEditor = forwardRef<TelegramTextEditorHandle, TelegramTextEditorProps>(function TelegramTextEditor({
   value,
   onChange,
   disabled,
@@ -108,7 +122,7 @@ export function TelegramTextEditor({
   highlightInternalLinkTargetId,
   highlightRequestKey = 0,
   availableInternalPosts,
-}: TelegramTextEditorProps) {
+}, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightedSelectionRef = useRef<{
     start: number;
@@ -314,6 +328,27 @@ export function TelegramTextEditor({
     onChange(next.value);
     restoreSelection(next.selectionStart, next.selectionEnd);
   };
+
+  const commitExternalChange = useCallback(
+    (nextValue: string) => {
+      if (nextValue === value) return;
+      undoStackRef.current.push(currentSnapshot());
+      redoStackRef.current = [];
+      lastKnownValueRef.current = nextValue;
+      onChange(nextValue);
+    },
+    [onChange, value],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      undo,
+      redo,
+      commitExternalChange,
+    }),
+    [commitExternalChange, redo, undo],
+  );
 
   const replaceSelection = (
     before: string,
@@ -648,7 +683,7 @@ export function TelegramTextEditor({
       </div>
     </div>
   );
-}
+});
 
 function EditorButton({
   label,

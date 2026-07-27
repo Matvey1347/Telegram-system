@@ -39,7 +39,10 @@ import { IconPicker } from "@/components/icons/icon-picker";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
 import { TelegramImageUpload } from "@/components/telegram/telegram-image-upload";
-import { TelegramTextEditor } from "@/components/telegram/telegram-text-editor";
+import {
+  TelegramTextEditor,
+  type TelegramTextEditorHandle,
+} from "@/components/telegram/telegram-text-editor";
 import { TelegramPostPreview } from "@/components/telegram/telegram-post-preview";
 import { MemberBadge } from "@/components/workspace/member-badge";
 import { MemberSelect } from "@/components/workspace/member-select";
@@ -630,6 +633,7 @@ function TelegramPostWorkspace({
   const [assignedMemberId, setAssignedMemberId] = useState<string | null>(null);
   const [memberSelectionTouched, setMemberSelectionTouched] = useState(false);
   const [text, setText] = useState("");
+  const textEditorRef = useRef<TelegramTextEditorHandle | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [icon, setIcon] = useState<string | null>(null);
   const iconRef = useRef<string | null>(null);
@@ -2939,6 +2943,15 @@ function TelegramPostWorkspace({
             channelPhotoUrl={channelPhotoUrl}
             text={text}
             imageUrls={imageUrls}
+            onTextChange={(nextValue) => {
+              if (textEditorRef.current) {
+                textEditorRef.current.commitExternalChange(nextValue);
+                return;
+              }
+              setText(nextValue);
+            }}
+            onUndo={() => textEditorRef.current?.undo()}
+            onRedo={() => textEditorRef.current?.redo()}
             longTextMode={longTextMode}
             captionLengthMax={effectiveCaptionLengthMax}
             messageLengthMax={effectiveMessageLengthMax}
@@ -3081,6 +3094,7 @@ function TelegramPostWorkspace({
             </div>
             <FormField label="Telegram text">
               <TelegramTextEditor
+                ref={textEditorRef}
                 value={text}
                 onChange={setText}
                 disabled={busy}
