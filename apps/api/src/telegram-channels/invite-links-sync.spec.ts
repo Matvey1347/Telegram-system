@@ -255,6 +255,95 @@ describe('TelegramChannelsService invite link sync', () => {
     );
   });
 
+  it('auto-attaches an imported invite link to the only campaign matching the same Warsaw placement date', async () => {
+    prisma.adCampaign.findMany.mockResolvedValue([
+      {
+        id: 'campaign-27-07',
+        title: '2026-07-27//200 members',
+        placementDate: new Date('2026-07-26T22:00:00.000Z'),
+        startedAt: null,
+        createdAt: new Date('2026-07-27T07:07:12.792Z'),
+      },
+    ]);
+    prisma.telegramInviteLink.upsert.mockImplementationOnce(
+      async ({ create }: { create: Record<string, unknown> }) => ({
+        id: String(create.url),
+        adCampaignId: create.adCampaignId ?? null,
+        telegramChannelId: create.telegramChannelId,
+        joinedCount: create.joinedCount,
+        requestedCount: create.requestedCount,
+        isRevoked: create.isRevoked,
+      }),
+    );
+
+    const result = await (service as any).syncChannelInviteLinks({
+      workspaceId: 'ws-1',
+      channelId: 'channel-1',
+      account: {
+        id: 'tg-account-1',
+        label: 'Owner',
+        username: 'owner_admin',
+        firstName: 'Owner',
+        apiId: '1',
+        apiHashEncrypted: 'enc',
+        apiHashIv: 'iv',
+        apiHashAuthTag: 'tag',
+        sessionEncrypted: 'sess',
+        sessionIv: 'sess-iv',
+        sessionAuthTag: 'sess-tag',
+      },
+      channelReference: {
+        username: 'invite_channel',
+        telegramChatId: '7001',
+        telegramAccessHash: '9001',
+      },
+      prefetchedRemote: {
+        scope: 'ALL_ADMINS',
+        expectedTotalLinks: 1,
+        admins: [],
+        links: [
+          {
+            url: 'https://t.me/+6aAGprPCOTAxNTZk',
+            title: '27.07 См А кр2',
+            telegramCreatorUserId: '200',
+            creatorUsername: 'a20_admin',
+            creatorFirstName: 'Sasha',
+            creatorLastName: 'Admin',
+            creatorPhotoUrl: null,
+            createdAt: null,
+            startDate: null,
+            expireDate: null,
+            usageLimit: null,
+            usage: 0,
+            requested: 35,
+            requestNeeded: true,
+            permanent: true,
+            revoked: false,
+          },
+        ],
+        warnings: [],
+      },
+      progressStep: { current: 2, total: 8 },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(prisma.telegramInviteLink.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          adCampaignId: 'campaign-27-07',
+          requestedCount: 35,
+        }),
+        update: expect.objectContaining({
+          adCampaignId: 'campaign-27-07',
+          requestedCount: 35,
+        }),
+      }),
+    );
+    expect(
+      (service as any).recalculateCampaignMetricsById,
+    ).toHaveBeenCalledWith('campaign-27-07');
+  });
+
   it('retries invite-link upsert without requestedCount when the running Prisma client is outdated', async () => {
     prisma.telegramInviteLink.upsert
       .mockRejectedValueOnce(

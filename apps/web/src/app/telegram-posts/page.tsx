@@ -72,6 +72,7 @@ import {
 } from "@/lib/telegram-posts-url";
 import {
   buildAutoGroupedPostTitle,
+  extractAutoPrefilledPostTitle,
   getNextGroupedPostNumber,
 } from "@/lib/telegram-post-title";
 import type {
@@ -637,6 +638,11 @@ function TelegramPostWorkspace({
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [icon, setIcon] = useState<string | null>(null);
   const iconRef = useRef<string | null>(null);
+  const iconAutofillRef = useRef<{ active: boolean; emoji: string | null }>({
+    active: false,
+    emoji: null,
+  });
+  const iconAutofillRequestRef = useRef(0);
   const [iconPickerGeneration, setIconPickerGeneration] = useState(0);
   const [iconPending, setIconPending] = useState(false);
   const [rememberedPostGroupId, setRememberedPostGroupId] = useState<
@@ -839,6 +845,10 @@ function TelegramPostWorkspace({
   const autoGroupedPostTitle = useMemo(
     () => buildAutoGroupedPostTitle(nextGroupedPostNumber),
     [nextGroupedPostNumber],
+  );
+  const autoPrefilledTitle = useMemo(
+    () => extractAutoPrefilledPostTitle(text),
+    [text],
   );
   const liveEditingPost =
     editing && posts.data
@@ -1735,6 +1745,7 @@ function TelegramPostWorkspace({
     setImageUrls([]);
     setIcon(null);
     iconRef.current = null;
+    iconAutofillRef.current = { active: false, emoji: null };
     setIconPending(false);
     setIconPickerGeneration((current) => current + 1);
     setPostGroupId(nextGroupId);
@@ -1787,6 +1798,7 @@ function TelegramPostWorkspace({
     setImageUrls(post.imageUrls);
     setIcon(post.icon ?? null);
     iconRef.current = post.icon ?? null;
+    iconAutofillRef.current = { active: false, emoji: null };
     setIconPending(false);
     const nextGroupId = effectivePostGroupId(post);
     setPostGroupId(nextGroupId);
@@ -2037,6 +2049,7 @@ function TelegramPostWorkspace({
 
   const changePostIcon = (nextIcon: string | null) => {
     iconRef.current = nextIcon;
+    iconAutofillRef.current = { active: false, emoji: null };
     setIcon(nextIcon);
     setIconPending(false);
   };
@@ -2299,10 +2312,63 @@ function TelegramPostWorkspace({
 
   useEffect(() => {
     if (editing || titleManuallyEdited) return;
-    const nextAutoTitle = autoGroupedPostTitle;
+    const nextAutoTitle = autoPrefilledTitle?.title
+      ? `${autoGroupedPostTitle}${autoPrefilledTitle.title}`
+      : autoGroupedPostTitle;
     if (title === nextAutoTitle) return;
     setTitle(nextAutoTitle);
-  }, [autoGroupedPostTitle, editing, title, titleManuallyEdited]);
+  }, [
+    autoGroupedPostTitle,
+    autoPrefilledTitle?.title,
+    editing,
+    title,
+    titleManuallyEdited,
+  ]);
+
+  useEffect(() => {
+    if (editing) return;
+    const nextEmoji = autoPrefilledTitle?.emoji ?? null;
+    const canAutofillIcon =
+      !iconRef.current || iconAutofillRef.current.active;
+
+    if (!canAutofillIcon) return;
+
+    if (!nextEmoji) {
+      if (iconAutofillRef.current.active) {
+        iconAutofillRef.current = { active: false, emoji: null };
+        iconRef.current = null;
+        setIcon(null);
+      }
+      return;
+    }
+
+    if (
+      iconAutofillRef.current.active &&
+      iconAutofillRef.current.emoji === nextEmoji
+    ) {
+      return;
+    }
+
+    const requestId = iconAutofillRequestRef.current + 1;
+    iconAutofillRequestRef.current = requestId;
+
+    void (async () => {
+      try {
+        const createdIcon = await iconsApi.createEmoji({
+          name: autoPrefilledTitle?.title || nextEmoji,
+          emoji: nextEmoji,
+        });
+        if (iconAutofillRequestRef.current !== requestId) return;
+        if (iconRef.current && !iconAutofillRef.current.active) return;
+        iconAutofillRef.current = { active: true, emoji: nextEmoji };
+        iconRef.current = createdIcon.id;
+        setIcon(createdIcon.id);
+      } catch {
+        if (iconAutofillRequestRef.current !== requestId) return;
+        iconAutofillRef.current = { active: false, emoji: null };
+      }
+    })();
+  }, [autoPrefilledTitle?.emoji, autoPrefilledTitle?.title, editing]);
 
   return (
     <>

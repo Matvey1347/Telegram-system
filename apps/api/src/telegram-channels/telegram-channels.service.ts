@@ -371,6 +371,75 @@ export class TelegramChannelsService {
     );
   }
 
+  private formatInviteLinkDateLabel(date: Date) {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Warsaw',
+      day: '2-digit',
+      month: '2-digit',
+    })
+      .format(date)
+      .replace('/', '.');
+  }
+
+  private extractInviteLinkTitleDateLabels(value: string | null | undefined) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return [];
+    const labels = new Set<string>();
+    const shortDateMatch = normalized.match(/\b(\d{1,2})[./-](\d{1,2})\b/);
+    if (shortDateMatch) {
+      const day = shortDateMatch[1]?.padStart(2, '0');
+      const month = shortDateMatch[2]?.padStart(2, '0');
+      if (day && month) labels.add(`${day}.${month}`);
+    }
+    const isoDateMatch = normalized.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+    if (isoDateMatch) {
+      labels.add(`${isoDateMatch[3]}.${isoDateMatch[2]}`);
+    }
+    return [...labels];
+  }
+
+  private async inferInviteLinkCampaignId(params: {
+    workspaceId: string;
+    channelId: string;
+    title: string | null | undefined;
+    existingCampaignId?: string | null;
+  }) {
+    if (params.existingCampaignId) return params.existingCampaignId;
+    const dateLabels = this.extractInviteLinkTitleDateLabels(params.title);
+    if (!dateLabels.length) return null;
+
+    const campaigns = await this.prisma.adCampaign.findMany({
+      where: {
+        workspaceId: params.workspaceId,
+        telegramChannelId: params.channelId,
+      },
+      select: {
+        id: true,
+        title: true,
+        placementDate: true,
+        startedAt: true,
+        createdAt: true,
+      },
+    });
+
+    const candidates = campaigns.filter((campaign: any) => {
+      const date =
+        campaign.placementDate ?? campaign.startedAt ?? campaign.createdAt ?? null;
+      const campaignDateLabel = date
+        ? this.formatInviteLinkDateLabel(new Date(date))
+        : null;
+      const campaignTitleLabels = this.extractInviteLinkTitleDateLabels(
+        campaign.title,
+      );
+      return dateLabels.some(
+        (label) =>
+          label === campaignDateLabel || campaignTitleLabels.includes(label),
+      );
+    });
+
+    return candidates.length === 1 ? candidates[0].id : null;
+  }
+
   private isMissingTelegramManagedPostOriginColumns(error: unknown) {
     const message =
       error instanceof Error ? error.message : String(error || '');
@@ -1488,8 +1557,15 @@ export class TelegramChannelsService {
       },
       select: this.inviteLinkSyncExistingSelect,
     });
+    const inferredCampaignId = await this.inferInviteLinkCampaignId({
+      workspaceId: params.workspaceId,
+      channelId: params.channelId,
+      title: params.link.title,
+      existingCampaignId: existing?.adCampaignId ?? null,
+    });
     const payload = {
       name: params.link.title || existing?.name || 'Imported MTProto link',
+      adCampaignId: existing?.adCampaignId ?? inferredCampaignId ?? null,
       telegramInviteLinkId: params.link.url,
       createdBy:
         existing?.createdBy ||

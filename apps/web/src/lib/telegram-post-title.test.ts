@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAutoGroupedPostTitle,
+  extractAutoPrefilledPostTitle,
   getNextGroupedPostNumber,
 } from "@/lib/telegram-post-title";
 import type { TelegramManagedPost } from "@/lib/api";
@@ -69,5 +70,27 @@ describe("telegram-post-title", () => {
         posts: [createPost({ id: "a", groupId: "group-1" })],
       }),
     ).toBeNull();
+  });
+
+  it("extracts a leading emoji and first-line title from telegram text", () => {
+    expect(
+      extractAutoPrefilledPostTitle(
+        "🧩 Наведи лад лише в одному місці\n\nНе потрібно прибирати всю кімнату.",
+      ),
+    ).toEqual({
+      emoji: "🧩",
+      title: "Наведи лад лише в одному місці",
+    });
+  });
+
+  it("extracts a trailing emoji and ignores simple markdown wrappers", () => {
+    expect(
+      extractAutoPrefilledPostTitle(
+        "**Наведи лад лише в одному місці 🧩**\n\nТекст поста",
+      ),
+    ).toEqual({
+      emoji: "🧩",
+      title: "Наведи лад лише в одному місці",
+    });
   });
 });
