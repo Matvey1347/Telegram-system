@@ -1047,7 +1047,7 @@ function ChannelFinanceMiniSummary({
         {metrics.length ? (
           <div className="space-y-2 text-xs">
             {topMetrics.length ? (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {topMetrics.map((metric) => (
                   <PreviewMetric
                     key={metric.label}
@@ -1073,7 +1073,7 @@ function ChannelFinanceMiniSummary({
               </div>
             ) : null}
             {supportingMetrics.length ? (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {supportingMetrics.map((metric) => (
                   <PreviewMetric
                     key={metric.label}

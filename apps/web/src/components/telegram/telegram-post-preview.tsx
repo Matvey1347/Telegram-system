@@ -20,10 +20,7 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronRight, Eye, MessageCircle } from "lucide-react";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
-import {
-  editorHtmlToTelegramMarkup,
-  telegramMarkupToEditorHtml,
-} from "./telegram-text-editor-format";
+import { editorHtmlToTelegramMarkup } from "./telegram-text-editor-format";
 
 type TelegramPostPreviewProps = {
   channelTitle: string;
@@ -48,29 +45,32 @@ const escapeHtml = (value: string) =>
 
 function renderFencedCodeBlock(
   info: string,
+  lineBreak: string,
   code: string,
-  hasInfoLine: boolean,
 ) {
   const normalizedInfo = info.replace(/\r/g, "");
+  const normalizedLineBreak = lineBreak.replace(/\r/g, "\n");
   const normalizedCode = code.replace(/\r/g, "");
-  const hasLabel = hasInfoLine && normalizedInfo.trim().length > 0;
+  const hasLabel = normalizedInfo.trim().length > 0;
   const label = hasLabel ? normalizedInfo : "copy";
-  const content = hasInfoLine
+  const content = hasLabel
     ? normalizedCode
-    : `${normalizedInfo}${normalizedCode}`;
-  return `<pre class="tg-code-block"><span class="tg-code-header"><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="Copy code"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button></span><code>${escapeHtml(content)}</code></pre>`;
+    : normalizedInfo
+      ? `${normalizedInfo}${normalizedLineBreak}${normalizedCode}`
+      : normalizedCode;
+  return `<pre class="tg-code-block" data-code-label="${escapeHtml(label)}" data-has-code-label="${hasLabel ? "true" : "false"}"><span class="tg-code-header" contenteditable="false"><span>${escapeHtml(label)}</span><button type="button" data-copy-code aria-label="Copy code" contenteditable="false"><svg class="tg-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="2.5" width="10" height="12" rx="1.8"></rect><rect x="3.5" y="5.5" width="10" height="12" rx="1.8"></rect></svg></button></span><code>${escapeHtml(content)}</code></pre>`;
 }
 
 function previewHtml(raw: string) {
-  const tokens: string[] = [];
-  const token = (html: string) => {
-    const index = tokens.push(html) - 1;
+  const tokens: Array<{ html: string; display: "inline" | "block" }> = [];
+  const token = (html: string, display: "inline" | "block" = "inline") => {
+    const index = tokens.push({ html, display }) - 1;
     return `\u0000${index}\u0000`;
   };
   let value = raw.replace(
     /```([^\n\r\u2028\u2029`]*)((?:\r\n|[\n\r\u2028\u2029])?)([\s\S]*?)```/g,
     (_match, info: string, lineBreak: string, code: string) => {
-      return token(renderFencedCodeBlock(info, code, Boolean(lineBreak)));
+      return token(renderFencedCodeBlock(info, lineBreak, code), "block");
     },
   );
   value = value.replace(/`([^`\n]+)`/g, (_match, code: string) =>
@@ -121,6 +121,7 @@ function previewHtml(raw: string) {
   let pendingBreakBeforeQuote = false;
   let quoteType: "regular" | "expandable" | null = null;
   let quoteLines: string[] = [];
+  const blockTokenPattern = /^\u0000(\d+)\u0000$/;
   const flushText = () => {
     if (!textLines.length) return;
     const linesToRender = [...textLines];
@@ -149,6 +150,19 @@ function previewHtml(raw: string) {
     quoteLines = [];
   };
   for (const line of lines) {
+    const blockTokenMatch = line.match(blockTokenPattern);
+    if (blockTokenMatch) {
+      const tokenEntry = tokens[Number(blockTokenMatch[1])];
+      if (tokenEntry?.display === "block") {
+        flush();
+        flushText();
+        rendered.push(
+          `${pendingBreakBeforeQuote ? '<span class="tg-quote-gap" aria-hidden="true"></span>' : ""}${tokenEntry.html}`,
+        );
+        pendingBreakBeforeQuote = false;
+        continue;
+      }
+    }
     const expandable = line.match(/^&gt;&gt;\s?(.*)$/);
     const regular = line.match(/^&gt;\s?(.*)$/);
     const nextType = expandable ? "expandable" : regular ? "regular" : null;
@@ -167,7 +181,7 @@ function previewHtml(raw: string) {
     .join("")
     .replace(
       /\u0000(\d+)\u0000/g,
-      (_match, index: string) => tokens[Number(index)] || "",
+      (_match, index: string) => tokens[Number(index)]?.html || "",
     );
 }
 
@@ -253,7 +267,9 @@ export function TelegramPostPreview({
             text: part,
             imageUrls: [],
           }));
-  const previewEditable = Boolean(onTextChange && !formattedHtml && messages.length === 1);
+  const previewEditable = Boolean(
+    onTextChange && !formattedHtml && messages.length === 1,
+  );
 
   return (
     <aside className="min-w-0">
@@ -398,10 +414,23 @@ function EditableTelegramPreviewText({
     return element.contains(selection.getRangeAt(0).commonAncestorContainer);
   }, []);
 
+  const collapseSelectionToPreviewEnd = useCallback(() => {
+    const element = contentRef.current;
+    const selection = window.getSelection();
+    if (!element || !selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+    element.focus();
+  }, []);
+
   useEffect(() => {
     const element = contentRef.current;
     if (!element) return;
-    const nextHtml = telegramMarkupToEditorHtml(value);
+    const nextHtml = previewHtml(value);
     if (lastMarkupRef.current === value && element.innerHTML === nextHtml) return;
     element.innerHTML = nextHtml;
     lastMarkupRef.current = value;
@@ -412,7 +441,7 @@ function EditableTelegramPreviewText({
         setToolbar(null);
       }, 0);
     }
-  }, [value]);
+  }, [collapseSelectionToPreviewEnd, value]);
 
   const applyMarkup = useCallback(
     (nextValue: string, options?: { recordHistory?: boolean; clearRedo?: boolean }) => {
@@ -481,23 +510,10 @@ function EditableTelegramPreviewText({
     return range;
   }, []);
 
-  const collapseSelectionToPreviewEnd = useCallback(() => {
-    const element = contentRef.current;
-    const selection = window.getSelection();
-    if (!element || !selection) return;
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    savedRangeRef.current = range.cloneRange();
-    element.focus();
-  }, []);
-
   const restoreMarkupInDom = useCallback((nextValue: string) => {
     const element = contentRef.current;
     if (!element) return;
-    element.innerHTML = telegramMarkupToEditorHtml(nextValue);
+    element.innerHTML = previewHtml(nextValue);
     collapseSelectionToPreviewEnd();
   }, [collapseSelectionToPreviewEnd]);
 

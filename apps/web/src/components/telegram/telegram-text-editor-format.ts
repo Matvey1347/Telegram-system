@@ -7,6 +7,22 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+function parseFencedCodeBlock(info: string, lineBreak: string, code: string) {
+  const normalizedInfo = info.replace(/\r/g, "");
+  const normalizedLineBreak = lineBreak.replace(/\r/g, "\n");
+  const normalizedCode = code.replace(/\r/g, "");
+  const language = normalizedInfo.trim();
+  const hasLanguage = language.length > 0;
+  return {
+    language: hasLanguage ? language : "",
+    code: hasLanguage
+      ? normalizedCode
+      : normalizedInfo
+        ? `${normalizedInfo}${normalizedLineBreak}${normalizedCode}`
+        : normalizedCode,
+  };
+}
+
 function joinBlockSegments(segments: string[]) {
   return segments.join("\n").replace(/\n{3,}/g, "\n\n");
 }
@@ -73,14 +89,14 @@ export function telegramMarkupToEditorHtml(raw: string) {
   };
 
   let value = normalizedRaw.replace(
-    /```([^\n`]*)\n?([\s\S]*?)```/g,
-    (_match, language: string, code: string) => {
-      const normalizedLanguage = language.trim();
-      const languageAttr = normalizedLanguage
-        ? ` data-language="${escapeHtml(normalizedLanguage)}"`
+    /```([^\n\r`]*)((?:\r\n|[\n\r])?)([\s\S]*?)```/g,
+    (_match, info: string, lineBreak: string, code: string) => {
+      const parsed = parseFencedCodeBlock(info, lineBreak, code);
+      const languageAttr = parsed.language
+        ? ` data-language="${escapeHtml(parsed.language)}"`
         : "";
       return token(
-        `<pre${languageAttr}><code>${escapeHtml(code)}</code></pre>`,
+        `<pre${languageAttr}><code>${escapeHtml(parsed.code)}</code></pre>`,
       );
     },
   );
@@ -178,9 +194,18 @@ function serializeNode(node: Node): string {
     return href ? `[${label}](${href})` : label;
   }
   if (tag === "pre") {
-    const language = element.dataset.language?.trim() || "";
+    const language =
+      element.dataset.language?.trim() ||
+      element.dataset.codeLabel?.trim() ||
+      "";
+    const hasCodeLabel = element.dataset.hasCodeLabel === "true";
     const codeElement = element.querySelector("code");
-    const rawCode = normalizeTextNode(codeElement?.textContent || element.textContent || "");
+    const rawCode = normalizeTextNode(
+      codeElement?.textContent || element.textContent || "",
+    );
+    if (hasCodeLabel || element.classList.contains("tg-code-block")) {
+      return `\`\`\`${language}\n${rawCode}\`\`\`\n`;
+    }
     return `\`\`\`${language}\n${rawCode}\`\`\`\n`;
   }
   if (tag === "blockquote") {

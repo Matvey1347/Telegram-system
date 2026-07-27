@@ -49,6 +49,77 @@ describe("TelegramPostPreview", () => {
     expect(withoutGap.container.querySelector(".tg-quote-gap")).toBeFalsy();
   });
 
+  it("renders same-line fenced text with spaces as a labeled Telegram code block", () => {
+    const { container } = render(
+      <TelegramPostPreview
+        channelTitle="Ментор | Саморозвиток"
+        text={"```немає чужого бренду\n→ менша брендова націнка\n```"}
+        imageUrls={[]}
+      />,
+    );
+
+    const codeHeader = container.querySelector(".tg-code-header span");
+    const codeBlock = container.querySelector(".tg-code-block code");
+    expect(codeHeader?.textContent).toBe("немає чужого бренду");
+    expect(codeBlock?.textContent).toContain("→ менша брендова націнка");
+  });
+
+  it("keeps Telegram code blocks inside the editable preview", () => {
+    const { container } = render(
+      <TelegramPostPreview
+        channelTitle="Ментор | Саморозвиток"
+        text={"```немає чужого бренду\n→ менша брендова націнка\n```"}
+        imageUrls={[]}
+        onTextChange={() => {}}
+      />,
+    );
+
+    const editor = container.querySelector(
+      '.telegram-preview-text[contenteditable="true"]',
+    );
+    const codeHeader = container.querySelector(".tg-code-header");
+    const copyButton = container.querySelector("[data-copy-code]");
+
+    expect(editor).toBeTruthy();
+    expect(codeHeader?.textContent).toContain("немає чужого бренду");
+    expect(copyButton).toBeTruthy();
+  });
+
+  it("does not add an extra gap after a code block when the source has only one newline", () => {
+    const { container } = render(
+      <TelegramPostPreview
+        channelTitle="Ментор | Саморозвиток"
+        text={
+          "Суть проста:\n```немає чужого бренду\n→ менша брендова націнка\n```\n📦 Для Pepco це особливо важливо"
+        }
+        imageUrls={[]}
+      />,
+    );
+
+    const preview = container.querySelector(".telegram-preview-text");
+    expect(preview?.innerHTML).toContain("Суть проста:<pre");
+    expect(preview?.innerHTML).toContain("</pre>📦 Для Pepco це особливо важливо");
+    expect(preview?.innerHTML).not.toContain("</pre><br>");
+    expect(preview?.querySelectorAll(".tg-quote-gap")).toHaveLength(0);
+  });
+
+  it("keeps a visual gap after a code block when the source has an empty line", () => {
+    const { container } = render(
+      <TelegramPostPreview
+        channelTitle="Ментор | Саморозвиток"
+        text={
+          "Суть проста:\n```немає чужого бренду\n→ менша брендова націнка\n```\n\n📦 Для Pepco це особливо важливо"
+        }
+        imageUrls={[]}
+      />,
+    );
+
+    const preview = container.querySelector(".telegram-preview-text");
+    expect(preview?.innerHTML).toContain(
+      '</pre><span class="tg-quote-gap" aria-hidden="true"></span>📦 Для Pepco це особливо важливо',
+    );
+  });
+
   it("handles native preview undo and redo directly inside the editable preview", async () => {
     const user = userEvent.setup();
 

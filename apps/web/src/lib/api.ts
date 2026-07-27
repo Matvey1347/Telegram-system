@@ -45,6 +45,7 @@ export const api = axios.create({
 });
 
 let lastCorrelationId: string | null = null;
+let freshReadRequestsInFlight = 0;
 
 function createCorrelationId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -55,6 +56,15 @@ function createCorrelationId() {
 
 export function getLastCorrelationId() {
   return lastCorrelationId;
+}
+
+export async function withFreshApiReads<T>(run: () => Promise<T>): Promise<T> {
+  freshReadRequestsInFlight += 1;
+  try {
+    return await run();
+  } finally {
+    freshReadRequestsInFlight = Math.max(0, freshReadRequestsInFlight - 1);
+  }
 }
 
 export const API_MUTATION_EVENT = "telegram-system:api-mutation";
@@ -322,6 +332,14 @@ api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const workspaceId = localStorage.getItem("selected-workspace-id");
     if (workspaceId) config.headers["X-Workspace-Id"] = workspaceId;
+  }
+  if (
+    String(config.method || "get").toLowerCase() === "get" &&
+    freshReadRequestsInFlight > 0
+  ) {
+    config.headers["X-Bypass-Response-Cache"] = "1";
+    config.headers["Cache-Control"] = "no-cache";
+    config.headers.Pragma = "no-cache";
   }
   if (config.baseURL?.includes(".ngrok-free.app")) {
     config.headers["ngrok-skip-browser-warning"] = "true";

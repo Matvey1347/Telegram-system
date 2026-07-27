@@ -7,6 +7,22 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+function parseFencedCodeBlock(info: string, lineBreak: string, code: string) {
+  const normalizedInfo = info.replace(/\r/g, '');
+  const normalizedLineBreak = lineBreak.replace(/\r/g, '\n');
+  const normalizedCode = code.replace(/\r/g, '\n');
+  const language = normalizedInfo.trim();
+  const hasLanguage = language.length > 0;
+  return {
+    language: hasLanguage ? language : '',
+    code: hasLanguage
+      ? normalizedCode
+      : normalizedInfo
+        ? `${normalizedInfo}${normalizedLineBreak}${normalizedCode}`
+        : normalizedCode,
+  };
+}
+
 function convertBlockquotes(value: string) {
   const lines = value.split('\n');
   const output: string[] = [];
@@ -49,14 +65,14 @@ export function telegramMarkupToHtml(raw: string) {
   };
 
   let value = normalizedRaw.replace(
-    /```([^\n`]*)\n?([\s\S]*?)```/g,
-    (_match, language: string, code: string) => {
-      const normalizedLanguage = language.trim();
-      const languageClass = normalizedLanguage
-        ? ` class="language-${escapeHtml(normalizedLanguage)}"`
+    /```([^\n\r`]*)((?:\r\n|[\n\r])?)([\s\S]*?)```/g,
+    (_match, info: string, lineBreak: string, code: string) => {
+      const parsed = parseFencedCodeBlock(info, lineBreak, code);
+      const languageClass = parsed.language
+        ? ` class="language-${escapeHtml(parsed.language)}"`
         : '';
       return token(
-        `<pre><code${languageClass}>${escapeHtml(code)}</code></pre>`,
+        `<pre><code${languageClass}>${escapeHtml(parsed.code)}</code></pre>`,
       );
     },
   );

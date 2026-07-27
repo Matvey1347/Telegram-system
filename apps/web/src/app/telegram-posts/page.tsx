@@ -76,7 +76,6 @@ import {
   getNextGroupedPostNumber,
 } from "@/lib/telegram-post-title";
 import type {
-  ManagedPostsSyncResult,
   ScheduleManagedPostsBatchItem,
   TelegramManagedPostCalendarResult,
 } from "@telegram-system/shared";
@@ -328,83 +327,6 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
-  const syncManagedPosts = useMutation<ManagedPostsSyncResult>({
-    mutationFn: async (): Promise<ManagedPostsSyncResult> => {
-      const currentChannel = channel!;
-      const progressId = `managed-posts-sync:${currentChannel.id}`;
-      setProgress({
-        id: progressId,
-        title: "Pulling scheduled posts from Telegram",
-        current: 0,
-        total: 0,
-        message: "Checking Telegram and importing scheduled posts…",
-        iconUrl: currentChannel.photoUrl || undefined,
-      });
-      try {
-        const result = await telegramChannelsApi.syncManagedPostsWithProgress(
-          currentChannel.id,
-          (item, current, total) => {
-            setProgress({
-              id: progressId,
-              title: "Pulling scheduled posts from Telegram",
-              current,
-              total,
-              message:
-                item.message || "Pulling scheduled posts from Telegram…",
-              iconUrl: currentChannel.photoUrl || undefined,
-            });
-          },
-        );
-        const failedCount =
-          (result.broken || 0) +
-          (result.movedToDraft || 0) +
-          (result.missing || 0);
-        const successCount = Math.max(0, (result.checked || 0) - failedCount);
-        setProgress({
-          id: progressId,
-          title: "Pulling scheduled posts from Telegram",
-          current: result.checked || 0,
-          total: result.checked || 0,
-          message:
-            result.importedScheduled > 0
-              ? `Imported ${result.importedScheduled} scheduled posts from Telegram`
-              : "Telegram sync completed",
-          completed: true,
-          successCount,
-          failedCount,
-          skippedCount: 0,
-          iconUrl: currentChannel.photoUrl || undefined,
-        });
-        window.setTimeout(() => clearProgress(progressId), 2800);
-        return result;
-      } catch (error) {
-        clearProgress(progressId);
-        throw error;
-      }
-    },
-    onSuccess: async (result) => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["telegram-managed-posts", channel?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["telegram-managed-posts-calendar", channel?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["post-groups", channel?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["telegram-managed-post-link-targets", channel?.id],
-        }),
-      ]);
-      if (result.importedScheduled > 0) {
-        pushToast(
-          `Telegram sync completed. Imported ${result.importedScheduled} scheduled posts from Telegram.`,
-          "success",
-        );
-      }
-    },
-  });
   useEffect(() => {
     if (typeof window === "undefined" || !availableChannels.length) return;
     const params = new URLSearchParams(searchParams.toString());
@@ -498,21 +420,6 @@ export default function TelegramPostsPage() {
                   }))}
                 />
               </div>
-              <Button
-                variant="secondary"
-                className="shrink-0"
-                disabled={syncManagedPosts.isPending}
-                onClick={() => syncManagedPosts.mutate()}
-                title="Sync posts from Telegram"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <RefreshCw
-                    size={15}
-                    className={syncManagedPosts.isPending ? "animate-spin" : ""}
-                  />
-                  Sync posts from Telegram
-                </span>
-              </Button>
               <Button
                 className="shrink-0"
                 onClick={() => {
@@ -2624,7 +2531,7 @@ function TelegramPostWorkspace({
               {selectedCalendarItems.length ? (
                 selectedCalendarItems.map((item) => (
                   <button
-                    key={item.id}
+                    key={`${item.id}:${item.status}:${item.status === "SCHEDULED" ? item.scheduledAt : item.publishedAt}`}
                     type="button"
                     onClick={(event) => {
                       if (wantsNewTab(event)) {

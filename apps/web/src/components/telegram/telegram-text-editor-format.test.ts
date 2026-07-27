@@ -46,4 +46,23 @@ describe("telegram-text-editor-format", () => {
       "**manual** __typed__",
     );
   });
+
+  it("treats same-line fenced text as a Telegram code block label", () => {
+    expect(
+      telegramMarkupToEditorHtml(
+        "```немає чужого бренду\n→ менша брендова націнка\n```",
+      ),
+    ).toContain(
+      '<pre data-language="немає чужого бренду"><code>→ менша брендова націнка\n</code></pre>',
+    );
+  });
+
+  it("serializes Telegram preview code blocks back to fenced markup", () => {
+    const html =
+      '<pre class="tg-code-block" data-code-label="немає чужого бренду" data-has-code-label="true"><span class="tg-code-header" contenteditable="false"><span>немає чужого бренду</span><button type="button" data-copy-code aria-label="Copy code" contenteditable="false"></button></span><code>→ менша брендова націнка\n</code></pre>';
+
+    expect(editorHtmlToTelegramMarkup(html)).toBe(
+      "```немає чужого бренду\n→ менша брендова націнка\n```",
+    );
+  });
 });

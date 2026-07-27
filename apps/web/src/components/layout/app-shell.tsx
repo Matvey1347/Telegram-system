@@ -9,6 +9,7 @@ import {
   accountApi,
   globalSearchApi,
   iconsApi,
+  withFreshApiReads,
   workspacesApi,
   type GlobalSearchResult,
 } from '@/lib/api';
@@ -186,56 +187,58 @@ export function AppShell({ children }: PropsWithChildren) {
   const handleGlobalRefresh = async () => {
     setRefreshing(true);
     try {
-      await runProgressSequence({
-        api: { pushToast, setProgress, clearProgress },
-        id: `global-refresh:${Date.now()}`,
-        title: 'Refreshing workspace',
-        steps: [
-          {
-            message: 'Clearing cached workspace data',
-            run: async () => {
-              clearPersistedQueryCache();
-              qc.removeQueries({
-                predicate: (query) =>
-                  isWorkspaceScopedQuery(query.queryKey) &&
-                  query.getObserversCount() === 0,
-              });
+      await withFreshApiReads(async () =>
+        runProgressSequence({
+          api: { pushToast, setProgress, clearProgress },
+          id: `global-refresh:${Date.now()}`,
+          title: 'Refreshing workspace',
+          steps: [
+            {
+              message: 'Clearing cached workspace data',
+              run: async () => {
+                clearPersistedQueryCache();
+                qc.removeQueries({
+                  predicate: (query) =>
+                    isWorkspaceScopedQuery(query.queryKey) &&
+                    query.getObserversCount() === 0,
+                });
+              },
             },
-          },
-          {
-            message: 'Refreshing current user',
-            run: async () => {
-              await qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+            {
+              message: 'Refreshing current user',
+              run: async () => {
+                await qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+              },
             },
-          },
-          {
-            message: 'Refreshing current account',
-            run: async () => {
-              await qc.invalidateQueries({ queryKey: ['account-me'] });
+            {
+              message: 'Refreshing current account',
+              run: async () => {
+                await qc.invalidateQueries({ queryKey: ['account-me'] });
+              },
             },
-          },
-          {
-            message: 'Refreshing workspace list',
-            run: async () => {
-              await qc.invalidateQueries({ queryKey: ['workspaces'] });
+            {
+              message: 'Refreshing workspace list',
+              run: async () => {
+                await qc.invalidateQueries({ queryKey: ['workspaces'] });
+              },
             },
-          },
-          {
-            message: 'Refreshing workspace resources',
-            run: async () => {
-              await qc.invalidateQueries({
-                predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
-              });
+            {
+              message: 'Refreshing workspace resources',
+              run: async () => {
+                await qc.invalidateQueries({
+                  predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
+                });
+              },
             },
-          },
-          {
-            message: 'Refetching visible page data',
-            run: async () => {
-              await qc.refetchQueries({ type: 'active' });
+            {
+              message: 'Refetching visible page data',
+              run: async () => {
+                await qc.refetchQueries({ type: 'active' });
+              },
             },
-          },
-        ],
-      });
+          ],
+        }),
+      );
       pushToast('Data refreshed from server.', 'success');
     } catch {
       pushToast('Failed to refresh data.', 'error');

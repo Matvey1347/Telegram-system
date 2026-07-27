@@ -14,6 +14,11 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       recentPublished?: Array<Record<string, unknown>>;
       scheduledHistory?: Array<Record<string, unknown>>;
     },
+    channel?: {
+      id?: string;
+      username?: string | null;
+      telegramChatId?: string | null;
+    },
   ) => {
     const update = jest.fn().mockImplementation(async ({ where, data }) => ({
       ...post,
@@ -82,12 +87,26 @@ describe('TelegramChannelsService syncManagedPosts', () => {
         findMany,
         update,
         create,
+        count: jest.fn().mockResolvedValue(0),
       },
       telegramChannel: {
         findFirst: jest.fn().mockResolvedValue({ assignedMemberId: 'member-1' }),
       },
       workspaceMember: {
         findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+      },
+      postGroup: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'group-imported',
+          workspaceId: 'workspace',
+          telegramChannelId: 'channel',
+          title: 'Created in Telegram',
+          isSystem: true,
+          systemKey: 'TELEGRAM_IMPORTED',
+          createdByMemberId: 'member-1',
+        }),
+        create: jest.fn(),
+        update: jest.fn(),
       },
       telegramManagedPostRevision: {
         create: createRevision,
@@ -119,10 +138,11 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       {} as never,
     );
     service['workspace'] = jest.fn().mockResolvedValue('workspace');
+    service['postGroupSystemColumnsAvailable'] = true;
     service['findOne'] = jest.fn().mockResolvedValue({
-      id: 'channel',
-      username: 'example',
-      telegramChatId: null,
+      id: channel?.id ?? 'channel',
+      username: channel?.username ?? 'example',
+      telegramChatId: channel?.telegramChatId ?? null,
     });
     service['connectedAccount'] = jest.fn().mockResolvedValue({});
     service['accountCredentials'] = jest.fn().mockReturnValue({
@@ -489,6 +509,59 @@ describe('TelegramChannelsService syncManagedPosts', () => {
     );
   });
 
+  it('publishes imported Telegram posts when the published message gets a new Telegram id', async () => {
+    const { service, update } = setup(
+      {
+        id: 'imported-failed',
+        title: 'Не плутай зайнятість із продуктивністю',
+        origin: 'TELEGRAM',
+        remoteImportKey: 'message:2742',
+        status: TelegramManagedPostStatus.FAILED,
+        telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
+        text: 'Не плутай зайнятість із продуктивністю',
+        imageUrls: [],
+        scheduledAt: new Date('2026-07-27T12:09:00.000Z'),
+        publishedAt: null,
+        telegramMessageIds: ['2742'],
+        telegramMessageUrls: [],
+        lastError: null,
+        assignedMemberId: 'member-1',
+      },
+      {
+        recentPublished: [
+          {
+            id: '3001',
+            text: 'Не плутай зайнятість із продуктивністю',
+            html: 'Не плутай зайнятість із продуктивністю',
+            date: '2026-07-27T12:10:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+      {
+        username: 'mentor_samorozvytok',
+        telegramChatId: '-1001590085922',
+      },
+    );
+
+    const result = await service.syncManagedPosts('user', 'channel');
+
+    expect(result.updated).toBeGreaterThan(0);
+    expect(result.missing).toBe(0);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'imported-failed' },
+        data: expect.objectContaining({
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          telegramMessageIds: ['3001'],
+          telegramMessageUrls: ['https://t.me/c/1590085922/3001'],
+          lastError: null,
+        }),
+      }),
+    );
+  });
+
   it('pulls Telegram scheduled posts when loading the calendar', async () => {
     const create = jest.fn().mockImplementation(async ({ data }) => ({
       id: 'imported-calendar',
@@ -522,6 +595,8 @@ describe('TelegramChannelsService syncManagedPosts', () => {
         findMany: jest
           .fn()
           .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([])
           .mockResolvedValueOnce([
             {
               id: 'imported-calendar',
@@ -533,6 +608,7 @@ describe('TelegramChannelsService syncManagedPosts', () => {
               publishedAt: null,
               origin: 'TELEGRAM',
               telegramRemoteStatus: TelegramManagedPostRemoteStatus.SCHEDULED,
+              telegramMessageIds: ['3'],
               telegramMessageUrls: [],
               imageUrls: [],
               group: null,
@@ -557,6 +633,20 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       workspaceMember: {
         findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
       },
+      postGroup: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'group-imported',
+          workspaceId: 'workspace',
+          telegramChannelId: 'channel',
+          title: 'Created in Telegram',
+          isSystem: true,
+          systemKey: 'TELEGRAM_IMPORTED',
+          createdByMemberId: 'member-1',
+        }),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      $executeRawUnsafe: jest.fn().mockResolvedValue(undefined),
     };
     const mtprotoClient = {
       getScheduledHistory: jest.fn().mockResolvedValue([
@@ -570,6 +660,11 @@ describe('TelegramChannelsService syncManagedPosts', () => {
           groupedId: null,
         },
       ]),
+      getManagedPostMessages: jest.fn().mockResolvedValue({
+        published: [],
+        scheduled: [],
+        recentPublished: [],
+      }),
       downloadChannelMessageMedia: jest.fn().mockResolvedValue(null),
     };
     const service = new TelegramChannelsService(
@@ -582,6 +677,7 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       {} as never,
     );
     service['workspace'] = jest.fn().mockResolvedValue('workspace');
+    service['postGroupSystemColumnsAvailable'] = true;
     service['findOne'] = jest.fn().mockResolvedValue({
       id: 'channel',
       username: 'example',
@@ -617,6 +713,313 @@ describe('TelegramChannelsService syncManagedPosts', () => {
         origin: 'TELEGRAM',
         status: 'SCHEDULED',
         title: 'цвуакпецуак',
+      }),
+    );
+  });
+
+  it('does not include published posts dated in the future when building the calendar', async () => {
+    const prisma = {
+      telegramManagedPost: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'scheduled-real',
+            telegramChannelId: 'channel',
+            title: 'Scheduled real',
+            text: 'Scheduled real',
+            status: TelegramManagedPostStatus.SCHEDULED,
+            scheduledAt: new Date('2026-07-28T17:15:00.000Z'),
+            publishedAt: null,
+            origin: 'SYSTEM',
+            telegramRemoteStatus: TelegramManagedPostRemoteStatus.SCHEDULED,
+            telegramMessageIds: ['46'],
+            telegramMessageUrls: [],
+            imageUrls: [],
+            group: null,
+            assignedMember: {
+              id: 'member-1',
+              workspaceId: 'workspace',
+              user: { name: 'Matthew', email: 'm@example.com' },
+              avatarIcon: null,
+              role: 'MEMBER',
+            },
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ scheduledAt: new Date('2026-07-28T17:15:00.000Z') }),
+      },
+      telegramChannel: {
+        findFirst: jest.fn().mockResolvedValue({ assignedMemberId: 'member-1' }),
+      },
+    };
+    const service = new TelegramChannelsService(
+      prisma as never,
+      {} as never,
+      { clearByPrefix: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    service['workspace'] = jest.fn().mockResolvedValue('workspace');
+    service['findOne'] = jest.fn().mockResolvedValue({
+      id: 'channel',
+      username: 'example',
+      telegramChatId: null,
+    });
+    service['connectedAccount'] = jest
+      .fn()
+      .mockRejectedValue(new Error('No connected account'));
+    service['promoteDueScheduledManagedPosts'] = jest.fn().mockResolvedValue(undefined);
+
+    const result = await service.managedPostsCalendar('user', 'channel', {
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-31T23:59:59.999Z',
+    });
+
+    expect(prisma.telegramManagedPost.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              status: TelegramManagedPostStatus.SCHEDULED,
+            }),
+            expect.objectContaining({
+              status: TelegramManagedPostStatus.PUBLISHED,
+              publishedAt: expect.objectContaining({
+                lte: expect.any(Date),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: 'scheduled-real',
+        status: 'SCHEDULED',
+      }),
+    ]);
+  });
+
+  it('keeps published posts published when an unrelated remote scheduled message matches their text', async () => {
+    const { service, update } = setup(
+      {
+        id: 'published',
+        title: 'Published',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        text: 'Published text',
+        imageUrls: [],
+        scheduledAt: null,
+        publishedAt: new Date('2026-07-21T17:15:00.000Z'),
+        telegramMessageIds: ['38'],
+        telegramMessageUrls: ['https://t.me/example/38'],
+      },
+      {
+        published: [
+          {
+            id: '38',
+            html: 'Published text',
+            text: 'Published text',
+            date: '2026-07-21T17:15:00.000Z',
+            hasMedia: false,
+          },
+        ],
+        scheduled: [
+          {
+            id: '88',
+            html: 'Published text',
+            text: 'Published text',
+            date: '2026-07-29T17:15:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+    );
+
+    await service.syncManagedPosts('user', 'channel');
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'published' },
+        data: expect.objectContaining({
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          scheduledAt: null,
+          publishedAt: new Date('2026-07-21T17:15:00.000Z'),
+        }),
+      }),
+    );
+  });
+
+  it('uses the local scheduled time as the published date floor when Telegram reports an older date', async () => {
+    const { service, update } = setup(
+      {
+        id: 'scheduled',
+        title: 'PGS',
+        status: TelegramManagedPostStatus.SCHEDULED,
+        text: 'PGS text',
+        imageUrls: [],
+        scheduledAt: new Date('2026-07-27T17:15:00.000Z'),
+        publishedAt: null,
+        telegramMessageIds: ['43'],
+        telegramMessageUrls: [],
+      },
+      {
+        published: [
+          {
+            id: '43',
+            html: 'PGS text',
+            text: 'PGS text',
+            date: '2026-07-23T17:15:15.000Z',
+            hasMedia: false,
+          },
+        ],
+      },
+    );
+
+    await service.syncManagedPosts('user', 'channel');
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'scheduled' },
+        data: expect.objectContaining({
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          scheduledAt: null,
+          publishedAt: new Date('2026-07-27T17:15:00.000Z'),
+        }),
+      }),
+    );
+  });
+
+  it('repairs imported Telegram links automatically when loading managed posts', async () => {
+    const repairedPost = {
+      id: 'imported-failed',
+      title: 'Не плутай зайнятість із продуктивністю',
+      origin: 'TELEGRAM',
+      remoteImportKey: 'message:2742',
+      status: TelegramManagedPostStatus.PUBLISHED,
+      telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+      text: 'Не плутай зайнятість із продуктивністю',
+      imageUrls: [],
+      scheduledAt: null,
+      publishedAt: new Date('2026-07-27T12:10:00.000Z'),
+      telegramMessageIds: ['3001'],
+      telegramMessageUrls: ['https://t.me/c/1590085922/3001'],
+      lastError: null,
+      assignedMemberId: 'member-1',
+      icon: null,
+      group: null,
+      assignedMember: {
+        id: 'member-1',
+        workspaceId: 'workspace',
+        user: { name: 'Matthew', email: 'm@example.com' },
+        avatarIcon: null,
+        role: 'MEMBER',
+      },
+    };
+    const update = jest.fn().mockResolvedValue(repairedPost);
+    const prisma = {
+      telegramManagedPost: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'imported-failed',
+              title: 'Не плутай зайнятість із продуктивністю',
+              origin: 'TELEGRAM',
+              remoteImportKey: 'message:2742',
+              status: TelegramManagedPostStatus.FAILED,
+              telegramRemoteStatus: TelegramManagedPostRemoteStatus.MISSING,
+              text: 'Не плутай зайнятість із продуктивністю',
+              imageUrls: [],
+              scheduledAt: new Date('2026-07-27T12:09:00.000Z'),
+              publishedAt: null,
+              telegramMessageIds: ['2742'],
+              telegramMessageUrls: [],
+              lastError: null,
+              assignedMemberId: 'member-1',
+            },
+          ])
+          .mockResolvedValueOnce([repairedPost]),
+        update,
+      },
+      telegramManagedPostRevision: {
+        create: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      telegramChannel: {
+        findFirst: jest.fn().mockResolvedValue({ assignedMemberId: 'member-1' }),
+      },
+      workspaceMember: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'member-1' }),
+      },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
+      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+    };
+    const mtprotoClient = {
+      getManagedPostMessages: jest.fn().mockResolvedValue({
+        published: [],
+        scheduled: [],
+        recentPublished: [
+          {
+            id: '3001',
+            text: 'Не плутай зайнятість із продуктивністю',
+            html: 'Не плутай зайнятість із продуктивністю',
+            date: '2026-07-27T12:10:00.000Z',
+            hasMedia: false,
+          },
+        ],
+      }),
+    };
+    const service = new TelegramChannelsService(
+      prisma as never,
+      {} as never,
+      { clearByPrefix: jest.fn() } as never,
+      {} as never,
+      mtprotoClient as never,
+      {} as never,
+      {} as never,
+    );
+    service['workspace'] = jest.fn().mockResolvedValue('workspace');
+    service['findOne'] = jest.fn().mockResolvedValue({
+      id: 'channel',
+      username: 'mentor_samorozvytok',
+      telegramChatId: '-1001590085922',
+    });
+    service['connectedAccount'] = jest.fn().mockResolvedValue({});
+    service['accountCredentials'] = jest.fn().mockReturnValue({
+      apiId: '1',
+      apiHash: 'hash',
+      session: 'session',
+    });
+
+    const result = await service.managedPosts('user', 'channel');
+
+    expect(mtprotoClient.getManagedPostMessages).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'imported-failed' },
+        data: expect.objectContaining({
+          status: TelegramManagedPostStatus.PUBLISHED,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+          telegramMessageIds: ['3001'],
+          telegramMessageUrls: ['https://t.me/c/1590085922/3001'],
+          lastError: null,
+        }),
+      }),
+    );
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        id: 'imported-failed',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+        telegramMessageUrls: ['https://t.me/c/1590085922/3001'],
       }),
     );
   });

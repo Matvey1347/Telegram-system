@@ -43,6 +43,7 @@ export class ResponseCacheInterceptor implements NestInterceptor {
       );
     }
 
+    if (this.shouldBypassCache(request)) return next.handle();
     if (!this.isCacheableGet(url)) return next.handle();
 
     const key = `${this.scopePrefix(userId, workspaceId)}:${method}:${url}`;
@@ -90,6 +91,12 @@ export class ResponseCacheInterceptor implements NestInterceptor {
     if (workspaceId)
       this.cache.clearByPrefix(this.scopePrefix(userId, workspaceId));
     this.cache.clearByPrefix(this.scopePrefix(userId, ''));
+  }
+
+  private shouldBypassCache(request: RequestWithUser) {
+    const rawHeader = request.headers['x-bypass-response-cache'];
+    const value = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    return value === '1' || value === 'true';
   }
 
   private isCacheableGet(url: string) {

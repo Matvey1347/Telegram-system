@@ -42,6 +42,16 @@ describe('telegramMarkupToHtml', () => {
     );
   });
 
+  it('treats same-line fenced text with spaces as a code block label', () => {
+    expect(
+      telegramMarkupToHtml(
+        '```немає чужого бренду\n→ менша брендова націнка\n```',
+      ),
+    ).toBe(
+      '<pre><code class="language-немає чужого бренду">→ менша брендова націнка\n</code></pre>',
+    );
+  });
+
   it('converts fenced code blocks with Windows line endings', () => {
     expect(telegramMarkupToHtml('```сделка\r\nубрать слабый актив\r\n```')).toBe(
       '<pre><code class="language-сделка">убрать слабый актив\n</code></pre>',
