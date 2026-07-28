@@ -65,4 +65,25 @@ describe("telegram-text-editor-format", () => {
       "```немає чужого бренду\n→ менша брендова націнка\n```",
     );
   });
+
+  it("keeps a newline before a blockquote when preview editing leaves plain text at the root", () => {
+    const html =
+      "Відпишися хоча б від десяти джерел, які дають більше шуму, ніж користі.<blockquote>Твоя стрічка — це середовище, у якому щодня живе твоя увага</blockquote>";
+
+    expect(editorHtmlToTelegramMarkup(html)).toBe(
+      [
+        "Відпишися хоча б від десяти джерел, які дають більше шуму, ніж користі.",
+        "> Твоя стрічка — це середовище, у якому щодня живе твоя увага",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves internal preview links instead of serializing them as # links", () => {
+    const html =
+      '<a href="tg-post:cms1gk8p20002htri28wdha4m" data-internal-post-link="cms1gk8p20002htri28wdha4m" data-internal-post-id="cms1gk8p20002htri28wdha4m">цука5е</a>';
+
+    expect(editorHtmlToTelegramMarkup(html)).toBe(
+      "[цука5е](tg-post:cms1gk8p20002htri28wdha4m)",
+    );
+  });
 });

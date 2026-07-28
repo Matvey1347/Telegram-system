@@ -150,6 +150,12 @@ function normalizeTextNode(value: string) {
   return value.replace(/\u00a0/g, " ");
 }
 
+function isBlockNode(node: Node) {
+  if (node.nodeType !== Node.ELEMENT_NODE) return false;
+  const tag = (node as HTMLElement).tagName.toLowerCase();
+  return tag === "blockquote" || tag === "pre" || tag === "div" || tag === "p";
+}
+
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return normalizeTextNode(node.textContent || "");
@@ -188,7 +194,14 @@ function serializeNode(node: Node): string {
   }
   if (tag === "a") {
     const label = serializeChildren(element) || "link";
-    const internalPostId = element.dataset.internalPostId;
+    const internalPostId =
+      element.dataset.internalPostId ||
+      element.dataset.internalPostLink ||
+      (() => {
+        const href = element.getAttribute("href") || "";
+        const match = href.match(/^tg-post:([a-zA-Z0-9_-]+)$/);
+        return match?.[1] || "";
+      })();
     if (internalPostId) return `[${label}](tg-post:${internalPostId})`;
     const href = element.getAttribute("href") || "";
     return href ? `[${label}](${href})` : label;
@@ -227,19 +240,30 @@ function serializeNode(node: Node): string {
 }
 
 function serializeChildren(element: HTMLElement) {
-  return Array.from(element.childNodes)
-    .map((node) => serializeNode(node))
-    .join("");
+  let serialized = "";
+  let previousWasBlock = false;
+
+  for (const node of Array.from(element.childNodes)) {
+    const nextValue = serializeNode(node);
+    if (!nextValue) continue;
+    const nextIsBlock = isBlockNode(node);
+    if (serialized && nextIsBlock && !serialized.endsWith("\n")) {
+      serialized += "\n";
+    } else if (serialized && previousWasBlock && !nextValue.startsWith("\n")) {
+      serialized += "\n";
+    }
+    serialized += nextValue;
+    previousWasBlock = nextIsBlock;
+  }
+
+  return serialized;
 }
 
 export function editorHtmlToTelegramMarkup(html: string) {
   if (typeof document === "undefined") return "";
   const container = document.createElement("div");
   container.innerHTML = html;
-
-  const serialized = Array.from(container.childNodes)
-    .map((node) => serializeNode(node))
-    .join("");
+  const serialized = serializeChildren(container);
 
   return joinBlockSegments(
     serialized

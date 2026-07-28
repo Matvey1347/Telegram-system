@@ -359,6 +359,16 @@ export class TelegramChannelsService {
     return `api:${userId}:${workspaceId || 'no-workspace'}`;
   }
 
+  private managedPostsCalendarCacheKey(
+    userId: string,
+    workspaceId: string,
+    channelId: string,
+    fromIso: string,
+    toIso: string,
+  ) {
+    return `${this.cacheScopePrefix(userId, workspaceId)}:GET:/telegram-channels/${channelId}/managed-posts/calendar?from=${fromIso}&to=${toIso}`;
+  }
+
   private invalidateTelegramChannelReadCache(
     userId: string,
     workspaceId: string,
@@ -4920,13 +4930,7 @@ export class TelegramChannelsService {
     query: ManagedPostsCalendarQueryDto,
   ): Promise<TelegramManagedPostCalendarResult> {
     const workspaceId = await this.workspace(userId);
-    const [channel, channelRow] = await Promise.all([
-      this.findOne(userId, channelId),
-      this.prisma.telegramChannel.findFirst({
-        where: { id: channelId, workspaceId },
-        select: { assignedMemberId: true },
-      }),
-    ]);
+    await this.findOne(userId, channelId);
     const from = new Date(query.from);
     const to = new Date(query.to);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
@@ -4942,110 +4946,110 @@ export class TelegramChannelsService {
     const now = new Date();
     const publishedRangeEnd = to < now ? to : now;
 
-    try {
-      await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
-      const account = await this.connectedAccount(workspaceId, channelId);
-      await this.syncRemoteScheduledManagedPosts({
+    await this.promoteDueScheduledManagedPosts(workspaceId, channelId);
+
+    const fromIso = from.toISOString();
+    const toIso = to.toISOString();
+    return this.responseCache.getOrSet(
+      this.managedPostsCalendarCacheKey(
+        userId,
         workspaceId,
         channelId,
-        channel,
-        assignedMemberId: channelRow?.assignedMemberId ?? null,
-        account,
-      });
-      await this.autoRepairImportedManagedPostsOnRead({
-        workspaceId,
-        channelId,
-        channel,
-        account,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unknown Telegram sync error';
-      this.logger.warn(
-        `Managed posts calendar scheduled sync skipped for channel ${channelId}: ${message}`,
-      );
-    }
-
-    const calendarWhere: Prisma.TelegramManagedPostWhereInput = {
-      workspaceId,
-      telegramChannelId: channelId,
-      OR: [
-        {
-          status: TelegramManagedPostStatus.SCHEDULED,
-          scheduledAt: { gte: from, lte: to },
-        },
-        ...(publishedRangeEnd >= from
-          ? [
-              {
-                status: TelegramManagedPostStatus.PUBLISHED,
-                publishedAt: { gte: from, lte: publishedRangeEnd },
-              } satisfies Prisma.TelegramManagedPostWhereInput,
-            ]
-          : []),
-      ],
-    };
-    const items = await this.prisma.telegramManagedPost.findMany({
-      where: calendarWhere,
-      orderBy: [{ scheduledAt: 'asc' }, { publishedAt: 'asc' }, { createdAt: 'asc' }],
-      include: {
-        assignedMember: WorkspaceService.assignedMemberInclude,
-        group: { select: { id: true, title: true, icon: true } },
-      },
-    });
-
-    const [futureScheduledTotal, lastScheduled] = await Promise.all([
-      this.prisma.telegramManagedPost.count({
-        where: {
+        fromIso,
+        toIso,
+      ),
+      15_000,
+      async () => {
+        const calendarWhere: Prisma.TelegramManagedPostWhereInput = {
           workspaceId,
           telegramChannelId: channelId,
-          status: TelegramManagedPostStatus.SCHEDULED,
-          scheduledAt: { gt: new Date() },
-        },
-      }),
-      this.prisma.telegramManagedPost.findFirst({
-        where: {
-          workspaceId,
-          telegramChannelId: channelId,
-          status: TelegramManagedPostStatus.SCHEDULED,
-          scheduledAt: { gt: new Date() },
-        },
-        orderBy: { scheduledAt: 'desc' },
-        select: { scheduledAt: true },
-      }),
-    ]);
+          OR: [
+            {
+              status: TelegramManagedPostStatus.SCHEDULED,
+              scheduledAt: { gte: from, lte: to },
+            },
+            ...(publishedRangeEnd >= from
+              ? [
+                  {
+                    status: TelegramManagedPostStatus.PUBLISHED,
+                    publishedAt: { gte: from, lte: publishedRangeEnd },
+                  } satisfies Prisma.TelegramManagedPostWhereInput,
+                ]
+              : []),
+          ],
+        };
+        const items = await this.prisma.telegramManagedPost.findMany({
+          where: calendarWhere,
+          orderBy: [
+            { scheduledAt: 'asc' },
+            { publishedAt: 'asc' },
+            { createdAt: 'asc' },
+          ],
+          include: {
+            assignedMember: WorkspaceService.assignedMemberInclude,
+            group: { select: { id: true, title: true, icon: true } },
+          },
+        });
 
-    return {
-      from: from.toISOString(),
-      to: to.toISOString(),
-      items: items.map((item) => ({
-        id: item.id,
-        telegramChannelId: item.telegramChannelId,
-        title: item.title,
-        text: item.text,
-        status: item.status as 'SCHEDULED' | 'PUBLISHED',
-        scheduledAt: item.scheduledAt?.toISOString() ?? null,
-        publishedAt: item.publishedAt?.toISOString() ?? null,
-        origin: item.origin,
-        telegramRemoteStatus: item.telegramRemoteStatus,
-        telegramMessageUrls: item.telegramMessageUrls,
-        hasMedia: item.imageUrls.length > 0,
-        group: item.group,
-        assignedMember: {
-          id: item.assignedMember.id,
-          workspaceId: item.assignedMember.workspaceId,
-          name: item.assignedMember.user?.name ?? item.assignedMember.id,
-          email: item.assignedMember.user?.email ?? null,
-          photoUrl: item.assignedMember.avatarIcon?.imageUrl ?? null,
-          role: item.assignedMember.role,
-        },
-      })),
-      summary: {
-        scheduledInRange: items.filter((item) => item.status === 'SCHEDULED').length,
-        publishedInRange: items.filter((item) => item.status === 'PUBLISHED').length,
-        futureScheduledTotal,
-        lastScheduledAt: lastScheduled?.scheduledAt?.toISOString() ?? null,
+        const [futureScheduledTotal, lastScheduled] = await Promise.all([
+          this.prisma.telegramManagedPost.count({
+            where: {
+              workspaceId,
+              telegramChannelId: channelId,
+              status: TelegramManagedPostStatus.SCHEDULED,
+              scheduledAt: { gt: new Date() },
+            },
+          }),
+          this.prisma.telegramManagedPost.findFirst({
+            where: {
+              workspaceId,
+              telegramChannelId: channelId,
+              status: TelegramManagedPostStatus.SCHEDULED,
+              scheduledAt: { gt: new Date() },
+            },
+            orderBy: { scheduledAt: 'desc' },
+            select: { scheduledAt: true },
+          }),
+        ]);
+
+        return {
+          from: fromIso,
+          to: toIso,
+          items: items.map((item) => ({
+            id: item.id,
+            telegramChannelId: item.telegramChannelId,
+            title: item.title,
+            text: item.text,
+            status: item.status as 'SCHEDULED' | 'PUBLISHED',
+            scheduledAt: item.scheduledAt?.toISOString() ?? null,
+            publishedAt: item.publishedAt?.toISOString() ?? null,
+            origin: item.origin,
+            telegramRemoteStatus: item.telegramRemoteStatus,
+            telegramMessageUrls: item.telegramMessageUrls,
+            hasMedia: item.imageUrls.length > 0,
+            group: item.group,
+            assignedMember: {
+              id: item.assignedMember.id,
+              workspaceId: item.assignedMember.workspaceId,
+              name: item.assignedMember.user?.name ?? item.assignedMember.id,
+              email: item.assignedMember.user?.email ?? null,
+              photoUrl: item.assignedMember.avatarIcon?.imageUrl ?? null,
+              role: item.assignedMember.role,
+            },
+          })),
+          summary: {
+            scheduledInRange: items.filter(
+              (item) => item.status === 'SCHEDULED',
+            ).length,
+            publishedInRange: items.filter(
+              (item) => item.status === 'PUBLISHED',
+            ).length,
+            futureScheduledTotal,
+            lastScheduledAt: lastScheduled?.scheduledAt?.toISOString() ?? null,
+          },
+        };
       },
-    };
+    );
   }
 
   private async promoteDueScheduledManagedPosts(

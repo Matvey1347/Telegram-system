@@ -239,6 +239,30 @@ function endOfMonth(value: Date) {
   return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
 }
 
+function startOfDay(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+}
+
+function endOfDay(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
+}
+
 function addMonths(value: Date, amount: number) {
   return new Date(value.getFullYear(), value.getMonth() + amount, 1);
 }
@@ -265,6 +289,12 @@ function calendarGridStart(value: Date) {
   const start = new Date(first);
   start.setDate(first.getDate() + diff);
   return start;
+}
+
+function calendarGridEnd(value: Date) {
+  const end = calendarGridStart(value);
+  end.setDate(end.getDate() + 41);
+  return end;
 }
 
 function buildCalendarDays(value: Date) {
@@ -611,8 +641,8 @@ function TelegramPostWorkspace({
   });
   const calendarRange = useMemo(
     () => ({
-      from: startOfMonth(calendarMonth).toISOString(),
-      to: endOfMonth(calendarMonth).toISOString(),
+      from: startOfDay(calendarGridStart(calendarMonth)).toISOString(),
+      to: endOfDay(calendarGridEnd(calendarMonth)).toISOString(),
     }),
     [calendarMonth],
   );
@@ -626,6 +656,9 @@ function TelegramPostWorkspace({
     queryFn: () =>
       telegramChannelsApi.managedPostsCalendar(channelId, calendarRange),
     enabled: workspaceView === "posts" && postView === "calendar",
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const postHistory = useQuery({
     queryKey: ["telegram-managed-post-history", channelId, editing?.id],

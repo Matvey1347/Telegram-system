@@ -562,7 +562,7 @@ describe('TelegramChannelsService syncManagedPosts', () => {
     );
   });
 
-  it('pulls Telegram scheduled posts when loading the calendar', async () => {
+  it('uses local managed posts when loading the calendar', async () => {
     const create = jest.fn().mockImplementation(async ({ data }) => ({
       id: 'imported-calendar',
       title: data.title,
@@ -594,9 +594,6 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       telegramManagedPost: {
         findMany: jest
           .fn()
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([])
           .mockResolvedValueOnce([
             {
               id: 'imported-calendar',
@@ -648,64 +645,36 @@ describe('TelegramChannelsService syncManagedPosts', () => {
       },
       $executeRawUnsafe: jest.fn().mockResolvedValue(undefined),
     };
-    const mtprotoClient = {
-      getScheduledHistory: jest.fn().mockResolvedValue([
-        {
-          id: '3',
-          text: 'цвуакпецуак',
-          html: 'цвуакпецуак',
-          date: '2026-07-26T10:09:00.000Z',
-          hasMedia: false,
-          mediaKind: null,
-          groupedId: null,
-        },
-      ]),
-      getManagedPostMessages: jest.fn().mockResolvedValue({
-        published: [],
-        scheduled: [],
-        recentPublished: [],
-      }),
-      downloadChannelMessageMedia: jest.fn().mockResolvedValue(null),
-    };
     const service = new TelegramChannelsService(
       prisma as never,
       {} as never,
-      { clearByPrefix: jest.fn() } as never,
+      {
+        clearByPrefix: jest.fn(),
+        getOrSet: jest.fn(async (_key, _ttlMs, load) => load()),
+      } as never,
       {} as never,
-      mtprotoClient as never,
+      {} as never,
       {} as never,
       {} as never,
     );
     service['workspace'] = jest.fn().mockResolvedValue('workspace');
-    service['postGroupSystemColumnsAvailable'] = true;
     service['findOne'] = jest.fn().mockResolvedValue({
       id: 'channel',
       username: 'example',
       telegramChatId: null,
     });
-    service['connectedAccount'] = jest.fn().mockResolvedValue({});
-    service['accountCredentials'] = jest.fn().mockReturnValue({
-      apiId: '1',
-      apiHash: 'hash',
-      session: 'session',
-    });
+    service['promoteDueScheduledManagedPosts'] = jest.fn().mockResolvedValue(undefined);
 
     const result = await service.managedPostsCalendar('user', 'channel', {
       from: '2026-07-01T00:00:00.000Z',
       to: '2026-07-31T23:59:59.999Z',
     });
 
-    expect(mtprotoClient.getScheduledHistory).toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          origin: 'TELEGRAM',
-          status: TelegramManagedPostStatus.SCHEDULED,
-          title: 'цвуакпецуак',
-          telegramMessageIds: ['3'],
-        }),
-      }),
+    expect(service['promoteDueScheduledManagedPosts']).toHaveBeenCalledWith(
+      'workspace',
+      'channel',
     );
+    expect(create).not.toHaveBeenCalled();
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toEqual(
       expect.objectContaining({
@@ -756,7 +725,10 @@ describe('TelegramChannelsService syncManagedPosts', () => {
     const service = new TelegramChannelsService(
       prisma as never,
       {} as never,
-      { clearByPrefix: jest.fn() } as never,
+      {
+        clearByPrefix: jest.fn(),
+        getOrSet: jest.fn(async (_key, _ttlMs, load) => load()),
+      } as never,
       {} as never,
       {} as never,
       {} as never,

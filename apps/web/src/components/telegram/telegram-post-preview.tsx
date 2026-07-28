@@ -80,7 +80,7 @@ function previewHtml(raw: string) {
     /\[([^\]\n]+)\]\(tg-post:([a-zA-Z0-9_-]+)\)/g,
     (_match, label: string, postId: string) =>
       token(
-        `<a href="#" data-internal-post-link="${escapeHtml(postId)}" title="Internal post link">${escapeHtml(label)}</a>`,
+        `<a href="tg-post:${escapeHtml(postId)}" data-internal-post-link="${escapeHtml(postId)}" data-internal-post-id="${escapeHtml(postId)}" title="Internal post link">${escapeHtml(label)}</a>`,
       ),
   );
   value = value.replace(
