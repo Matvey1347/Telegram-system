@@ -2583,6 +2583,12 @@ export const telegramChannelsApi = {
           : undefined,
       )
     ).data,
+  returnManagedPostToDraft: async (channelId: string, postId: string) =>
+    (
+      await api.post<TelegramManagedPost>(
+        `/telegram-channels/${channelId}/managed-posts/${postId}/return-to-draft`,
+      )
+    ).data,
   scheduleManagedPostsBatch: async (
     channelId: string,
     payload: ScheduleManagedPostsBatchPayload,

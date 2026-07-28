@@ -7138,6 +7138,52 @@ export class TelegramChannelsService {
     );
   }
 
+  async returnManagedPostToDraft(
+    userId: string,
+    channelId: string,
+    postId: string,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const post = await this.prisma.telegramManagedPost.findFirst({
+      where: { id: postId, workspaceId, telegramChannelId: channelId },
+      include: { telegramChannel: true },
+    });
+    if (!post) throw new NotFoundException('Managed post not found');
+    if (post.status !== TelegramManagedPostStatus.SCHEDULED) {
+      throw new BadRequestException(
+        'Only scheduled posts can be returned to draft',
+      );
+    }
+    if (post.origin === 'TELEGRAM') {
+      throw new BadRequestException(
+        'Posts created in Telegram cannot be returned to draft from the editor',
+      );
+    }
+    await this.cancelScheduledManagedPost(workspaceId, post);
+    return this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(tx, post, 'before_return_to_draft');
+      return tx.telegramManagedPost.update({
+        where: { id: postId },
+        data: {
+          status: TelegramManagedPostStatus.DRAFT,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
+          scheduledAt: null,
+          publishedAt: null,
+          telegramMessageIds: [],
+          telegramMessageUrls: [],
+          sourceType: null,
+          sourceId: null,
+          publishMode: null,
+          lastError: null,
+          lastTelegramSyncedAt: new Date(),
+          lastTelegramSyncNote:
+            'Scheduled Telegram post was cancelled and returned to draft from the editor.',
+        },
+        include: this.managedPostInclude,
+      });
+    });
+  }
+
   private async cancelScheduledManagedPost(
     workspaceId: string,
     post: {

@@ -369,6 +369,14 @@ export class TelegramChannelsController {
   ) {
     return this.service.scheduleManagedPost(user.sub, id, postId, dto);
   }
+  @Post(':id/managed-posts/:postId/return-to-draft')
+  returnManagedPostToDraft(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.service.returnManagedPostToDraft(user.sub, id, postId);
+  }
   @Post(':id/managed-posts/schedule-batch')
   scheduleManagedPostsBatch(
     @CurrentUser() user: JwtUser,

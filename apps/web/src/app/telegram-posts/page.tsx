@@ -785,6 +785,9 @@ function TelegramPostWorkspace({
     return chatId ? `https://t.me/c/${chatId}/${messageId}` : null;
   })();
   const displayedError = error || editingMeta?.lastError || "";
+  const canReturnScheduledPostToDraft = Boolean(
+    editingMeta?.status === "SCHEDULED" && editingMeta.origin !== "TELEGRAM",
+  );
   const canManageTelegramLink = Boolean(
     editingMeta &&
       (editingMeta.status === "SCHEDULED" ||
@@ -1774,6 +1777,41 @@ function TelegramPostWorkspace({
       ),
     [editing, restoreConfirmationValue, restorePreviewRevision],
   );
+  const returnManagedPostToDraft = useMutation({
+    mutationFn: async () => {
+      if (!editing) throw new Error("No post selected");
+      return telegramChannelsApi.returnManagedPostToDraft(channelId, editing.id);
+    },
+    onSuccess: async (post) => {
+      changeStatusTab("DRAFT");
+      selectPost(post);
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-posts-calendar", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-history", channelId, post.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["telegram-managed-post-link-targets", channelId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["post-groups", channelId],
+        }),
+      ]);
+      pushToast(`"${post.title}" returned to draft.`, "success");
+    },
+    onError: (mutationError) => {
+      pushToast(
+        apiErrorMessage(mutationError, "Could not return post to draft"),
+        "error",
+        7000,
+      );
+    },
+  });
 
   const saveManualTelegramUrl = async () => {
     if (!editing) return;
@@ -3003,6 +3041,20 @@ function TelegramPostWorkspace({
                           : "Double-click to set the Telegram link."}
                       </TooltipBubble>
                     </span>
+                  ) : null}
+                  {editing && canReturnScheduledPostToDraft ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="inline-flex h-8 items-center gap-1.5 px-2.5 text-xs"
+                      disabled={editorIsSaving || returnManagedPostToDraft.isPending}
+                      onClick={() => void returnManagedPostToDraft.mutateAsync()}
+                    >
+                      <RotateCcw size={13} />
+                      {returnManagedPostToDraft.isPending
+                        ? "Returning..."
+                        : "Return to draft"}
+                    </Button>
                   ) : null}
                 </div>
                 {isPublished ? (
