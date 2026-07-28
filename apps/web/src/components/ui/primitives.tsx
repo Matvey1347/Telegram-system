@@ -78,10 +78,20 @@ export function normalizeTimeInputValue(value: string) {
   return `${hours.slice(0, 2)}:${minutes.slice(0, 2)}`;
 }
 
+export function canonicalizeTimeInputValue(value: string) {
+  const normalized = normalizeTimeInputValue(value);
+  const match = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 export function isValidTimeInputValue(value: string) {
-  if (!/^\d{2}:\d{2}$/.test(value)) return false;
-  const [hours, minutes] = value.split(":").map(Number);
-  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+  return canonicalizeTimeInputValue(value) !== null;
 }
 
 export function TimeInput(

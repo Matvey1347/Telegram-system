@@ -49,6 +49,7 @@ import { MoneyStack } from "@/components/ui/money-stack";
 import { Pagination } from "@/components/ui/pagination";
 import {
   Button,
+  canonicalizeTimeInputValue,
   DateRangeInput,
   FormField,
   Input,
@@ -584,40 +585,8 @@ export default function TelegramChannelAnalyticsPage() {
   });
 
   const settingsMutation = useMutation({
-    mutationFn: () =>
-      telegramChannelsApi.updateQuiet(id, {
-        seedSubscribersCount: toNumber(settings.seedSubscribersCount),
-        activeSubscribersWindow: Math.max(
-          1,
-          toNumber(settings.activeSubscribersWindow),
-        ),
-        knownFakeSubscribersCount: Math.max(
-          0,
-          toNumber(settings.knownFakeSubscribersCount),
-        ),
-        ownViewsPerPost: Math.max(0, toNumber(settings.ownViewsPerPost)),
-        ownReactionsPerPost: Math.max(
-          0,
-          toNumber(settings.ownReactionsPerPost),
-        ),
-        targetCpaFrom:
-          settings.targetCpaFrom === "" ? null : toNumber(settings.targetCpaFrom),
-        targetCpa: settings.targetCpa === "" ? null : toNumber(settings.targetCpa),
-        acceptableCpaFrom:
-          settings.acceptableCpaFrom === ""
-            ? null
-            : toNumber(settings.acceptableCpaFrom),
-        acceptableCpa:
-          settings.acceptableCpa === "" ? null : toNumber(settings.acceptableCpa),
-        stopCpaFrom:
-          settings.stopCpaFrom === "" ? null : toNumber(settings.stopCpaFrom),
-        stopCpa: null,
-        timePosts: settings.timePosts.map((item) => ({
-          title: item.title.trim(),
-          time: item.time,
-          iconId: item.iconId || null,
-        })),
-      }),
+    mutationFn: (nextSettings: SettingsState) =>
+      telegramChannelsApi.updateQuiet(id, buildChannelSettingsPayload(nextSettings)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
       queryClient.invalidateQueries({
@@ -1052,19 +1021,19 @@ export default function TelegramChannelAnalyticsPage() {
               settings={settings}
               setSettings={setSettings}
               isSaving={settingsMutation.isPending}
-              onSave={() => settingsMutation.mutate()}
+              onSave={(nextSettings) => settingsMutation.mutate(nextSettings)}
             />
             <SeedSettingsControl
               settings={settings}
               setSettings={setSettings}
               isSaving={settingsMutation.isPending}
-              onSave={() => settingsMutation.mutate()}
+              onSave={(nextSettings) => settingsMutation.mutate(nextSettings)}
             />
             <TimePostsControl
               settings={settings}
               setSettings={setSettings}
               isSaving={settingsMutation.isPending}
-              onSave={() => settingsMutation.mutate()}
+              onSave={(nextSettings) => settingsMutation.mutate(nextSettings)}
             />
             <InfoTooltip
               tip={
@@ -1900,6 +1869,39 @@ type SettingsState = {
   }>;
 };
 
+function buildChannelSettingsPayload(settings: SettingsState) {
+  return {
+    seedSubscribersCount: toNumber(settings.seedSubscribersCount),
+    activeSubscribersWindow: Math.max(
+      1,
+      toNumber(settings.activeSubscribersWindow),
+    ),
+    knownFakeSubscribersCount: Math.max(
+      0,
+      toNumber(settings.knownFakeSubscribersCount),
+    ),
+    ownViewsPerPost: Math.max(0, toNumber(settings.ownViewsPerPost)),
+    ownReactionsPerPost: Math.max(0, toNumber(settings.ownReactionsPerPost)),
+    targetCpaFrom:
+      settings.targetCpaFrom === "" ? null : toNumber(settings.targetCpaFrom),
+    targetCpa: settings.targetCpa === "" ? null : toNumber(settings.targetCpa),
+    acceptableCpaFrom:
+      settings.acceptableCpaFrom === ""
+        ? null
+        : toNumber(settings.acceptableCpaFrom),
+    acceptableCpa:
+      settings.acceptableCpa === "" ? null : toNumber(settings.acceptableCpa),
+    stopCpaFrom:
+      settings.stopCpaFrom === "" ? null : toNumber(settings.stopCpaFrom),
+    stopCpa: null,
+    timePosts: settings.timePosts.map((item) => ({
+      title: item.title.trim(),
+      time: canonicalizeTimeInputValue(item.time) ?? item.time,
+      iconId: item.iconId || null,
+    })),
+  };
+}
+
 function KpiSettingsControl({
   settings,
   setSettings,
@@ -1909,7 +1911,7 @@ function KpiSettingsControl({
   settings: SettingsState;
   setSettings: (settings: SettingsState) => void;
   isSaving: boolean;
-  onSave: () => void;
+  onSave: (settings: SettingsState) => void;
 }) {
   const [open, setOpen] = useState(false);
   const setValue = (key: keyof SettingsState, value: string) =>
@@ -1923,7 +1925,7 @@ function KpiSettingsControl({
       settings.stopCpa,
   );
   const save = () => {
-    onSave();
+    onSave(settings);
     setOpen(false);
   };
 
@@ -2043,7 +2045,7 @@ function SeedSettingsControl({
   settings: SettingsState;
   setSettings: (settings: SettingsState) => void;
   isSaving: boolean;
-  onSave: () => void;
+  onSave: (settings: SettingsState) => void;
 }) {
   const [open, setOpen] = useState(false);
   const setValue = (key: keyof SettingsState, value: string) =>
@@ -2055,7 +2057,7 @@ function SeedSettingsControl({
       toNumber(settings.knownFakeSubscribersCount),
   );
   const save = () => {
-    onSave();
+    onSave(settings);
     setOpen(false);
   };
 
@@ -2160,50 +2162,69 @@ function TimePostsControl({
   settings: SettingsState;
   setSettings: (settings: SettingsState) => void;
   isSaving: boolean;
-  onSave: () => void;
+  onSave: (settings: SettingsState) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [draftTimePosts, setDraftTimePosts] = useState(settings.timePosts);
   const hasTimePosts = settings.timePosts.length > 0;
+
+  useEffect(() => {
+    if (!open) {
+      setDraftTimePosts(settings.timePosts);
+    }
+  }, [open, settings.timePosts]);
 
   const updateTimePost = (
     index: number,
     patch: Partial<SettingsState["timePosts"][number]>,
   ) => {
-    setSettings({
-      ...settings,
-      timePosts: settings.timePosts.map((item, itemIndex) =>
+    setDraftTimePosts((current) =>
+      current.map((item, itemIndex) =>
         itemIndex === index ? { ...item, ...patch } : item,
       ),
-    });
+    );
   };
 
   const addTimePost = () => {
-    setSettings({
-      ...settings,
-      timePosts: [
-        ...settings.timePosts,
-        {
-          id: `draft-${Date.now()}-${settings.timePosts.length}`,
-          title: "",
-          time: "17:00",
-          iconId: null,
-          icon: null,
-        },
-      ],
-    });
+    setDraftTimePosts((current) => [
+      ...current,
+      {
+        id: `draft-${Date.now()}-${current.length}`,
+        title: "",
+        time: "17:00",
+        iconId: null,
+        icon: null,
+      },
+    ]);
   };
 
   const removeTimePost = (index: number) => {
-    setSettings({
-      ...settings,
-      timePosts: settings.timePosts.filter((_, itemIndex) => itemIndex !== index),
-    });
+    setDraftTimePosts((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+  };
+
+  const close = () => {
+    setDraftTimePosts(settings.timePosts);
+    setOpen(false);
   };
 
   const save = () => {
-    onSave();
+    const nextSettings = {
+      ...settings,
+      timePosts: draftTimePosts.map((item) => ({
+        ...item,
+        time: canonicalizeTimeInputValue(item.time) ?? item.time,
+      })),
+    };
+    setSettings(nextSettings);
+    onSave(nextSettings);
     setOpen(false);
   };
+
+  const hasInvalidTimePost = draftTimePosts.some(
+    (item) => !canonicalizeTimeInputValue(item.time),
+  );
 
   return (
     <>
@@ -2220,14 +2241,14 @@ function TimePostsControl({
         <Clock3 size={15} />
         {hasTimePosts ? "Edit time posts" : "Set time posts"}
       </Button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Time posts">
+      <Modal open={open} onClose={close} title="Time posts">
         <div className="space-y-4">
           <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm text-slate-300">
             Save reusable channel publishing slots. Later, in schedule mode, you
             can insert these times with one tap.
           </div>
           <div className="space-y-3">
-            {settings.timePosts.map((item, index) => (
+            {draftTimePosts.map((item, index) => (
               <div
                 key={item.id}
                 className="rounded-lg border border-slate-800 bg-slate-900/20 p-3"
@@ -2273,7 +2294,7 @@ function TimePostsControl({
                 </div>
               </div>
             ))}
-            {!settings.timePosts.length ? (
+            {!draftTimePosts.length ? (
               <div className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">
                 No time posts yet. Add your first reusable channel slot.
               </div>
@@ -2290,21 +2311,12 @@ function TimePostsControl({
               Add time post
             </Button>
             <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setOpen(false)}
-              >
+              <Button type="button" variant="secondary" onClick={close}>
                 Cancel
               </Button>
               <Button
                 type="button"
-                disabled={
-                  isSaving ||
-                  settings.timePosts.some(
-                    (item) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(item.time),
-                  )
-                }
+                disabled={isSaving || hasInvalidTimePost}
                 onClick={save}
               >
                 {isSaving ? "Saving..." : "Save time posts"}

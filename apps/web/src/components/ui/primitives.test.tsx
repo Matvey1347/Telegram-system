@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { CustomSelect } from "@/components/ui/primitives";
+import {
+  canonicalizeTimeInputValue,
+  CustomSelect,
+  isValidTimeInputValue,
+} from "@/components/ui/primitives";
 
 describe("CustomSelect", () => {
   it("renders the dropdown in a fixed overlay layer above surrounding layout", async () => {
@@ -23,5 +27,18 @@ describe("CustomSelect", () => {
     const option = await screen.findByRole("button", { name: /publish/i });
     expect(container).not.toContainElement(option);
     expect(option.closest("div")?.className).toContain("z-[120]");
+  });
+});
+
+describe("time input helpers", () => {
+  it("accepts single-digit hours and canonicalizes them for saving", () => {
+    expect(canonicalizeTimeInputValue("8:15")).toBe("08:15");
+    expect(isValidTimeInputValue("8:15")).toBe(true);
+  });
+
+  it("rejects incomplete or out-of-range times", () => {
+    expect(canonicalizeTimeInputValue("8:1")).toBeNull();
+    expect(canonicalizeTimeInputValue("24:00")).toBeNull();
+    expect(isValidTimeInputValue("24:00")).toBe(false);
   });
 });
