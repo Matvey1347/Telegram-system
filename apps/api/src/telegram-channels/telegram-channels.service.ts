@@ -10514,11 +10514,36 @@ export class TelegramChannelsService {
   async inviteLinksForSelect(
     userId: string,
     channelId: string,
-    query: Pick<TelegramChannelInviteLinksQueryDto, 'search'> = {},
+    query: Pick<
+      TelegramChannelInviteLinksQueryDto,
+      'search' | 'availableForCampaignId'
+    > = {},
   ) {
     const workspaceId = await this.workspace(userId);
     await this.findOne(userId, channelId);
-    const where = this.inviteLinksWhere(workspaceId, channelId, query.search);
+    const baseWhere = this.inviteLinksWhere(
+      workspaceId,
+      channelId,
+      query.search,
+    );
+    const availableForCampaignId = String(
+      query.availableForCampaignId || '',
+    ).trim();
+    const where: Prisma.TelegramInviteLinkWhereInput = availableForCampaignId
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { adCampaignId: null },
+                { adCampaignId: availableForCampaignId },
+              ],
+            },
+          ],
+        }
+      : {
+          AND: [baseWhere, { adCampaignId: null }],
+        };
     const links = await this.findInviteLinksWithRequestedCountFallback({
       workspaceId,
       where,

@@ -2992,7 +2992,7 @@ export async function getTelegramChannelInviteLinks(
 
 export async function getTelegramChannelInviteLinksForSelect(
   channelId: string,
-  params?: { search?: string },
+  params?: { search?: string; availableForCampaignId?: string },
 ) {
   return (
     await api.get<TelegramInviteLink[]>(

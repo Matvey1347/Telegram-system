@@ -226,6 +226,7 @@ export class TelegramChannelPostsQueryDto extends PaginationQueryDto {
 
 export class TelegramChannelInviteLinksQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsString() availableForCampaignId?: string;
 }
 
 export class TelegramManagedPostsQueryDto extends PaginationQueryDto {}

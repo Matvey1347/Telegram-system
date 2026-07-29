@@ -704,7 +704,7 @@ export class AdHypothesesService {
   ) {
     const workspaceId = await this.workspace(userId);
     const pagination = normalizePagination(query);
-    const [hypotheses, totalItems] = await this.prisma.$transaction([
+    const [hypotheses, totalItems] = await Promise.all([
       (this.prisma.adHypothesis as any).findMany({
         where: { workspaceId },
         include: this.includeHypothesisCampaigns(),

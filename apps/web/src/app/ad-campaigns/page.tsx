@@ -2317,8 +2317,15 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
 
   const { data: promos } = useQuery({ queryKey: ['channel-promos', selectedChannelId], queryFn: () => getTelegramChannelPromos(selectedChannelId), enabled: !!selectedChannelId });
   const { data: inviteLinks } = useQuery({
-    queryKey: ['channel-invite-links-select', selectedChannelId],
-    queryFn: () => getTelegramChannelInviteLinksForSelect(selectedChannelId),
+    queryKey: [
+      'channel-invite-links-select',
+      selectedChannelId,
+      initial?.id ?? null,
+    ],
+    queryFn: () =>
+      getTelegramChannelInviteLinksForSelect(selectedChannelId, {
+        availableForCampaignId: initial?.id || undefined,
+      }),
     enabled: !!selectedChannelId,
   });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list });
