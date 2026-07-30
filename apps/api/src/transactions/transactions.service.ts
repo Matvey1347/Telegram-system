@@ -49,6 +49,37 @@ export class TransactionsService {
     );
   }
 
+  private isBuyChannelsCategory(category: {
+    key?: string | null;
+    name?: string | null;
+    type: 'income' | 'expense';
+  }) {
+    const normalizedCategoryName = String(category.name ?? '')
+      .trim()
+      .toLowerCase();
+    return (
+      category.type === 'expense' &&
+      (category.key === 'buy_channels' ||
+        normalizedCategoryName === 'buy channels' ||
+        normalizedCategoryName === 'buy channels (legacy)')
+    );
+  }
+
+  private isChannelAdvertisingRevenueCategory(category: {
+    key?: string | null;
+    name?: string | null;
+    type: 'income' | 'expense';
+  }) {
+    const normalizedCategoryName = String(category.name ?? '')
+      .trim()
+      .toLowerCase();
+    return (
+      category.type === 'income' &&
+      (category.key === 'channel_advertising_revenue' ||
+        normalizedCategoryName === 'channel advertising revenue')
+    );
+  }
+
   private async validateCategoryAndMember(
     workspaceId: string,
     type: 'income' | 'expense',
@@ -169,22 +200,28 @@ export class TransactionsService {
     return rows[0] ?? null;
   }
 
+  private async findWorkspaceTelegramChannelById(
+    workspaceId: string,
+    channelId: string,
+  ) {
+    return this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId },
+      select: {
+        id: true,
+        title: true,
+        username: true,
+        photoUrl: true,
+      },
+    });
+  }
+
   private async resolvePurchaseChannelLink(params: {
     workspaceId: string;
     category: { key?: string | null; name?: string | null; type: 'income' | 'expense' };
     telegramChannelId?: string | null;
     transactionId?: string;
   }) {
-    const normalizedCategoryName = String(params.category.name ?? '')
-      .trim()
-      .toLowerCase();
-    const isBuyChannelsCategory =
-      params.category.type === 'expense' &&
-      (
-        params.category.key === 'buy_channels' ||
-        normalizedCategoryName === 'buy channels' ||
-        normalizedCategoryName === 'buy channels (legacy)'
-      );
+    const isBuyChannelsCategory = this.isBuyChannelsCategory(params.category);
     const requestedChannelId = params.telegramChannelId ?? null;
 
     if (!isBuyChannelsCategory) {
@@ -213,6 +250,38 @@ export class TransactionsService {
         'This Telegram channel is already linked to another purchase transaction.',
       );
     }
+    return channel;
+  }
+
+  private async resolveRevenueChannelLink(params: {
+    workspaceId: string;
+    category: { key?: string | null; name?: string | null; type: 'income' | 'expense' };
+    telegramChannelId?: string | null;
+  }) {
+    const isChannelAdvertisingRevenueCategory =
+      this.isChannelAdvertisingRevenueCategory(params.category);
+    const requestedChannelId = params.telegramChannelId ?? null;
+
+    if (!isChannelAdvertisingRevenueCategory) {
+      if (requestedChannelId) {
+        throw new BadRequestException(
+          'telegramChannelId is only allowed for Channel Advertising Revenue income',
+        );
+      }
+      return null;
+    }
+
+    if (!requestedChannelId) {
+      throw new BadRequestException(
+        'telegramChannelId is required for Channel Advertising Revenue income',
+      );
+    }
+
+    const channel = await this.findWorkspaceTelegramChannelById(
+      params.workspaceId,
+      requestedChannelId,
+    );
+    if (!channel) throw new NotFoundException('Telegram channel not found');
     return channel;
   }
 
@@ -361,6 +430,14 @@ export class TransactionsService {
               },
             },
           },
+          telegramChannel: {
+            select: {
+              id: true,
+              title: true,
+              username: true,
+              photoUrl: true,
+            },
+          },
           member: { include: { user: true } },
           assignedMember: WorkspaceService.assignedMemberInclude,
           createdByUser: WorkspaceService.createdByUserInclude,
@@ -419,6 +496,14 @@ export class TransactionsService {
             },
           },
         },
+        telegramChannel: {
+          select: {
+            id: true,
+            title: true,
+            username: true,
+            photoUrl: true,
+          },
+        },
         member: { include: { user: true } },
         assignedMember: WorkspaceService.assignedMemberInclude,
         createdByUser: WorkspaceService.createdByUserInclude,
@@ -465,7 +550,16 @@ export class TransactionsService {
     const purchaseChannel = await this.resolvePurchaseChannelLink({
       workspaceId,
       category,
-      telegramChannelId: dto.telegramChannelId,
+      telegramChannelId: this.isBuyChannelsCategory(category)
+        ? dto.telegramChannelId
+        : undefined,
+    });
+    const revenueChannel = await this.resolveRevenueChannelLink({
+      workspaceId,
+      category,
+      telegramChannelId: this.isChannelAdvertisingRevenueCategory(category)
+        ? dto.telegramChannelId
+        : undefined,
     });
 
     const exchangeRateToPrimary =
@@ -476,6 +570,7 @@ export class TransactionsService {
         data: {
           workspaceId,
           accountId: dto.accountId,
+          telegramChannelId: revenueChannel?.id ?? null,
           type: dto.type,
           amount: dto.amount,
           exchangeRateToPrimary,
@@ -516,6 +611,14 @@ export class TransactionsService {
                   imageUrl: true,
                 },
               },
+            },
+          },
+          telegramChannel: {
+            select: {
+              id: true,
+              title: true,
+              username: true,
+              photoUrl: true,
             },
           },
           member: { include: { user: true } },
@@ -593,15 +696,28 @@ export class TransactionsService {
       workspaceId,
       category,
       telegramChannelId:
-        dto.telegramChannelId === undefined
+        this.isBuyChannelsCategory(category) && dto.telegramChannelId === undefined
           ? (
               await this.findLinkedPurchaseChannelByTransaction(
                 workspaceId,
                 existing.id,
               )
             )?.id ?? null
-          : dto.telegramChannelId,
+          : this.isBuyChannelsCategory(category)
+            ? dto.telegramChannelId
+            : undefined,
       transactionId: existing.id,
+    });
+    const revenueChannel = await this.resolveRevenueChannelLink({
+      workspaceId,
+      category,
+      telegramChannelId:
+        this.isChannelAdvertisingRevenueCategory(category) &&
+        dto.telegramChannelId === undefined
+          ? existing.telegramChannelId
+          : this.isChannelAdvertisingRevenueCategory(category)
+            ? dto.telegramChannelId
+            : undefined,
     });
 
     const rate =
@@ -615,6 +731,7 @@ export class TransactionsService {
           ...transactionDto,
           categoryId: category.id,
           category: category.name,
+          telegramChannelId: revenueChannel?.id ?? null,
           memberId,
           date: dto.date ? new Date(dto.date) : undefined,
           amountInPrimaryCurrency: amount * rate,
@@ -647,6 +764,14 @@ export class TransactionsService {
                   imageUrl: true,
                 },
               },
+            },
+          },
+          telegramChannel: {
+            select: {
+              id: true,
+              title: true,
+              username: true,
+              photoUrl: true,
             },
           },
           member: { include: { user: true } },

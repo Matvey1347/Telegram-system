@@ -49,7 +49,24 @@ function isBuyChannelsCategory(category?: TransactionCategory | null) {
   if (!category) return false;
   return (
     category.type === 'expense' &&
-    category.name.trim().toLowerCase() === 'buy channels (legacy)'
+    (
+      category.key === 'buy_channels' ||
+      category.name.trim().toLowerCase() === 'buy channels (legacy)' ||
+      category.name.trim().toLowerCase() === 'buy channels'
+    )
+  );
+}
+
+function isChannelAdvertisingRevenueCategory(
+  category?: TransactionCategory | null,
+) {
+  if (!category) return false;
+  return (
+    category.type === 'income' &&
+    (
+      category.key === 'channel_advertising_revenue' ||
+      category.name.trim().toLowerCase() === 'channel advertising revenue'
+    )
   );
 }
 
@@ -257,6 +274,7 @@ function getTransactionTitle(transaction: Transaction) {
   return transaction.description?.trim()
     || transaction.adCampaign?.title?.trim()
     || transaction.investment?.notes?.trim()
+    || transaction.telegramChannel?.title?.trim()
     || transaction.purchasedTelegramChannel?.title?.trim()
     || transaction.member?.user?.name?.trim()
     || transaction.categoryRef?.name
@@ -272,7 +290,10 @@ function transactionDefaults(initial?: Transaction): Values {
         amount: Number(initial.amount),
         categoryId: initial.categoryId ?? initial.categoryRef?.id ?? '',
         memberId: initial.memberId ?? '',
-        telegramChannelId: initial.purchasedTelegramChannel?.id ?? '',
+        telegramChannelId:
+          initial.telegramChannel?.id ??
+          initial.purchasedTelegramChannel?.id ??
+          '',
         description: initial.description ?? '',
         date: formatLocalDate(new Date(initial.date)),
         iconId: initial.iconId ?? null,
@@ -293,6 +314,8 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   const selectedCategory = useMemo(() => categories?.find((c) => c.id === categoryId), [categories, categoryId]);
   const isInvestment = type === 'income' && selectedCategory?.key === 'investment';
   const isBuyChannels = isBuyChannelsCategory(selectedCategory);
+  const isChannelAdvertisingRevenue = isChannelAdvertisingRevenueCategory(selectedCategory);
+  const requiresTelegramChannel = isBuyChannels || isChannelAdvertisingRevenue;
   const ownChannels = useMemo(
     () => (telegramChannels ?? []).filter((channel) => channel.isActive !== false),
     [telegramChannels],
@@ -313,10 +336,10 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   }, [isInvestment, setValue]);
 
   useEffect(() => {
-    if (!isBuyChannels) {
+    if (!requiresTelegramChannel) {
       setValue('telegramChannelId', '');
     }
-  }, [isBuyChannels, setValue]);
+  }, [requiresTelegramChannel, setValue]);
 
   useEffect(() => {
     if (!isInvestment) return;
@@ -396,10 +419,17 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
             </Select>
           </FormField>
         ) : null}
-        {isBuyChannels ? (
-          <FormField label="Channel">
+        {requiresTelegramChannel ? (
+          <FormField
+            label={isChannelAdvertisingRevenue ? 'Revenue channel' : 'Channel'}
+            required={isChannelAdvertisingRevenue}
+            error={errors.telegramChannelId ? 'Required field' : undefined}
+          >
             <Select
-              {...register('telegramChannelId')}
+              {...register('telegramChannelId', {
+                validate: (value) =>
+                  !isChannelAdvertisingRevenue || Boolean(value) || 'required',
+              })}
               value={telegramChannelId}
               onChange={(event) => setValue('telegramChannelId', event.target.value, { shouldDirty: true, shouldValidate: true })}
             >

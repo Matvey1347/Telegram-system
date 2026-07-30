@@ -609,6 +609,12 @@ export type Transaction = EntityAssignment & {
   member?: WorkspaceMember;
   adCampaign?: { id: string; title: string } | null;
   investment?: { id: string; notes?: string | null } | null;
+  telegramChannel?: {
+    id: string;
+    title: string;
+    username?: string | null;
+    photoUrl?: string | null;
+  } | null;
   purchasedTelegramChannel?: {
     id: string;
     title: string;
@@ -1741,6 +1747,14 @@ export type DashboardSummary = {
   incomeForPeriod: number;
   expensesForPeriod: number;
   profitForPeriod: number;
+  investedCapital: number;
+  investedCapitalForPeriod: number;
+  operatingProfitAllTime: number;
+  remainingToBreakEven: number;
+  projectedMonthlyProfit: number;
+  projectedPaybackMonths: number | null;
+  revenueTransactionsCount: number;
+  channelsWithRevenueCount: number;
   adSpendForPeriod: number;
   totalJoinedFromAds: number;
   averageCPA: number | null;
@@ -1758,6 +1772,8 @@ export type DashboardSummary = {
     income: number;
     expenses: number;
     profit: number;
+    investments: number;
+    cumulativeProfitAfterInvestments: number;
     adSpend: number;
     joined: number;
   }>;
@@ -1785,7 +1801,13 @@ export type DashboardSummary = {
     title: string;
     username?: string | null;
     photoUrl?: string | null;
+    revenue: number;
+    allTimeRevenue: number;
     spend: number;
+    acquisitionCost: number;
+    net: number;
+    remainingToBreakEven: number;
+    projectedPaybackMonths: number | null;
     joined: number;
     campaigns: number;
     cpa: number | null;

@@ -448,6 +448,7 @@ model Transaction {
   id                      String          @id @default(cuid())
   workspaceId             String
   accountId               String
+  telegramChannelId       String?
   type                    TransactionType
   amount                  Decimal
   currency                String          @db.VarChar(3)
@@ -465,6 +466,7 @@ model Transaction {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   account   Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  telegramChannel TelegramChannel? @relation("TelegramChannelRevenueTransactions", fields: [telegramChannelId], references: [id], onDelete: SetNull)
 
   adCampaign     AdCampaign?          @relation("CampaignExpenseTransaction", fields: [adCampaignId], references: [id])
   investment     Investment?
@@ -481,6 +483,7 @@ model Transaction {
   @@index([workspaceId, type, categoryId])
   @@index([workspaceId, memberId])
   @@index([workspaceId, assignedMemberId])
+  @@index([workspaceId, telegramChannelId])
 }
 
 model TransactionCategory {
@@ -614,6 +617,7 @@ model TelegramChannel {
   assignedMember WorkspaceMember? @relation("TelegramChannelAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
   createdByUser  User?            @relation("TelegramChannelCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   purchaseTransaction Transaction? @relation("TelegramChannelPurchaseTransaction", fields: [purchaseTransactionId], references: [id], onDelete: SetNull)
+  revenueTransactions Transaction[] @relation("TelegramChannelRevenueTransactions")
 
   promos            Promo[]
   adCampaigns       AdCampaign[]

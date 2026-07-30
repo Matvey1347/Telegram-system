@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { inviteLinkJoinedSubscribers, sumInviteLinkJoinedSubscribers } from '../common/analytics/invite-link-metrics';
+import {
+  inviteLinkJoinedSubscribers,
+  sumInviteLinkAttributedSubscribers,
+  sumInviteLinkJoinedSubscribers,
+} from '../common/analytics/invite-link-metrics';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
+import { resolveChannelKpiStatus } from '../common/analytics/channel-financial-summary';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 
@@ -46,6 +51,19 @@ function inRange(date: Date | null | undefined, from: Date, to: Date) {
   return time >= from.getTime() && time <= to.getTime();
 }
 
+function categoryKey(transaction: {
+  categoryRef?: { key?: string | null; name?: string | null } | null;
+  category?: string | null;
+}) {
+  return (
+    transaction.categoryRef?.key ??
+    String(transaction.categoryRef?.name ?? transaction.category ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+  );
+}
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -61,7 +79,8 @@ export class DashboardService {
   }
 
   private async buildSummary(workspaceId: string, from: Date, to: Date) {
-    const [workspace, accounts, tx, campaigns, channels, hypotheses, members] = await Promise.all([
+    const [workspace, accounts, tx, campaigns, channels, hypotheses, members, investments] =
+      await Promise.all([
       this.prisma.workspace.findUniqueOrThrow({
         where: { id: workspaceId },
         select: { primaryCurrency: true, secondaryCurrency: true },
@@ -136,6 +155,13 @@ export class DashboardService {
           photoUrl: true,
           currentSubscribersCount: true,
           isActive: true,
+          purchaseTransaction: {
+            select: {
+              id: true,
+              amountInPrimaryCurrency: true,
+              date: true,
+            },
+          },
           adminLinks: { select: { id: true }, take: 1 },
           audienceSnapshots: {
             orderBy: { collectedAt: 'desc' },
@@ -152,21 +178,70 @@ export class DashboardService {
       }),
       this.prisma.adHypothesis.findMany({ where: { workspaceId }, select: { id: true, status: true } }),
       this.prisma.workspaceMember.count({ where: { workspaceId } }),
+      this.prisma.investment.findMany({
+        where: { workspaceId },
+        select: {
+          id: true,
+          amountInPrimaryCurrency: true,
+          date: true,
+        },
+      }),
     ]);
 
     const periodTx = tx.filter((t) => inRange(t.date, from, to));
+    const revenueTransactions = tx.filter(
+      (transaction) => categoryKey(transaction) === 'channel_advertising_revenue',
+    );
+    const periodRevenueTransactions = revenueTransactions.filter((transaction) =>
+      inRange(transaction.date, from, to),
+    );
+    const expenseTransactions = tx.filter((transaction) => transaction.type === 'expense');
+    const periodExpenseTransactions = expenseTransactions.filter((transaction) =>
+      inRange(transaction.date, from, to),
+    );
+    const periodInvestments = investments.filter((investment) =>
+      inRange(investment.date, from, to),
+    );
     const campaignDate = (campaign: any) =>
       campaign.placementDate ?? campaign.startedAt ?? campaign.createdAt;
     const periodCampaignsRaw = campaigns.filter((campaign) =>
       inRange(campaignDate(campaign), from, to),
     );
 
-    const income = periodTx
-      .filter((t) => t.type === 'income')
+    const income = periodRevenueTransactions
       .reduce((a, t) => a + dec(t.amountInPrimaryCurrency), 0);
-    const expenses = periodTx
-      .filter((t) => t.type === 'expense')
+    const expenses = periodExpenseTransactions
       .reduce((a, t) => a + dec(t.amountInPrimaryCurrency), 0);
+    const totalInvestedPrimary = investments.reduce(
+      (sum, investment) => sum + dec(investment.amountInPrimaryCurrency),
+      0,
+    );
+    const investedForPeriod = periodInvestments.reduce(
+      (sum, investment) => sum + dec(investment.amountInPrimaryCurrency),
+      0,
+    );
+    const operatingProfitAllTime =
+      revenueTransactions.reduce(
+        (sum, transaction) => sum + dec(transaction.amountInPrimaryCurrency),
+        0,
+      ) -
+      expenseTransactions.reduce(
+        (sum, transaction) => sum + dec(transaction.amountInPrimaryCurrency),
+        0,
+      );
+    const remainingToBreakEven = Math.max(
+      0,
+      totalInvestedPrimary - operatingProfitAllTime,
+    );
+    const periodDays = Math.max(
+      1,
+      Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / DAY) + 1,
+    );
+    const projectedMonthlyProfit = ((income - expenses) / periodDays) * 30;
+    const projectedPaybackMonths =
+      projectedMonthlyProfit > 0
+        ? remainingToBreakEven / projectedMonthlyProfit
+        : null;
     const adSpend = periodCampaignsRaw.reduce(
       (a, c) => a + dec(c.priceInPrimaryCurrency),
       0,
@@ -197,15 +272,30 @@ export class DashboardService {
     };
     const campaignsWithMtprotoMetrics = campaigns.map((campaign) => {
       const joinedCount = campaignJoinedCount(campaign);
+      const attributedCount = Math.max(
+        joinedCount,
+        sumInviteLinkAttributedSubscribers(campaign.inviteLinks),
+      );
+      const cpa =
+        attributedCount > 0
+          ? dec(campaign.priceInPrimaryCurrency) / attributedCount
+          : null;
       return {
         ...campaign,
         joinedCount,
+        attributedCount,
         leftCount: null,
         netGrowthCount: null,
-        cpa:
-          joinedCount > 0
-            ? dec(campaign.priceInPrimaryCurrency) / joinedCount
-            : null,
+        cpa,
+        overallStatus: resolveChannelKpiStatus({
+          avgCpa: cpa,
+          targetCpaFrom: campaign.telegramChannel?.targetCpaFrom,
+          targetCpa: campaign.telegramChannel?.targetCpa,
+          acceptableCpaFrom: campaign.telegramChannel?.acceptableCpaFrom,
+          acceptableCpa: campaign.telegramChannel?.acceptableCpa,
+          stopCpaFrom: campaign.telegramChannel?.stopCpaFrom,
+          stopCpa: campaign.telegramChannel?.stopCpa,
+        }),
         attributionSource: 'mtproto_invite_link_usage',
       };
     });
@@ -273,18 +363,54 @@ export class DashboardService {
       0,
     );
 
-    const dailyMap = new Map<string, { date: string; income: number; expenses: number; profit: number; adSpend: number; joined: number }>();
+    const cumulativeBeforePeriod =
+      revenueTransactions
+        .filter((transaction) => transaction.date < from)
+        .reduce((sum, transaction) => sum + dec(transaction.amountInPrimaryCurrency), 0) -
+      expenseTransactions
+        .filter((transaction) => transaction.date < from)
+        .reduce((sum, transaction) => sum + dec(transaction.amountInPrimaryCurrency), 0) -
+      investments
+        .filter((investment) => investment.date < from)
+        .reduce((sum, investment) => sum + dec(investment.amountInPrimaryCurrency), 0);
+
+    const dailyMap = new Map<string, {
+      date: string;
+      income: number;
+      expenses: number;
+      profit: number;
+      investments: number;
+      cumulativeProfitAfterInvestments: number;
+      adSpend: number;
+      joined: number;
+    }>();
     for (let time = startOfDay(from).getTime(); time <= startOfDay(to).getTime(); time += DAY) {
       const date = isoDay(new Date(time));
-      dailyMap.set(date, { date, income: 0, expenses: 0, profit: 0, adSpend: 0, joined: 0 });
+      dailyMap.set(date, {
+        date,
+        income: 0,
+        expenses: 0,
+        profit: 0,
+        investments: 0,
+        cumulativeProfitAfterInvestments: 0,
+        adSpend: 0,
+        joined: 0,
+      });
     }
-    for (const transaction of periodTx) {
+    for (const transaction of periodRevenueTransactions) {
       const row = dailyMap.get(isoDay(transaction.date));
       if (!row) continue;
-      const amount = dec(transaction.amountInPrimaryCurrency);
-      if (transaction.type === 'income') row.income += amount;
-      if (transaction.type === 'expense') row.expenses += amount;
-      row.profit = row.income - row.expenses;
+      row.income += dec(transaction.amountInPrimaryCurrency);
+    }
+    for (const transaction of periodExpenseTransactions) {
+      const row = dailyMap.get(isoDay(transaction.date));
+      if (!row) continue;
+      row.expenses += dec(transaction.amountInPrimaryCurrency);
+    }
+    for (const investment of periodInvestments) {
+      const row = dailyMap.get(isoDay(investment.date));
+      if (!row) continue;
+      row.investments += dec(investment.amountInPrimaryCurrency);
     }
     for (const campaign of periodCampaigns) {
       const row = dailyMap.get(isoDay(campaignDate(campaign)));
@@ -292,9 +418,16 @@ export class DashboardService {
       row.adSpend += dec(campaign.priceInPrimaryCurrency);
       row.joined += campaign.joinedCount;
     }
+    let cumulativeProfitAfterInvestments = cumulativeBeforePeriod;
+    for (const row of dailyMap.values()) {
+      row.profit = row.income - row.expenses;
+      cumulativeProfitAfterInvestments +=
+        row.income - row.expenses - row.investments;
+      row.cumulativeProfitAfterInvestments = cumulativeProfitAfterInvestments;
+    }
 
     const categoryMap = new Map<string, { id?: string | null; name: string; type: string; amount: number; count: number; iconId?: string | null; icon?: unknown }>();
-    for (const transaction of periodTx) {
+    for (const transaction of [...periodRevenueTransactions, ...periodExpenseTransactions]) {
       const category = transaction.categoryRef;
       const key = `${transaction.type}:${transaction.categoryId ?? transaction.category}`;
       const current = categoryMap.get(key) ?? {
@@ -327,6 +460,25 @@ export class DashboardService {
       current.joined += campaign.joinedCount;
       current.campaigns += 1;
       channelAdMap.set(channel.id, current);
+    }
+
+    const revenueByChannelId = new Map<
+      string,
+      { allTimeRevenue: number; periodRevenue: number }
+    >();
+    for (const transaction of revenueTransactions) {
+      const channelId = transaction.telegramChannelId;
+      if (!channelId) continue;
+      const current = revenueByChannelId.get(channelId) ?? {
+        allTimeRevenue: 0,
+        periodRevenue: 0,
+      };
+      const amount = dec(transaction.amountInPrimaryCurrency);
+      current.allTimeRevenue += amount;
+      if (inRange(transaction.date, from, to)) {
+        current.periodRevenue += amount;
+      }
+      revenueByChannelId.set(channelId, current);
     }
 
     const ownChannels = channels.filter((channel) => channel.adminLinks.length > 0);
@@ -363,6 +515,18 @@ export class DashboardService {
       incomeForPeriod: income,
       expensesForPeriod: expenses,
       profitForPeriod: income - expenses,
+      investedCapital: totalInvestedPrimary,
+      investedCapitalForPeriod: investedForPeriod,
+      operatingProfitAllTime,
+      remainingToBreakEven,
+      projectedMonthlyProfit,
+      projectedPaybackMonths,
+      revenueTransactionsCount: periodRevenueTransactions.length,
+      channelsWithRevenueCount: new Set(
+        periodRevenueTransactions
+          .map((transaction) => transaction.telegramChannelId)
+          .filter(Boolean),
+      ).size,
       adSpendForPeriod: adSpend,
       totalJoinedFromAds: totalJoined,
       averageCPA: cpas.length
@@ -392,11 +556,35 @@ export class DashboardService {
         }))
         .sort((a, b) => dec(b.primary) - dec(a.primary)),
       channelPerformance: [...channelAdMap.values()]
-        .map((channel) => ({
-          ...channel,
-          cpa: channel.joined > 0 ? channel.spend / channel.joined : null,
-        }))
-        .sort((a, b) => dec(a.cpa ?? Number.POSITIVE_INFINITY) - dec(b.cpa ?? Number.POSITIVE_INFINITY))
+        .map((channel) => {
+          const revenue = revenueByChannelId.get(channel.id);
+          const acquisitionCost = ownChannels.find(
+            (ownChannel) => ownChannel.id === channel.id,
+          )?.purchaseTransaction
+            ? dec(
+                ownChannels.find((ownChannel) => ownChannel.id === channel.id)
+                  ?.purchaseTransaction?.amountInPrimaryCurrency,
+              )
+            : 0;
+          const remaining = Math.max(
+            0,
+            acquisitionCost - dec(revenue?.allTimeRevenue),
+          );
+          const periodNet = dec(revenue?.periodRevenue) - channel.spend;
+          const monthlyNet = (periodNet / periodDays) * 30;
+          return {
+            ...channel,
+            revenue: dec(revenue?.periodRevenue),
+            allTimeRevenue: dec(revenue?.allTimeRevenue),
+            acquisitionCost,
+            net: periodNet,
+            remainingToBreakEven: remaining,
+            projectedPaybackMonths:
+              monthlyNet > 0 ? remaining / monthlyNet : null,
+            cpa: channel.joined > 0 ? channel.spend / channel.joined : null,
+          };
+        })
+        .sort((a, b) => dec(b.net) - dec(a.net))
         .slice(0, 6),
       topOwnChannels: ownChannels
         .map((channel) => {

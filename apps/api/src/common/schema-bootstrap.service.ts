@@ -155,5 +155,34 @@ ADD COLUMN IF NOT EXISTS "telegramChannelId" TEXT;
 ALTER TABLE "AdCampaign"
 ADD COLUMN IF NOT EXISTS "customTitleTemplate" TEXT;
 `);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "Transaction"
+ADD COLUMN IF NOT EXISTS "telegramChannelId" TEXT;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+CREATE INDEX IF NOT EXISTS "Transaction_workspaceId_telegramChannelId_idx"
+ON "Transaction" ("workspaceId", "telegramChannelId");
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'Transaction_telegramChannelId_fkey'
+  ) THEN
+    ALTER TABLE "Transaction"
+    ADD CONSTRAINT "Transaction_telegramChannelId_fkey"
+    FOREIGN KEY ("telegramChannelId")
+    REFERENCES "TelegramChannel"("id")
+    ON DELETE SET NULL
+    ON UPDATE CASCADE;
+  END IF;
+END
+$$;
+`);
   }
 }

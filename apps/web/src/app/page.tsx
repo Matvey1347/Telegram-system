@@ -6,8 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   Line,
@@ -27,6 +25,16 @@ import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSum
 import { formatMoney } from '@/lib/money';
 
 const COLORS = ['#2563eb', '#10b981', '#f97316', '#f43f5e', '#8b5cf6', '#14b8a6', '#eab308', '#94a3b8'];
+const KPI_STATUS_COLORS: Record<string, string> = {
+  good: '#10b981',
+  bad: '#f43f5e',
+  acceptable: '#f97316',
+  unknown: '#2563eb',
+};
+
+function kpiStatusColor(status: string) {
+  return KPI_STATUS_COLORS[status] ?? '#2563eb';
+}
 
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
@@ -147,12 +155,13 @@ export default function DashboardPage() {
         : 'grid gap-6 xl:grid-cols-1';
   const netMargin = data && data.incomeForPeriod > 0 ? (data.profitForPeriod / data.incomeForPeriod) * 100 : null;
   const activeRate = data && data.totalSubscribers > 0 ? (data.activeSubscribersEstimate / data.totalSubscribers) * 100 : null;
+  const paybackMeta =
+    data?.projectedPaybackMonths == null
+      ? 'No positive payback pace yet'
+      : `${n(data.projectedPaybackMonths, 1)} months at current pace`;
   const hasAdKpiStatus = statusRows.length > 0;
   const hasAccounts = (data?.accountBalances.length ?? 0) > 0;
   const hasChannelPerformance = (data?.channelPerformance.length ?? 0) > 0;
-  const hasBestCampaigns = (data?.bestCampaigns.length ?? 0) > 0;
-  const hasWorstCampaigns = (data?.worstCampaigns.length ?? 0) > 0;
-  const hasCampaignTables = hasBestCampaigns || hasWorstCampaigns;
   const hasOwnChannels = (data?.topOwnChannels.length ?? 0) > 0;
 
   return (
@@ -205,18 +214,19 @@ export default function DashboardPage() {
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard icon={Banknote} label="Current balance" value={money(data.totalBalancePrimary)} detail={formatMoney(data.totalBalanceSecondary, data.secondaryCurrency ?? '', 'symbol')} tone="blue" />
-            <MetricCard icon={TrendingUp} label="Net profit" value={money(data.profitForPeriod)} detail={`${money(data.incomeForPeriod)} income · ${money(data.expensesForPeriod)} expenses`} tone={data.profitForPeriod >= 0 ? 'green' : 'red'} />
+            <MetricCard icon={Megaphone} label="Channel ad revenue" value={money(data.incomeForPeriod)} detail={`${n(data.revenueTransactionsCount)} revenue transactions · ${n(data.channelsWithRevenueCount)} channels`} tone="green" />
+            <MetricCard icon={TrendingUp} label="Operating result" value={money(data.profitForPeriod)} detail={`${money(data.incomeForPeriod)} revenue · ${money(data.expensesForPeriod)} expenses`} tone={data.profitForPeriod >= 0 ? 'green' : 'red'} />
+            <MetricCard icon={Target} label="Invested capital" value={money(data.investedCapital)} detail={`${money(data.remainingToBreakEven)} left to break even`} tone="violet" />
+            <MetricCard icon={Target} label="Projected payback" value={data.projectedPaybackMonths == null ? '-' : `${n(data.projectedPaybackMonths, 1)} mo`} detail={`${money(data.projectedMonthlyProfit)} monthly pace`} tone={data.projectedPaybackMonths == null ? 'amber' : 'teal'} />
             <MetricCard icon={Megaphone} label="Ad spend" value={money(data.adSpendForPeriod)} detail={`${data.periodCampaignsCount} campaigns in period`} tone="amber" />
-            <MetricCard icon={Target} label="Average CPA" value={data.averageCPA ? money(data.averageCPA) : '-'} detail={`${n(data.totalJoinedFromAds)} joined from ads`} tone="violet" />
             <MetricCard icon={RadioTower} label="Own channels" value={n(data.ownChannelsCount)} detail={`${n(data.totalSubscribers)} subscribers total`} tone="teal" />
             <MetricCard icon={Activity} label="Active audience" value={activeRate == null ? '-' : `${n(activeRate, 1)}%`} detail={`${n(data.activeSubscribersEstimate)} estimated active`} tone="green" />
             <MetricCard icon={Users} label="Workspace members" value={n(data.workspaceMembersCount)} detail={`${n(data.telegramChannelsCount)} total channels`} tone="blue" />
-            <MetricCard icon={Activity} label="Attention needed" value={n(data.anomalousChannelsCount)} detail="channels with traffic anomaly" tone={data.anomalousChannelsCount ? 'red' : 'green'} />
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.85fr)]">
             <Card>
-              <SectionHeader title="Cashflow" meta={netMargin == null ? 'No income in period' : `${n(netMargin, 1)}% margin`} />
+              <SectionHeader title="Revenue vs Payback" meta={netMargin == null ? paybackMeta : `${n(netMargin, 1)}% margin · ${paybackMeta}`} />
               <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={data.dailyTrend} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
@@ -227,24 +237,21 @@ export default function DashboardPage() {
                     <Area type="monotone" dataKey="income" stackId="cash" stroke="#10b981" fill="#10b981" fillOpacity={0.22} />
                     <Area type="monotone" dataKey="expenses" stackId="cash" stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.2} />
                     <Line type="monotone" dataKey="profit" stroke="#60a5fa" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="cumulativeProfitAfterInvestments" stroke="#facc15" strokeWidth={2} dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </Card>
 
             <Card>
-              <SectionHeader title="Ad Pulse" meta={`${n(data.totalJoinedFromAds)} joined`} />
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data.dailyTrend} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-                    <CartesianGrid stroke="#262626" vertical={false} />
-                    <XAxis dataKey="date" tickFormatter={shortDate} stroke="#737373" tickLine={false} axisLine={false} />
-                    <YAxis stroke="#737373" tickLine={false} axisLine={false} width={40} />
-                    <Tooltip content={<ChartTooltip money={money} />} />
-                    <Bar dataKey="adSpend" fill="#f97316" radius={[5, 5, 0, 0]} />
-                    <Line type="monotone" dataKey="joined" stroke="#38bdf8" strokeWidth={2} dot={false} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <SectionHeader title="Payback Model" meta={paybackMeta} />
+              <div className="grid gap-3">
+                <MiniStat label="Invested in period" value={money(data.investedCapitalForPeriod)} />
+                <MiniStat label="Operating profit, all time" value={money(data.operatingProfitAllTime)} />
+                <MiniStat label="Remaining to break even" value={money(data.remainingToBreakEven)} />
+                <MiniStat label="Average CPA" value={data.averageCPA ? money(data.averageCPA) : '-'} />
+                <MiniStat label="Campaigns in period" value={n(data.periodCampaignsCount)} />
+                <MiniStat label="Traffic anomaly channels" value={n(data.anomalousChannelsCount)} />
               </div>
             </Card>
           </div>
@@ -264,16 +271,16 @@ export default function DashboardPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie data={statusRows} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={3}>
-                          {statusRows.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                          {statusRows.map((row) => <Cell key={row.name} fill={kpiStatusColor(row.name)} />)}
                         </Pie>
                         <Tooltip />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
                   <div className="space-y-2">
-                    {statusRows.map((row, index) => (
+                    {statusRows.map((row) => (
                       <div key={row.name} className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
-                        <span className="flex items-center gap-2 text-sm text-neutral-300"><span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[index % COLORS.length] }} />{row.name}</span>
+                        <span className="flex items-center gap-2 text-sm text-neutral-300"><span className="h-2.5 w-2.5 rounded-full" style={{ background: kpiStatusColor(row.name) }} />{row.name}</span>
                         <span className="font-semibold text-white">{row.value}</span>
                       </div>
                     ))}
@@ -318,7 +325,7 @@ export default function DashboardPage() {
 
               {hasChannelPerformance ? (
                 <Card>
-                  <SectionHeader title="Best Ad Channels" meta="CPA by target channel" />
+                  <SectionHeader title="Channel Unit Economics" meta="Revenue vs spend by own channel" />
                   <div className="space-y-3">
                     {data.channelPerformance.map((channel) => (
                       <ProgressRow
@@ -329,26 +336,15 @@ export default function DashboardPage() {
                             <span className="truncate">{channel.title}</span>
                           </span>
                         }
-                        value={channel.cpa == null ? '-' : money(channel.cpa)}
-                        subValue={`${n(channel.joined)} joined · ${money(channel.spend)}`}
-                        amount={channel.joined}
-                        max={Math.max(...data.channelPerformance.map((item) => item.joined), 1)}
+                        value={money(channel.net)}
+                        subValue={`${money(channel.revenue)} revenue · ${money(channel.spend)} spend · ${channel.projectedPaybackMonths == null ? 'no payback pace' : `${n(channel.projectedPaybackMonths, 1)} mo payback`}`}
+                        amount={Math.max(0, channel.net)}
+                        max={Math.max(...data.channelPerformance.map((item) => Math.max(0, item.net)), 1)}
                         color="#10b981"
                       />
                     ))}
                   </div>
                 </Card>
-              ) : null}
-            </div>
-          ) : null}
-
-          {hasCampaignTables ? (
-            <div className="grid gap-6 xl:grid-cols-2">
-              {hasBestCampaigns ? (
-                <CampaignTable title="Best Campaigns" rows={data.bestCampaigns} money={money} />
-              ) : null}
-              {hasWorstCampaigns ? (
-                <CampaignTable title="Worst Campaigns" rows={data.worstCampaigns} money={money} />
               ) : null}
             </div>
           ) : null}
@@ -607,13 +603,21 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 
 function ChartTooltip({ active, payload, label, money }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
+  const moneyKeys = new Set([
+    'income',
+    'expenses',
+    'profit',
+    'adSpend',
+    'investments',
+    'cumulativeProfitAfterInvestments',
+  ]);
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm shadow-xl">
       <div className="mb-1 font-semibold text-white">{label}</div>
       {payload.map((item) => (
         <div key={item.dataKey} className="flex items-center justify-between gap-5 text-neutral-300">
           <span style={{ color: item.color }}>{item.name || item.dataKey}</span>
-          <span>{['income', 'expenses', 'profit', 'adSpend'].includes(item.dataKey) ? money(item.value) : n(item.value)}</span>
+          <span>{moneyKeys.has(item.dataKey) ? money(item.value) : n(item.value)}</span>
         </div>
       ))}
     </div>

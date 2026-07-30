@@ -15,8 +15,41 @@ export class FinanceCategoriesService {
     private readonly workspaceService: WorkspaceService,
   ) {}
 
+  private async ensureEmojiIcon(
+    workspaceId: string,
+    name: string,
+    emoji: string,
+    tx?: PrismaClient,
+  ) {
+    const client = tx ?? this.prisma;
+    const icon = await (client as any).icon.upsert({
+      where: {
+        workspaceId_type_name: {
+          workspaceId,
+          type: 'emoji',
+          name,
+        },
+      },
+      update: { emoji },
+      create: {
+        workspaceId,
+        type: 'emoji',
+        name,
+        emoji,
+      },
+      select: { id: true },
+    });
+    return icon.id as string;
+  }
+
   async ensureSystemCategories(workspaceId: string, tx?: PrismaClient) {
     const client = tx ?? this.prisma;
+    const channelAdvertisingRevenueIconId = await this.ensureEmojiIcon(
+      workspaceId,
+      'channel-advertising-revenue',
+      '👛',
+      client,
+    );
     const buyChannelsCandidates = await (client as any).transactionCategory.findMany({
       where: {
         workspaceId,
@@ -49,6 +82,29 @@ export class FinanceCategoriesService {
         isSystem: true,
         name: 'Investment',
         iconId: undefined,
+      },
+    });
+
+    await (client as any).transactionCategory.upsert({
+      where: {
+        workspaceId_type_key: {
+          workspaceId,
+          type: 'income',
+          key: 'channel_advertising_revenue',
+        },
+      },
+      update: {
+        isSystem: true,
+        name: 'Channel Advertising Revenue',
+        iconId: channelAdvertisingRevenueIconId,
+      },
+      create: {
+        workspaceId,
+        type: 'income',
+        key: 'channel_advertising_revenue',
+        isSystem: true,
+        name: 'Channel Advertising Revenue',
+        iconId: channelAdvertisingRevenueIconId,
       },
     });
 
