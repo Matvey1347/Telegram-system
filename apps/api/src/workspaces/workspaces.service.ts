@@ -23,6 +23,7 @@ export class WorkspacesService {
     workspace: {
       id: string;
       name: string;
+      timezone: string;
       primaryCurrency: string;
       secondaryCurrency: string;
       avatarIcon?: {
@@ -38,6 +39,7 @@ export class WorkspacesService {
     return {
       id: row.workspace.id,
       name: row.workspace.name,
+      timezone: row.workspace.timezone,
       role: row.role,
       primaryCurrency: row.workspace.primaryCurrency,
       secondaryCurrency: row.workspace.secondaryCurrency,
@@ -57,6 +59,7 @@ export class WorkspacesService {
           select: {
             id: true,
             name: true,
+            timezone: true,
             primaryCurrency: true,
             secondaryCurrency: true,
             avatarIcon: {
@@ -95,6 +98,7 @@ export class WorkspacesService {
           select: {
             id: true,
             name: true,
+            timezone: true,
             primaryCurrency: true,
             secondaryCurrency: true,
             avatarIcon: {
@@ -130,12 +134,13 @@ export class WorkspacesService {
           INSERT INTO "Workspace" (
             "id",
             "name",
+            "timezone",
             "primaryCurrency",
             "secondaryCurrency",
             "createdAt",
             "updatedAt"
           )
-          VALUES (${workspaceId}, ${name}, 'USD', 'UAH', NOW(), NOW())
+          VALUES (${workspaceId}, ${name}, 'Europe/Warsaw', 'USD', 'UAH', NOW(), NOW())
         `,
       );
       await tx.workspaceMember.create({
@@ -150,6 +155,7 @@ export class WorkspacesService {
     return {
       id: workspaceId,
       name,
+      timezone: 'Europe/Warsaw',
       role: WorkspaceRole.owner,
       primaryCurrency: 'USD',
       secondaryCurrency: 'UAH',
@@ -169,7 +175,11 @@ export class WorkspacesService {
     ) {
       throw new ForbiddenException('Insufficient workspace role');
     }
-    if (dto.name === undefined && dto.avatarIconId === undefined) {
+    if (
+      dto.name === undefined &&
+      dto.avatarIconId === undefined &&
+      dto.timezone === undefined
+    ) {
       return this.findOne(userId, id);
     }
     if (dto.avatarIconId !== undefined && dto.avatarIconId !== null) {
@@ -182,6 +192,7 @@ export class WorkspacesService {
       where: { id },
       data: {
         name: dto.name?.trim(),
+        timezone: dto.timezone?.trim(),
         avatarIconId:
           dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
       },

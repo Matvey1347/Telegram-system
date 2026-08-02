@@ -37,6 +37,7 @@ import {
   YAxis,
 } from "recharts";
 import { AdCampaignsTable } from "@/components/ad-campaigns/campaigns-table";
+import { TelegramChannelAdSalesSection } from "@/components/ad-sales/telegram-channel-ad-sales-section";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
 import { IconPicker } from "@/components/icons/icon-picker";
@@ -1131,6 +1132,10 @@ export default function TelegramChannelAnalyticsPage() {
             settings={settings}
           />
         )}
+      </section>
+
+      <section className="mt-6">
+        <TelegramChannelAdSalesSection channelId={id} />
       </section>
 
       {hasAudienceChart || mtprotoGraphs.length || isAudienceSnapshotsLoading ? (

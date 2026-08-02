@@ -3042,6 +3042,32 @@ export class TelegramMtprotoClient {
     }
   }
 
+  async deletePublishedMessages(params: {
+    apiId: string;
+    apiHash: string;
+    session: string;
+    channelRef?: string;
+    channel?: StoredTelegramChannelReference;
+    messageIds: string[];
+  }) {
+    const client = await this.createClient(params);
+    try {
+      const resolved = params.channel
+        ? await this.resolveStoredChannel(client, params.channel)
+        : null;
+      const peer =
+        resolved?.peer || (await client.getInputEntity(params.channelRef as string));
+      await client.invoke(
+        new Api.channels.DeleteMessages({
+          channel: peer as unknown as Api.TypeInputChannel,
+          id: params.messageIds.map(Number).filter(Number.isFinite),
+        }),
+      );
+    } finally {
+      await this.closeClient(client);
+    }
+  }
+
   async getManagedPostMessages(params: {
     apiId: string;
     apiHash: string;

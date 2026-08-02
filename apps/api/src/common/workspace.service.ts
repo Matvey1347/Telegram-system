@@ -46,6 +46,7 @@ export class WorkspaceService {
   private workspaceSelect = {
     id: true,
     name: true,
+    timezone: true,
     primaryCurrency: true,
     secondaryCurrency: true,
     avatarIcon: {

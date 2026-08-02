@@ -21,6 +21,7 @@ import { IconPicker } from '@/components/icons/icon-picker';
 import { IconAvatar } from '@/components/icons/icon-avatar';
 import {
   Bug,
+  BriefcaseBusiness,
   ArrowRightLeft,
   ChevronDown,
   ChevronRight,
@@ -286,6 +287,7 @@ export function AppShell({ children }: PropsWithChildren) {
             { label: "Telegram", href: "/telegram-channels", icon: RadioTower },
             { label: "Posts", href: "/telegram-posts", icon: Send },
             { label: "Ads", href: "/ad-campaigns", icon: Target },
+            { label: "Ad sales", href: "/ad-sales", icon: BriefcaseBusiness },
           ],
         },
       ] as const,

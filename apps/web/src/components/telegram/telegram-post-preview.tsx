@@ -125,6 +125,11 @@ function previewHtml(raw: string) {
   const flushText = () => {
     if (!textLines.length) return;
     const linesToRender = [...textLines];
+    let leadingEmptyLines = 0;
+    while (linesToRender.length && linesToRender[0]?.trim() === "") {
+      linesToRender.shift();
+      leadingEmptyLines += 1;
+    }
     let trailingEmptyLines = 0;
     while (
       linesToRender.length &&
@@ -134,7 +139,9 @@ function previewHtml(raw: string) {
       trailingEmptyLines += 1;
     }
     if (linesToRender.length) {
-      rendered.push(linesToRender.join("<br>"));
+      rendered.push(
+        `${leadingEmptyLines > 0 && rendered.length ? '<span class="tg-quote-gap" aria-hidden="true"></span>' : ""}${linesToRender.join("<br>")}`,
+      );
     }
     pendingBreakBeforeQuote = trailingEmptyLines > 0;
     textLines = [];
@@ -294,7 +301,7 @@ export function TelegramPostPreview({
             <div className="max-w-[94%] space-y-2">
               {messages.map((message, index) => (
                 <TelegramMessageBubble
-                  key={`${index}-${message.text.length}-${message.imageUrls.length}`}
+                  key={index}
                   text={message.text}
                   formattedHtml={index === 0 ? formattedHtml : null}
                   imageUrls={message.imageUrls}
@@ -639,21 +646,27 @@ function EditableTelegramPreviewText({
     [redo, undo],
   );
 
-  const handleBeforeInput = useCallback(
-    (event: FormEvent<HTMLDivElement>) => {
-      const nativeEvent = event.nativeEvent as InputEvent;
-      if (nativeEvent.inputType === "historyUndo") {
+  useEffect(() => {
+    const element = contentRef.current;
+    if (!element) return;
+
+    const handleNativeBeforeInput = (event: InputEvent) => {
+      if (event.inputType === "historyUndo") {
         event.preventDefault();
         undo();
         return;
       }
-      if (nativeEvent.inputType === "historyRedo") {
+      if (event.inputType === "historyRedo") {
         event.preventDefault();
         redo();
       }
-    },
-    [redo, undo],
-  );
+    };
+
+    element.addEventListener("beforeinput", handleNativeBeforeInput);
+    return () => {
+      element.removeEventListener("beforeinput", handleNativeBeforeInput);
+    };
+  }, [redo, undo]);
 
   return (
     <>
@@ -705,7 +718,6 @@ function EditableTelegramPreviewText({
         suppressContentEditableWarning
         className="telegram-preview-text whitespace-pre-wrap break-words text-[14px] leading-[1.3] text-[#f5f5f5] outline-none"
         onClick={handlePreviewContentClick}
-        onBeforeInput={handleBeforeInput}
         onInput={emitChange}
         onKeyDown={handleKeyDown}
         onFocus={() => {

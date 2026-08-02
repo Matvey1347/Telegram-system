@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts';
 import { Activity, Banknote, Megaphone, RadioTower, Target, TrendingUp, Users } from 'lucide-react';
+import { AdSalesDashboardCard } from '@/components/ad-sales/ad-sales-dashboard-card';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountDisplayName } from '@/lib/account-display';
@@ -223,6 +224,8 @@ export default function DashboardPage() {
             <MetricCard icon={Activity} label="Active audience" value={activeRate == null ? '-' : `${n(activeRate, 1)}%`} detail={`${n(data.activeSubscribersEstimate)} estimated active`} tone="green" />
             <MetricCard icon={Users} label="Workspace members" value={n(data.workspaceMembersCount)} detail={`${n(data.telegramChannelsCount)} total channels`} tone="blue" />
           </div>
+
+          <AdSalesDashboardCard />
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.85fr)]">
             <Card>

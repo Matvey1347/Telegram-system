@@ -241,7 +241,6 @@ function serializeNode(node: Node): string {
 
 function serializeChildren(element: HTMLElement) {
   let serialized = "";
-  let previousWasBlock = false;
 
   for (const node of Array.from(element.childNodes)) {
     const nextValue = serializeNode(node);
@@ -249,11 +248,8 @@ function serializeChildren(element: HTMLElement) {
     const nextIsBlock = isBlockNode(node);
     if (serialized && nextIsBlock && !serialized.endsWith("\n")) {
       serialized += "\n";
-    } else if (serialized && previousWasBlock && !nextValue.startsWith("\n")) {
-      serialized += "\n";
     }
     serialized += nextValue;
-    previousWasBlock = nextIsBlock;
   }
 
   return serialized;

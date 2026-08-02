@@ -49,6 +49,7 @@ import { MemberSelect } from "@/components/workspace/member-select";
 import {
   iconsApi,
   promptNotesApi,
+  telegramAdSalesApi,
   telegramChannelsApi,
   workspaceMembersApi,
   type BulkActionResult,
@@ -565,6 +566,7 @@ function TelegramPostWorkspace({
   const [calendarBatchCustomTimeByPostId, setCalendarBatchCustomTimeByPostId] =
     useState<Record<string, string>>({});
   const [calendarBatchBusy, setCalendarBatchBusy] = useState(false);
+  const [showAdSalesOverlay, setShowAdSalesOverlay] = useState(true);
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
   const [titleManuallyEdited, setTitleManuallyEdited] = useState(false);
@@ -656,6 +658,28 @@ function TelegramPostWorkspace({
     queryFn: () =>
       telegramChannelsApi.managedPostsCalendar(channelId, calendarRange),
     enabled: workspaceView === "posts" && postView === "calendar",
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const adCalendarOverlay = useQuery({
+    queryKey: [
+      "telegram-ad-availability",
+      "telegram-posts-overlay",
+      channelId,
+      calendarRange.from,
+      calendarRange.to,
+    ],
+    queryFn: () =>
+      telegramAdSalesApi.availability({
+        from: calendarRange.from,
+        to: calendarRange.to,
+        channelIds: [channelId],
+      }),
+    enabled:
+      workspaceView === "posts" &&
+      postView === "calendar" &&
+      showAdSalesOverlay,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -1068,6 +1092,27 @@ function TelegramPostWorkspace({
     return grouped;
   }, [calendarData.data]);
   const selectedCalendarItems = calendarItemsByDay.get(selectedCalendarDate) || [];
+  const adCalendarItemsByDay = useMemo(() => {
+    const grouped = new Map<
+      string,
+      Array<
+        (NonNullable<typeof adCalendarOverlay.data>["slots"])[number]
+      >
+    >();
+    for (const item of adCalendarOverlay.data?.slots || []) {
+      if (item.state === "AVAILABLE") continue;
+      const key = toLocalDateKey(item.scheduledAt);
+      grouped.set(key, [...(grouped.get(key) || []), item]);
+    }
+    for (const [key, items] of grouped) {
+      grouped.set(
+        key,
+        [...items].sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt)),
+      );
+    }
+    return grouped;
+  }, [adCalendarOverlay.data]);
+  const selectedAdCalendarItems = adCalendarItemsByDay.get(selectedCalendarDate) || [];
   const calendarPresetScheduleSlots = useMemo(
     () =>
       buildCalendarDayScheduleSlots({
@@ -2510,6 +2555,18 @@ function TelegramPostWorkspace({
                   <RefreshCw size={15} />
                   Refresh
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAdSalesOverlay((current) => !current)}
+                  className={`inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium transition ${
+                    showAdSalesOverlay
+                      ? "border-blue-700 bg-blue-950/40 text-blue-100"
+                      : "border-neutral-800 bg-neutral-950 text-neutral-200 hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
+                  }`}
+                >
+                  <Layers3 size={15} />
+                  Ads overlay
+                </button>
               </div>
             </div>
             <div className="overflow-x-auto rounded-2xl border border-neutral-800 bg-[#1b1b1b]">
@@ -2538,6 +2595,16 @@ function TelegramPostWorkspace({
                     ).length;
                     const publishedCount = items.filter(
                       (item) => item.status === "PUBLISHED",
+                    ).length;
+                    const adItems = adCalendarItemsByDay.get(dateKey) || [];
+                    const adReservedCount = adItems.filter(
+                      (item) => item.existingPlacement?.status === "RESERVED",
+                    ).length;
+                    const adSoldCount = adItems.filter(
+                      (item) =>
+                        item.existingPlacement?.status === "SCHEDULED" ||
+                        item.existingPlacement?.status === "PUBLISHED" ||
+                        item.existingPlacement?.status === "COMPLETED",
                     ).length;
                     const isCurrentMonth = sameMonth(day, calendarMonth);
                     const isToday = dateKey === toLocalDateKey(new Date());
@@ -2577,6 +2644,16 @@ function TelegramPostWorkspace({
                             {publishedCount ? (
                               <div className="text-[10px] font-medium text-emerald-300 sm:text-[11px]">
                                 Published {publishedCount}
+                              </div>
+                            ) : null}
+                            {showAdSalesOverlay && adReservedCount ? (
+                              <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
+                                Ad reserved {adReservedCount}
+                              </div>
+                            ) : null}
+                            {showAdSalesOverlay && adSoldCount ? (
+                              <div className="text-[10px] font-medium text-sky-300 sm:text-[11px]">
+                                Ad sold {adSoldCount}
                               </div>
                             ) : null}
                           </div>
@@ -2687,6 +2764,46 @@ function TelegramPostWorkspace({
                   No posts on this day
                 </div>
               )}
+              {showAdSalesOverlay && selectedAdCalendarItems.length ? (
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    <Layers3 size={14} />
+                    Ad placements
+                  </div>
+                  {selectedAdCalendarItems.map((item) => (
+                    <div
+                      key={`${item.channelId}:${item.scheduledAt}:${item.existingPlacement?.id ?? item.state}`}
+                      className="rounded-xl border border-sky-800/50 bg-sky-950/20 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-white">
+                            {item.existingPlacement?.status || item.state}
+                          </p>
+                          <p className="mt-1 text-xs text-neutral-300">
+                            {timeLabel(item.scheduledAt)} · {item.expectedViews.toLocaleString()} views
+                          </p>
+                        </div>
+                        <div className="text-right text-xs text-neutral-300">
+                          <p>{item.recommendedPrice} {item.currency}</p>
+                          <p>{item.minimumPrice} min</p>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-xs text-neutral-400">
+                        {item.blockingReason || item.source}
+                      </p>
+                      {item.existingPlacement?.saleId ? (
+                        <a
+                          href={`/ad-sales?saleId=${item.existingPlacement.saleId}`}
+                          className="mt-3 inline-flex text-xs font-medium text-blue-300 hover:text-blue-200"
+                        >
+                          Open sale
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="mt-6 border-t border-neutral-800 pt-5">
               <div>

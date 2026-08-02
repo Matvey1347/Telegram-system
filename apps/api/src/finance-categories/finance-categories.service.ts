@@ -50,6 +50,18 @@ export class FinanceCategoriesService {
       '👛',
       client,
     );
+    const telegramAdSalesIconId = await this.ensureEmojiIcon(
+      workspaceId,
+      'telegram-ad-sales',
+      '💸',
+      client,
+    );
+    const telegramAdSalesReversalIconId = await this.ensureEmojiIcon(
+      workspaceId,
+      'telegram-ad-sales-reversal',
+      '↩️',
+      client,
+    );
     const buyChannelsCandidates = await (client as any).transactionCategory.findMany({
       where: {
         workspaceId,
@@ -105,6 +117,52 @@ export class FinanceCategoriesService {
         isSystem: true,
         name: 'Channel Advertising Revenue',
         iconId: channelAdvertisingRevenueIconId,
+      },
+    });
+
+    await (client as any).transactionCategory.upsert({
+      where: {
+        workspaceId_type_key: {
+          workspaceId,
+          type: 'income',
+          key: 'telegram_ad_sales',
+        },
+      },
+      update: {
+        isSystem: true,
+        name: 'Telegram Ad Sales',
+        iconId: telegramAdSalesIconId,
+      },
+      create: {
+        workspaceId,
+        type: 'income',
+        key: 'telegram_ad_sales',
+        isSystem: true,
+        name: 'Telegram Ad Sales',
+        iconId: telegramAdSalesIconId,
+      },
+    });
+
+    await (client as any).transactionCategory.upsert({
+      where: {
+        workspaceId_type_key: {
+          workspaceId,
+          type: 'expense',
+          key: 'telegram_ad_sales_reversal',
+        },
+      },
+      update: {
+        isSystem: true,
+        name: 'Telegram Ad Sales Reversal',
+        iconId: telegramAdSalesReversalIconId,
+      },
+      create: {
+        workspaceId,
+        type: 'expense',
+        key: 'telegram_ad_sales_reversal',
+        isSystem: true,
+        name: 'Telegram Ad Sales Reversal',
+        iconId: telegramAdSalesReversalIconId,
       },
     });
 

@@ -336,6 +336,175 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
+export function CurrencySelect({
+  value,
+  onChange,
+  currencies,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  currencies: string[];
+  disabled?: boolean;
+}) {
+  const options = Array.from(new Set([value, ...currencies].filter(Boolean))).sort();
+
+  return (
+    <Select
+      value={value}
+      onChange={(event) => onChange(event.target.value.toUpperCase())}
+      disabled={disabled}
+    >
+      {options.map((currency) => (
+        <option key={currency} value={currency}>
+          {currency}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
+  iconUrl?: string;
+  iconEmoji?: string;
+  iconFallback?: string;
+};
+
+export function MultiSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "Select",
+  searchPlaceholder = "Search...",
+  disabled = false,
+  className = "",
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  options: MultiSelectOption[];
+  placeholder?: string;
+  searchPlaceholder?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const onDocPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", onDocPointerDown);
+  }, []);
+
+  const selectedSet = useMemo(() => new Set(value), [value]);
+  const selectedOptions = options.filter((option) => selectedSet.has(option.value));
+  const filteredOptions = options.filter((option) =>
+    option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
+
+  const toggleValue = (nextValue: string) => {
+    onChange(
+      selectedSet.has(nextValue)
+        ? value.filter((item) => item !== nextValue)
+        : [...value, nextValue],
+    );
+  };
+
+  return (
+    <div ref={rootRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setOpen((current) => {
+            if (current) setSearch("");
+            return !current;
+          });
+        }}
+        className="flex min-h-[42px] w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-left text-sm text-white outline-none ring-blue-500 focus:ring disabled:opacity-50"
+      >
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {selectedOptions.length ? (
+            selectedOptions.map((option) => (
+              <span
+                key={option.value}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
+              >
+                <OptionIcon
+                  iconUrl={option.iconUrl}
+                  iconEmoji={option.iconEmoji}
+                  fallback={option.iconFallback}
+                />
+                <span className="truncate">{option.label}</span>
+              </span>
+            ))
+          ) : (
+            <span className="text-neutral-400">{placeholder}</span>
+          )}
+        </span>
+        <ChevronDown size={16} className="shrink-0 text-neutral-400" />
+      </button>
+      {open ? (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+          <div className="border-b border-neutral-800 p-2">
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setOpen(false);
+                  setSearch("");
+                }
+              }}
+              placeholder={searchPlaceholder}
+              className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
+            />
+          </div>
+          <div className="max-h-72 overflow-auto">
+            {filteredOptions.map((option) => {
+              const checked = selectedSet.has(option.value);
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => toggleValue(option.value)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <OptionIcon
+                      iconUrl={option.iconUrl}
+                      iconEmoji={option.iconEmoji}
+                      fallback={option.iconFallback}
+                    />
+                    <span className="truncate">{option.label}</span>
+                  </span>
+                  {checked ? <Check size={14} className="text-blue-300" /> : null}
+                </button>
+              );
+            })}
+            {!filteredOptions.length ? (
+              <p className="px-3 py-3 text-center text-sm text-neutral-500">
+                No options found
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function Textarea(
   props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
 ) {
@@ -996,7 +1165,7 @@ export function CustomSelect({
                   />
                 </div>
               ) : null}
-              <div className="max-h-60 overflow-auto">
+              <div className="z-[120] max-h-60 overflow-auto">
                 {filteredOptions.map((opt) => {
                   const isSelected = opt.value === value;
                   return (
@@ -1162,6 +1331,33 @@ export function TooltipBubble({
         className={`absolute h-3 w-3 border-neutral-700 bg-neutral-950 ${arrowAnchorClass} ${arrowClass}`}
         aria-hidden="true"
       />
+    </span>
+  );
+}
+
+export function Tooltip({
+  content,
+  children,
+  side = "top",
+  align = "center",
+  className = "",
+}: {
+  content: React.ReactNode;
+  children: React.ReactNode;
+  side?: "top" | "bottom";
+  align?: "left" | "center" | "right";
+  className?: string;
+}) {
+  return (
+    <span className={`group relative inline-flex ${className}`}>
+      {children}
+      <TooltipBubble
+        side={side}
+        align={align}
+        className="hidden whitespace-normal group-hover:block group-focus-within:block"
+      >
+        {content}
+      </TooltipBubble>
     </span>
   );
 }

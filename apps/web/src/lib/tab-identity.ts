@@ -153,6 +153,21 @@ export function resolveRouteTabIdentity({
   if (pathname.startsWith("/ad-campaigns/")) {
     return { title: pageTitle("Campaign"), emoji: "📈", color: "#7c3aed" };
   }
+  if (pathname === "/ad-sales" || pathname.startsWith("/ad-sales/")) {
+    if (pathname.startsWith("/ad-sales/pricing")) {
+      return { title: pageTitle("Ad Sales Pricing"), emoji: "📈", color: "#1d4ed8" };
+    }
+    if (pathname.startsWith("/ad-sales/analytics")) {
+      return { title: pageTitle("Ad Sales Analytics"), emoji: "📊", color: "#0f766e" };
+    }
+    if (pathname.startsWith("/ad-sales/settings")) {
+      return { title: pageTitle("Ad Sales Settings"), emoji: "⚙️", color: "#4b5563" };
+    }
+    if (pathname.startsWith("/ad-sales/sales")) {
+      return { title: pageTitle("Ad Sales"), emoji: "💰", color: "#0f766e" };
+    }
+    return { title: pageTitle("Ad Sales"), emoji: "💼", color: "#0f766e" };
+  }
   if (pathname === "/settings") {
     return { title: pageTitle("Settings"), emoji: "⚙️", color: "#4b5563" };
   }

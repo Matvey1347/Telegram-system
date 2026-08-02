@@ -14,5 +14,9 @@ export class UpdateWorkspaceDto {
 
   @IsOptional()
   @IsString()
+  timezone?: string;
+
+  @IsOptional()
+  @IsString()
   avatarIconId?: string | null;
 }

@@ -552,6 +552,10 @@ export class TelegramChannelsService {
     if (this.ensureTelegramChannelImportPolicyColumnsPromise) {
       return this.ensureTelegramChannelImportPolicyColumnsPromise;
     }
+    if (typeof this.prisma.$executeRawUnsafe !== 'function') {
+      this.telegramChannelImportPolicyColumnsAvailable = false;
+      return false;
+    }
     this.ensureTelegramChannelImportPolicyColumnsPromise = (async () => {
       await this.prisma.$executeRawUnsafe(`
         DO $$

@@ -13,6 +13,7 @@ export default function SettingsPage() {
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: authApi.me });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
   const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceTimezone, setWorkspaceTimezone] = useState('Europe/Warsaw');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
   const [workspaceDeleteOpen, setWorkspaceDeleteOpen] = useState(false);
   const workspaceMutation = useMutation({
@@ -45,6 +46,7 @@ export default function SettingsPage() {
     // Query data hydrates editable workspace form fields.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWorkspaceName(me.data.workspace.name);
+    setWorkspaceTimezone(me.data.workspace.timezone ?? 'Europe/Warsaw');
     setWorkspaceIconId(me.data.workspace.avatarIcon?.id ?? null);
   }, [me.data]);
 
@@ -70,6 +72,14 @@ export default function SettingsPage() {
               <label className="mb-1 block text-sm text-neutral-300">Workspace name</label>
               <Input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
             </div>
+            <div>
+              <label className="mb-1 block text-sm text-neutral-300">Workspace timezone</label>
+              <Input
+                value={workspaceTimezone}
+                onChange={(e) => setWorkspaceTimezone(e.target.value)}
+                placeholder="Europe/Warsaw"
+              />
+            </div>
             <div className="flex justify-end gap-3">
               <div className="flex items-center gap-2">
                 <Button
@@ -80,8 +90,14 @@ export default function SettingsPage() {
                   Delete
                 </Button>
                 <Button
-                  onClick={() => workspaceMutation.mutate({ name: workspaceName.trim(), avatarIconId: workspaceIconId })}
-                  disabled={!workspaceName.trim() || workspaceMutation.isPending}
+                  onClick={() =>
+                    workspaceMutation.mutate({
+                      name: workspaceName.trim(),
+                      timezone: workspaceTimezone.trim() || 'Europe/Warsaw',
+                      avatarIconId: workspaceIconId,
+                    })
+                  }
+                  disabled={!workspaceName.trim() || !workspaceTimezone.trim() || workspaceMutation.isPending}
                 >
                   Save
                 </Button>

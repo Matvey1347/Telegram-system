@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { currenciesApi, Currency, CurrencyDisplayMode, ExchangeRate } from '@/lib/api';
-import { Button, Card, ConfirmDeleteModal, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, MasonryGrid, Modal, PageHeader, Select } from '@/components/ui/primitives';
+import { Button, Card, ConfirmDeleteModal, CurrencySelect, DateInput, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, MasonryGrid, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { formatRate } from '@/lib/money';
 
 type RateValues = { baseCurrency: Currency; targetCurrency: Currency; rate: number; date: string; source?: string };
@@ -115,16 +115,6 @@ function CurrencySettingsCard({ settings, onSave }: { settings: { primaryCurrenc
         </div>
       </form>
     </Card>
-  );
-}
-
-function CurrencySelect({ value, onChange, currencies }: { value: string; onChange: (value: string) => void; currencies: string[] }) {
-  const options = Array.from(new Set([value, ...currencies].filter(Boolean))).sort();
-
-  return (
-    <Select value={value} onChange={(e) => onChange(e.target.value.toUpperCase())}>
-      {options.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
-    </Select>
   );
 }
 

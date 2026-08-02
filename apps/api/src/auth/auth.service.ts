@@ -38,6 +38,7 @@ export class AuthService {
       workspace: {
         id: membership.workspace.id,
         name: membership.workspace.name,
+        timezone: membership.workspace.timezone,
         role: membership.role,
         avatarIcon: membership.workspace.avatarIcon ?? null,
       },
@@ -64,12 +65,13 @@ export class AuthService {
           INSERT INTO "Workspace" (
             "id",
             "name",
+            "timezone",
             "primaryCurrency",
             "secondaryCurrency",
             "createdAt",
             "updatedAt"
           )
-          VALUES (${workspaceId}, ${workspaceName}, 'USD', 'UAH', NOW(), NOW())
+          VALUES (${workspaceId}, ${workspaceName}, 'Europe/Warsaw', 'USD', 'UAH', NOW(), NOW())
         `,
       );
       await tx.workspaceMember.create({

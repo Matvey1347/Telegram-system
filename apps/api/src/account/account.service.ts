@@ -56,6 +56,7 @@ export class AccountService {
       workspace: {
         id: membership.workspace.id,
         name: membership.workspace.name,
+        timezone: membership.workspace.timezone,
         role: membership.role,
         avatarIcon: membership.workspace.avatarIcon ?? null,
       },
@@ -251,6 +252,7 @@ export class AccountService {
       where: { id: membership.workspaceId },
       data: {
         name: dto.name.trim(),
+        timezone: dto.timezone?.trim() || undefined,
         avatarIconId:
           dto.avatarIconId === undefined ? undefined : dto.avatarIconId,
       },

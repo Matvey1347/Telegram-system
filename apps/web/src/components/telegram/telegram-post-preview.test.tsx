@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
@@ -126,12 +126,15 @@ describe("TelegramPostPreview", () => {
     function PreviewHarness() {
       const [value, setValue] = useState("Start");
       return (
-        <TelegramPostPreview
-          channelTitle="Ментор | Саморозвиток"
-          text={value}
-          imageUrls={[]}
-          onTextChange={setValue}
-        />
+        <>
+          <TelegramPostPreview
+            channelTitle="Ментор | Саморозвиток"
+            text={value}
+            imageUrls={[]}
+            onTextChange={setValue}
+          />
+          <output data-testid="preview-value">{value}</output>
+        </>
       );
     }
 
@@ -142,7 +145,9 @@ describe("TelegramPostPreview", () => {
     await user.click(editor as HTMLElement);
     (editor as HTMLElement).innerHTML = "<div>Changed</div>";
     fireEvent.input(editor as HTMLElement);
-    expect(screen.getByText("Changed")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-value").textContent).toBe("Changed");
+    });
 
     editor?.dispatchEvent(
       new InputEvent("beforeinput", {
@@ -151,7 +156,9 @@ describe("TelegramPostPreview", () => {
         inputType: "historyUndo",
       }),
     );
-    expect(screen.getByText("Start")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-value").textContent).toBe("Start");
+    });
 
     editor?.dispatchEvent(
       new InputEvent("beforeinput", {
@@ -160,7 +167,9 @@ describe("TelegramPostPreview", () => {
         inputType: "historyRedo",
       }),
     );
-    expect(screen.getByText("Changed")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("preview-value").textContent).toBe("Changed");
+    });
   });
 
   it("collapses preview selection on undo even when there is no history entry", async () => {
