@@ -1,21 +1,33 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
-import { Button, Card, ConfirmDeleteModal, Input, LoadingState, PageHeader } from '@/components/ui/primitives';
-import { accountApi, authApi, workspacesApi } from '@/lib/api';
+import { Button, Card, ConfirmDeleteModal, Input, LoadingState, PageHeader, Select } from '@/components/ui/primitives';
+import { accountApi, authApi, telegramAdSalesApi, workspacesApi } from '@/lib/api';
 import { WorkspaceMembersSection } from '@/components/workspace/workspace-members-section';
 
 export default function SettingsPage() {
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: authApi.me });
   const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
+  const adSalesWorkspaceSettings = useQuery({
+    queryKey: ['telegram-ad-sales', 'workspace-settings'],
+    queryFn: telegramAdSalesApi.getWorkspaceSettings,
+  });
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceTimezone, setWorkspaceTimezone] = useState('Europe/Warsaw');
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
+  const [defaultOrganicPostsPerAdSlot, setDefaultOrganicPostsPerAdSlot] = useState('3');
   const [workspaceDeleteOpen, setWorkspaceDeleteOpen] = useState(false);
+  const timezoneOptions = useMemo(() => {
+    const fallback = ['Europe/Warsaw', 'UTC', 'Europe/London', 'Europe/Berlin', 'Europe/Kyiv', 'America/New_York'];
+    if (typeof Intl.supportedValuesOf !== 'function') {
+      return fallback;
+    }
+    return Intl.supportedValuesOf('timeZone');
+  }, []);
   const workspaceMutation = useMutation({
     mutationFn: accountApi.updateWorkspace,
     onSuccess: () => me.refetch(),
@@ -40,6 +52,12 @@ export default function SettingsPage() {
       }
     },
   });
+  const adSalesWorkspaceMutation = useMutation({
+    mutationFn: telegramAdSalesApi.updateWorkspaceSettings,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['telegram-ad-sales', 'workspace-settings'] });
+    },
+  });
 
   useEffect(() => {
     if (!me.data?.workspace) return;
@@ -49,6 +67,13 @@ export default function SettingsPage() {
     setWorkspaceTimezone(me.data.workspace.timezone ?? 'Europe/Warsaw');
     setWorkspaceIconId(me.data.workspace.avatarIcon?.id ?? null);
   }, [me.data]);
+
+  useEffect(() => {
+    if (!adSalesWorkspaceSettings.data) return;
+    setDefaultOrganicPostsPerAdSlot(
+      String(adSalesWorkspaceSettings.data.defaultOrganicPostsPerAdSlot ?? 3),
+    );
+  }, [adSalesWorkspaceSettings.data]);
 
   return (
     <AppShell>
@@ -74,11 +99,16 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="mb-1 block text-sm text-neutral-300">Workspace timezone</label>
-              <Input
+              <Select
                 value={workspaceTimezone}
-                onChange={(e) => setWorkspaceTimezone(e.target.value)}
-                placeholder="Europe/Warsaw"
-              />
+                onChange={(event) => setWorkspaceTimezone(event.target.value)}
+              >
+                {timezoneOptions.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div className="flex justify-end gap-3">
               <div className="flex items-center gap-2">
@@ -100,6 +130,44 @@ export default function SettingsPage() {
                   disabled={!workspaceName.trim() || !workspaceTimezone.trim() || workspaceMutation.isPending}
                 >
                   Save
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <h3 className="text-lg font-semibold">Workspace defaults</h3>
+          <p className="mt-1 text-sm text-neutral-400">
+            Shared defaults live here so more global settings from different parts of the app can be added in one place.
+          </p>
+          <div className="mt-5 space-y-5">
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-4">
+              <h4 className="text-base font-semibold text-white">Advertising sales</h4>
+              <p className="mt-1 text-sm text-neutral-400">
+                Default posting cadence for channels that use the workspace rule.
+              </p>
+              <div className="mt-4 max-w-xl">
+                <label className="mb-1 block text-sm text-neutral-300">
+                  Organic posts per ad opportunity
+                </label>
+                <Input
+                  value={defaultOrganicPostsPerAdSlot}
+                  onChange={(event) => setDefaultOrganicPostsPerAdSlot(event.target.value)}
+                />
+                <p className="mt-2 text-sm text-neutral-500">
+                  Example: `3` means one ad opportunity appears after every 3 organic posts.
+                </p>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <Button
+                  onClick={() =>
+                    adSalesWorkspaceMutation.mutate({
+                      defaultOrganicPostsPerAdSlot: Number(defaultOrganicPostsPerAdSlot || 3),
+                    })
+                  }
+                  disabled={adSalesWorkspaceMutation.isPending || !defaultOrganicPostsPerAdSlot.trim()}
+                >
+                  Save ad-sales defaults
                 </Button>
               </div>
             </div>

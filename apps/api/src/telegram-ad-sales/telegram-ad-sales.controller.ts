@@ -54,6 +54,9 @@ import {
   TelegramAdCrmWorkspaceSettingsDto,
   CompleteTelegramAdvertiserTaskDto,
   SkipTelegramAdvertiserTaskDto,
+  UpdateTelegramAdChannelPricingDto,
+  UpdateTelegramAdSalesMemberPreferencesDto,
+  UpdateTelegramAdSalesWorkspaceSettingsDto,
   UpdateTelegramAdSalePaymentDto,
   UpdateTelegramAdvertiserContactDto,
   UpdateTelegramAdvertiserDto,
@@ -70,6 +73,32 @@ import { TelegramAdSalesService } from './telegram-ad-sales.service';
 @Controller('telegram-ad-sales')
 export class TelegramAdSalesController {
   constructor(private readonly service: TelegramAdSalesService) {}
+
+  @Get('settings/workspace')
+  getWorkspaceSettings(@CurrentUser() user: JwtUser) {
+    return this.service.getAdSalesWorkspaceSettings(user.sub);
+  }
+
+  @Put('settings/workspace')
+  updateWorkspaceSettings(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: UpdateTelegramAdSalesWorkspaceSettingsDto,
+  ) {
+    return this.service.updateAdSalesWorkspaceSettings(user.sub, dto);
+  }
+
+  @Get('preferences')
+  getPreferences(@CurrentUser() user: JwtUser) {
+    return this.service.getAdSalesMemberPreferences(user.sub);
+  }
+
+  @Put('preferences')
+  updatePreferences(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: UpdateTelegramAdSalesMemberPreferencesDto,
+  ) {
+    return this.service.updateAdSalesMemberPreferences(user.sub, dto);
+  }
 
   @Get('products')
   listProducts(@CurrentUser() user: JwtUser, @Query() query: TelegramAdProductsQueryDto) {
@@ -103,6 +132,20 @@ export class TelegramAdSalesController {
   @Get('channels/:channelId/policy')
   getPolicy(@CurrentUser() user: JwtUser, @Param('channelId') channelId: string) {
     return this.service.getPolicy(user.sub, channelId);
+  }
+
+  @Get('channels/:channelId/baseline')
+  getChannelBaseline(@CurrentUser() user: JwtUser, @Param('channelId') channelId: string) {
+    return this.service.getChannelBaseline(user.sub, channelId);
+  }
+
+  @Put('channels/:channelId/pricing')
+  updateChannelPricing(
+    @CurrentUser() user: JwtUser,
+    @Param('channelId') channelId: string,
+    @Body() dto: UpdateTelegramAdChannelPricingDto,
+  ) {
+    return this.service.updateChannelPricing(user.sub, channelId, dto);
   }
 
   @Put('channels/:channelId/policy')

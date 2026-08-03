@@ -1,20 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   CalendarDays,
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Info,
-  Layers3,
+  Pencil,
   Plus,
+  RefreshCw,
   Settings2,
+  Trash2,
 } from "lucide-react";
 import type {
   TelegramAdAvailabilitySlot,
-  TelegramAdPriceSnapshot,
+  TelegramAdChannelBaseline,
   TelegramAdProduct,
   TelegramAdSale,
 } from "@telegram-system/shared";
@@ -22,11 +27,15 @@ import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
 import { MemberBadge } from "@/components/workspace/member-badge";
 import { MemberSelect } from "@/components/workspace/member-select";
+import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { MoneyStack } from "@/components/ui/money-stack";
 import { Pagination } from "@/components/ui/pagination";
 import {
   Button,
   Card,
+  ConfirmDeleteModal,
+  CurrencySelect,
+  DateRangeInput,
   EmptyState,
   ErrorState,
   FormField,
@@ -36,6 +45,7 @@ import {
   MultiSelect,
   PageHeader,
   Select,
+  Skeleton,
   TableLoadingState,
   Textarea,
   Tooltip,
@@ -55,25 +65,29 @@ import {
   accountsApi,
   authApi,
   currenciesApi,
+  getTelegramChannelPosts,
   telegramAdSalesApi,
   telegramChannelsApi,
   telegramChannelNetworksApi,
+  withFreshApiReads,
   type Account,
   type TelegramChannel,
   type TelegramChannelNetwork,
-  type TelegramManagedPost,
 } from "@/lib/api";
 import {
+  autoAllocatePayment,
   buildAdCalendarSlots,
   buildUnderpricingSummary,
   channelLocalDateKey,
   channelLocalTime,
-  collectAdOverlayPlacements,
   expandNetworkChannelIds,
   getChannelOptionLabel,
+  readAdSalesCalendarRangeMode,
+  writeAdSalesCalendarRangeMode,
+  type TelegramAdSalesCalendarRangeMode,
   type TelegramAdSalesTab,
-  type TelegramAdCalendarView,
 } from "@/lib/telegram-ad-sales";
+import { MetricPreviewLabel } from "@/lib/metric-preview-icons";
 import {
   invalidateTelegramAdSalesQueries,
   telegramAdSalesKeys,
@@ -83,17 +97,26 @@ import { useAppToast } from "@/providers/toast-provider";
 const tabs: Array<{
   id: TelegramAdSalesTab;
   label: string;
-  icon: typeof CalendarDays;
+  icon: typeof CalendarRange;
 }> = [
-  { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "calendar", label: "Slots", icon: CalendarRange },
   { id: "sales", label: "Deals", icon: CircleDollarSign },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Setup", icon: Settings2 },
 ];
 
+const calendarRangeModes: Array<{
+  id: TelegramAdSalesCalendarRangeMode;
+  label: string;
+  icon: typeof CalendarRange;
+}> = [
+  { id: "week", label: "Week", icon: CalendarRange },
+  { id: "month", label: "Month", icon: CalendarDays },
+];
+
 const tabDescriptions: Record<TelegramAdSalesTab, string> = {
   calendar:
-    "Book placements here. Green slots are available, while busy and past slots are only history.",
+    "See ad opportunities here and switch between calendar and list layout for the selected period.",
   sales:
     "Track created deals here: reserved, confirmed, paid, published, and completed placements.",
   analytics:
@@ -101,6 +124,13 @@ const tabDescriptions: Record<TelegramAdSalesTab, string> = {
   settings:
     "Configure formats, audience baseline, and the posting rule that turns organic posts into ad slots.",
 };
+
+const adSalesPanelClass =
+  "rounded-[22px] border border-neutral-800 bg-[#171717]";
+const adSalesSoftPanelClass =
+  "rounded-[18px] border border-neutral-800 bg-[#111111]";
+const adSalesTileClass =
+  "rounded-[18px] border border-slate-800/80 bg-[#0b1220] p-4 shadow-[inset_0_1px_0_rgba(96,165,250,0.05)]";
 
 function startOfWeek(value: Date) {
   const date = new Date(value);
@@ -117,7 +147,7 @@ function addDays(value: Date, days: number) {
 }
 
 function dateKey(value: Date) {
-  return value.toISOString().slice(0, 10);
+  return channelLocalDateKey(value);
 }
 
 function startOfMonth(value: Date) {
@@ -133,17 +163,11 @@ function monthGridDays(value: Date) {
   return Array.from({ length: 42 }, (_, index) => addDays(start, index));
 }
 
-function rangeForView(view: TelegramAdCalendarView, cursor: Date) {
+function rangeForCalendarMode(view: "week" | "month", cursor: Date) {
   if (view === "month") {
     return {
       from: startOfMonth(cursor),
       to: endOfMonth(cursor),
-    };
-  }
-  if (view === "list") {
-    return {
-      from: startOfWeek(cursor),
-      to: addDays(startOfWeek(cursor), 20),
     };
   }
   return {
@@ -152,10 +176,107 @@ function rangeForView(view: TelegramAdCalendarView, cursor: Date) {
   };
 }
 
+function listDaysInRange(from: Date, to: Date) {
+  const days: Date[] = [];
+  const start = new Date(from);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(to);
+  end.setHours(0, 0, 0, 0);
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    days.push(new Date(cursor));
+  }
+  return days;
+}
+
+const defaultPlacementFormatNames = new Set(["1/24", "2/48", "3/72", "1/permanent", "No auto-delete"]);
+
+function isDefaultPlacementFormat(product: TelegramAdProduct) {
+  return defaultPlacementFormatNames.has(product.name.trim());
+}
+
+function placementFormatCanonicalKey(
+  product: Pick<TelegramAdProduct, "name" | "isPermanent" | "topDurationMinutes" | "feedDurationHours" | "deleteAfterHours">,
+) {
+  const name = product.name.trim();
+  if (product.isPermanent && (name === "1/permanent" || name === "No auto-delete")) {
+    return "default:no-auto-delete";
+  }
+  if (name === "1/24") return "default:1/24";
+  if (name === "2/48") return "default:2/48";
+  if (name === "3/72") return "default:3/72";
+  return `custom:${name}:${product.topDurationMinutes ?? "na"}:${product.feedDurationHours ?? "na"}:${product.deleteAfterHours ?? "na"}`;
+}
+
+function placementFormatName(product: Pick<TelegramAdProduct, "name" | "isPermanent">) {
+  if (product.isPermanent && product.name.trim() === "1/permanent") {
+    return "No auto-delete";
+  }
+  return product.name;
+}
+
+function placementDeliveryLabel(product: Pick<TelegramAdProduct, "topDurationMinutes" | "feedDurationHours" | "isPermanent" | "deleteAfterHours">) {
+  const topHours = product.topDurationMinutes ? Math.round(product.topDurationMinutes / 60) : 0;
+  if (product.isPermanent) {
+    return "No auto-delete";
+  }
+  const feedHours = product.feedDurationHours ?? product.deleteAfterHours ?? null;
+  if (topHours > 0 && feedHours) {
+    return `${topHours}h first • ${feedHours}h in feed`;
+  }
+  if (feedHours) {
+    return `${feedHours}h in feed`;
+  }
+  return "Custom placement";
+}
+
+function placementExpectedViews(
+  product: TelegramAdProduct,
+  baseline: TelegramAdChannelBaseline | undefined,
+) {
+  const canonicalKey = placementFormatCanonicalKey(product);
+  if (!baseline) {
+    return product.estimatedViews;
+  }
+  if (canonicalKey === "default:1/24") {
+    return baseline.windows.h24.expectedViews;
+  }
+  if (canonicalKey === "default:2/48") {
+    return baseline.windows.h48.expectedViews;
+  }
+  if (canonicalKey === "default:3/72") {
+    return baseline.windows.h72.expectedViews;
+  }
+  if (canonicalKey === "default:no-auto-delete") {
+    return baseline.windows.d7.expectedViews;
+  }
+  return product.estimatedViews;
+}
+
+function placementEstimatedPrice(
+  product: TelegramAdProduct,
+  baseline: TelegramAdChannelBaseline | undefined,
+  baseCpm: string,
+) {
+  const expectedViews = placementExpectedViews(product, baseline);
+  const parsedCpm = Number(baseCpm.trim());
+  if (expectedViews != null && Number.isFinite(parsedCpm) && parsedCpm > 0) {
+    const value = (expectedViews / 1000) * parsedCpm;
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+  }
+  return product.estimatedPrice ?? "—";
+}
+
+function monthLabel(value: Date) {
+  return value.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function tabButtonClass(active: boolean) {
   return active
-    ? "border-blue-500 bg-blue-600 text-white"
-    : "border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-700 hover:text-white";
+    ? "border-blue-500 bg-blue-600 text-white shadow-[0_0_24px_rgba(37,99,235,0.22)]"
+    : "border-slate-800/80 bg-[#0b1220] text-neutral-300 hover:border-slate-700 hover:text-white";
 }
 
 function saleChannelCount(sale: TelegramAdSale) {
@@ -188,6 +309,12 @@ function paymentStatusTone(status: string) {
   return "bg-red-900/40 text-red-300 border-red-700";
 }
 
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+type SlotsLayoutView = "calendar" | "list";
+
 function EnumPill({
   label,
   tone,
@@ -199,6 +326,44 @@ function EnumPill({
     <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}>
       {label}
     </span>
+  );
+}
+
+function ToggleRow({
+  checked,
+  onChange,
+  label,
+  description,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  description?: string;
+}) {
+  return (
+    <div className={adSalesTileClass + " flex items-center justify-between gap-3"}>
+      <div>
+        <p className="text-sm font-medium text-white">{label}</p>
+        {description ? <p className="mt-1 text-sm text-neutral-400">{description}</p> : null}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full border transition ${
+          checked
+            ? "border-emerald-500/70 bg-emerald-500/20"
+            : "border-neutral-700 bg-neutral-900"
+        }`}
+        aria-pressed={checked}
+        aria-label={label}
+      >
+        <span
+          className={`absolute h-6 w-6 rounded-full bg-white transition ${
+            checked ? "left-7" : "left-1"
+          }`}
+        />
+      </button>
+    </div>
   );
 }
 
@@ -223,11 +388,16 @@ export function AdSalesPage() {
   const queryClient = useQueryClient();
   const { pushToast } = useAppToast();
   const [tab, setTab] = useState<TelegramAdSalesTab>(() => routeTabFromPathname(pathname));
-  const [calendarView, setCalendarView] = useState<TelegramAdCalendarView>("week");
-  const [calendarCursor, setCalendarCursor] = useState(() => new Date("2026-08-01T12:00:00.000Z"));
+  const [calendarView, setCalendarView] = useState<SlotsLayoutView>("calendar");
+  const [calendarRangeMode, setCalendarRangeMode] =
+    useState<TelegramAdSalesCalendarRangeMode>("week");
+  const [calendarCursor, setCalendarCursor] = useState(() => new Date());
+  const [calendarRangeSelection, setCalendarRangeSelection] = useState<{
+    from: string;
+    to: string;
+  } | null>(null);
   const [selectedNetworkId, setSelectedNetworkId] = useState("");
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [responsibleMemberId, setResponsibleMemberId] = useState("");
   const [slotVisibility, setSlotVisibility] = useState<"all" | "free" | "busy">("all");
@@ -245,44 +415,112 @@ export function AdSalesPage() {
     saleId: string;
     placementId: string;
   } | null>(null);
+  const [pastSlotAssignment, setPastSlotAssignment] = useState<{
+    saleId: string;
+    placementId: string;
+    channelTitle: string;
+    slotDateLabel: string;
+    posts: Array<{
+      id: string;
+      title: string;
+      kind: "managed" | "telegram";
+      status: string;
+      dateValue: string;
+    }>;
+  } | null>(null);
+  const [selectedPastPostId, setSelectedPastPostId] = useState("");
   const [postTitle, setPostTitle] = useState("");
   const [postText, setPostText] = useState("");
   const [postImages, setPostImages] = useState("");
+  const [refreshingCurrentPage, setRefreshingCurrentPage] = useState(false);
+  const [availabilityCacheBust, setAvailabilityCacheBust] = useState(0);
+  const appliedPreferencesSignatureRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    const storedView = readAdSalesCalendarRangeMode(window.localStorage);
+    if (!storedView) return;
+    // Apply the stored visual mode before the browser paints the calendar.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCalendarRangeMode(storedView);
+  }, []);
 
   useEffect(() => {
     setTab(routeTabFromPathname(pathname));
   }, [pathname]);
 
-  const { from, to } = useMemo(
-    () => rangeForView(calendarView, calendarCursor),
-    [calendarCursor, calendarView],
-  );
+  const { from, to } = useMemo(() => {
+    if (calendarRangeSelection?.from) {
+      return {
+        from: new Date(`${calendarRangeSelection.from}T00:00:00`),
+        to: new Date(`${(calendarRangeSelection.to || calendarRangeSelection.from)}T23:59:59.999`),
+      };
+    }
+    return rangeForCalendarMode(calendarRangeMode, calendarCursor);
+  }, [calendarCursor, calendarRangeMode, calendarRangeSelection]);
+
+  const calendarDays = useMemo(() => {
+    if (calendarRangeMode === "month" && !calendarRangeSelection?.from) {
+      return monthGridDays(calendarCursor);
+    }
+    return listDaysInRange(from, to);
+  }, [calendarCursor, calendarRangeMode, calendarRangeSelection, from, to]);
+  const visibleCalendarRange = useMemo(() => {
+    const start = calendarDays[0] ?? from;
+    const end = calendarDays[calendarDays.length - 1] ?? to;
+    return {
+      from: new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0),
+      to: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999),
+    };
+  }, [calendarDays, from, to]);
 
   const { data: settings } = useQuery({
     queryKey: ["currency-settings"],
     queryFn: currenciesApi.getSettings,
+    staleTime: 5 * 60 * 1000,
   });
   const { data: me } = useQuery({
     queryKey: ["auth", "me"],
     queryFn: authApi.me,
+    staleTime: 5 * 60 * 1000,
   });
   const { data: rates } = useQuery({
     queryKey: ["currency-rates"],
     queryFn: currenciesApi.listRates,
+    staleTime: 5 * 60 * 1000,
   });
   const { data: channels = [] } = useQuery({
     queryKey: ["telegram-channels"],
     queryFn: telegramChannelsApi.list,
+    staleTime: 60 * 1000,
   });
   const { data: networks = [] } = useQuery({
     queryKey: ["telegram-channel-networks"],
     queryFn: telegramChannelNetworksApi.list,
+    staleTime: 60 * 1000,
   });
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts"],
     queryFn: accountsApi.list,
+    staleTime: 60 * 1000,
   });
   const workspaceTimezone = me?.workspace.timezone || "Europe/Warsaw";
+  const preferencesQuery = useQuery({
+    queryKey: telegramAdSalesKeys.preferences(),
+    queryFn: telegramAdSalesApi.getPreferences,
+    staleTime: 60 * 1000,
+  });
+  const adSalesWorkspaceSettingsQuery = useQuery({
+    queryKey: telegramAdSalesKeys.workspaceSettings(),
+    queryFn: telegramAdSalesApi.getWorkspaceSettings,
+    enabled: tab === "settings",
+    staleTime: 60 * 1000,
+  });
+  const savePreferencesMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => telegramAdSalesApi.updatePreferences(payload),
+    onSuccess: (preferences) => {
+      queryClient.setQueryData(telegramAdSalesKeys.preferences(), preferences);
+    },
+  });
   const salesQuery = useQuery({
     queryKey: telegramAdSalesKeys.sales({
       page: salesPage,
@@ -307,9 +545,13 @@ export function AdSalesPage() {
       channels.filter((channel) => channel.preview?.canPostMessages),
     [channels],
   );
-  const saleableChannelIds = useMemo(
-    () => new Set(saleableChannels.map((channel) => channel.id)),
+  const saleableChannelIdsList = useMemo(
+    () => saleableChannels.map((channel) => channel.id),
     [saleableChannels],
+  );
+  const saleableChannelIds = useMemo(
+    () => new Set(saleableChannelIdsList),
+    [saleableChannelIdsList],
   );
   const saleableNetworks = useMemo(
     () =>
@@ -328,32 +570,166 @@ export function AdSalesPage() {
     () =>
       expandNetworkChannelIds({
         selectedChannelIds,
+        allChannelIds: saleableChannelIdsList,
         selectedNetworkId: selectedNetworkId || null,
         networks: saleableNetworks as TelegramChannelNetwork[],
       }),
-    [saleableNetworks, selectedChannelIds, selectedNetworkId],
+    [saleableChannelIdsList, saleableNetworks, selectedChannelIds, selectedNetworkId],
   );
 
   useEffect(() => {
-    if (saleableChannels.length && !effectiveChannelIds.length) {
-      setSelectedChannelIds(saleableChannels.slice(0, 3).map((channel) => channel.id));
-    }
-  }, [effectiveChannelIds.length, saleableChannels]);
+    const preferences = preferencesQuery.data;
+    if (!preferences) return;
+    const allowedIds = new Set(saleableChannelIdsList);
+    const filteredPreferenceIds = preferences.selectedChannelIds.filter((channelId) =>
+      allowedIds.has(channelId),
+    );
+    const nextNetworkId = preferences.initialized ? preferences.selectedNetworkId ?? "" : "";
+    const networkChannelIds = nextNetworkId
+      ? (saleableNetworks.find((network) => network.id === nextNetworkId)?.channels ?? []).map(
+          (channel) => channel.id,
+        )
+      : [];
+    const nextIds = preferences.initialized
+      ? nextNetworkId
+        ? networkChannelIds
+        : filteredPreferenceIds.length
+          ? filteredPreferenceIds
+          : saleableChannelIdsList
+      : saleableChannelIdsList;
+    const normalizedView =
+      preferences.initialized && preferences.calendarView === "month" ? "month" : "week";
+    const nextCalendarRangeMode = normalizedView;
+    writeAdSalesCalendarRangeMode(window.localStorage, nextCalendarRangeMode);
+    const nextPreferencesSignature = JSON.stringify({
+      nextIds,
+      nextNetworkId,
+      nextCalendarRangeMode,
+      saleableChannelIdsList,
+    });
 
-  useEffect(() => {
-    if (!selectedChannelIds.length) return;
-    const allowedIds = new Set(saleableChannels.map((channel) => channel.id));
-    const nextIds = selectedChannelIds.filter((channelId) => allowedIds.has(channelId));
-    if (nextIds.length !== selectedChannelIds.length) {
-      setSelectedChannelIds(nextIds);
+    if (appliedPreferencesSignatureRef.current === nextPreferencesSignature) {
+      return;
     }
-  }, [saleableChannels, selectedChannelIds]);
+    appliedPreferencesSignatureRef.current = nextPreferencesSignature;
+
+    setSelectedChannelIds((current) => (sameStringArray(current, nextIds) ? current : nextIds));
+    setSelectedNetworkId((current) => (current === nextNetworkId ? current : nextNetworkId));
+    setCalendarRangeMode((current) =>
+      current === nextCalendarRangeMode ? current : nextCalendarRangeMode,
+    );
+
+    if (!preferences.initialized && nextIds.length) {
+      savePreferencesMutation.mutate({
+        selectedChannelIds: nextIds,
+        selectedNetworkId: null,
+        calendarView: nextCalendarRangeMode,
+        initialized: true,
+      });
+      return;
+    }
+
+    if (preferences.initialized && nextIds.length !== preferences.selectedChannelIds.length) {
+      savePreferencesMutation.mutate({
+        selectedChannelIds: nextIds,
+        selectedNetworkId: preferences.selectedNetworkId,
+        calendarView: nextCalendarRangeMode,
+        initialized: true,
+      });
+    }
+  }, [preferencesQuery.data, saleableChannelIdsList, saleableNetworks]);
+
+  const persistCalendarPreferences = (payload: Partial<{
+    selectedChannelIds: string[];
+    selectedNetworkId: string | null;
+    calendarView: "week" | "month";
+  }>) => {
+    savePreferencesMutation.mutate({
+      selectedChannelIds,
+      selectedNetworkId: selectedNetworkId || null,
+      calendarView: payload.calendarView ?? calendarRangeMode,
+      ...payload,
+      initialized: true,
+    });
+  };
+
+  const handleCalendarRangeModeChange = (view: TelegramAdSalesCalendarRangeMode) => {
+    writeAdSalesCalendarRangeMode(window.localStorage, view);
+    setCalendarRangeMode(view);
+    persistCalendarPreferences({ calendarView: view });
+  };
+
+  const handleCalendarViewChange = (view: SlotsLayoutView) => {
+    setCalendarView(view);
+  };
+
+  const handleCalendarRangeChange = (range: { from: string; to: string }) => {
+    setCalendarRangeSelection(range.from || range.to ? range : null);
+    if (range.from) {
+      setCalendarCursor(new Date(`${range.from}T12:00:00`));
+    }
+  };
+
+  const shiftCalendarRange = (direction: -1 | 1) => {
+    if (calendarRangeSelection?.from) {
+      const currentFrom = new Date(`${calendarRangeSelection.from}T00:00:00`);
+      const currentTo = new Date(`${(calendarRangeSelection.to || calendarRangeSelection.from)}T00:00:00`);
+      const span = Math.max(
+        1,
+        Math.round((currentTo.getTime() - currentFrom.getTime()) / (24 * 60 * 60 * 1000)) + 1,
+      );
+      const nextFrom = addDays(currentFrom, span * direction);
+      const nextTo = addDays(currentTo, span * direction);
+      setCalendarRangeSelection({
+        from: dateKey(nextFrom),
+        to: dateKey(nextTo),
+      });
+      setCalendarCursor(new Date(nextFrom));
+      return;
+    }
+    setCalendarCursor((current) =>
+      calendarRangeMode === "month"
+        ? new Date(current.getFullYear(), current.getMonth() + direction, 1)
+        : addDays(current, direction * 7),
+    );
+  };
+
+  const handleSelectedNetworkIdChange = (networkId: string) => {
+    setSelectedNetworkId(networkId);
+    if (!networkId) {
+      persistCalendarPreferences({ selectedNetworkId: null });
+      return;
+    }
+    const network = saleableNetworks.find((item) => item.id === networkId);
+    const nextChannelIds = network?.channels.map((channel) => channel.id) ?? [];
+    setSelectedChannelIds(nextChannelIds);
+    persistCalendarPreferences({
+      selectedNetworkId: networkId || null,
+      selectedChannelIds: nextChannelIds,
+    });
+  };
+
+  const handleSelectedChannelIdsChange = (channelIds: string[]) => {
+    const sortedIds = [...channelIds].sort();
+    const matchedNetwork =
+      saleableNetworks.find((network) => {
+        const networkIds = network.channels.map((channel) => channel.id).sort();
+        return sameStringArray(networkIds, sortedIds);
+      }) ?? null;
+    setSelectedChannelIds(channelIds);
+    setSelectedNetworkId(matchedNetwork?.id ?? "");
+    persistCalendarPreferences({
+      selectedChannelIds: channelIds,
+      selectedNetworkId: matchedNetwork?.id ?? null,
+    });
+  };
 
   const channelProductQueries = useQueries({
     queries: effectiveChannelIds.map((channelId) => ({
       queryKey: telegramAdSalesKeys.channelProducts(channelId),
       queryFn: () => telegramAdSalesApi.listChannelProducts(channelId),
-      enabled: tab === "calendar" || tab === "settings" || saleWizardOpen,
+      enabled: tab === "settings" || saleWizardOpen,
+      staleTime: 60 * 1000,
     })),
   });
   const productsByChannelId = useMemo<Record<string, TelegramAdProduct[]>>(
@@ -367,39 +743,45 @@ export function AdSalesPage() {
     [channelProductQueries, effectiveChannelIds],
   );
 
-  const availabilityQuery = useQuery({
-    queryKey: telegramAdSalesKeys.availability({
-      from: from.toISOString(),
-      to: to.toISOString(),
-      channelIds: effectiveChannelIds,
-      productIds: selectedProductIds,
-      networkId: selectedNetworkId || undefined,
-    }),
-    queryFn: () =>
-      telegramAdSalesApi.availability({
-        from: from.toISOString(),
-        to: to.toISOString(),
-        channelIds: effectiveChannelIds,
-        ...(selectedNetworkId ? { networkId: selectedNetworkId } : {}),
-        ...(selectedProductIds.length ? { productIds: selectedProductIds } : {}),
-      }),
-    enabled: Boolean(effectiveChannelIds.length),
-  });
-
-  const managedPostCalendarQueries = useQueries({
+  const availabilityQueries = useQueries({
     queries: effectiveChannelIds.map((channelId) => ({
-      queryKey: ["telegram-managed-posts-calendar", channelId, { from: from.toISOString(), to: to.toISOString() }],
+      queryKey: telegramAdSalesKeys.availability({
+        from: visibleCalendarRange.from.toISOString(),
+        to: visibleCalendarRange.to.toISOString(),
+        channelIds: [channelId],
+        cacheBust: availabilityCacheBust || undefined,
+      }),
       queryFn: () =>
-        telegramChannelsApi.managedPostsCalendar(channelId, {
-          from: from.toISOString(),
-          to: to.toISOString(),
+        telegramAdSalesApi.availability({
+          from: visibleCalendarRange.from.toISOString(),
+          to: visibleCalendarRange.to.toISOString(),
+          channelIds: [channelId],
+          ...(availabilityCacheBust ? { cacheBust: String(availabilityCacheBust) } : {}),
         }),
-      enabled: tab === "calendar" && calendarView !== "list",
+      enabled: tab === "calendar",
+      staleTime: 30 * 1000,
     })),
   });
 
+  const availabilitySlots = availabilityQueries.flatMap((query) => query.data?.slots ?? []);
+  const availabilityDaySummaries = availabilityQueries.flatMap(
+    (query) => query.data?.summaries ?? [],
+  );
+  const loadingAvailabilityChannelIds = effectiveChannelIds.filter(
+    (_, index) => availabilityQueries[index]?.isFetching,
+  );
+  const failedAvailabilityChannelIds = effectiveChannelIds.filter(
+    (_, index) => availabilityQueries[index]?.isError,
+  );
+
   const filteredSales = useMemo(() => {
     let items = salesQuery.data?.items ?? [];
+    items = items.filter((sale) =>
+      sale.placements.some((placement) => {
+        const placementDate = new Date(placement.scheduledAt).getTime();
+        return placementDate >= from.getTime() && placementDate <= to.getTime();
+      }),
+    );
     const search = saleSearch.trim().toLowerCase();
     if (search) {
       items = items.filter((sale) =>
@@ -428,17 +810,19 @@ export function AdSalesPage() {
     return items;
   }, [
     effectiveChannelIds,
+    from,
     paymentStatusFilter,
     responsibleMemberId,
     saleSearch,
     salesQuery.data?.items,
     selectedChannelIds.length,
+    to,
     underpricedOnly,
     unpaidOnly,
   ]);
 
   const filteredSlots = useMemo(() => {
-    let items = buildAdCalendarSlots(availabilityQuery.data?.slots ?? []);
+    let items = buildAdCalendarSlots(availabilitySlots);
     if (statusFilter) {
       items = items.filter(
         (slot) => slot.existingPlacement?.status === statusFilter || slot.state === statusFilter,
@@ -451,23 +835,7 @@ export function AdSalesPage() {
       items = items.filter((slot) => slot.state !== "AVAILABLE");
     }
     return items;
-  }, [availabilityQuery.data?.slots, slotVisibility, statusFilter]);
-
-  const organicByChannelId = useMemo(
-    () =>
-      Object.fromEntries(
-        effectiveChannelIds.map((channelId, index) => [
-          channelId,
-          managedPostCalendarQueries[index]?.data?.items ?? [],
-        ]),
-      ) as Record<string, Array<{ id: string; title: string; status: string; scheduledAt?: string | null; publishedAt?: string | null; telegramMessageUrls: string[] }>>,
-    [effectiveChannelIds, managedPostCalendarQueries],
-  );
-
-  const overlayPlacements = useMemo(
-    () => collectAdOverlayPlacements(salesQuery.data?.items ?? []),
-    [salesQuery.data?.items],
-  );
+  }, [availabilitySlots, slotVisibility, statusFilter]);
 
   const pricingChannels = useMemo(
     () =>
@@ -477,11 +845,12 @@ export function AdSalesPage() {
     [channels, effectiveChannelIds],
   );
 
-  const pricingHistoryQueries = useQueries({
+  const baselineQueries = useQueries({
     queries: pricingChannels.map((channel) => ({
-      queryKey: telegramAdSalesKeys.priceHistory(channel.id, { limit: 20 }),
-      queryFn: () => telegramAdSalesApi.priceHistory(channel.id, { limit: 20 }),
+      queryKey: telegramAdSalesKeys.baseline(channel.id),
+      queryFn: () => telegramAdSalesApi.getChannelBaseline(channel.id),
       enabled: tab === "settings",
+      staleTime: 60 * 1000,
     })),
   });
 
@@ -490,18 +859,91 @@ export function AdSalesPage() {
       queryKey: telegramAdSalesKeys.policy(channel.id),
       queryFn: () => telegramAdSalesApi.getPolicy(channel.id),
       enabled: tab === "settings",
+      staleTime: 60 * 1000,
     })),
   });
 
+  const handleRefreshCurrentPage = async () => {
+    setRefreshingCurrentPage(true);
+    try {
+      if (tab === "calendar") {
+        setAvailabilityCacheBust(Date.now());
+      }
+      await withFreshApiReads(async () => {
+        const refreshTasks: Promise<unknown>[] = [
+          queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.preferences() }),
+          queryClient.refetchQueries({ queryKey: ["telegram-channels"], type: "active" }),
+          queryClient.refetchQueries({ queryKey: ["telegram-channel-networks"], type: "active" }),
+          queryClient.refetchQueries({ queryKey: telegramAdSalesKeys.preferences(), type: "active" }),
+        ];
+
+        if (tab === "settings") {
+          refreshTasks.push(
+            queryClient.refetchQueries({
+              queryKey: telegramAdSalesKeys.workspaceSettings(),
+              type: "active",
+            }),
+          );
+          for (const channelId of pricingChannels.map((channel) => channel.id)) {
+            refreshTasks.push(
+              queryClient.refetchQueries({
+                queryKey: telegramAdSalesKeys.channelProducts(channelId),
+                type: "active",
+              }),
+              queryClient.refetchQueries({
+                queryKey: telegramAdSalesKeys.baseline(channelId),
+                type: "active",
+              }),
+              queryClient.refetchQueries({
+                queryKey: telegramAdSalesKeys.policy(channelId),
+                type: "active",
+              }),
+            );
+          }
+        }
+
+        if (tab === "sales") {
+          refreshTasks.push(
+            queryClient.refetchQueries({
+              queryKey: telegramAdSalesKeys.sales({
+                page: salesPage,
+                pageSize: salesPageSize,
+                status: statusFilter || undefined,
+              }),
+              type: "active",
+            }),
+          );
+        }
+
+        if (tab === "analytics") {
+          refreshTasks.push(
+            queryClient.refetchQueries({
+              queryKey: telegramAdSalesKeys.analytics(),
+              type: "active",
+            }),
+            queryClient.refetchQueries({
+              queryKey: ["dashboard-summary"],
+              type: "active",
+            }),
+          );
+        }
+
+        await Promise.all(refreshTasks);
+      });
+    } finally {
+      setRefreshingCurrentPage(false);
+    }
+  };
+
   async function handleCreateSale(payload: Parameters<NonNullable<React.ComponentProps<typeof SaleWizardModal>["onSubmit"]>>[0]) {
+    const seedSlot = wizardSeedSlot;
     const sale = await telegramAdSalesApi.createSale({
       advertiserId: payload.advertiserId,
       createAdvertiser: payload.createAdvertiser,
       advertiserName: payload.advertiserName,
       advertiserTelegram: payload.advertiserTelegram,
       advertiserContact: payload.advertiserContact,
-      notes: payload.notes,
-      settlementCurrency: payload.settlementCurrency,
+      settlementCurrency: payload.paymentCurrency,
       assignedMemberId: payload.assignedMemberId,
     }, true);
 
@@ -509,6 +951,7 @@ export function AdSalesPage() {
       await telegramAdSalesApi.addPlacement(sale.id, {
         telegramChannelId: placement.channelId,
         telegramAdProductId: placement.productId,
+        inventoryOpportunityKey: placement.inventoryOpportunityKey,
         scheduledAt: placement.scheduledAt,
         timezone: placement.timezone,
         agreedPrice: placement.agreedPrice,
@@ -527,10 +970,98 @@ export function AdSalesPage() {
           scheduledAt: placement.scheduledAt,
         })),
       }, true);
+      const attachmentTasks =
+        payload.placements.flatMap((draft) => {
+          if (!draft.telegramPostId) return [];
+          const placement = reserved.placements.find(
+            (item) =>
+              item.telegramChannelId === draft.channelId &&
+              item.scheduledAt === draft.scheduledAt,
+          );
+          return placement
+            ? [
+                telegramAdSalesApi.attachManagedPost(reserved.id, placement.id, {
+                  telegramPostId: draft.telegramPostId,
+                }, true),
+              ]
+            : [];
+        });
+      await Promise.all(attachmentTasks);
+      if (attachmentTasks.length) {
+        await telegramAdSalesApi.reconcileSale(reserved.id, true);
+      }
+      const autoAllocation = autoAllocatePayment({
+        amount: payload.paymentAmount,
+        placements: reserved.placements.map((placement) => ({
+          id: placement.id,
+          agreedPrice: placement.agreedPrice,
+          paidAllocatedAmount: placement.paidAllocatedAmount,
+        })),
+      });
+      await telegramAdSalesApi.createPayment(
+        reserved.id,
+        {
+          accountId: payload.accountId,
+          amount: payload.paymentAmount,
+          currency: payload.paymentCurrency,
+          paidAt: new Date().toISOString(),
+          allocations: autoAllocation.allocations,
+        },
+        true,
+      );
       await invalidateTelegramAdSalesQueries(queryClient, {
         saleId: reserved.id,
         channelIds: reserved.placements.map((placement) => placement.telegramChannelId),
       });
+      if (seedSlot?.state === "PAST" && !payload.placements.some((placement) => placement.telegramPostId)) {
+        const placement =
+          reserved.placements.find((item) =>
+            seedSlot.inventoryOpportunityKey
+              ? item.inventoryOpportunityKey === seedSlot.inventoryOpportunityKey
+              : item.telegramChannelId === seedSlot.channelId &&
+                item.scheduledAt === seedSlot.scheduledAt,
+          ) ??
+          reserved.placements.find((item) => item.telegramChannelId === seedSlot.channelId);
+        const slotTime = new Date(seedSlot.scheduledAt).getTime();
+        const publishedPosts = await getTelegramChannelPosts(seedSlot.channelId, {
+          page: 1,
+          pageSize: 100,
+          from: new Date(slotTime - 36 * 60 * 60 * 1000).toISOString(),
+          to: new Date(slotTime + 36 * 60 * 60 * 1000).toISOString(),
+        });
+        const candidates = publishedPosts.items
+          .filter(
+            (item) =>
+              channelLocalDateKey(item.postDate, seedSlot.timezone) ===
+              channelLocalDateKey(seedSlot.scheduledAt, seedSlot.timezone),
+          )
+          .map((item) => ({
+            id: item.id,
+            title:
+              item.text?.trim()?.split("\n").find(Boolean)?.slice(0, 80) ||
+              "Telegram post",
+            kind: "telegram" as const,
+            status: "PUBLISHED",
+            dateValue: item.postDate,
+          }));
+        if (placement && candidates.length) {
+          setPastSlotAssignment({
+            saleId: reserved.id,
+            placementId: placement.id,
+            channelTitle:
+              saleableChannels.find((channel) => channel.id === seedSlot.channelId)?.title ||
+              "Channel",
+            slotDateLabel: new Date(seedSlot.scheduledAt).toLocaleDateString(),
+            posts: candidates,
+          });
+          setSelectedPastPostId(candidates[0]?.id ?? "");
+        } else {
+          pushToast(
+            "Sale was created, but no post from that day was found to link to the past slot.",
+            "error",
+          );
+        }
+      }
       pushToast("Ad sale reserved successfully.", "success");
       return { sale: reserved };
     } catch (error) {
@@ -562,50 +1093,152 @@ export function AdSalesPage() {
         title="Advertising sales"
         subtitle="Sell ad placements across your own Telegram channels and networks."
         action={
-          <Button
-            onClick={() => {
-              setWizardSeedSlot(null);
-              setSaleWizardOpen(true);
-            }}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Plus size={16} />
-              New sale
-            </span>
-          </Button>
+          <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-end xl:gap-4">
+            <div className="min-w-[220px] xl:min-w-[260px]">
+              <FormField label="Network">
+                <Select
+                  value={selectedNetworkId}
+                  onChange={(event) => handleSelectedNetworkIdChange(event.target.value)}
+                >
+                  <option value="">All networks</option>
+                  {saleableNetworks.map((network) => (
+                    <option key={network.id} value={network.id}>
+                      {network.name}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            </div>
+            <div className="min-w-[280px] xl:min-w-[360px]">
+              <FormField label="Channels">
+                <MultiSelect
+                  value={selectedChannelIds}
+                  onChange={handleSelectedChannelIdsChange}
+                  placeholder="Choose channels"
+                  allSelectedLabel="All channels"
+                  options={saleableChannels.map((channel) => ({
+                    value: channel.id,
+                    label: channel.title,
+                    selectedLabel: channel.title,
+                    iconUrl: channel.photoUrl,
+                    iconFallback: channel.title,
+                  }))}
+                />
+              </FormField>
+            </div>
+            <Button
+              variant="secondary"
+              className="hidden shrink-0 whitespace-nowrap lg:inline-flex xl:self-end"
+              onClick={() => void handleRefreshCurrentPage()}
+              disabled={refreshingCurrentPage}
+              title="Clear cached data and refresh this page"
+            >
+              <span className="inline-flex items-center gap-2">
+                <RefreshCw size={16} className={refreshingCurrentPage ? "animate-spin" : ""} />
+                Refresh
+              </span>
+            </Button>
+            <Button
+              className="shrink-0 whitespace-nowrap xl:self-end"
+              onClick={() => {
+                setWizardSeedSlot(null);
+                setSaleWizardOpen(true);
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Plus size={16} />
+                New sale
+              </span>
+            </Button>
+          </div>
         }
       />
 
-      <Card className="mb-5">
+      <Card className={`mb-5 ${adSalesPanelClass}`}>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_auto_auto_300px] xl:items-end">
+          <div>
+            <h2 className="text-3xl font-semibold tracking-tight text-white">
+              {`${from.toLocaleDateString()} - ${to.toLocaleDateString()}`}
+            </h2>
+            <p className="mt-1 text-sm text-neutral-400">
+              Shared reporting period and workspace scope for all ad-sales tabs.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {calendarRangeModes.map((view) => {
+              const Icon = view.icon;
+              return (
+                <button
+                  key={view.id}
+                  type="button"
+                  onClick={() => handleCalendarRangeModeChange(view.id)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${tabButtonClass(calendarRangeMode === view.id)}`}
+                >
+                  <Icon size={15} />
+                  {view.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => shiftCalendarRange(-1)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800/80 bg-[#0b1220] text-neutral-300 transition hover:border-slate-700 hover:bg-[#10192b] hover:text-white"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCalendarRangeSelection(null);
+                setCalendarCursor(new Date());
+              }}
+              className="inline-flex h-10 items-center rounded-xl border border-slate-800/80 bg-[#0b1220] px-4 text-sm font-medium text-white transition hover:border-slate-700 hover:bg-[#10192b]"
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => shiftCalendarRange(1)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800/80 bg-[#0b1220] text-neutral-300 transition hover:border-slate-700 hover:bg-[#10192b] hover:text-white"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <DateRangeInput
+            from={calendarRangeSelection?.from || dateKey(from)}
+            to={calendarRangeSelection?.to || dateKey(to)}
+            onChange={handleCalendarRangeChange}
+            className="w-full"
+          />
+        </div>
+      </Card>
+
+      <Card className={`mb-5 ${adSalesPanelClass}`}>
         <div className="flex flex-wrap gap-2">
           {tabs.map((item) => {
             const Icon = item.icon;
             return (
-              <button
+              <Tooltip
                 key={item.id}
-                type="button"
-                onClick={() => {
-                  setTab(item.id);
-                  router.replace(tabRouteMap[item.id]);
-                }}
-                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${tabButtonClass(tab === item.id)}`}
+                side="top"
+                align="center"
+                content={<span className="block w-72">{tabDescriptions[item.id]}</span>}
               >
-                <Icon size={16} />
-                {item.label}
-                <Tooltip
-                  side="bottom"
-                  align="center"
-                  className="w-fit"
-                  content={<span className="block w-72">{tabDescriptions[item.id]}</span>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTab(item.id);
+                    router.replace(tabRouteMap[item.id]);
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${tabButtonClass(tab === item.id)}`}
                 >
-                  <span
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-neutral-300 transition hover:text-white"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <Info size={14} />
-                  </span>
-                </Tooltip>
-              </button>
+                  <Icon size={16} />
+                  {item.label}
+                  <Info size={14} className="text-neutral-300" />
+                </button>
+              </Tooltip>
             );
           })}
         </div>
@@ -613,28 +1246,24 @@ export function AdSalesPage() {
 
       {tab === "calendar" ? (
         <CalendarTab
+          loadingChannelIds={loadingAvailabilityChannelIds}
+          failedChannelIds={failedAvailabilityChannelIds}
           calendarView={calendarView}
-          onCalendarViewChange={setCalendarView}
+          calendarRangeMode={calendarRangeMode}
           calendarCursor={calendarCursor}
-          onCalendarCursorChange={setCalendarCursor}
+          onCalendarViewChange={handleCalendarViewChange}
+          calendarFrom={from}
+          calendarTo={to}
+          calendarDays={calendarDays}
           channels={saleableChannels}
-          networks={saleableNetworks}
-          selectedNetworkId={selectedNetworkId}
-          onSelectedNetworkIdChange={setSelectedNetworkId}
           selectedChannelIds={selectedChannelIds}
-          onSelectedChannelIdsChange={setSelectedChannelIds}
-          selectedProductIds={selectedProductIds}
-          onSelectedProductIdsChange={setSelectedProductIds}
           statusFilter={statusFilter}
           onStatusFilterChange={setStatusFilter}
           slotVisibility={slotVisibility}
           onSlotVisibilityChange={setSlotVisibility}
           filteredSlots={filteredSlots}
-          organicByChannelId={organicByChannelId}
-          overlayPlacements={overlayPlacements}
           sales={salesQuery.data?.items ?? []}
-          settings={settings}
-          rates={rates}
+          daySummaries={availabilityDaySummaries}
           onCreateFromSlot={(slot) => {
             setWizardSeedSlot(slot);
             setSaleWizardOpen(true);
@@ -674,6 +1303,8 @@ export function AdSalesPage() {
         <AdSalesAnalyticsPanel
           selectedChannelIds={effectiveChannelIds}
           selectedNetworkId={selectedNetworkId || null}
+          from={from}
+          to={to}
         />
       ) : null}
 
@@ -682,9 +1313,17 @@ export function AdSalesPage() {
           channels={pricingChannels}
           supportedCurrencies={settings?.supportedCurrencies ?? ["USD", "EUR", "PLN", "UAH"]}
           workspaceTimezone={workspaceTimezone}
+          workspaceSettings={adSalesWorkspaceSettingsQuery.data}
           productsByChannelId={productsByChannelId}
-          historyQueries={pricingHistoryQueries.map((query) => query.data ?? [])}
+          baselineQueries={baselineQueries.map((query) => query.data)}
+          baselineLoading={baselineQueries.map((query) => query.isLoading || query.isFetching)}
           policies={policyQueries.map((query) => query.data)}
+          policyLoading={policyQueries.map((query) => query.isLoading || query.isFetching)}
+          productLoading={pricingChannels.map((channel) => {
+            const index = effectiveChannelIds.findIndex((channelId) => channelId === channel.id);
+            const query = index >= 0 ? channelProductQueries[index] : undefined;
+            return Boolean(query?.isLoading || query?.isFetching);
+          })}
           onCreateProduct={async (channelId, payload) => {
             await telegramAdSalesApi.createProduct(channelId, payload);
             await queryClient.invalidateQueries({
@@ -693,6 +1332,16 @@ export function AdSalesPage() {
           }}
           onUpdateProduct={async (productId, payload, channelId) => {
             await telegramAdSalesApi.updateProduct(productId, payload);
+            await queryClient.invalidateQueries({
+              queryKey: telegramAdSalesKeys.channelProducts(channelId),
+            });
+          }}
+          onDeleteProduct={async (productId, channelId) => {
+            await telegramAdSalesApi.deactivateProduct(productId);
+            queryClient.setQueryData<TelegramAdProduct[]>(
+              telegramAdSalesKeys.channelProducts(channelId),
+              (current) => (current ?? []).filter((product) => product.id !== productId),
+            );
             await queryClient.invalidateQueries({
               queryKey: telegramAdSalesKeys.channelProducts(channelId),
             });
@@ -715,20 +1364,20 @@ export function AdSalesPage() {
               ),
             );
           }}
-          onRecalculate={async (channelId, productId) => {
-            await telegramAdSalesApi.createQuote({
-              telegramChannelId: channelId,
-              telegramAdProductId: productId || undefined,
+          onUpdateChannelPricing={async (channelId, payload) => {
+            await telegramAdSalesApi.updateChannelPricing(channelId, payload);
+            await queryClient.invalidateQueries({
+              queryKey: telegramAdSalesKeys.baseline(channelId),
             });
             await queryClient.invalidateQueries({
-              queryKey: telegramAdSalesKeys.priceHistory(channelId, { limit: 20 }),
+              queryKey: telegramAdSalesKeys.channelProducts(channelId),
             });
           }}
           onRecommendPolicy={async (channelId, payload) => {
-            const recommendation = await telegramAdSalesApi.recommendPolicy(channelId, {});
+            await telegramAdSalesApi.recommendPolicy(channelId, {});
             await telegramAdSalesApi.updatePolicy(channelId, {
-              ...payload,
-              ...recommendation,
+              useWorkspaceDefault: payload.useWorkspaceDefault,
+              organicPostsPerAdSlot: payload.organicPostsPerAdSlot,
             });
             await queryClient.invalidateQueries({
               queryKey: telegramAdSalesKeys.policy(channelId),
@@ -740,38 +1389,42 @@ export function AdSalesPage() {
       <SaleWizardModal
         open={saleWizardOpen}
         onClose={() => setSaleWizardOpen(false)}
+        accounts={accounts as Account[]}
         channels={saleableChannels}
         networks={saleableNetworks as TelegramChannelNetwork[]}
         productsByChannelId={productsByChannelId}
         defaultCurrency={settings?.primaryCurrency || "USD"}
-        supportedCurrencies={settings?.supportedCurrencies ?? ["USD", "EUR", "PLN", "UAH"]}
         workspaceTimezone={workspaceTimezone}
         initialChannelId={wizardSeedSlot?.channelId ?? null}
         initialScheduledAt={wizardSeedSlot?.scheduledAt ?? null}
+        initialInventoryOpportunityKey={wizardSeedSlot?.inventoryOpportunityKey ?? null}
         onSearchAdvertisers={(query) => telegramAdSalesApi.searchAdvertisers({ q: query, limit: 5 })}
-        onRequestQuote={async ({ channelId, productId, pricingMode }) =>
+        onRequestQuote={async ({ channelId, productId, pricingMode, currency }) =>
           telegramAdSalesApi.createQuote({
             telegramChannelId: channelId,
             telegramAdProductId: productId,
             pricingMode,
-          })
+            currency,
+          }, true)
         }
-        onFindNearestSlot={async ({ channelId, productId, from }) => {
+        onLoadAvailableSlots={async ({ channelId, productId, from, to }) => {
           const result = await telegramAdSalesApi.availability({
             from,
-            to: addDays(new Date(from), 14).toISOString(),
+            to,
             channelIds: [channelId],
             ...(productId ? { productIds: [productId] } : {}),
           });
-          const nearest = result.slots.find((slot) => slot.state === "AVAILABLE");
-          return nearest
-            ? {
-                scheduledAt: nearest.scheduledAt,
-                recommendedPrice: nearest.recommendedPrice,
-                minimumPrice: nearest.minimumPrice,
-                expectedViews: nearest.expectedViews,
-              }
-            : null;
+          return result.slots.filter((slot) => slot.state === "AVAILABLE" || slot.state === "PAST");
+        }}
+        onLoadPublishedPosts={async ({ channelId, date }) => {
+          const from = new Date(`${date}T00:00:00`).toISOString();
+          const to = new Date(`${date}T23:59:59.999`).toISOString();
+          const result = await getTelegramChannelPosts(channelId, { page: 1, pageSize: 100, from, to });
+          return result.items.map((post) => ({
+            id: post.id,
+            title: post.text?.trim().split("\n").find(Boolean)?.slice(0, 90) || "Telegram post",
+            publishedAt: post.postDate,
+          }));
         }}
         onSubmit={handleCreateSale}
       />
@@ -857,6 +1510,72 @@ export function AdSalesPage() {
       />
 
       <Modal
+        open={Boolean(pastSlotAssignment)}
+        onClose={() => {
+          setPastSlotAssignment(null);
+          setSelectedPastPostId("");
+        }}
+        title="Link sold post"
+        size="md"
+      >
+        {pastSlotAssignment ? (
+          <div className="space-y-4">
+            <p className="text-sm text-neutral-400">
+              Choose the real ad post for {pastSlotAssignment.channelTitle} on{" "}
+              {pastSlotAssignment.slotDateLabel}.
+            </p>
+            <FormField label="Published post">
+              <Select
+                value={selectedPastPostId}
+                onChange={(event) => setSelectedPastPostId(event.target.value)}
+              >
+                {pastSlotAssignment.posts.map((post) => {
+                  const label = post.title?.trim() || "Untitled post";
+                  return (
+                    <option key={post.id} value={post.id}>
+                      {post.dateValue ? `${new Date(post.dateValue).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ` : ""}
+                      {post.kind === "telegram" ? "Post · " : "Managed · "}
+                      {label}
+                    </option>
+                  );
+                })}
+              </Select>
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setPastSlotAssignment(null);
+                  setSelectedPastPostId("");
+                }}
+              >
+                Skip for now
+              </Button>
+              <Button
+                disabled={!selectedPastPostId}
+                onClick={async () => {
+                  if (!pastSlotAssignment || !selectedPastPostId) return;
+                  const current = pastSlotAssignment;
+                  const selectedPost = current.posts.find((post) => post.id === selectedPastPostId);
+                  setPastSlotAssignment(null);
+                  setSelectedPastPostId("");
+                  await telegramAdSalesApi.attachManagedPost(current.saleId, current.placementId, {
+                    ...(selectedPost?.kind === "telegram"
+                      ? { telegramPostId: selectedPost.id }
+                      : { managedPostId: selectedPost?.id }),
+                  });
+                  await telegramAdSalesApi.reconcileSale(current.saleId);
+                  await invalidateTelegramAdSalesQueries(queryClient, { saleId: current.saleId });
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
         open={Boolean(postEditorPlacement)}
         onClose={() => setPostEditorPlacement(null)}
         title="Create advertising post"
@@ -914,41 +1633,67 @@ export function AdSalesPage() {
 }
 
 function CalendarTab(props: {
-  calendarView: TelegramAdCalendarView;
-  onCalendarViewChange: (value: TelegramAdCalendarView) => void;
+  loadingChannelIds: string[];
+  failedChannelIds: string[];
+  calendarView: SlotsLayoutView;
+  onCalendarViewChange: (value: SlotsLayoutView) => void;
+  calendarRangeMode: "week" | "month";
   calendarCursor: Date;
-  onCalendarCursorChange: (value: Date) => void;
+  calendarFrom: Date;
+  calendarTo: Date;
+  calendarDays: Date[];
   channels: TelegramChannel[];
-  networks: TelegramChannelNetwork[];
-  selectedNetworkId: string;
-  onSelectedNetworkIdChange: (value: string) => void;
   selectedChannelIds: string[];
-  onSelectedChannelIdsChange: (value: string[]) => void;
-  selectedProductIds: string[];
-  onSelectedProductIdsChange: (value: string[]) => void;
   statusFilter: string;
   onStatusFilterChange: (value: string) => void;
   slotVisibility: "all" | "free" | "busy";
   onSlotVisibilityChange: (value: "all" | "free" | "busy") => void;
   filteredSlots: ReturnType<typeof buildAdCalendarSlots>;
-  organicByChannelId: Record<string, Array<{ id: string; title: string; status: string; scheduledAt?: string | null; publishedAt?: string | null; telegramMessageUrls: string[] }>>;
-  overlayPlacements: ReturnType<typeof collectAdOverlayPlacements>;
   sales: TelegramAdSale[];
-  settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
-  rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
+  daySummaries: Array<{
+    channelId: string;
+    date: string;
+    timezone: string;
+    organicPostsCountForDay: number;
+    adsCountForDay: number;
+  }>;
   onCreateFromSlot: (slot: TelegramAdAvailabilitySlot) => void;
 }) {
-  const monthDays = useMemo(() => monthGridDays(props.calendarCursor), [props.calendarCursor]);
+  const loadingChannelIds = useMemo(
+    () => new Set(props.loadingChannelIds),
+    [props.loadingChannelIds],
+  );
+  const failedChannelIds = useMemo(
+    () => new Set(props.failedChannelIds),
+    [props.failedChannelIds],
+  );
   const slotsByChannelDay = useMemo(() => {
     const grouped = new Map<string, typeof props.filteredSlots>();
     for (const slot of props.filteredSlots) {
-      const key = `${slot.channelId}:${channelLocalDateKey(slot.scheduledAt)}`;
+      const key = `${slot.channelId}:${slot.date}`;
       const current = grouped.get(key) ?? [];
       current.push(slot);
       grouped.set(key, current);
     }
     return grouped;
   }, [props.filteredSlots]);
+
+  const daySummariesByChannelDay = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        channelId: string;
+        date: string;
+        timezone: string;
+        organicPostsCountForDay: number;
+        adsCountForDay: number;
+      }
+    >();
+    for (const summary of props.daySummaries) {
+      grouped.set(`${summary.channelId}:${summary.date}`, summary);
+    }
+    return grouped;
+  }, [props.daySummaries]);
 
   const visibleChannels = useMemo(
     () =>
@@ -959,49 +1704,71 @@ function CalendarTab(props: {
       ),
     [props.channels, props.selectedChannelIds],
   );
+  const todayKey = channelLocalDateKey(new Date());
+  const futureSlotsByChannel = useMemo(() => {
+    const grouped = new Map<string, typeof props.filteredSlots>();
+    for (const slot of props.filteredSlots) {
+      if (slot.date < todayKey) continue;
+      const current = grouped.get(slot.channelId) ?? [];
+      current.push(slot);
+      grouped.set(slot.channelId, current);
+    }
+    for (const slots of grouped.values()) {
+      slots.sort(
+        (left, right) =>
+          new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime(),
+      );
+    }
+    return grouped;
+  }, [props.filteredSlots, todayKey]);
+
+  const saleById = useMemo(
+    () => new Map(props.sales.map((sale) => [sale.id, sale])),
+    [props.sales],
+  );
+
+  const renderSlot = (slot: ReturnType<typeof buildAdCalendarSlots>[number]) => {
+    const sale = slot.existingPlacement?.saleId
+      ? saleById.get(slot.existingPlacement.saleId)
+      : undefined;
+    return (
+      <CalendarSlotCard
+        key={slot.id}
+        slot={slot}
+        advertiserName={sale?.advertiserName}
+        saleTitle={sale?.title}
+        paymentStatus={sale?.paymentStatus || "UNPAID"}
+        agreedPrice={
+          sale?.placements.find(
+            (placement) => placement.id === slot.existingPlacement?.id,
+          )?.agreedPrice
+        }
+        onClick={
+          slot.state === "AVAILABLE" ||
+          (slot.state === "PAST" && !slot.existingPlacement)
+            ? () => props.onCreateFromSlot(slot)
+            : undefined
+        }
+      />
+    );
+  };
 
   return (
     <div className="space-y-5">
-      <Card>
-        <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]">
-          <FormField label="Network">
-            <Select
-              value={props.selectedNetworkId}
-              onChange={(event) => props.onSelectedNetworkIdChange(event.target.value)}
-            >
-              <option value="">All networks</option>
-              {props.networks.map((network) => (
-                <option key={network.id} value={network.id}>
-                  {network.name}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <FormField label="Channels">
-            <MultiSelect
-              value={props.selectedChannelIds}
-              onChange={props.onSelectedChannelIdsChange}
-              placeholder="Choose channels"
-              options={props.channels.map((channel) => ({
-                value: channel.id,
-                label: getChannelOptionLabel(channel),
-                iconUrl: channel.photoUrl,
-                iconFallback: channel.title,
-              }))}
-            />
-          </FormField>
+      <Card className={adSalesPanelClass}>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_180px]">
           <FormField label="Status">
             <Select
               value={props.statusFilter}
               onChange={(event) => props.onStatusFilterChange(event.target.value)}
             >
               <option value="">All states</option>
-              <option value="AVAILABLE">Available</option>
-              <option value="RESERVED">Reserved</option>
-              <option value="SOLD">Sold</option>
-              <option value="BLOCKED_BY_POLICY">Blocked</option>
-              <option value="CONFLICT_WITH_ORGANIC_POST">Conflict</option>
-              <option value="PAST">Past</option>
+              <option value="AVAILABLE" className="text-emerald-300">● Available</option>
+              <option value="RESERVED" className="text-amber-300">● Reserved</option>
+              <option value="SOLD" className="text-blue-300">● Sold</option>
+              <option value="BLOCKED_BY_POLICY" className="text-rose-300">● Blocked</option>
+              <option value="CONFLICT_WITH_ORGANIC_POST" className="text-orange-300">● Conflict</option>
+              <option value="PAST" className="text-neutral-400">● Past</option>
             </Select>
           </FormField>
           <FormField label="Visibility">
@@ -1014,153 +1781,210 @@ function CalendarTab(props: {
               <option value="busy">Only busy</option>
             </Select>
           </FormField>
-          <FormField label="View">
-            <div className="flex gap-2">
-              {(["week", "month", "list"] as const).map((view) => (
-                <button
-                  key={view}
-                  type="button"
-                  onClick={() => props.onCalendarViewChange(view)}
-                  className={`rounded-full border px-3 py-2 text-sm ${tabButtonClass(props.calendarView === view)}`}
-                >
-                  {view[0].toUpperCase() + view.slice(1)}
-                </button>
-              ))}
-            </div>
+          <FormField label="Layout">
+            <Select
+              value={props.calendarView}
+              onChange={(event) =>
+                props.onCalendarViewChange(event.target.value as "calendar" | "list")
+              }
+            >
+              <option value="calendar">Calendar</option>
+              <option value="list">List</option>
+            </Select>
           </FormField>
         </div>
       </Card>
 
-      {props.calendarView === "week" ? (
-        <div className="overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
-          <div className="sticky top-0 z-10 grid grid-cols-[220px_repeat(7,minmax(220px,1fr))] border-b border-neutral-800 bg-neutral-950/95 backdrop-blur">
-            <div className="border-r border-neutral-800 px-4 py-3 text-sm font-semibold text-white">
-              Channels
+      {props.calendarView === "calendar" && props.calendarRangeMode === "month" ? (
+        <div className={adSalesPanelClass}>
+          <div className="overflow-hidden rounded-xl border border-slate-800/80">
+            <div className="grid grid-cols-7 border-b border-slate-800/80 bg-[#09111e]">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
+                <div key={label} className="border-r border-slate-800/80 px-3 py-2 text-center text-xs font-medium text-neutral-400 last:border-r-0">
+                  {label}
+                </div>
+              ))}
             </div>
-            {Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(props.calendarCursor), index)).map((day) => (
-              <div key={day.toISOString()} className="border-r border-neutral-800 px-4 py-3 text-sm">
-                <p className="font-semibold text-white">
-                  {day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
-                </p>
-              </div>
-            ))}
-          </div>
-          {visibleChannels.map((channel) => (
-            <div
-              key={channel.id}
-              className="grid grid-cols-[220px_repeat(7,minmax(220px,1fr))] border-b border-neutral-900 last:border-b-0"
-            >
-              <div className="sticky left-0 z-[1] border-r border-neutral-800 bg-neutral-950 px-4 py-4">
-                <p className="font-medium text-white">{channel.title}</p>
-                <p className="text-xs text-neutral-500">{channel.username || "No username"}</p>
-              </div>
-              {Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(props.calendarCursor), index)).map((day) => {
-                const dayKey = `${channel.id}:${dateKey(day)}`;
-                const slots = slotsByChannelDay.get(dayKey) ?? [];
-                const organic = (props.organicByChannelId[channel.id] ?? []).filter(
-                  (item) => channelLocalDateKey(item.scheduledAt || item.publishedAt || "") === dateKey(day),
+            <div className="grid grid-cols-7">
+              {props.calendarDays.map((day) => {
+                const dayDateKey = dateKey(day);
+                const outsideMonth = day.getMonth() !== props.calendarCursor.getMonth();
+                const daySlots = visibleChannels.flatMap((channel) =>
+                  (slotsByChannelDay.get(`${channel.id}:${dayDateKey}`) ?? []).map((slot) => ({
+                    channel,
+                    slot,
+                  })),
                 );
                 return (
-                  <div key={dayKey} className="min-h-52 border-r border-neutral-900 p-3">
-                    <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-neutral-500">
-                      <span>{organic.length} organic</span>
-                      <span>{slots.length} ad slots</span>
+                  <div
+                    key={day.toISOString()}
+                    className={`min-h-28 border-b border-r border-slate-900/70 p-2 ${outsideMonth ? "bg-black/20 opacity-45" : "bg-[#111111]"}`}
+                  >
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">{day.getDate()}</span>
+                      {dayDateKey === todayKey ? (
+                        <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">Today</span>
+                      ) : null}
                     </div>
-                    <div className="space-y-2">
-                      {organic.map((item) => (
-                        <div key={item.id} className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-2 text-xs text-neutral-300">
-                          <p className="font-medium text-white">{item.title}</p>
-                          <p>{channelLocalTime(item.scheduledAt || item.publishedAt || "")} · {item.status}</p>
-                        </div>
+                    <div className="space-y-1">
+                      {daySlots.map(({ channel, slot }) => (
+                        <button
+                          key={`${channel.id}:${slot.id}`}
+                          type="button"
+                          disabled={Boolean(slot.existingPlacement) || !["AVAILABLE", "PAST"].includes(slot.state)}
+                          onClick={() => props.onCreateFromSlot(slot)}
+                          title={`${channel.title} · ${slot.state === "PAST" ? "Missed ad slot" : "Add Ad Slot"}`}
+                          className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] font-medium transition ${
+                            slot.state === "AVAILABLE"
+                              ? "border-emerald-700/60 bg-emerald-950/30 text-emerald-200 hover:border-emerald-500"
+                              : slot.state === "PAST"
+                                ? "border-rose-700/60 bg-rose-950/25 text-rose-200 hover:border-rose-500"
+                                : "border-slate-800 bg-[#0b1220] text-neutral-300"
+                          }`}
+                        >
+                          <TelegramEntityAvatar imageUrl={channel.photoUrl} kind="channel" alt={channel.title} size="xs" />
+                          <span className="min-w-0 truncate">{channel.title}</span>
+                          <span className="ml-auto shrink-0 text-[9px] opacity-80">
+                            {slot.state === "PAST"
+                              ? "Missed ad slot"
+                              : slot.state === "AVAILABLE"
+                                ? "Add Ad Slot"
+                                : "Busy"}
+                          </span>
+                        </button>
                       ))}
-                      {slots.slice(0, 4).map((slot) => {
-                        const sale = props.sales.find((item) => item.id === slot.existingPlacement?.saleId);
-                        return (
-                          <CalendarSlotCard
-                            key={slot.id}
-                            slot={slot}
-                            advertiserName={sale?.advertiserName}
-                            saleTitle={sale?.title}
-                            paymentStatus={sale?.paymentStatus || "UNPAID"}
-                            agreedPrice={
-                              sale?.placements.find((placement) => placement.id === slot.existingPlacement?.id)?.agreedPrice
-                            }
-                            onClick={slot.state === "AVAILABLE" ? () => props.onCreateFromSlot(slot) : undefined}
-                          />
-                        );
-                      })}
+                      {props.loadingChannelIds.length ? <Skeleton className="h-6 w-full" /> : null}
                     </div>
                   </div>
                 );
               })}
             </div>
-          ))}
+          </div>
         </div>
       ) : null}
 
-      {props.calendarView === "month" ? (
-        <div className="grid gap-3 md:grid-cols-7">
-          {monthDays.map((day) => {
-            const daySales = props.filteredSlots.filter(
-              (slot) => channelLocalDateKey(slot.scheduledAt) === dateKey(day),
-            );
-            return (
-              <Card key={day.toISOString()} className="min-h-44">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-white">
-                    {day.toLocaleDateString(undefined, { day: "numeric", month: "short" })}
-                  </p>
-                  <span className="text-xs text-neutral-500">{daySales.length} slots</span>
+      {props.calendarView === "calendar" && props.calendarRangeMode !== "month" ? (
+        <div className={adSalesPanelClass}>
+          <div className="overflow-x-auto">
+            <div className="min-w-max">
+              <div
+                className="sticky top-0 z-10 border-b border-slate-800/80 bg-[#09111e]/95 backdrop-blur"
+                style={{ display: "grid", gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))` }}
+              >
+                <div className="border-r border-slate-800/80 px-4 py-3 text-sm font-semibold text-white">
+                  Channels
                 </div>
-                <div className="mt-3 space-y-2">
-                  {daySales.slice(0, 3).map((slot) => (
-                    <CalendarSlotCard
-                      key={slot.id}
-                      slot={slot}
-                      onClick={slot.state === "AVAILABLE" ? () => props.onCreateFromSlot(slot) : undefined}
-                    />
-                  ))}
+                {props.calendarDays.map((day) => (
+                  <div key={day.toISOString()} className="border-r border-slate-800/80 px-3 py-2.5 text-sm">
+                    <p className="font-semibold text-white">
+                      {day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {visibleChannels.map((channel) => (
+                <div
+                  key={channel.id}
+                  className="border-b border-slate-900/60 last:border-b-0"
+                  style={{ display: "grid", gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))` }}
+                >
+                  <div className="sticky left-0 z-[1] border-r border-slate-800/80 bg-[#09111e] px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <TelegramEntityAvatar
+                        imageUrl={channel.photoUrl}
+                        kind="channel"
+                        alt={channel.title}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-white">{channel.title}</p>
+                        {channel.username ? (
+                          <p className="truncate text-xs text-neutral-500">{channel.username}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                  {props.calendarDays.map((day) => {
+                    const dayKey = `${channel.id}:${dateKey(day)}`;
+                    const slots = slotsByChannelDay.get(dayKey) ?? [];
+                    const summary = daySummariesByChannelDay.get(dayKey);
+                    const organicCount = summary?.organicPostsCountForDay ?? 0;
+                    const adSlotsCount = summary?.adsCountForDay ?? slots.length;
+                    return (
+                      <div key={dayKey} className="min-h-24 border-r border-slate-900/60 p-2">
+                        {loadingChannelIds.has(channel.id) ? (
+                          <>
+                            <Skeleton className="mb-2 h-3 w-24" />
+                            <Skeleton className="h-10 w-full" />
+                          </>
+                        ) : failedChannelIds.has(channel.id) ? (
+                          <p className="text-xs text-rose-300">Could not load slots.</p>
+                        ) : (
+                          <>
+                            <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
+                              <span>{organicCount} organic</span>
+                              <span>{adSlotsCount} ad slots</span>
+                            </div>
+                            <div className="space-y-1.5">{slots.slice(0, 2).map(renderSlot)}</div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              </Card>
-            );
-          })}
+              ))}
+            </div>
+          </div>
         </div>
       ) : null}
 
       {props.calendarView === "list" ? (
         <div className="space-y-3">
-          {props.filteredSlots.map((slot) => (
-            <Card key={slot.id}>
-              <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr] lg:items-center">
-                <div>
-                  <p className="font-medium text-white">
-                    {props.channels.find((channel) => channel.id === slot.channelId)?.title || slot.channelId}
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    {new Date(slot.scheduledAt).toLocaleString()} · {slot.timezone}
-                  </p>
+          {visibleChannels.map((channel) => {
+            const slots = futureSlotsByChannel.get(channel.id) ?? [];
+            return (
+              <Card key={channel.id} className={adSalesSoftPanelClass}>
+                <div className="flex items-center gap-2">
+                  <TelegramEntityAvatar imageUrl={channel.photoUrl} kind="channel" alt={channel.title} size="sm" />
+                  <p className="font-medium text-white">{channel.title}</p>
                 </div>
-                <div className="text-sm text-neutral-300">
-                  {slot.expectedViews.toLocaleString()} views · {slot.recommendedPrice} {slot.currency}
-                </div>
-                <div className="text-sm text-neutral-300">
-                  {slot.state} · {slot.blockingReason || slot.source}
-                </div>
-                <div className="flex justify-end">
-                  <Button
-                    disabled={slot.state !== "AVAILABLE"}
-                    onClick={() => {
-                      if (slot.state !== "AVAILABLE") return;
-                      props.onCreateFromSlot(slot);
-                    }}
-                  >
-                    {slot.state === "AVAILABLE" ? "Book slot" : "Unavailable"}
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
-          {!props.filteredSlots.length ? <EmptyState text="No slots for the selected filters." /> : null}
+                {loadingChannelIds.has(channel.id) ? (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}
+                  </div>
+                ) : failedChannelIds.has(channel.id) ? (
+                  <p className="mt-3 text-sm text-rose-300">Could not load slots.</p>
+                ) : slots.length ? (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {slots.slice(0, 6).map((slot) => (
+                      <button
+                        key={slot.id}
+                        type="button"
+                        disabled={slot.state !== "AVAILABLE"}
+                        onClick={() => slot.state === "AVAILABLE" && props.onCreateFromSlot(slot)}
+                        className={`rounded-lg border p-3 text-left transition ${
+                          slot.state === "AVAILABLE"
+                            ? "border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500"
+                            : "cursor-default border-neutral-800 bg-neutral-950/60"
+                        }`}
+                      >
+                        <p className="text-sm font-medium text-white">
+                          {new Date(slot.scheduledAt).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                          {" · "}
+                          {channelLocalTime(slot.scheduledAt, slot.timezone)}
+                        </p>
+                        <p className="mt-1 text-xs text-neutral-400">
+                          {slot.state === "AVAILABLE" ? "Add Ad Slot" : slot.state.replaceAll("_", " ")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-neutral-500">No upcoming slots for the selected filters.</p>
+                )}
+              </Card>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -1211,7 +2035,7 @@ function SalesTab(props: {
 
   return (
     <div className="space-y-5">
-      <Card>
+      <Card className={adSalesPanelClass}>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
           <FormField label="Search">
             <Input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} />
@@ -1285,7 +2109,7 @@ function SalesTab(props: {
       {props.loading ? <TableLoadingState columns={8} rows={6} /> : null}
       {props.error ? <ErrorState text="Could not load ad sales." /> : null}
       {!props.loading && !props.error ? (
-        <div className="overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
+        <div className={adSalesPanelClass}>
           <div className="table-scroll w-full">
             <table className="w-full min-w-[1180px] text-left text-sm">
               <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
@@ -1409,454 +2233,587 @@ function SettingsTab(props: {
   channels: TelegramChannel[];
   supportedCurrencies: string[];
   workspaceTimezone: string;
+  workspaceSettings: Awaited<ReturnType<typeof telegramAdSalesApi.getWorkspaceSettings>> | undefined;
   productsByChannelId: Record<string, TelegramAdProduct[]>;
-  historyQueries: TelegramAdPriceSnapshot[][];
+  baselineQueries: Array<TelegramAdChannelBaseline | undefined>;
+  baselineLoading: boolean[];
   policies: Array<Awaited<ReturnType<typeof telegramAdSalesApi.getPolicy>> | undefined>;
+  policyLoading: boolean[];
+  productLoading: boolean[];
   onCreateProduct: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
   onUpdateProduct: (productId: string, payload: Record<string, unknown>, channelId: string) => Promise<void>;
+  onDeleteProduct: (productId: string, channelId: string) => Promise<void>;
   onUpdatePolicy: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
   onApplyPolicyToChannels: (channelIds: string[], payload: Record<string, unknown>) => Promise<void>;
-  onRecalculate: (channelId: string, productId?: string | null) => Promise<void>;
+  onUpdateChannelPricing: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
   onRecommendPolicy: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
 }) {
   const [draftPolicyByChannel, setDraftPolicyByChannel] = useState<Record<string, Record<string, string>>>({});
-  const [globalPolicyDraft, setGlobalPolicyDraft] = useState<Record<string, string>>({});
+  const [channelPricingDrafts, setChannelPricingDrafts] = useState<Record<string, { baseCpm: string; currency: string }>>({});
+  const [editingChannelPricing, setEditingChannelPricing] = useState<{
+    channelId: string;
+    baseCpm: string;
+    currency: string;
+  } | null>(null);
   const [editingProduct, setEditingProduct] = useState<{
     channelId: string;
     productId?: string;
     name: string;
-    defaultPricingMode: "CPM" | "FIXED" | "MANUAL";
-    minimumPrice: string;
-    currency: string;
+    topDurationHours: string;
+    feedDurationHours: string;
+    isPermanent: boolean;
     isActive: boolean;
     position: string;
   } | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState<{
+    id: string;
+    name: string;
+    channelId: string;
+  } | null>(null);
+  const [activeChannelId, setActiveChannelId] = useState<string>(props.channels[0]?.id ?? "");
 
   useEffect(() => {
+    const workspaceDefault = props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3;
     setDraftPolicyByChannel(
       Object.fromEntries(
         props.channels.map((channel, index) => {
           const policy = props.policies[index];
+          const organicPostsPerAdSlot = policy?.organicPostsPerAdSlot ?? workspaceDefault;
+          const useWorkspaceDefault =
+            policy?.useWorkspaceDefault === true ||
+            organicPostsPerAdSlot === workspaceDefault;
           return [
             channel.id,
             {
-              expectedOrganicPostsPerDay: policy?.expectedOrganicPostsPerDay ?? "0",
-              organicPostsPerAdSlot: String(policy?.organicPostsPerAdSlot ?? 3),
-              maxAdsPerDay: String(policy?.maxAdsPerDay ?? 1),
-              minDaysBetweenAds: String(policy?.minDaysBetweenAds ?? 3),
-              minHoursBetweenAds: String(policy?.minHoursBetweenAds ?? 72),
-              slotStrategy: policy?.slotStrategy ?? "BEFORE_ORGANIC_POST",
-              fallbackSlotTimes: (policy?.fallbackSlotTimes ?? []).join(", "),
+              useWorkspaceDefault: useWorkspaceDefault ? "true" : "false",
+              organicPostsPerAdSlot: String(organicPostsPerAdSlot),
             },
           ];
         }),
       ),
     );
-  }, [props.channels, props.policies]);
+  }, [props.channels, props.policies, props.workspaceSettings?.defaultOrganicPostsPerAdSlot]);
 
   useEffect(() => {
-    const firstPolicy = props.policies[0];
-    setGlobalPolicyDraft({
-      expectedOrganicPostsPerDay: firstPolicy?.expectedOrganicPostsPerDay ?? "3",
-      organicPostsPerAdSlot: String(firstPolicy?.organicPostsPerAdSlot ?? 3),
-      maxAdsPerDay: String(firstPolicy?.maxAdsPerDay ?? 1),
-      minDaysBetweenAds: String(firstPolicy?.minDaysBetweenAds ?? 3),
-      minHoursBetweenAds: String(firstPolicy?.minHoursBetweenAds ?? 72),
-      slotStrategy: firstPolicy?.slotStrategy ?? "BEFORE_ORGANIC_POST",
-      fallbackSlotTimes: (firstPolicy?.fallbackSlotTimes ?? []).join(", "),
-    });
-  }, [props.policies]);
+    setChannelPricingDrafts(
+      Object.fromEntries(
+        props.channels.map((channel, index) => {
+          const baseline = props.baselineQueries[index];
+          return [
+            channel.id,
+            {
+              baseCpm: baseline?.pricing.baseCpm ?? "",
+              currency: baseline?.pricing.currency ?? props.supportedCurrencies[0] ?? "USD",
+            },
+          ];
+        }),
+      ),
+    );
+  }, [props.channels, props.baselineQueries, props.supportedCurrencies]);
+
+  useEffect(() => {
+    if (!props.channels.length) {
+      setActiveChannelId("");
+      return;
+    }
+    setActiveChannelId((current) =>
+      props.channels.some((channel) => channel.id === current) ? current : props.channels[0]!.id,
+    );
+  }, [props.channels]);
 
   if (!props.channels.length) {
     return <EmptyState text="Choose one or more channels in Calendar to manage products and schedule policies." />;
   }
 
+  const activeChannelIndex = Math.max(
+    0,
+    props.channels.findIndex((channel) => channel.id === activeChannelId),
+  );
+  const activeChannel = props.channels[activeChannelIndex] ?? props.channels[0];
+  const products = props.productsByChannelId[activeChannel.id] ?? [];
+  const visibleProducts = products.reduce<TelegramAdProduct[]>((items, product) => {
+    const semanticKey = placementFormatCanonicalKey(product);
+    const existingIndex = items.findIndex((item) => placementFormatCanonicalKey(item) === semanticKey);
+    if (existingIndex === -1) {
+      items.push(product);
+      return items;
+    }
+    const existing = items[existingIndex]!;
+    if (existing.name.trim() === "1/permanent" && product.name.trim() === "No auto-delete") {
+      items[existingIndex] = product;
+    }
+    return items;
+  }, []);
+  const baseline = props.baselineQueries[activeChannelIndex];
+  const baselineLoading = props.baselineLoading[activeChannelIndex] ?? false;
+  const policyLoading = props.policyLoading[activeChannelIndex] ?? false;
+  const productLoading = props.productLoading[activeChannelIndex] ?? false;
+  const setupLoading = baselineLoading || policyLoading || productLoading;
+  const policyDraft = draftPolicyByChannel[activeChannel.id] ?? {};
+  const pricingDraft = channelPricingDrafts[activeChannel.id] ?? {
+    baseCpm: baseline?.pricing.baseCpm ?? "",
+    currency: baseline?.pricing.currency ?? props.supportedCurrencies[0] ?? "USD",
+  };
+
   return (
     <div className="space-y-5">
-      <Card>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-white">Default rule for selected channels</h3>
-            <p className="text-sm text-neutral-400">
-              Set one shared cadence first, then override only the channels that need it.
-            </p>
-          </div>
-          <Button
-            onClick={() =>
-              void props.onApplyPolicyToChannels(props.channels.map((channel) => channel.id), {
-                timezone: props.workspaceTimezone,
-                expectedOrganicPostsPerDay: Number(globalPolicyDraft.expectedOrganicPostsPerDay || 0),
-                organicPostsPerAdSlot: Number(globalPolicyDraft.organicPostsPerAdSlot || 3),
-                maxAdsPerDay: Number(globalPolicyDraft.maxAdsPerDay || 1),
-                minDaysBetweenAds: Number(globalPolicyDraft.minDaysBetweenAds || 3),
-                minHoursBetweenAds: Number(globalPolicyDraft.minHoursBetweenAds || 72),
-                slotStrategy: globalPolicyDraft.slotStrategy || "BEFORE_ORGANIC_POST",
-                fallbackSlotTimes: (globalPolicyDraft.fallbackSlotTimes || "")
-                  .split(",")
-                  .map((item) => item.trim())
-                  .filter(Boolean),
-                autoFrequencyEnabled: true,
-                allowManualSlots: false,
-              })
-            }
-          >
-            Apply to selected channels
-          </Button>
+      <Card className={adSalesPanelClass}>
+        <div>
+          <h3 className="text-lg font-semibold text-white">Channels</h3>
+          <p className="text-sm text-neutral-400">
+            Switch channels here instead of scrolling through all setup cards.
+          </p>
         </div>
-        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <FormField label="Expected organic posts/day">
-            <Input
-              value={globalPolicyDraft.expectedOrganicPostsPerDay || ""}
-              onChange={(event) =>
-                setGlobalPolicyDraft((current) => ({
-                  ...current,
-                  expectedOrganicPostsPerDay: event.target.value,
-                }))
-              }
-            />
-          </FormField>
-          <FormField label="Organic posts per ad slot">
-            <Input
-              value={globalPolicyDraft.organicPostsPerAdSlot || ""}
-              onChange={(event) =>
-                setGlobalPolicyDraft((current) => ({
-                  ...current,
-                  organicPostsPerAdSlot: event.target.value,
-                }))
-              }
-            />
-          </FormField>
-          <FormField label="Max ads/day">
-            <Input
-              value={globalPolicyDraft.maxAdsPerDay || ""}
-              onChange={(event) =>
-                setGlobalPolicyDraft((current) => ({
-                  ...current,
-                  maxAdsPerDay: event.target.value,
-                }))
-              }
-            />
-          </FormField>
-          <FormField label="Min days between ads">
-            <Input
-              value={globalPolicyDraft.minDaysBetweenAds || ""}
-              onChange={(event) =>
-                setGlobalPolicyDraft((current) => ({
-                  ...current,
-                  minDaysBetweenAds: event.target.value,
-                }))
-              }
-            />
-          </FormField>
-          <FormField label="Min hours between ads">
-            <Input
-              value={globalPolicyDraft.minHoursBetweenAds || ""}
-              onChange={(event) =>
-                setGlobalPolicyDraft((current) => ({
-                  ...current,
-                  minHoursBetweenAds: event.target.value,
-                }))
-              }
-            />
-          </FormField>
+        <div className="mt-4 overflow-x-auto">
+          <div className="flex min-w-max gap-2">
+            {props.channels.map((channel) => {
+              const selected = channel.id === activeChannel.id;
+              return (
+                <button
+                  key={channel.id}
+                  type="button"
+                  onClick={() => setActiveChannelId(channel.id)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    selected
+                      ? "border-blue-500 bg-blue-600 text-white"
+                      : "border-neutral-800 bg-neutral-950/70 text-neutral-300 hover:border-neutral-700 hover:text-white"
+                  }`}
+                >
+                  <TelegramEntityAvatar
+                    imageUrl={channel.photoUrl}
+                    kind="channel"
+                    alt={channel.title}
+                    size="sm"
+                  />
+                  <span className="whitespace-nowrap">{channel.title}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Card>
-      {props.channels.map((channel, index) => {
-        const products = props.productsByChannelId[channel.id] ?? [];
-        const history = props.historyQueries[index] ?? [];
-        const latest = history[0];
-        const previous = history[1];
-        const latestRecommended = Number(latest?.recommendedPrice || 0);
-        const previousRecommended = Number(previous?.recommendedPrice || 0);
-        const delta = latest && previous ? latestRecommended - previousRecommended : 0;
-        const policyDraft = draftPolicyByChannel[channel.id] ?? {};
-        return (
-          <Card key={channel.id}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold text-white">{channel.title}</h3>
-                <p className="text-sm text-neutral-400">{channel.username || "No username"}</p>
-              </div>
-              <Tooltip
-                side="bottom"
-                align="right"
-                content={
-                  <span className="block w-80">
-                    Format = what we sell on a channel, for example a native post, 24h feed placement, or top placement. Policy = how organic posting cadence turns into available ad slots.
-                  </span>
-                }
-              >
-                <Button
-                  onClick={() =>
-                    setEditingProduct({
-                      channelId: channel.id,
-                      name: "",
-                      defaultPricingMode: "CPM",
-                      minimumPrice: "0",
-                      currency: props.supportedCurrencies[0] ?? "USD",
-                      isActive: true,
-                      position: String(products.length),
-                    })
-                  }
-                >
-                  Add format
-                </Button>
-              </Tooltip>
-            </div>
-
-            <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
-                  <tr>
-                    <th className="px-3 py-2">Format</th>
-                    <th className="px-3 py-2">Billing model</th>
-                    <th className="px-3 py-2">Minimum</th>
-                    <th className="px-3 py-2">Active</th>
-                    <th className="px-3 py-2">Ordering</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800">
-                  {products.map((product) => (
-                    <tr key={product.id} className="bg-neutral-950">
-                      <td className="px-3 py-2">
+      <Card key={activeChannel.id} className={adSalesPanelClass}>
+            <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(280px,1.15fr)_repeat(4,minmax(150px,0.7fr))]">
+                <div className="rounded-[18px] border border-slate-800/80 bg-[#0a0f18] p-4">
+                  {setupLoading ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-4 w-24" />
+                      <Skeleton className="h-9 w-40" />
+                      <Skeleton className="h-4 w-56" />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-medium uppercase tracking-wide text-neutral-400">Post CPM</h4>
                         <button
                           type="button"
-                          className="font-medium text-white underline-offset-2 hover:underline"
                           onClick={() =>
-                            setEditingProduct({
-                              channelId: channel.id,
-                              productId: product.id,
-                              name: product.name,
-                              defaultPricingMode: product.defaultPricingMode,
-                              minimumPrice: product.minimumPrice || "0",
-                              currency: product.currency,
-                              isActive: product.isActive,
-                              position: String(product.position),
+                            setEditingChannelPricing({
+                              channelId: activeChannel.id,
+                              baseCpm: pricingDraft.baseCpm,
+                              currency: pricingDraft.currency,
                             })
                           }
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-[#0f172a] text-neutral-300 transition hover:border-slate-600 hover:text-white"
+                          aria-label={`Edit CPM for ${activeChannel.title}`}
                         >
-                          {product.name}
+                          <Pencil size={14} />
                         </button>
-                      </td>
-                      <td className="px-3 py-2">{product.defaultPricingMode}</td>
-                      <td className="px-3 py-2">{product.minimumPrice || "0"} {product.currency}</td>
-                      <td className="px-3 py-2">{product.isActive ? "Yes" : "No"}</td>
-                      <td className="px-3 py-2">{product.position}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-baseline gap-3">
+                        <p className="text-2xl font-semibold text-white">
+                          {pricingDraft.baseCpm.trim()
+                            ? `${pricingDraft.baseCpm} ${pricingDraft.currency}`
+                            : "CPM not set"}
+                        </p>
+                        <p className="text-sm text-neutral-500">
+                          Price per 1,000 views for this channel.
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <MetricCard
+                  label="24h views"
+                  value={baseline?.windows.h24.expectedViews != null ? String(baseline.windows.h24.expectedViews) : "—"}
+                  loading={baselineLoading}
+                />
+                <MetricCard
+                  label="48h views"
+                  value={baseline?.windows.h48.expectedViews != null ? String(baseline.windows.h48.expectedViews) : "—"}
+                  loading={baselineLoading}
+                />
+                <MetricCard
+                  label="72h views"
+                  value={baseline?.windows.h72.expectedViews != null ? String(baseline.windows.h72.expectedViews) : "—"}
+                  loading={baselineLoading}
+                />
+                <MetricCard
+                  label="7d views"
+                  value={baseline?.windows.d7.expectedViews != null ? String(baseline.windows.d7.expectedViews) : "—"}
+                  loading={baselineLoading}
+                />
             </div>
 
-            <div className="mt-5 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h4 className="text-base font-semibold text-white">Audience baseline</h4>
-                <p className="text-sm text-neutral-400">
-                  Pricing uses this recent view baseline from real channel posts.
-                </p>
+            <div className="mt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-semibold text-white">Formats</h4>
+                  <p className="text-sm text-neutral-400">
+                    Standard placements are generated automatically. Add only custom ones here.
+                  </p>
+                </div>
+                <Tooltip
+                  side="bottom"
+                  align="right"
+                  content={
+                    <span className="block w-80">
+                      Format = what we sell on a channel, for example a native post, 24h feed placement, or top placement. Policy = how organic posting cadence turns into available ad slots.
+                    </span>
+                  }
+                >
+                  <Button
+                    onClick={() =>
+                      setEditingProduct({
+                        channelId: activeChannel.id,
+                        name: "",
+                        topDurationHours: "1",
+                        feedDurationHours: "24",
+                        isPermanent: false,
+                        isActive: true,
+                        position: String(visibleProducts.length),
+                      })
+                    }
+                  >
+                    Add custom format
+                  </Button>
+                </Tooltip>
               </div>
-              <Button variant="secondary" onClick={() => void props.onRecalculate(channel.id)}>
-                Refresh audience baseline
-              </Button>
-            </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-4">
-              <MetricCard label="Expected views" value={String(latest?.expectedViews ?? 0)} />
-              <MetricCard label="Target CPM" value={latest?.targetCpm ?? "0"} />
-              <MetricCard label="Recommended" value={`${latest?.recommendedPrice ?? "0"} ${latest?.currency ?? ""}`} />
-              <MetricCard label="Minimum" value={`${latest?.minimumPrice ?? "0"} ${latest?.currency ?? ""}`} />
-            </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-300">
-                <p className="text-neutral-400">Last refresh</p>
-                <p className="mt-1 font-medium text-white">
-                  {latest ? new Date(latest.calculatedAt).toLocaleString() : "No baseline yet"}
-                </p>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-300">
-                <p className="text-neutral-400">Data quality</p>
-                <p className="mt-1 font-medium text-white">
-                  {String(latest?.metadata?.dataQuality ?? "unknown")}
-                </p>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-300">
-                <p className="text-neutral-400">Change vs previous</p>
-                <p className={`mt-1 font-medium ${delta >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                  {delta.toFixed(2)}
-                </p>
-              </div>
-            </div>
-            {history.length ? (
-              <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
-                    <tr>
-                      <th className="px-3 py-2">Date</th>
-                      <th className="px-3 py-2">Views</th>
-                      <th className="px-3 py-2">Recommended</th>
-                      <th className="px-3 py-2">Minimum</th>
-                      <th className="px-3 py-2">Target CPM</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-800">
-                    {history.slice(0, 6).map((snapshot) => (
-                      <tr key={snapshot.id} className="bg-neutral-950">
-                        <td className="px-3 py-2">{new Date(snapshot.calculatedAt).toLocaleString()}</td>
-                        <td className="px-3 py-2">{snapshot.expectedViews.toLocaleString()}</td>
-                        <td className="px-3 py-2">{snapshot.recommendedPrice}</td>
-                        <td className="px-3 py-2">{snapshot.minimumPrice}</td>
-                        <td className="px-3 py-2">{snapshot.targetCpm}</td>
+              <div className="overflow-hidden rounded-[18px] border border-slate-800/80 bg-[#0b1220]">
+                {productLoading ? (
+                  <div className="p-4">
+                    <TableLoadingState columns={5} rows={4} />
+                  </div>
+                ) : (
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#09111e] text-xs uppercase text-neutral-400">
+                      <tr>
+                        <th className="px-3 py-2">Format</th>
+                        <th className="px-3 py-2">Expected views</th>
+                        <th className="px-3 py-2">Auto price</th>
+                        <th className="px-3 py-2">Active</th>
+                        <th className="px-3 py-2 text-right">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {visibleProducts.map((product) => {
+                        const expectedViews = placementExpectedViews(product, baseline);
+                        const estimatedPrice = placementEstimatedPrice(product, baseline, pricingDraft.baseCpm);
+                        const priceCurrency = baseline?.pricing.currency ?? product.currency;
+                        return (
+                          <tr key={product.id} className="bg-transparent">
+                            <td className="px-3 py-2">
+                              <Tooltip side="top" content={placementDeliveryLabel(product)}>
+                                {isDefaultPlacementFormat(product) ? (
+                                  <span className="font-medium text-white">{placementFormatName(product)}</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="font-medium text-white underline-offset-2 hover:underline"
+                                    onClick={() =>
+                                      setEditingProduct({
+                                        channelId: activeChannel.id,
+                                        productId: product.id,
+                                        name: product.name,
+                                        topDurationHours: String(
+                                          product.topDurationMinutes
+                                            ? Math.max(1, Math.round(product.topDurationMinutes / 60))
+                                            : 1,
+                                        ),
+                                        feedDurationHours: String(
+                                          product.feedDurationHours ?? product.deleteAfterHours ?? 24,
+                                        ),
+                                        isPermanent: product.isPermanent,
+                                        isActive: product.isActive,
+                                        position: String(product.position),
+                                      })
+                                    }
+                                  >
+                                    {placementFormatName(product)}
+                                  </button>
+                                )}
+                              </Tooltip>
+                            </td>
+                            <td className="px-3 py-2">
+                              {expectedViews != null ? expectedViews.toLocaleString() : "—"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {estimatedPrice === "—" ? "—" : `${estimatedPrice} ${priceCurrency}`}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void props.onUpdateProduct(
+                                    product.id,
+                                    { isActive: !product.isActive },
+                                    activeChannel.id,
+                                  )
+                                }
+                                className={`relative inline-flex h-8 w-14 items-center rounded-full border transition ${
+                                  product.isActive
+                                    ? "border-emerald-500/70 bg-emerald-500/20"
+                                    : "border-neutral-700 bg-neutral-900"
+                                }`}
+                                aria-label={`${product.isActive ? "Disable" : "Enable"} ${product.name}`}
+                              >
+                                <span
+                                  className={`absolute h-6 w-6 rounded-full bg-white transition ${
+                                    product.isActive ? "left-7" : "left-1"
+                                  }`}
+                                />
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {!isDefaultPlacementFormat(product) ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDeletingProduct({
+                                      id: product.id,
+                                      name: placementFormatName(product),
+                                      channelId: activeChannel.id,
+                                    })
+                                  }
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-900/70 bg-red-950/30 text-red-300 transition hover:border-red-700 hover:text-red-200"
+                                  aria-label={`Delete ${product.name}`}
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              ) : (
+                                <span className="text-neutral-600">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
-            ) : null}
+            </div>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <FormField label="Expected organic posts/day">
-                <Input
-                  value={policyDraft.expectedOrganicPostsPerDay || ""}
-                  onChange={(event) =>
+            <div className="mt-5">
+              <h4 className="text-base font-semibold text-white">Audience baseline</h4>
+              <p className="text-sm text-neutral-400">
+                Expected views come automatically from recent ordinary channel posts. This block updates from live data and does not need a manual refresh.
+              </p>
+            </div>
+            <div className="mt-5 space-y-4">
+              {policyLoading ? (
+                <div className={adSalesTileClass + " space-y-3 p-4"}>
+                  <Skeleton className="h-5 w-44" />
+                  <Skeleton className="h-4 w-64" />
+                </div>
+              ) : (
+                <ToggleRow
+                  checked={policyDraft.useWorkspaceDefault === "true"}
+                  onChange={(checked) =>
                     setDraftPolicyByChannel((current) => ({
                       ...current,
-                      [channel.id]: { ...current[channel.id], expectedOrganicPostsPerDay: event.target.value },
+                      [activeChannel.id]: {
+                        ...current[activeChannel.id],
+                        useWorkspaceDefault: checked ? "true" : "false",
+                      },
                     }))
                   }
+                  label="Use workspace default"
+                  description={`1 ad opportunity after every ${props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3} organic posts.`}
                 />
-              </FormField>
-              <FormField label="Organic posts per ad slot">
-                <Input
-                  value={policyDraft.organicPostsPerAdSlot || ""}
-                  onChange={(event) =>
-                    setDraftPolicyByChannel((current) => ({
-                      ...current,
-                      [channel.id]: { ...current[channel.id], organicPostsPerAdSlot: event.target.value },
-                    }))
-                  }
-                />
-              </FormField>
-              <FormField label="Max ads/day">
-                <Input
-                  value={policyDraft.maxAdsPerDay || ""}
-                  onChange={(event) =>
-                    setDraftPolicyByChannel((current) => ({
-                      ...current,
-                      [channel.id]: { ...current[channel.id], maxAdsPerDay: event.target.value },
-                    }))
-                  }
-                />
-              </FormField>
-              <FormField label="Min hours between ads">
-                <Input
-                  value={policyDraft.minHoursBetweenAds || ""}
-                  onChange={(event) =>
-                    setDraftPolicyByChannel((current) => ({
-                      ...current,
-                      [channel.id]: { ...current[channel.id], minHoursBetweenAds: event.target.value },
-                    }))
-                  }
-                />
-              </FormField>
-              <FormField label="Min days between ads">
-                <Input
-                  value={policyDraft.minDaysBetweenAds || ""}
-                  onChange={(event) =>
-                    setDraftPolicyByChannel((current) => ({
-                      ...current,
-                      [channel.id]: { ...current[channel.id], minDaysBetweenAds: event.target.value },
-                    }))
-                  }
-                />
-              </FormField>
+              )}
+              {!policyLoading && policyDraft.useWorkspaceDefault === "false" ? (
+                <div className="max-w-xl text-sm">
+                  <span className="mb-1 flex items-center gap-2 text-neutral-300">
+                    <span>Organic posts per ad opportunity</span>
+                    <Tooltip
+                      side="top"
+                      align="left"
+                      content={`Effective rule = 1 ad opportunity after every ${policyDraft.organicPostsPerAdSlot || "3"} organic posts.`}
+                    >
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center text-neutral-400 transition hover:text-white"
+                        aria-label="Explain organic posts per ad opportunity"
+                      >
+                        <Info size={14} />
+                      </button>
+                    </Tooltip>
+                  </span>
+                  <Input
+                    value={policyDraft.organicPostsPerAdSlot || ""}
+                    onChange={(event) =>
+                      setDraftPolicyByChannel((current) => ({
+                        ...current,
+                        [activeChannel.id]: { ...current[activeChannel.id], organicPostsPerAdSlot: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ) : null}
             </div>
             <p className="mt-4 text-sm text-neutral-400">
               Workspace timezone: <span className="text-white">{props.workspaceTimezone}</span>
             </p>
-            <div className="mt-4 rounded-xl border border-dashed border-neutral-700 bg-neutral-950/40 p-4 text-sm text-neutral-400">
-              Rule preview: 1 ad slot for every {policyDraft.organicPostsPerAdSlot || "3"} organic posts,
-              with max {policyDraft.maxAdsPerDay || "1"} ad/day and at least {policyDraft.minDaysBetweenAds || "3"} day gap.
-            </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button
-                variant="secondary"
+                disabled={policyLoading}
                 onClick={() =>
-                  void props.onRecommendPolicy(channel.id, {
-                    timezone: props.workspaceTimezone,
-                    expectedOrganicPostsPerDay: Number(policyDraft.expectedOrganicPostsPerDay || 0),
+                  void props.onUpdatePolicy(activeChannel.id, {
+                    useWorkspaceDefault: policyDraft.useWorkspaceDefault === "true",
                     organicPostsPerAdSlot: Number(policyDraft.organicPostsPerAdSlot || 3),
-                    maxAdsPerDay: Number(policyDraft.maxAdsPerDay || 1),
-                    minDaysBetweenAds: Number(policyDraft.minDaysBetweenAds || 3),
-                    minHoursBetweenAds: Number(policyDraft.minHoursBetweenAds || 72),
-                    slotStrategy: policyDraft.slotStrategy || "BEFORE_ORGANIC_POST",
-                    fallbackSlotTimes: (policyDraft.fallbackSlotTimes || "")
-                      .split(",")
-                      .map((item) => item.trim())
-                      .filter(Boolean),
-                    autoFrequencyEnabled: true,
-                    allowManualSlots: false,
                   })
                 }
               >
-                Apply recommendation
-              </Button>
-              <Button
-                onClick={() =>
-                  void props.onUpdatePolicy(channel.id, {
-                    timezone: props.workspaceTimezone,
-                    expectedOrganicPostsPerDay: Number(policyDraft.expectedOrganicPostsPerDay || 0),
-                    organicPostsPerAdSlot: Number(policyDraft.organicPostsPerAdSlot || 3),
-                    maxAdsPerDay: Number(policyDraft.maxAdsPerDay || 1),
-                    minDaysBetweenAds: Number(policyDraft.minDaysBetweenAds || 3),
-                    minHoursBetweenAds: Number(policyDraft.minHoursBetweenAds || 72),
-                    slotStrategy: policyDraft.slotStrategy || "BEFORE_ORGANIC_POST",
-                    fallbackSlotTimes: (policyDraft.fallbackSlotTimes || "")
-                      .split(",")
-                      .map((item) => item.trim())
-                      .filter(Boolean),
-                    autoFrequencyEnabled: true,
-                    allowManualSlots: false,
-                  })
-                }
-              >
-                Save policy
+                Save
               </Button>
             </div>
-          </Card>
-        );
-      })}
+      </Card>
+      <ChannelPricingModal
+        open={Boolean(editingChannelPricing)}
+        draft={editingChannelPricing}
+        supportedCurrencies={props.supportedCurrencies}
+        onClose={() => setEditingChannelPricing(null)}
+        onSubmit={async (draft) => {
+          setEditingChannelPricing(null);
+          setChannelPricingDrafts((current) => ({
+            ...current,
+            [draft.channelId]: {
+              baseCpm: draft.baseCpm,
+              currency: draft.currency,
+            },
+          }));
+          await props.onUpdateChannelPricing(draft.channelId, {
+            baseCpm: draft.baseCpm.trim() === "" ? null : Number(draft.baseCpm),
+            currency: draft.currency,
+          });
+        }}
+      />
       <ProductEditorModal
         open={Boolean(editingProduct)}
         draft={editingProduct}
         supportedCurrencies={props.supportedCurrencies}
         onClose={() => setEditingProduct(null)}
         onSubmit={async (draft) => {
+          const topDurationHours = Math.max(1, Number(draft.topDurationHours || 1));
+          const feedDurationHours = Math.max(1, Number(draft.feedDurationHours || 24));
+          const formatConfig = {
+            topDurationMinutes: topDurationHours * 60,
+            feedDurationHours: draft.isPermanent ? null : feedDurationHours,
+            deleteAfterHours: draft.isPermanent ? null : feedDurationHours,
+            isPermanent: draft.isPermanent,
+          };
           if (draft.productId) {
             await props.onUpdateProduct(
               draft.productId,
               {
                 name: draft.name.trim(),
-                defaultPricingMode: draft.defaultPricingMode,
-                minimumPrice: Number(draft.minimumPrice || 0),
-                currency: draft.currency,
+                defaultPricingMode: "CPM",
+                minimumPrice: 0,
+                currency: channelPricingDrafts[draft.channelId]?.currency || props.supportedCurrencies[0] || "USD",
                 isActive: draft.isActive,
                 position: Number(draft.position || 0),
+                ...formatConfig,
               },
               draft.channelId,
             );
           } else {
             await props.onCreateProduct(draft.channelId, {
               name: draft.name.trim(),
-              defaultPricingMode: draft.defaultPricingMode,
-              minimumPrice: Number(draft.minimumPrice || 0),
-              currency: draft.currency,
+              defaultPricingMode: "CPM",
+              minimumPrice: 0,
+              currency: channelPricingDrafts[draft.channelId]?.currency || props.supportedCurrencies[0] || "USD",
               isActive: draft.isActive,
               position: Number(draft.position || 0),
+              ...formatConfig,
             });
           }
           setEditingProduct(null);
         }}
       />
+      <ConfirmDeleteModal
+        open={Boolean(deletingProduct)}
+        onClose={() => setDeletingProduct(null)}
+        entityName={deletingProduct?.name ?? ""}
+        description="This custom format will be removed from the channel setup and will stop appearing in new bookings."
+        onConfirm={() =>
+          deletingProduct
+            ? props.onDeleteProduct(deletingProduct.id, deletingProduct.channelId)
+            : undefined
+        }
+      />
     </div>
+  );
+}
+
+function ChannelPricingModal(props: {
+  open: boolean;
+  draft: {
+    channelId: string;
+    baseCpm: string;
+    currency: string;
+  } | null;
+  supportedCurrencies: string[];
+  onClose: () => void;
+  onSubmit: (draft: {
+    channelId: string;
+    baseCpm: string;
+    currency: string;
+  }) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(props.draft);
+
+  useEffect(() => {
+    setDraft(props.draft);
+  }, [props.draft]);
+
+  if (!draft) return null;
+
+  return (
+    <Modal open={props.open} onClose={props.onClose} title="Edit CPM" allowOverflow>
+      <div className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-2">
+          <FormField label="Post CPM">
+            <Input
+              value={draft.baseCpm}
+              onChange={(event) =>
+                setDraft((current) => (current ? { ...current, baseCpm: event.target.value } : current))
+              }
+              placeholder="Leave empty to unset CPM"
+            />
+          </FormField>
+          <FormField label="Currency">
+            <CurrencySelect
+              value={draft.currency}
+              onChange={(currency) =>
+                setDraft((current) => (current ? { ...current, currency } : current))
+              }
+              currencies={props.supportedCurrencies}
+            />
+          </FormField>
+        </div>
+        <p className="text-sm text-neutral-500">
+          Format prices for this channel are calculated automatically from the CPM you set here.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void props.onSubmit(draft)}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1866,9 +2823,9 @@ function ProductEditorModal(props: {
     channelId: string;
     productId?: string;
     name: string;
-    defaultPricingMode: "CPM" | "FIXED" | "MANUAL";
-    minimumPrice: string;
-    currency: string;
+    topDurationHours: string;
+    feedDurationHours: string;
+    isPermanent: boolean;
     isActive: boolean;
     position: string;
   } | null;
@@ -1878,9 +2835,9 @@ function ProductEditorModal(props: {
     channelId: string;
     productId?: string;
     name: string;
-    defaultPricingMode: "CPM" | "FIXED" | "MANUAL";
-    minimumPrice: string;
-    currency: string;
+    topDurationHours: string;
+    feedDurationHours: string;
+    isPermanent: boolean;
     isActive: boolean;
     position: string;
   }) => Promise<void>;
@@ -1905,68 +2862,74 @@ function ProductEditorModal(props: {
           />
         </FormField>
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Billing model">
-            <Select
-              value={draft.defaultPricingMode}
+          <FormField label="Hours first in feed">
+            <Input
+              value={draft.topDurationHours}
               onChange={(event) =>
                 setDraft((current) =>
-                  current
-                    ? { ...current, defaultPricingMode: event.target.value as "CPM" | "FIXED" | "MANUAL" }
-                    : current,
+                  current ? { ...current, topDurationHours: event.target.value } : current,
                 )
               }
-            >
-              <option value="CPM">CPM</option>
-              <option value="FIXED">Fixed</option>
-              <option value="MANUAL">Manual</option>
-            </Select>
-          </FormField>
-          <FormField label="Minimum price">
-            <Input
-              value={draft.minimumPrice}
-              onChange={(event) =>
-                setDraft((current) => (current ? { ...current, minimumPrice: event.target.value } : current))
-              }
             />
           </FormField>
-          <FormField label="Currency">
-            <Select
-              value={draft.currency}
-              onChange={(event) =>
-                setDraft((current) => (current ? { ...current, currency: event.target.value } : current))
-              }
-            >
-              {props.supportedCurrencies.map((currency) => (
-                <option key={currency} value={currency}>
-                  {currency}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <FormField label="Ordering">
+          <FormField label="Hours kept in feed">
             <Input
-              value={draft.position}
+              value={draft.feedDurationHours}
               onChange={(event) =>
-                setDraft((current) => (current ? { ...current, position: event.target.value } : current))
+                setDraft((current) =>
+                  current ? { ...current, feedDurationHours: event.target.value } : current,
+                )
               }
+              disabled={draft.isPermanent}
             />
           </FormField>
+          <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 text-sm text-neutral-300">
+            <p className="text-neutral-400">Delivery preview</p>
+            <p className="mt-1 text-white">
+              {draft.isPermanent
+                ? `${draft.topDurationHours || "1"}h first, then stays without auto-delete`
+                : `${draft.topDurationHours || "1"}h first, ${draft.feedDurationHours || "24"}h total in feed`}
+            </p>
+          </div>
         </div>
-        <label className="flex items-center gap-2 text-sm text-neutral-300">
-          <input
-            type="checkbox"
+        <p className="text-sm text-neutral-500">
+          Price is calculated automatically from channel CPM and the matching post-performance window.
+        </p>
+        <div className="hidden">
+          <Select value={props.supportedCurrencies[0] ?? "USD"} onChange={() => undefined}>
+            {props.supportedCurrencies.map((currency) => (
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="grid gap-3">
+          <ToggleRow
             checked={draft.isActive}
-            onChange={(event) =>
-              setDraft((current) => (current ? { ...current, isActive: event.target.checked } : current))
+            onChange={(checked) =>
+              setDraft((current) => (current ? { ...current, isActive: checked } : current))
             }
+            label="Active"
           />
-          Active
-        </label>
+          <ToggleRow
+            checked={draft.isPermanent}
+            onChange={(checked) =>
+              setDraft((current) =>
+                current ? { ...current, isPermanent: checked } : current,
+              )
+            }
+            label="Keep without auto-delete"
+          />
+        </div>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={props.onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void props.onSubmit(draft)} disabled={!draft.name.trim()}>
+          <Button
+            onClick={() => void props.onSubmit(draft)}
+            disabled={!draft.name.trim() || !draft.topDurationHours.trim() || (!draft.isPermanent && !draft.feedDurationHours.trim())}
+          >
             Save
           </Button>
         </div>
@@ -2067,11 +3030,28 @@ function SaleDetailsModal(props: {
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({
+  label,
+  value,
+  loading = false,
+}: {
+  label: string;
+  value: string;
+  loading?: boolean;
+}) {
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4">
-      <p className="text-sm text-neutral-400">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+      {loading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+      ) : (
+        <>
+          <MetricPreviewLabel label={label} />
+          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -2089,7 +3069,7 @@ function MetricMoneyCard({
 }) {
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4">
-      <p className="text-sm text-neutral-400">{label}</p>
+      <MetricPreviewLabel label={label} />
       <div className="mt-2">
         <MoneyStack amount={amount} currency={settings?.primaryCurrency || "USD"} settings={settings} rates={rates} />
       </div>

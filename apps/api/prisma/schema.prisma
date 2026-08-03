@@ -389,6 +389,8 @@ model Workspace {
   telegramManagedPostRevisions      TelegramManagedPostRevision[]
   telegramAdProducts                TelegramAdProduct[]
   telegramAdSchedulePolicies        TelegramAdSchedulePolicy[]
+  telegramAdSalesWorkspaceSettings  TelegramAdSalesWorkspaceSettings?
+  telegramAdSalesMemberPreferences  TelegramAdSalesMemberPreferences[]
   telegramAdPriceSnapshots          TelegramAdPriceSnapshot[]
   telegramAdInventoryDailySnapshots TelegramAdInventoryDailySnapshot[]
   telegramAdSales                   TelegramAdSale[]
@@ -605,6 +607,7 @@ model WorkspaceMember {
   telegramAdvertiserActivities         TelegramAdvertiserActivity[]     @relation("TelegramAdvertiserActivityActorMember")
   assignedTelegramAdvertiserTasks      TelegramAdvertiserTask[]         @relation("TelegramAdvertiserTaskAssignedMember")
   telegramAdCrmSettings                TelegramAdCrmMemberSettings?
+  telegramAdSalesPreferences           TelegramAdSalesMemberPreferences?
   specificTelegramAdvertiserAutomationRules TelegramAdvertiserAutomationRule[] @relation("TelegramAdvertiserAutomationSpecificMember")
   createdPostGroups                    PostGroup[]                      @relation("PostGroupCreatedByMember")
   createdTelegramInviteLinks           TelegramInviteLink[]             @relation("TelegramInviteLinkCreatorMember")
@@ -788,6 +791,8 @@ model TelegramChannel {
   knownFakeSubscribersCount Int                            @default(0)
   ownViewsPerPost           Int                            @default(0)
   ownReactionsPerPost       Int                            @default(0)
+  adBaseCpm                 Decimal?
+  adBaseCurrency            String                         @default("USD") @db.VarChar(3)
   subscriberBaseQuality     String                         @default("normal")
   dataQualityNotes          String?
   targetCpaFrom             Decimal?
@@ -1072,6 +1077,7 @@ model TelegramAdProduct {
   @@index([workspaceId])
   @@index([telegramChannelId, isActive, position])
   @@index([workspaceId, telegramChannelId])
+  @@unique([workspaceId, telegramChannelId, name])
 }
 
 model TelegramAdSchedulePolicy {
@@ -1081,6 +1087,7 @@ model TelegramAdSchedulePolicy {
   timezone                   String
   autoFrequencyEnabled       Boolean                @default(true)
   expectedOrganicPostsPerDay Decimal?
+  useWorkspaceDefault        Boolean                @default(false)
   organicPostsPerAdSlot      Int                    @default(3)
   maxAdsPerDay               Int
   minHoursBetweenAds         Int
@@ -1096,6 +1103,32 @@ model TelegramAdSchedulePolicy {
 
   @@index([workspaceId])
   @@index([workspaceId, telegramChannelId])
+}
+
+model TelegramAdSalesWorkspaceSettings {
+  workspaceId                    String   @id
+  defaultOrganicPostsPerAdSlot   Int      @default(3)
+  createdAt                      DateTime @default(now())
+  updatedAt                      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model TelegramAdSalesMemberPreferences {
+  id                  String   @id @default(cuid())
+  workspaceId          String
+  workspaceMemberId    String   @unique
+  selectedChannelIds   String[] @default([])
+  selectedNetworkId    String?
+  calendarView         String   @default("week")
+  initialized          Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceMember WorkspaceMember @relation(fields: [workspaceMemberId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }
 
 model TelegramAdPriceSnapshot {
@@ -1223,6 +1256,7 @@ model TelegramAdSalePlacement {
   telegramChannelId          String
   telegramChannelNetworkId   String?
   telegramAdProductId        String?
+  inventoryOpportunityKey    String?
   pricingSnapshotId          String?
   status                     TelegramAdPlacementStatus @default(DRAFT)
   scheduledAt                DateTime
@@ -1279,6 +1313,7 @@ model TelegramAdSalePlacement {
   @@index([pricingSnapshotId])
   @@index([workspaceId, publishedAt])
   @@index([workspaceId, plannedDeleteAt, deletedAt])
+  @@unique([workspaceId, telegramChannelId, inventoryOpportunityKey])
 }
 
 model TelegramAdvertiser {

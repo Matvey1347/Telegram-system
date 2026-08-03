@@ -1,0 +1,3 @@
+ALTER TABLE "TelegramChannel"
+ADD COLUMN "adBaseCpm" DECIMAL(65,30),
+ADD COLUMN "adBaseCurrency" VARCHAR(3) NOT NULL DEFAULT 'USD';

@@ -222,6 +222,8 @@ export class TelegramChannelListQueryDto extends PaginationQueryDto {}
 
 export class TelegramChannelPostsQueryDto extends PaginationQueryDto {
   @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsDateString() from?: string;
+  @IsOptional() @IsDateString() to?: string;
 }
 
 export class TelegramChannelInviteLinksQueryDto extends PaginationQueryDto {

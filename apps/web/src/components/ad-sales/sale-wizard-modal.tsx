@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  TelegramAdAvailabilitySlot,
   TelegramAdPriceQuote,
   TelegramAdProduct,
   TelegramAdSale,
@@ -9,30 +10,33 @@ import type {
   TelegramAdStructuredError,
 } from "@telegram-system/shared";
 import type {
+  Account,
   TelegramChannel,
   TelegramChannelNetwork,
 } from "@/lib/api";
+import { accountDisplayName } from "@/lib/account-display";
 import {
   buildUnderpricingSummary,
+  channelLocalDateKey,
   expandNetworkChannelIds,
   getChannelOptionLabel,
   toNumber,
 } from "@/lib/telegram-ad-sales";
 import {
   Button,
-  CurrencySelect,
+  CustomSelect,
   DateInput,
   FormField,
   Input,
   Modal,
   MultiSelect,
   Select,
+  Skeleton,
   Textarea,
   TimeInput,
 } from "@/components/ui/primitives";
+import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { MemberSelect } from "@/components/workspace/member-select";
-
-type WizardStep = 0 | 1 | 2 | 3;
 
 export type SalePlacementDraft = {
   key: string;
@@ -41,7 +45,7 @@ export type SalePlacementDraft = {
   time: string;
   timezone: string;
   productId: string;
-  expectedViews: number;
+  expectedViews: number | null;
   targetCpm: string;
   recommendedPrice: string;
   minimumPrice: string;
@@ -50,53 +54,106 @@ export type SalePlacementDraft = {
   manualPriceReason: string;
   warnings: string[];
   conflict: string | null;
+  agreedPriceManuallyEdited: boolean;
+  inventoryOpportunityKey?: string | null;
+  telegramPostId?: string | null;
 };
 
-type QuoteMap = Record<string, TelegramAdPriceQuote | undefined>;
+type PublishedPostOption = {
+  id: string;
+  title: string;
+  publishedAt: string;
+};
+
+type QuoteRequestDraft = {
+  key: string;
+  channelId: string;
+  productId: string;
+  pricingMode: SalePlacementDraft["pricingMode"];
+};
 
 function channelKey(channelId: string) {
   return `placement:${channelId}`;
 }
 
+function productPrice(product: TelegramAdProduct | undefined) {
+  return product?.estimatedPrice ?? product?.defaultFixedPrice ?? "0";
+}
+
+function createPlacementDraft(params: {
+  channelId: string;
+  product?: TelegramAdProduct;
+  date: string;
+  time: string;
+  timezone: string;
+  inventoryOpportunityKey?: string | null;
+}): SalePlacementDraft {
+  const price = productPrice(params.product);
+  return {
+    key: channelKey(params.channelId),
+    channelId: params.channelId,
+    date: params.date,
+    time: params.time,
+    timezone: params.timezone,
+    productId: params.product?.id ?? "",
+    expectedViews: params.product?.estimatedViews ?? 0,
+    targetCpm: params.product?.defaultCpm ?? "0",
+    recommendedPrice: price,
+    minimumPrice: params.product?.minimumPrice ?? price,
+    agreedPrice: price,
+    pricingMode: params.product?.defaultPricingMode ?? "CPM",
+    manualPriceReason: "",
+    warnings: [],
+    conflict: null,
+    agreedPriceManuallyEdited: false,
+    inventoryOpportunityKey: params.inventoryOpportunityKey ?? null,
+    telegramPostId: null,
+  };
+}
+
 export function SaleWizardModal({
   open,
   onClose,
+  accounts,
   channels,
   networks,
   productsByChannelId,
   defaultCurrency,
-  supportedCurrencies,
   workspaceTimezone,
-  onFindNearestSlot,
+  onLoadAvailableSlots,
+  onLoadPublishedPosts,
   onRequestQuote,
   onSearchAdvertisers,
   onSubmit,
   busy = false,
   initialChannelId,
   initialScheduledAt,
+  initialInventoryOpportunityKey,
 }: {
   open: boolean;
   onClose: () => void;
+  accounts: Account[];
   channels: TelegramChannel[];
   networks: TelegramChannelNetwork[];
   productsByChannelId: Record<string, TelegramAdProduct[]>;
   defaultCurrency: string;
-  supportedCurrencies: string[];
   workspaceTimezone: string;
-  onFindNearestSlot: (params: {
+  onLoadAvailableSlots: (params: {
     channelId: string;
     productId?: string;
     from: string;
-  }) => Promise<{
-    scheduledAt: string;
-    recommendedPrice: string;
-    minimumPrice: string;
-    expectedViews: number;
-  } | null>;
+    to: string;
+  }) => Promise<TelegramAdAvailabilitySlot[]>;
+  onLoadPublishedPosts: (params: {
+    channelId: string;
+    date: string;
+    timezone: string;
+  }) => Promise<PublishedPostOption[]>;
   onRequestQuote: (params: {
     channelId: string;
     productId?: string;
     pricingMode?: "CPM" | "FIXED" | "MANUAL";
+    currency?: string;
   }) => Promise<TelegramAdPriceQuote>;
   onSearchAdvertisers: (query: string) => Promise<TelegramAdvertiser[]>;
   onSubmit: (payload: {
@@ -107,10 +164,13 @@ export function SaleWizardModal({
     advertiserContact?: string;
     notes?: string;
     assignedMemberId?: string | null;
-    settlementCurrency: string;
+    accountId: string;
+    paymentAmount: number;
+    paymentCurrency: string;
     placements: Array<{
       channelId: string;
       productId?: string;
+      inventoryOpportunityKey?: string | null;
       scheduledAt: string;
       timezone: string;
       agreedPrice: number;
@@ -119,70 +179,89 @@ export function SaleWizardModal({
       expectedViews: number;
       pricingMode: "CPM" | "FIXED" | "MANUAL";
       manualPriceReason?: string;
+      telegramPostId?: string | null;
     }>;
   }) => Promise<{ sale: TelegramAdSale; conflicts?: TelegramAdStructuredError[] }>;
   busy?: boolean;
   initialChannelId?: string | null;
   initialScheduledAt?: string | null;
+  initialInventoryOpportunityKey?: string | null;
 }) {
-  const [step, setStep] = useState<WizardStep>(0);
   const [advertiserTelegram, setAdvertiserTelegram] = useState("");
   const [advertiserContact, setAdvertiserContact] = useState("");
   const [selectedAdvertiser, setSelectedAdvertiser] = useState<TelegramAdvertiser | null>(null);
   const [selectedAdvertiserId, setSelectedAdvertiserId] = useState<string | null>(null);
   const [advertiserMatches, setAdvertiserMatches] = useState<TelegramAdvertiser[]>([]);
-  const [notes, setNotes] = useState("");
   const [assignedMemberId, setAssignedMemberId] = useState("");
-  const [settlementCurrency, setSettlementCurrency] = useState(defaultCurrency);
+  const [accountId, setAccountId] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [channelSelectionMode, setChannelSelectionMode] = useState<"network" | "channels">(
+    "network",
+  );
   const [selectedNetworkId, setSelectedNetworkId] = useState("");
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [placements, setPlacements] = useState<SalePlacementDraft[]>([]);
-  const [_quoteMap, setQuoteMap] = useState<QuoteMap>({});
   const [submissionError, setSubmissionError] = useState("");
+  const [slotPickerPlacementKey, setSlotPickerPlacementKey] = useState<string | null>(null);
+  const [slotPickerSlots, setSlotPickerSlots] = useState<TelegramAdAvailabilitySlot[]>([]);
+  const [slotPickerLoading, setSlotPickerLoading] = useState(false);
+  const [slotPickerError, setSlotPickerError] = useState("");
+  const [publishedPostsByPlacement, setPublishedPostsByPlacement] = useState<Record<string, PublishedPostOption[]>>({});
+  const [postsLoadingByPlacement, setPostsLoadingByPlacement] = useState<Record<string, boolean>>({});
+  const modalInitializedRef = useRef(false);
+  const loadedQuoteKeyRef = useRef("");
+  const publishedPostRequestsRef = useRef(new Map<string, symbol>());
+  const paymentCurrency =
+    accounts.find((account) => account.id === accountId)?.currency ?? defaultCurrency;
 
   useEffect(() => {
-    if (!open) return;
-    setStep(0);
+    if (!open) {
+      modalInitializedRef.current = false;
+      return;
+    }
+    if (modalInitializedRef.current) return;
+    modalInitializedRef.current = true;
     setAdvertiserTelegram("");
     setAdvertiserContact("");
     setSelectedAdvertiser(null);
     setSelectedAdvertiserId(null);
     setAdvertiserMatches([]);
-    setNotes("");
     setAssignedMemberId("");
-    setSettlementCurrency(defaultCurrency);
+    const preferredAccount = accounts.find((account) => account.isActive) ?? accounts[0];
+    setAccountId(preferredAccount?.id ?? "");
+    setPaymentAmount("");
+    setChannelSelectionMode(initialChannelId ? "channels" : "network");
     setSelectedNetworkId("");
     setSelectedChannelIds(initialChannelId ? [initialChannelId] : []);
     setPlacements(
       initialChannelId
         ? [
-            {
-              key: channelKey(initialChannelId),
+            createPlacementDraft({
               channelId: initialChannelId,
+              product: productsByChannelId[initialChannelId]?.[0],
               date: initialScheduledAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
               time: initialScheduledAt
                 ? new Date(initialScheduledAt).toISOString().slice(11, 16)
                 : "12:00",
               timezone: workspaceTimezone,
-              productId: productsByChannelId[initialChannelId]?.[0]?.id ?? "",
-              expectedViews: 0,
-              targetCpm: "0",
-              recommendedPrice: "0",
-              minimumPrice: "0",
-              agreedPrice: "0",
-              pricingMode: "CPM",
-              manualPriceReason: "",
-              warnings: [],
-              conflict: null,
-            },
+              inventoryOpportunityKey: initialInventoryOpportunityKey ?? null,
+            }),
           ]
         : [],
     );
-    setQuoteMap({});
     setSubmissionError("");
+    loadedQuoteKeyRef.current = "";
+    setSlotPickerPlacementKey(null);
+    setSlotPickerSlots([]);
+    setSlotPickerError("");
+    setPublishedPostsByPlacement({});
+    setPostsLoadingByPlacement({});
+    publishedPostRequestsRef.current.clear();
   }, [
+    accounts,
     defaultCurrency,
     initialChannelId,
+    initialInventoryOpportunityKey,
     initialScheduledAt,
     open,
     productsByChannelId,
@@ -193,7 +272,6 @@ export function SaleWizardModal({
     if (!open) return;
     const search = advertiserContact.trim();
     if (search.length < 2 || selectedAdvertiserId) {
-      setAdvertiserMatches([]);
       return;
     }
     let cancelled = false;
@@ -220,96 +298,203 @@ export function SaleWizardModal({
   );
 
   useEffect(() => {
-    if (!effectiveChannelIds.length) {
-      setPlacements([]);
-      return;
-    }
+    // Placement rows are derived from selected channels and products can arrive after opening.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPlacements((current) => {
+      if (!effectiveChannelIds.length) return [];
       const byChannelId = new Map(current.map((item) => [item.channelId, item] as const));
       return effectiveChannelIds.map((channelId) => {
         const existing = byChannelId.get(channelId);
-        if (existing) return existing;
-        return {
-          key: channelKey(channelId),
+        const defaultProduct = productsByChannelId[channelId]?.[0];
+        if (existing) {
+          if (existing.productId || !defaultProduct) return existing;
+          const price = productPrice(defaultProduct);
+          return {
+            ...existing,
+            productId: defaultProduct.id,
+            expectedViews: defaultProduct.estimatedViews ?? 0,
+            targetCpm: defaultProduct.defaultCpm ?? "0",
+            recommendedPrice: price,
+            minimumPrice: defaultProduct.minimumPrice ?? price,
+            agreedPrice: existing.agreedPriceManuallyEdited ? existing.agreedPrice : price,
+            pricingMode: defaultProduct.defaultPricingMode,
+          };
+        }
+        return createPlacementDraft({
           channelId,
+          product: defaultProduct,
           date: new Date().toISOString().slice(0, 10),
           time: "12:00",
           timezone: workspaceTimezone,
-          productId: productsByChannelId[channelId]?.[0]?.id ?? "",
-          expectedViews: 0,
-          targetCpm: "0",
-          recommendedPrice: "0",
-          minimumPrice: "0",
-          agreedPrice: "0",
-          pricingMode: "CPM",
-          manualPriceReason: "",
-          warnings: [],
-          conflict: null,
-        };
+        });
       });
     });
   }, [effectiveChannelIds, productsByChannelId, workspaceTimezone]);
 
   useEffect(() => {
+    if (!open) return;
+    for (const placement of placements) {
+      const cacheKey = `${placement.channelId}:${placement.date}`;
+      if (publishedPostRequestsRef.current.has(cacheKey)) continue;
+      const requestToken = Symbol(cacheKey);
+      publishedPostRequestsRef.current.set(cacheKey, requestToken);
+      setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: true }));
+      void onLoadPublishedPosts({
+        channelId: placement.channelId,
+        date: placement.date,
+        timezone: placement.timezone,
+      })
+        .then((posts) => {
+          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+            setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: posts }));
+          }
+        })
+        .catch(() => {
+          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+            setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: [] }));
+          }
+        })
+        .finally(() => {
+          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+            setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: false }));
+          }
+        });
+    }
+  }, [onLoadPublishedPosts, open, placements]);
+
+  const quoteRequests = useMemo<QuoteRequestDraft[]>(
+    () =>
+      placements.map((placement) => ({
+        key: placement.key,
+        channelId: placement.channelId,
+        productId: placement.productId,
+        pricingMode: placement.pricingMode,
+      })),
+    [placements],
+  );
+
+  const quoteRequestKey = useMemo(
+    () =>
+      open && quoteRequests.length
+        ? JSON.stringify({
+            currency: paymentCurrency,
+            requests: quoteRequests,
+          })
+        : "",
+    [open, paymentCurrency, quoteRequests],
+  );
+
+  useEffect(() => {
     let cancelled = false;
     async function loadQuotes() {
-      for (const placement of placements) {
+      for (const placement of quoteRequests) {
         const quote = await onRequestQuote({
           channelId: placement.channelId,
           productId: placement.productId || undefined,
           pricingMode: placement.pricingMode,
+          currency: paymentCurrency,
         });
         if (cancelled) return;
-        setQuoteMap((current) => ({ ...current, [placement.key]: quote }));
-        setPlacements((current) =>
-          current.map((item) =>
-            item.key !== placement.key
-              ? item
-              : {
-                  ...item,
-                  expectedViews: quote.expectedViews,
-                  targetCpm: quote.targetCpm,
-                  recommendedPrice: quote.recommendedPrice,
-                  minimumPrice: quote.minimumPrice,
-                  agreedPrice:
-                    toNumber(item.agreedPrice) > 0 ? item.agreedPrice : quote.recommendedPrice,
-                  warnings: quote.warnings.map((warning) => warning.message),
-                },
-          ),
-        );
+        setPlacements((current) => {
+          let changed = false;
+          const next = current.map((item) => {
+            if (item.key !== placement.key) return item;
+            const product = productsByChannelId[item.channelId]?.find(
+              (candidate) => candidate.id === item.productId,
+            );
+            const nextRecommendedPrice =
+              toNumber(quote.recommendedPrice) > 0
+                ? quote.recommendedPrice
+                : productPrice(product);
+            const nextMinimumPrice =
+              toNumber(quote.minimumPrice) > 0
+                ? quote.minimumPrice
+                : product?.minimumPrice ?? nextRecommendedPrice;
+            const nextAgreedPrice = item.agreedPriceManuallyEdited
+              ? item.agreedPrice
+              : nextRecommendedPrice;
+            const nextWarnings = quote.warnings.map((warning) => warning.message);
+            const hasChanged =
+              item.expectedViews !== quote.expectedViews ||
+              item.targetCpm !== quote.targetCpm ||
+              item.recommendedPrice !== nextRecommendedPrice ||
+              item.minimumPrice !== nextMinimumPrice ||
+              item.agreedPrice !== nextAgreedPrice ||
+              item.warnings.join("|") !== nextWarnings.join("|");
+            if (!hasChanged) return item;
+            changed = true;
+            return {
+              ...item,
+              expectedViews: quote.expectedViews,
+              targetCpm: quote.targetCpm,
+              recommendedPrice: nextRecommendedPrice,
+              minimumPrice: nextMinimumPrice,
+              agreedPrice: nextAgreedPrice,
+              warnings: nextWarnings,
+            };
+          });
+          return changed ? next : current;
+          });
       }
     }
-    if (open && placements.length) {
+    if (quoteRequestKey && loadedQuoteKeyRef.current !== quoteRequestKey) {
+      loadedQuoteKeyRef.current = quoteRequestKey;
       void loadQuotes();
     }
     return () => {
       cancelled = true;
     };
-  }, [onRequestQuote, open, placements]);
+  }, [onRequestQuote, paymentCurrency, productsByChannelId, quoteRequestKey, quoteRequests]);
 
-  const summary = useMemo(() => {
-    const totals = placements.reduce(
-      (acc, placement) => {
-        acc.expectedViews += placement.expectedViews;
-        acc.recommended += toNumber(placement.recommendedPrice);
-        acc.minimum += toNumber(placement.minimumPrice);
-        acc.agreed += toNumber(placement.agreedPrice);
-        const underpricing = buildUnderpricingSummary({
-          recommendedPrice: placement.recommendedPrice,
-          minimumPrice: placement.minimumPrice,
-          agreedPrice: placement.agreedPrice,
-        });
-        acc.underpricing += underpricing.minimumDelta;
-        return acc;
-      },
-      { expectedViews: 0, recommended: 0, minimum: 0, agreed: 0, underpricing: 0 },
+  const canSubmit =
+    !!advertiserContact.trim() &&
+    !!accountId &&
+    toNumber(paymentAmount) > 0 &&
+    effectiveChannelIds.length > 0 &&
+    placements.length > 0;
+
+  async function openSlotPicker(placement: SalePlacementDraft) {
+    setSlotPickerPlacementKey(placement.key);
+    setSlotPickerSlots([]);
+    setSlotPickerError("");
+    setSlotPickerLoading(true);
+    try {
+      const start = new Date(`${placement.date}T00:00:00`);
+      start.setDate(start.getDate() - 7);
+      const end = new Date(`${placement.date}T23:59:59`);
+      end.setDate(end.getDate() + 21);
+      const slots = await onLoadAvailableSlots({
+        channelId: placement.channelId,
+        productId: placement.productId || undefined,
+        from: start.toISOString(),
+        to: end.toISOString(),
+      });
+      setSlotPickerSlots(slots);
+    } catch (error) {
+      setSlotPickerError(error instanceof Error ? error.message : "Could not load available slots.");
+    } finally {
+      setSlotPickerLoading(false);
+    }
+  }
+
+  function applySlot(slot: TelegramAdAvailabilitySlot) {
+    if (!slotPickerPlacementKey) return;
+    setPlacements((current) =>
+      current.map((item) =>
+        item.key === slotPickerPlacementKey
+          ? {
+              ...item,
+              date: slot.date,
+              timezone: slot.timezone,
+              inventoryOpportunityKey: null,
+              conflict: null,
+              telegramPostId: null,
+            }
+          : item,
+      ),
     );
-    return {
-      ...totals,
-      blendedCpm:
-        totals.expectedViews > 0 ? Number(((totals.agreed / totals.expectedViews) * 1000).toFixed(2)) : 0,
-    };
-  }, [placements]);
+    setSlotPickerPlacementKey(null);
+  }
 
   async function submit() {
     setSubmissionError("");
@@ -325,20 +510,23 @@ export function SaleWizardModal({
             ? normalizedContact
             : advertiserTelegram.trim() || undefined,
         advertiserContact: normalizedContact || undefined,
-        notes: notes.trim() || undefined,
         assignedMemberId: assignedMemberId || null,
-        settlementCurrency,
+        accountId,
+        paymentAmount: toNumber(paymentAmount),
+        paymentCurrency,
         placements: placements.map((placement) => ({
           channelId: placement.channelId,
           productId: placement.productId || undefined,
+          inventoryOpportunityKey: placement.inventoryOpportunityKey ?? undefined,
           scheduledAt: new Date(`${placement.date}T${placement.time}:00`).toISOString(),
           timezone: placement.timezone,
           agreedPrice: toNumber(placement.agreedPrice),
           recommendedPrice: toNumber(placement.recommendedPrice),
           minimumPrice: toNumber(placement.minimumPrice),
-          expectedViews: placement.expectedViews,
+          expectedViews: placement.expectedViews ?? 0,
           pricingMode: placement.pricingMode,
           manualPriceReason: placement.manualPriceReason.trim() || undefined,
+          telegramPostId: placement.telegramPostId ?? null,
         })),
       });
 
@@ -356,7 +544,6 @@ export function SaleWizardModal({
           })),
         );
         setSubmissionError("Some placements conflict with existing reservations.");
-        setStep(2);
         return;
       }
 
@@ -366,344 +553,403 @@ export function SaleWizardModal({
     }
   }
 
-  return (
-    <Modal open={open} onClose={onClose} title="New ad sale" size="xl">
-      <div className="mb-4 flex flex-wrap gap-2">
-        {["Contact", "Channels", "Booking", "Review"].map((label, index) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => setStep(index as WizardStep)}
-            className={`rounded-full border px-3 py-1.5 text-sm ${
-              step === index
-                ? "border-blue-500 bg-blue-600 text-white"
-                : "border-neutral-700 bg-neutral-900 text-neutral-300"
-            }`}
-          >
-            {index + 1}. {label}
-          </button>
-        ))}
-      </div>
+  const slotPickerPlacement = placements.find((item) => item.key === slotPickerPlacementKey) ?? null;
+  const slotsByDate = Array.from(
+    slotPickerSlots.reduce((groups, slot) => {
+      const items = groups.get(slot.date) ?? [];
+      items.push(slot);
+      groups.set(slot.date, items);
+      return groups;
+    }, new Map<string, TelegramAdAvailabilitySlot[]>()),
+  ).sort(([left], [right]) => left.localeCompare(right));
 
-      {step === 0 ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Contact" required>
-            <div className="space-y-2">
-              <Input
-                value={advertiserContact}
-                onChange={(event) => {
-                  setAdvertiserContact(event.target.value);
-                  setSelectedAdvertiser(null);
-                  setSelectedAdvertiserId(null);
-                }}
-                placeholder="@username, phone, email"
-              />
-              {selectedAdvertiserId ? (
-                <div className="rounded-lg border border-emerald-700 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
-                  Linked to existing advertiser.
-                  <button
-                    type="button"
-                    className="ml-2 text-emerald-100 underline"
-                    onClick={() => {
-                      setSelectedAdvertiser(null);
-                      setSelectedAdvertiserId(null);
-                    }}
-                  >
-                    Unlink
-                  </button>
-                </div>
-              ) : null}
-              {!selectedAdvertiserId && advertiserMatches.length ? (
-                <div className="rounded-lg border border-neutral-800 bg-neutral-950">
-                  {advertiserMatches.slice(0, 5).map((advertiser) => (
+  return (
+    <>
+      <Modal open={open} onClose={onClose} title="New ad sale" size="xl">
+      <div className="max-h-[78vh] space-y-6 overflow-y-auto pr-1">
+        <section className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-neutral-400">
+              Sale details
+            </h3>
+            <p className="mt-1 text-sm text-neutral-500">
+              Fill contact and payment once, then configure placements for each selected channel on
+              the same screen.
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <FormField label="Contact" required>
+              <div className="space-y-2">
+                <Input
+                  value={advertiserContact}
+                  onChange={(event) => {
+                    setAdvertiserContact(event.target.value);
+                    setSelectedAdvertiser(null);
+                    setSelectedAdvertiserId(null);
+                    setAdvertiserMatches([]);
+                  }}
+                  placeholder="@username, phone, email"
+                />
+                {selectedAdvertiserId ? (
+                  <div className="rounded-lg border border-emerald-700 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+                    Linked to existing advertiser.
                     <button
-                      key={advertiser.id}
                       type="button"
-                      className="flex w-full items-start justify-between gap-3 border-b border-neutral-800 px-3 py-2 text-left last:border-b-0 hover:bg-neutral-900"
+                      className="ml-2 text-emerald-100 underline"
                       onClick={() => {
-                        setSelectedAdvertiser(advertiser);
-                        setSelectedAdvertiserId(advertiser.id);
-                        setAdvertiserTelegram(advertiser.telegramUsername ?? "");
-                        setAdvertiserContact(
-                          advertiser.telegramUsername ??
-                            advertiser.email ??
-                            advertiser.phone ??
-                            advertiser.contacts?.find((item) => item.isPrimary)?.value ??
-                            "",
-                        );
-                        setAdvertiserMatches([]);
+                        setSelectedAdvertiser(null);
+                        setSelectedAdvertiserId(null);
                       }}
                     >
-                      <span>
-                        <span className="block text-sm text-white">{advertiser.displayName}</span>
-                        <span className="block text-xs text-neutral-400">
-                          {advertiser.companyName ||
-                            advertiser.telegramUsername ||
-                            advertiser.email ||
-                            advertiser.phone ||
-                            "Existing advertiser"}
-                        </span>
-                      </span>
-                      <span className="text-xs text-neutral-500">{advertiser.totalSalesCount} sales</span>
+                      Unlink
                     </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </FormField>
-
-          <FormField label="Settlement currency">
-            <CurrencySelect
-              value={settlementCurrency}
-              onChange={setSettlementCurrency}
-              currencies={supportedCurrencies}
-            />
-          </FormField>
-
-          <FormField label="Responsible member">
-            <MemberSelect value={assignedMemberId} onChange={setAssignedMemberId} />
-          </FormField>
-
-          <div className="md:col-span-2">
-            <FormField label="Notes">
-              <Textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} />
-            </FormField>
-          </div>
-        </div>
-      ) : null}
-
-      {step === 1 ? (
-        <div className="space-y-4">
-          <FormField label="Network">
-            <Select value={selectedNetworkId} onChange={(event) => setSelectedNetworkId(event.target.value)}>
-              <option value="">No network</option>
-              {networks.map((network) => (
-                <option key={network.id} value={network.id}>
-                  {network.name}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-
-          <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h4 className="font-medium text-white">Channels</h4>
-              <p className="text-xs text-neutral-400">
-                Network channels are added automatically, but you can remove or add more.
-              </p>
-            </div>
-            <MultiSelect
-              value={selectedChannelIds}
-              onChange={setSelectedChannelIds}
-              placeholder="Choose channels"
-              options={channels.map((channel) => ({
-                value: channel.id,
-                label: getChannelOptionLabel(channel),
-                iconUrl: channel.photoUrl,
-                iconFallback: channel.title,
-              }))}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {step === 2 ? (
-        <div className="space-y-3">
-          {placements.map((placement) => {
-            const channel = channels.find((item) => item.id === placement.channelId);
-            const products = productsByChannelId[placement.channelId] ?? [];
-            const priceSummary = buildUnderpricingSummary({
-              agreedPrice: placement.agreedPrice,
-              recommendedPrice: placement.recommendedPrice,
-              minimumPrice: placement.minimumPrice,
-            });
-
-            return (
-              <div key={placement.key} className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-white">{channel?.title ?? placement.channelId}</p>
-                    <p className="text-xs text-neutral-500">{channel?.username || "No username"}</p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={async () => {
-                      const nearest = await onFindNearestSlot({
-                        channelId: placement.channelId,
-                        productId: placement.productId || undefined,
-                        from: new Date(`${placement.date}T${placement.time}:00`).toISOString(),
-                      });
-                      if (!nearest) return;
-                      setPlacements((current) =>
-                        current.map((item) =>
-                          item.key !== placement.key
-                            ? item
-                            : {
-                                ...item,
-                                date: nearest.scheduledAt.slice(0, 10),
-                                time: new Date(nearest.scheduledAt).toISOString().slice(11, 16),
-                                expectedViews: nearest.expectedViews,
-                                recommendedPrice: nearest.recommendedPrice,
-                                minimumPrice: nearest.minimumPrice,
-                                conflict: null,
-                              },
-                        ),
-                      );
-                    }}
-                  >
-                    Find nearest slot
-                  </Button>
-                </div>
-
-                <div className="grid gap-3 lg:grid-cols-6">
-                  <FormField label="Date">
-                    <DateInput
-                      value={placement.date}
-                      onChange={(event) =>
-                        setPlacements((current) =>
-                          current.map((item) =>
-                            item.key === placement.key ? { ...item, date: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                  </FormField>
-                  <FormField label="Time">
-                    <TimeInput
-                      value={placement.time}
-                      onChange={(event) =>
-                        setPlacements((current) =>
-                          current.map((item) =>
-                            item.key === placement.key ? { ...item, time: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                  </FormField>
-                  <FormField label="Timezone">
-                    <Input value={placement.timezone} disabled />
-                  </FormField>
-                  <FormField label="Format">
-                    <Select
-                      value={placement.productId}
-                      onChange={(event) =>
-                        setPlacements((current) =>
-                          current.map((item) =>
-                            item.key === placement.key ? { ...item, productId: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    >
-                      <option value="">Default</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormField>
-                  <FormField label="Booked price">
-                    <Input
-                      value={placement.agreedPrice}
-                      onChange={(event) =>
-                        setPlacements((current) =>
-                          current.map((item) =>
-                            item.key === placement.key ? { ...item, agreedPrice: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                  </FormField>
-                  <FormField label="Pricing mode">
-                    <Select
-                      value={placement.pricingMode}
-                      onChange={(event) =>
-                        setPlacements((current) =>
-                          current.map((item) =>
-                            item.key === placement.key
-                              ? { ...item, pricingMode: event.target.value as SalePlacementDraft["pricingMode"] }
-                              : item,
-                          ),
-                        )
-                      }
-                    >
-                      <option value="CPM">CPM</option>
-                      <option value="FIXED">Fixed</option>
-                      <option value="MANUAL">Manual</option>
-                    </Select>
-                  </FormField>
-                </div>
-
-                <p className="mt-2 text-xs text-neutral-500">
-                  Timezone comes from workspace settings and is reused across the whole ad-sales flow.
-                </p>
-
-                <div className="mt-3 grid gap-2 text-xs text-neutral-300 md:grid-cols-5">
-                  <div>Expected views: {placement.expectedViews.toLocaleString()}</div>
-                  <div>Target CPM: {placement.targetCpm}</div>
-                  <div>Recommended: {placement.recommendedPrice}</div>
-                  <div>Minimum: {placement.minimumPrice}</div>
-                  <div>
-                    Warning:{" "}
-                    {priceSummary.isBelowMinimum
-                      ? `Critical · -${priceSummary.minimumDelta} · ${priceSummary.discountPercent}%`
-                      : priceSummary.isBelowRecommended
-                        ? "Below recommended"
-                        : "OK"}
-                  </div>
-                </div>
-
-                {priceSummary.isBelowMinimum ? (
-                  <div className="mt-3">
-                    <FormField label="Reason for low price" required>
-                      <Textarea
-                        rows={2}
-                        value={placement.manualPriceReason}
-                        onChange={(event) =>
-                          setPlacements((current) =>
-                            current.map((item) =>
-                              item.key === placement.key
-                                ? { ...item, manualPriceReason: event.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                      />
-                    </FormField>
                   </div>
                 ) : null}
-
-                {placement.conflict ? (
-                  <p className="mt-3 rounded-lg border border-rose-700 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
-                    {placement.conflict}
-                  </p>
+                {!selectedAdvertiserId && advertiserMatches.length ? (
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950">
+                    {advertiserMatches.slice(0, 5).map((advertiser) => (
+                      <button
+                        key={advertiser.id}
+                        type="button"
+                        className="flex w-full items-start justify-between gap-3 border-b border-neutral-800 px-3 py-2 text-left last:border-b-0 hover:bg-neutral-900"
+                        onClick={() => {
+                          setSelectedAdvertiser(advertiser);
+                          setSelectedAdvertiserId(advertiser.id);
+                          setAdvertiserTelegram(advertiser.telegramUsername ?? "");
+                          setAdvertiserContact(
+                            advertiser.telegramUsername ??
+                              advertiser.email ??
+                              advertiser.phone ??
+                              advertiser.contacts?.find((item) => item.isPrimary)?.value ??
+                              "",
+                          );
+                          setAdvertiserMatches([]);
+                        }}
+                      >
+                        <span>
+                          <span className="block text-sm text-white">{advertiser.displayName}</span>
+                          <span className="block text-xs text-neutral-400">
+                            {advertiser.companyName ||
+                              advertiser.telegramUsername ||
+                              advertiser.email ||
+                              advertiser.phone ||
+                              "Existing advertiser"}
+                          </span>
+                        </span>
+                        <span className="text-xs text-neutral-500">{advertiser.totalSalesCount} sales</span>
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
-            );
-          })}
-        </div>
-      ) : null}
+            </FormField>
 
-      {step === 3 ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-4">
-            <h4 className="font-medium text-white">Summary</h4>
-            <dl className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Channels</dt><dd>{effectiveChannelIds.length}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Placements</dt><dd>{placements.length}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Expected views</dt><dd>{summary.expectedViews.toLocaleString()}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Recommended total</dt><dd>{summary.recommended.toFixed(2)} {settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Minimum total</dt><dd>{summary.minimum.toFixed(2)} {settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Agreed total</dt><dd>{summary.agreed.toFixed(2)} {settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Underpricing</dt><dd>{summary.underpricing.toFixed(2)} {settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Blended CPM</dt><dd>{summary.blendedCpm.toFixed(2)}</dd></div>
-            </dl>
+            <FormField label="Financial account" required>
+              <CustomSelect
+                value={accountId}
+                onChange={setAccountId}
+                placeholder="Select account"
+                options={accounts
+                  .filter((account) => account.isActive)
+                  .map((account) => ({
+                    value: account.id,
+                    label: `${accountDisplayName(account)} (${account.currency})`,
+                    iconUrl: account.icon?.imageUrl ?? undefined,
+                    iconEmoji: account.icon?.emoji ?? undefined,
+                    iconFallback: account.name,
+                  }))}
+              />
+              <p className="mt-2 text-xs text-neutral-500">
+                Currency is taken automatically from the selected account.
+              </p>
+            </FormField>
+
+            <FormField label="Price" required>
+              <div className="space-y-2">
+                <Input
+                  value={paymentAmount}
+                  onChange={(event) => setPaymentAmount(event.target.value)}
+                  placeholder="0"
+                  inputMode="decimal"
+                />
+                <p className="text-xs text-neutral-500">Payment currency: {paymentCurrency}</p>
+              </div>
+            </FormField>
+
           </div>
-          <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-950/50 p-4 text-sm text-neutral-400">
-            Final reservation and conflict validation still runs on the backend. If a slot became busy during editing, the form stays open and only conflicting placement rows are marked.
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <FormField label="Responsible member">
+            <MemberSelect value={assignedMemberId} onChange={setAssignedMemberId} defaultToCurrent />
+          </FormField>
+          <FormField label="Placement source">
+            <div className="space-y-2">
+              <div className="inline-grid grid-cols-2 rounded-lg border border-neutral-700 bg-neutral-950 p-1">
+                {(["network", "channels"] as const).map((mode) => {
+                  const selected = channelSelectionMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setChannelSelectionMode(mode);
+                        if (mode === "network") {
+                          setSelectedChannelIds([]);
+                        } else {
+                          setSelectedNetworkId("");
+                        }
+                      }}
+                      className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+                        selected
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                      }`}
+                    >
+                      {mode === "network" ? "Network" : "Channels"}
+                    </button>
+                  );
+                })}
+              </div>
+              {channelSelectionMode === "network" ? (
+                <Select
+                  value={selectedNetworkId}
+                  onChange={(event) => setSelectedNetworkId(event.target.value)}
+                >
+                  <option value="">Choose network</option>
+                  {networks.map((network) => (
+                    <option key={network.id} value={network.id}>
+                      {network.name}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <MultiSelect
+                  value={selectedChannelIds}
+                  onChange={setSelectedChannelIds}
+                  placeholder="Choose channels"
+                  options={channels.map((channel) => ({
+                    value: channel.id,
+                    label: getChannelOptionLabel(channel),
+                    selectedLabel: channel.title,
+                    iconUrl: channel.photoUrl,
+                    iconFallback: channel.title,
+                  }))}
+                />
+              )}
+            </div>
+          </FormField>
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-neutral-400">
+                Placements
+              </h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                One booking card appears for every selected channel. No extra steps.
+              </p>
+            </div>
+            <div className="rounded-full border border-neutral-800 bg-neutral-950 px-3 py-1 text-xs text-neutral-400">
+              {placements.length} placement{placements.length === 1 ? "" : "s"}
+            </div>
           </div>
-        </div>
-      ) : null}
+
+          {placements.length ? (
+            <div className="space-y-3">
+              {placements.map((placement) => {
+                const channel = channels.find((item) => item.id === placement.channelId);
+                const products = productsByChannelId[placement.channelId] ?? [];
+                const priceSummary = buildUnderpricingSummary({
+                  agreedPrice: placement.agreedPrice,
+                  recommendedPrice: placement.recommendedPrice,
+                  minimumPrice: placement.minimumPrice,
+                });
+
+                return (
+                  <div key={placement.key} className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <TelegramEntityAvatar
+                          imageUrl={channel?.photoUrl}
+                          alt={channel?.title ?? placement.channelId}
+                          kind="channel"
+                          size="sm"
+                        />
+                        <p className="truncate font-medium text-white">{channel?.title ?? placement.channelId}</p>
+                      </div>
+                      <Button onClick={() => void openSlotPicker(placement)}>
+                        Find nearby date
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-4">
+                      <FormField label="Date">
+                        <DateInput
+                          value={placement.date}
+                          onChange={(event) =>
+                            setPlacements((current) =>
+                              current.map((item) =>
+                                item.key === placement.key
+                                  ? {
+                                      ...item,
+                                      date: event.target.value,
+                                      inventoryOpportunityKey: null,
+                                      telegramPostId: null,
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Time">
+                        <TimeInput
+                          value={placement.time}
+                          onChange={(event) =>
+                            setPlacements((current) =>
+                              current.map((item) =>
+                                item.key === placement.key ? { ...item, time: event.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Format">
+                        <Select
+                          value={placement.productId}
+                          onChange={(event) => {
+                            const product = products.find(
+                              (candidate) => candidate.id === event.target.value,
+                            );
+                            const price = productPrice(product);
+                            setPlacements((current) =>
+                              current.map((item) =>
+                                item.key === placement.key
+                                  ? {
+                                      ...item,
+                                      productId: event.target.value,
+                                      pricingMode: product?.defaultPricingMode ?? "CPM",
+                                      expectedViews: product?.estimatedViews ?? 0,
+                                      targetCpm: product?.defaultCpm ?? "0",
+                                      recommendedPrice: price,
+                                      minimumPrice: product?.minimumPrice ?? price,
+                                      agreedPrice: price,
+                                      agreedPriceManuallyEdited: false,
+                                    }
+                                  : item,
+                              ),
+                            );
+                          }}
+                        >
+                          <option value="">Default</option>
+                          {products.map((product) => (
+                            <option key={product.id} value={product.id}>
+                              {product.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                      <FormField label="Price">
+                        <div className="space-y-1">
+                          <Input
+                            value={placement.agreedPrice}
+                            inputMode="decimal"
+                            onChange={(event) =>
+                              setPlacements((current) =>
+                                current.map((item) =>
+                                  item.key === placement.key
+                                    ? {
+                                        ...item,
+                                        agreedPrice: event.target.value,
+                                        agreedPriceManuallyEdited: true,
+                                      }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                          <p className="text-xs text-emerald-300">
+                            Recommended: {placement.recommendedPrice} {paymentCurrency}
+                          </p>
+                        </div>
+                      </FormField>
+                    </div>
+
+                    {(() => {
+                      const postsKey = `${placement.channelId}:${placement.date}`;
+                      const posts = publishedPostsByPlacement[postsKey] ?? [];
+                      return postsLoadingByPlacement[postsKey] ? (
+                        <div className="mt-3 flex items-center gap-3">
+                          <Skeleton className="h-4 w-28" />
+                          <Skeleton className="h-10 flex-1" />
+                        </div>
+                      ) : posts.length ? (
+                        <div className="mt-3">
+                          <FormField label="Advertising post">
+                            <Select
+                              value={placement.telegramPostId ?? ""}
+                              onChange={(event) =>
+                                setPlacements((current) =>
+                                  current.map((item) =>
+                                    item.key === placement.key
+                                      ? { ...item, telegramPostId: event.target.value || null }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="">Not linked to a published post</option>
+                              {posts.map((post) => (
+                                <option key={post.id} value={post.id}>
+                                  {new Date(post.publishedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {post.title}
+                                </option>
+                              ))}
+                            </Select>
+                          </FormField>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {priceSummary.isBelowMinimum ? (
+                      <div className="mt-3">
+                        <FormField label="Reason for low price" required>
+                          <Textarea
+                            rows={2}
+                            value={placement.manualPriceReason}
+                            onChange={(event) =>
+                              setPlacements((current) =>
+                                current.map((item) =>
+                                  item.key === placement.key
+                                    ? { ...item, manualPriceReason: event.target.value }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                        </FormField>
+                      </div>
+                    ) : null}
+
+                    {placement.conflict ? (
+                      <p className="mt-3 rounded-lg border border-rose-700 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
+                        {placement.conflict}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-950/50 p-4 text-sm text-neutral-400">
+              Select a network or one or more channels to generate booking rows.
+            </div>
+          )}
+        </section>
+
+      </div>
 
       {submissionError ? (
         <p className="mt-4 rounded-lg border border-rose-700 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
@@ -711,32 +957,65 @@ export function SaleWizardModal({
         </p>
       ) : null}
 
-      <div className="mt-5 flex justify-between gap-2">
-        <Button
-          variant="secondary"
-          onClick={() => setStep((current) => Math.max(0, current - 1) as WizardStep)}
-          disabled={step === 0 || busy}
-        >
-          Back
-        </Button>
+      <div className="mt-5 flex justify-end gap-2">
         <div className="flex gap-2">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          {step < 3 ? (
-            <Button
-              onClick={() => setStep((current) => Math.min(3, current + 1) as WizardStep)}
-              disabled={busy || (step === 0 && !advertiserContact.trim()) || (step === 1 && !effectiveChannelIds.length)}
-            >
-              Next
-            </Button>
-          ) : (
-            <Button onClick={() => void submit()} disabled={busy || !placements.length}>
-              Create sale
-            </Button>
-          )}
+          <Button onClick={() => void submit()} disabled={busy || !canSubmit}>
+            Create sale
+          </Button>
         </div>
       </div>
-    </Modal>
+      </Modal>
+
+      <Modal
+        open={Boolean(slotPickerPlacement)}
+        onClose={() => setSlotPickerPlacementKey(null)}
+        title="Choose a nearby date"
+        size="xl"
+      >
+        <p className="mb-4 text-sm text-neutral-400">
+          {slotPickerPlacement
+            ? `Available dates for ${channels.find((channel) => channel.id === slotPickerPlacement.channelId)?.title ?? "this channel"}. Choose the time manually in the placement.`
+            : "Choose an available date. Time stays unchanged."}
+        </p>
+        {slotPickerLoading ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-24" />)}
+          </div>
+        ) : slotPickerError ? (
+          <p className="rounded-lg border border-rose-700 bg-rose-950/30 p-3 text-sm text-rose-200">{slotPickerError}</p>
+        ) : slotsByDate.length ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {slotsByDate.map(([date, slots]) => {
+              const isToday = date === channelLocalDateKey(new Date(), workspaceTimezone);
+              const isPast = date < channelLocalDateKey(new Date(), workspaceTimezone);
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  onClick={() => applySlot(slots[0])}
+                  className={`rounded-xl border p-3 text-left transition hover:-translate-y-0.5 ${
+                    isPast
+                      ? "border-rose-700/80 bg-rose-950/30 hover:border-rose-500"
+                      : "border-emerald-700/80 bg-emerald-950/30 hover:border-emerald-500"
+                  } ${isToday ? "ring-1 ring-emerald-400" : ""}`}
+                >
+                  <span className="block text-sm font-medium text-white">
+                    {new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                  </span>
+                  <span className={`mt-2 block text-xs ${isPast ? "text-rose-300" : "text-emerald-300"}`}>
+                    {isToday ? "Today · Available" : isPast ? "Past date" : "Available"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="rounded-lg border border-dashed border-neutral-700 p-4 text-sm text-neutral-400">No available slots were found in this period.</p>
+        )}
+      </Modal>
+    </>
   );
 }

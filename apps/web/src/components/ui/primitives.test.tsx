@@ -5,6 +5,7 @@ import {
   canonicalizeTimeInputValue,
   CustomSelect,
   isValidTimeInputValue,
+  Tooltip,
 } from "@/components/ui/primitives";
 
 describe("CustomSelect", () => {
@@ -27,6 +28,27 @@ describe("CustomSelect", () => {
     const option = await screen.findByRole("button", { name: /publish/i });
     expect(container).not.toContainElement(option);
     expect(option.closest("div")?.className).toContain("z-[120]");
+  });
+});
+
+describe("Tooltip", () => {
+  it("renders content through a portal and closes on Escape", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <div className="overflow-hidden">
+        <Tooltip content="Helpful tab description">
+          <button type="button">Info</button>
+        </Tooltip>
+      </div>,
+    );
+
+    await user.hover(screen.getByRole("button", { name: "Info" }));
+
+    const tooltip = await screen.findByText("Helpful tab description");
+    expect(container).not.toContainElement(tooltip);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByText("Helpful tab description")).toBeNull();
   });
 });
 

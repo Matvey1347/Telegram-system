@@ -6,11 +6,14 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { ResponsiveContainer, AreaChart, Area, CartesianGrid, Tooltip, XAxis, YAxis, LineChart, Line } from "recharts";
 import { Card, EmptyState, ErrorState, LoadingState } from "@/components/ui/primitives";
 import { telegramAdSalesApi } from "@/lib/api";
+import { MetricPreviewLabel } from "@/lib/metric-preview-icons";
 import { telegramAdSalesKeys } from "@/lib/telegram-ad-sales-query";
 
 type Props = {
   selectedChannelIds: string[];
   selectedNetworkId?: string | null;
+  from: Date;
+  to: Date;
 };
 
 function money(value: string | number | null | undefined) {
@@ -20,21 +23,28 @@ function money(value: string | number | null | undefined) {
   });
 }
 
-export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }: Props) {
+const analyticsPanelClass =
+  "rounded-[22px] border border-slate-800/80 bg-[#070c16] shadow-[inset_0_1px_0_rgba(96,165,250,0.06)]";
+const analyticsTileClass =
+  "rounded-[18px] border border-slate-800/80 bg-[#0b1220] p-4 shadow-[inset_0_1px_0_rgba(96,165,250,0.05)]";
+
+export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId, from, to }: Props) {
   const scopedParams = useMemo(
     () => ({
-      rangeDays: 30,
+      from: from.toISOString(),
+      to: to.toISOString(),
       ...(selectedChannelIds[0] ? { channelId: selectedChannelIds[0] } : {}),
       ...(selectedNetworkId ? { networkId: selectedNetworkId } : {}),
     }),
-    [selectedChannelIds, selectedNetworkId],
+    [from, selectedChannelIds, selectedNetworkId, to],
   );
   const summaryParams = useMemo(
     () => ({
-      rangeDays: 30,
+      from: from.toISOString(),
+      to: to.toISOString(),
       ...(selectedNetworkId ? { networkId: selectedNetworkId } : {}),
     }),
-    [selectedNetworkId],
+    [from, selectedNetworkId, to],
   );
   const summaryQuery = useQuery({
     queryKey: telegramAdSalesKeys.analyticsSummary(summaryParams),
@@ -54,10 +64,14 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
   });
   const channelQueries = useQueries({
     queries: selectedChannelIds.slice(0, 6).map((channelId) => ({
-      queryKey: telegramAdSalesKeys.channelAnalytics(channelId, { rangeDays: 30 }),
+      queryKey: telegramAdSalesKeys.channelAnalytics(channelId, {
+        from: from.toISOString(),
+        to: to.toISOString(),
+      }),
       queryFn: () =>
         telegramAdSalesApi.channelAnalytics(channelId, {
-          rangeDays: 30,
+          from: from.toISOString(),
+          to: to.toISOString(),
         }),
     })),
   });
@@ -97,7 +111,7 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <Card>
+        <Card className={analyticsPanelClass}>
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-white">Revenue over time</h3>
@@ -123,7 +137,7 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
           )}
         </Card>
 
-        <Card>
+        <Card className={analyticsPanelClass}>
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-white">Inventory fill rate</h3>
@@ -150,7 +164,7 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.3fr_1fr]">
-        <Card>
+        <Card className={analyticsPanelClass}>
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-white">Channel performance</h3>
@@ -160,9 +174,9 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
               Open full analytics
             </Link>
           </div>
-          <div className="overflow-hidden rounded-xl border border-neutral-800">
+          <div className="overflow-hidden rounded-[18px] border border-slate-800/80 bg-[#0b1220]">
             <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
+              <thead className="bg-[#09111e] text-xs uppercase text-neutral-400">
                 <tr>
                   <th className="px-3 py-2">Channel</th>
                   <th className="px-3 py-2">Revenue</th>
@@ -171,9 +185,9 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
                   <th className="px-3 py-2">Actual CPM</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-800">
+              <tbody className="divide-y divide-slate-800/80">
                 {channelRows.map((row) => (
-                  <tr key={row.channelId} className="bg-neutral-950">
+                  <tr key={row.channelId} className="bg-transparent">
                     <td className="px-3 py-2 text-white">{row.title}</td>
                     <td className="px-3 py-2">{money(row.revenue.totalAgreedRevenue)}</td>
                     <td className="px-3 py-2">{money(row.revenue.totalPaidRevenue)}</td>
@@ -186,14 +200,14 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
           </div>
         </Card>
 
-        <Card>
+        <Card className={analyticsPanelClass}>
           <div className="mb-4">
             <h3 className="font-semibold text-white">Active alerts</h3>
             <p className="text-sm text-neutral-500">Overdue payments, deletions, and unused inventory</p>
           </div>
           <div className="space-y-3">
             {alerts.slice(0, 6).map((alert, index) => (
-              <div key={`${alert.kind}-${alert.placementId ?? alert.channelId ?? index}`} className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3">
+              <div key={`${alert.kind}-${alert.placementId ?? alert.channelId ?? index}`} className={analyticsTileClass}>
                 <p className="font-medium text-white">{alert.title}</p>
                 <p className="mt-1 text-sm text-neutral-400">{alert.details}</p>
               </div>
@@ -208,8 +222,8 @@ export function AdSalesAnalyticsPanel({ selectedChannelIds, selectedNetworkId }:
 
 function AnalyticsKpi({ label, value }: { label: string; value: string }) {
   return (
-    <Card>
-      <p className="text-sm text-neutral-400">{label}</p>
+    <Card className={analyticsTileClass}>
+      <MetricPreviewLabel label={label} />
       <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
     </Card>
   );

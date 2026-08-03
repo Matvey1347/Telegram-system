@@ -379,6 +379,10 @@ export class TelegramChannelsService {
     this.responseCache.clearByPrefix(
       `${this.cacheScopePrefix(userId, '')}:GET:/telegram-channels`,
     );
+    // Availability is derived from synced organic posts, so it cannot outlive a channel sync.
+    this.responseCache.clearByPrefix(
+      `telegram-ad-sales:availability:${workspaceId}:`,
+    );
   }
 
   private formatInviteLinkDateLabel(date: Date) {
@@ -9507,11 +9511,6 @@ export class TelegramChannelsService {
       for (const stalePost of stalePosts) {
         affectedDays.add(stalePost.postDate.toISOString().slice(0, 10));
       }
-      await this.prisma.telegramPost.deleteMany({
-        where: {
-          id: { in: stalePosts.map((post) => post.id) },
-        },
-      });
     }
     await this.notifyDetailedTaskProgress(
       onProgress,
@@ -10657,9 +10656,25 @@ export class TelegramChannelsService {
     const channel = await this.findOne(userId, channelId);
     const pagination = normalizePagination(query);
     const search = query.search?.trim();
+    const fromDate = query.from ? new Date(query.from) : null;
+    const toDate = query.to ? new Date(query.to) : null;
+    if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+      throw new BadRequestException('Post date range is invalid');
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      throw new BadRequestException('Post date range is invalid');
+    }
     const where: any = {
       workspaceId,
       telegramChannelId: channelId,
+      ...((fromDate || toDate)
+        ? {
+            postDate: {
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {}),
+            },
+          }
+        : {}),
       ...(search
         ? {
             OR: [

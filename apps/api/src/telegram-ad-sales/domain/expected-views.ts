@@ -1,16 +1,17 @@
 export type ExpectedViewsInputPost = {
+  id?: string;
   postDate: Date;
   viewsCount: number | null;
-  manualOwnViews: number;
+  manualOwnViews?: number | null;
   excludeFromAnalytics: boolean;
+  adPlacementLinked?: boolean;
 };
 
 export type ExpectedViewsInput = {
   now?: Date;
   statisticsWindowDays?: number;
-  freshnessGraceHours?: number;
   minPostsForPrimary?: number;
-  anomalyMultiplier?: number;
+  maxPostsForPrimary?: number;
   posts: ExpectedViewsInputPost[];
   currentSubscribersCount?: number | null;
   ownViewsPerPost?: number | null;
@@ -22,16 +23,25 @@ export type ExpectedViewsInput = {
   } | null;
 };
 
+export type ExpectedViewsSampleItem = {
+  postId: string | null;
+  date: Date;
+  rawViews: number | null;
+  included: boolean;
+  reason: string | null;
+};
+
 export type ExpectedViewsResult = {
-  expectedViews: number;
+  expectedViews: number | null;
   averageViews: number | null;
   medianViews: number | null;
   adjustedViews: number | null;
   postsSampleCount: number;
   methodVersion: string;
-  dataQuality: string;
+  dataQuality: 'READY' | 'NOT_ENOUGH_DATA';
   warnings: string[];
-  fallbackSource: 'POSTS' | 'AUDIENCE_SNAPSHOT' | 'OWN_VIEWS_PER_POST' | 'SAFE_VALUE';
+  fallbackSource: 'POSTS' | 'NONE';
+  sample: ExpectedViewsSampleItem[];
 };
 
 function median(values: number[]) {
@@ -48,157 +58,78 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function trimmedMean(values: number[]) {
-  if (!values.length) return null;
-  if (values.length < 4) return average(values);
-  const sorted = [...values].sort((a, b) => a - b);
-  const trim = Math.max(1, Math.floor(sorted.length * 0.1));
-  return average(sorted.slice(trim, sorted.length - trim));
-}
-
-export function calculateExpectedViews(
-  input: ExpectedViewsInput,
-): ExpectedViewsResult {
+export function calculateExpectedViews(input: ExpectedViewsInput): ExpectedViewsResult {
   const now = input.now ?? new Date();
-  const statisticsWindowDays = input.statisticsWindowDays ?? 30;
-  const freshnessGraceHours = input.freshnessGraceHours ?? 18;
+  const statisticsWindowDays = input.statisticsWindowDays ?? 50;
   const minPostsForPrimary = input.minPostsForPrimary ?? 3;
-  const anomalyMultiplier = input.anomalyMultiplier ?? 3;
-  const warnings: string[] = [];
-  const cutoff = new Date(
-    now.getTime() - statisticsWindowDays * 24 * 60 * 60 * 1000,
-  );
-  const freshnessCutoff = new Date(
-    now.getTime() - freshnessGraceHours * 60 * 60 * 1000,
-  );
-  const relevantViews = input.posts
-    .filter((post) => !post.excludeFromAnalytics)
-    .filter((post) => post.postDate >= cutoff)
-    .filter((post) => post.postDate <= freshnessCutoff)
-    .map((post) =>
-      Math.max(
-        0,
-        Number(post.viewsCount ?? 0) - Math.max(0, Number(post.manualOwnViews ?? 0)),
-      ),
-    )
-    .filter((value) => Number.isFinite(value));
-  const rawViews = input.posts
-    .filter((post) => !post.excludeFromAnalytics)
-    .filter((post) => post.postDate >= cutoff)
-    .filter((post) => post.postDate <= freshnessCutoff)
-    .map((post) => Math.max(0, Number(post.viewsCount ?? 0)))
-    .filter((value) => Number.isFinite(value));
+  const maxPostsForPrimary = input.maxPostsForPrimary ?? 3;
+  const cutoff = new Date(now.getTime() - statisticsWindowDays * 24 * 60 * 60 * 1000);
 
-  const rawMedian = median(relevantViews);
-  const boundedViews =
-    rawMedian == null
-      ? relevantViews
-      : relevantViews.filter((value) => value <= rawMedian * anomalyMultiplier || value <= 1);
-
-  const avg = average(boundedViews);
-  const med = median(boundedViews);
-  const adjusted = trimmedMean(boundedViews);
-  const rawPositiveViews = rawViews.filter((value) => value > 0);
-  const rawAvg = average(rawPositiveViews);
-  const rawMed = median(rawPositiveViews);
-  const rawAdjusted = trimmedMean(rawPositiveViews);
-  const shouldUseRawPostViews =
-    rawPositiveViews.length >= minPostsForPrimary &&
-    rawMed != null &&
-    rawAdjusted != null &&
-    (boundedViews.length < minPostsForPrimary ||
-      (Math.max(...boundedViews, 0) === 0 && rawMed > 0));
-
-  if (
-    !shouldUseRawPostViews &&
-    boundedViews.length >= minPostsForPrimary &&
-    med != null &&
-    adjusted != null
-  ) {
-    if (boundedViews.length < 5) warnings.push('INSUFFICIENT_POSTS_SAMPLE');
+  const baseSample = input.posts.map((post) => {
+    const rawViews = post.viewsCount == null ? null : Math.max(0, Number(post.viewsCount));
+    let reason: string | null = null;
+    if (post.excludeFromAnalytics) reason = 'excluded_from_analytics';
+    else if (post.adPlacementLinked) reason = 'ad_placement';
+    else if (post.postDate < cutoff) reason = 'outside_window';
+    else if (post.postDate > now) reason = 'future_post';
+    else if (rawViews == null || !Number.isFinite(rawViews) || rawViews <= 0) reason = 'missing_raw_views';
     return {
-      expectedViews: Math.max(0, Math.round(Math.min(med, adjusted))),
+      postId: post.id ?? null,
+      date: post.postDate,
+      rawViews,
+      included: reason == null,
+      reason,
+    };
+  });
+
+  const includedCandidates = baseSample
+    .filter((item) => item.included)
+    .sort((left, right) => right.date.getTime() - left.date.getTime());
+  const selectedPostIds = new Set(
+    includedCandidates.slice(0, maxPostsForPrimary).map((item) => item.postId),
+  );
+  const sample = baseSample.map((item) => {
+    if (!item.included) return item;
+    if (selectedPostIds.has(item.postId)) return item;
+    return {
+      ...item,
+      included: false,
+      reason: 'older_than_recent_sample',
+    };
+  });
+
+  const includedViews = sample
+    .filter((item) => item.included)
+    .map((item) => item.rawViews)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const avg = average(includedViews);
+  const med = median(includedViews);
+
+  if (includedViews.length < minPostsForPrimary || med == null) {
+    return {
+      expectedViews: null,
       averageViews: avg,
       medianViews: med,
-      adjustedViews: adjusted,
-      postsSampleCount: boundedViews.length,
-      methodVersion: 'expected-views.v1',
-      dataQuality: boundedViews.length < 5 ? 'warning' : 'good',
-      warnings,
-      fallbackSource: 'POSTS',
-    };
-  }
-  if (
-    rawPositiveViews.length >= minPostsForPrimary &&
-    rawMed != null &&
-    rawAdjusted != null
-  ) {
-    warnings.push('FALLBACK_EXPECTED_VIEWS');
-    warnings.push('INSUFFICIENT_POSTS_SAMPLE');
-    return {
-      expectedViews: Math.max(0, Math.round(Math.min(rawMed, rawAdjusted))),
-      averageViews: rawAvg,
-      medianViews: rawMed,
-      adjustedViews: rawAdjusted,
-      postsSampleCount: rawPositiveViews.length,
-      methodVersion: 'expected-views.v1',
-      dataQuality: 'warning',
-      warnings,
-      fallbackSource: 'POSTS',
+      adjustedViews: med,
+      postsSampleCount: includedViews.length,
+      methodVersion: 'expected-views.v3-raw-posts',
+      dataQuality: 'NOT_ENOUGH_DATA',
+      warnings: ['INSUFFICIENT_POSTS_SAMPLE'],
+      fallbackSource: 'NONE',
+      sample,
     };
   }
 
-  if (input.audienceSnapshot) {
-    const audienceValue =
-      input.audienceSnapshot.avgViewsAdjusted ??
-      input.audienceSnapshot.activeSubscribersEstimate ??
-      null;
-    if (audienceValue != null && audienceValue >= 0) {
-      warnings.push('FALLBACK_EXPECTED_VIEWS');
-      return {
-        expectedViews: Math.round(audienceValue),
-        averageViews: avg,
-        medianViews: med,
-        adjustedViews: adjusted,
-        postsSampleCount: boundedViews.length,
-        methodVersion: 'expected-views.v1',
-        dataQuality: input.audienceSnapshot.dataQuality ?? 'warning',
-        warnings,
-        fallbackSource: 'AUDIENCE_SNAPSHOT',
-      };
-    }
-  }
-
-  if (Number(input.ownViewsPerPost ?? 0) > 0) {
-    warnings.push('FALLBACK_EXPECTED_VIEWS');
-    return {
-      expectedViews: Math.round(Number(input.ownViewsPerPost ?? 0)),
-      averageViews: avg,
-      medianViews: med,
-      adjustedViews: adjusted,
-      postsSampleCount: boundedViews.length,
-      methodVersion: 'expected-views.v1',
-      dataQuality: 'warning',
-      warnings,
-      fallbackSource: 'OWN_VIEWS_PER_POST',
-    };
-  }
-
-  warnings.push('FALLBACK_EXPECTED_VIEWS');
-  warnings.push('LOW_DATA_QUALITY');
-  const safeValue = Math.max(
-    0,
-    Math.round(Number(input.currentSubscribersCount ?? 0) * 0.1),
-  );
   return {
-    expectedViews: safeValue,
+    expectedViews: Math.max(0, Math.round(med)),
     averageViews: avg,
     medianViews: med,
-    adjustedViews: adjusted,
-    postsSampleCount: boundedViews.length,
-    methodVersion: 'expected-views.v1',
-    dataQuality: 'poor',
-    warnings,
-    fallbackSource: 'SAFE_VALUE',
+    adjustedViews: med,
+    postsSampleCount: includedViews.length,
+    methodVersion: 'expected-views.v3-raw-posts',
+    dataQuality: 'READY',
+    warnings: includedViews.length < 5 ? ['INSUFFICIENT_POSTS_SAMPLE'] : [],
+    fallbackSource: 'POSTS',
+    sample,
   };
 }

@@ -61,6 +61,7 @@ import {
   TimeInput,
   TooltipBubble,
 } from "@/components/ui/primitives";
+import { MetricPreviewLabel } from "@/lib/metric-preview-icons";
 import {
   adCampaignsApi,
   currenciesApi,
@@ -1497,7 +1498,11 @@ function ChannelMetricsDeck({
             className="min-h-[82px] rounded-lg border border-slate-800 bg-slate-900/40 p-3"
           >
             <div className="flex items-center gap-1">
-              <p className="truncate text-xs text-slate-400">{metric.title}</p>
+              <MetricPreviewLabel
+                label={metric.title}
+                metricKey={metric.key}
+                className="truncate text-xs text-slate-400"
+              />
               {metric.tip ? <InfoTooltip tip={metric.tip} /> : null}
             </div>
             <p className="mt-1.5 truncate text-xl font-semibold text-white">
@@ -1523,13 +1528,17 @@ function ChannelMetricsDeck({
 function CompactMetric({
   metric,
 }: {
-  metric: { title: string; value: string; hint?: string; tip?: string };
+  metric: { key?: string; title: string; value: string; hint?: string; tip?: string };
 }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-1.5">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1">
-          <p className="truncate text-xs text-slate-400">{metric.title}</p>
+          <MetricPreviewLabel
+            label={metric.title}
+            metricKey={metric.key}
+            className="truncate text-xs text-slate-400"
+          />
           {metric.tip ? <InfoTooltip tip={metric.tip} /> : null}
         </div>
         <p className="shrink-0 text-sm font-semibold text-slate-100">
@@ -3537,7 +3546,7 @@ function CampaignsTable({
 function SnapshotItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-h-[58px] rounded-lg border border-slate-800 bg-slate-900/25 px-2.5 py-2">
-      <p className="truncate text-xs text-slate-400">{label}</p>
+      <MetricPreviewLabel label={label} className="truncate text-xs text-slate-400" />
       <div className="mt-1 truncate text-sm font-semibold text-slate-100">
         {value || "-"}
       </div>

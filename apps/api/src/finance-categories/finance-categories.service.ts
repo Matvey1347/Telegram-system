@@ -50,12 +50,6 @@ export class FinanceCategoriesService {
       '👛',
       client,
     );
-    const telegramAdSalesIconId = await this.ensureEmojiIcon(
-      workspaceId,
-      'telegram-ad-sales',
-      '💸',
-      client,
-    );
     const telegramAdSalesReversalIconId = await this.ensureEmojiIcon(
       workspaceId,
       'telegram-ad-sales-reversal',
@@ -97,7 +91,7 @@ export class FinanceCategoriesService {
       },
     });
 
-    await (client as any).transactionCategory.upsert({
+    const channelAdvertisingRevenueCategory = await (client as any).transactionCategory.upsert({
       where: {
         workspaceId_type_key: {
           workspaceId,
@@ -119,29 +113,38 @@ export class FinanceCategoriesService {
         iconId: channelAdvertisingRevenueIconId,
       },
     });
-
-    await (client as any).transactionCategory.upsert({
+    const telegramAdSalesCandidates = await (client as any).transactionCategory.findMany({
       where: {
-        workspaceId_type_key: {
-          workspaceId,
-          type: 'income',
-          key: 'telegram_ad_sales',
-        },
-      },
-      update: {
-        isSystem: true,
-        name: 'Telegram Ad Sales',
-        iconId: telegramAdSalesIconId,
-      },
-      create: {
         workspaceId,
         type: 'income',
-        key: 'telegram_ad_sales',
-        isSystem: true,
-        name: 'Telegram Ad Sales',
-        iconId: telegramAdSalesIconId,
+        OR: [
+          { key: 'telegram_ad_sales' },
+          { name: { equals: 'Telegram Ad Sales', mode: 'insensitive' } },
+        ],
       },
+      orderBy: { createdAt: 'asc' },
     });
+    const duplicateTelegramAdSalesIds = telegramAdSalesCandidates
+      .map((category: { id: string }) => category.id)
+      .filter((id: string) => id !== channelAdvertisingRevenueCategory.id);
+    if (duplicateTelegramAdSalesIds.length) {
+      await (client as any).transaction.updateMany({
+        where: {
+          workspaceId,
+          OR: [
+            { categoryId: { in: duplicateTelegramAdSalesIds } },
+            { category: 'Telegram Ad Sales' },
+          ],
+        },
+        data: {
+          categoryId: channelAdvertisingRevenueCategory.id,
+          category: channelAdvertisingRevenueCategory.name,
+        },
+      });
+      await (client as any).transactionCategory.deleteMany({
+        where: { id: { in: duplicateTelegramAdSalesIds } },
+      });
+    }
 
     await (client as any).transactionCategory.upsert({
       where: {

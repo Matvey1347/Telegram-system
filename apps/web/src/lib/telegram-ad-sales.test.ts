@@ -1,12 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   autoAllocatePayment,
+  buildAdCalendarSlots,
   buildUnderpricingSummary,
   channelLocalTime,
   expandNetworkChannelIds,
+  readAdSalesCalendarRangeMode,
+  writeAdSalesCalendarRangeMode,
 } from "./telegram-ad-sales";
 
 describe("telegram-ad-sales helpers", () => {
+  it("restores the saved calendar range for the selected workspace", () => {
+    const values = new Map<string, string>([["selected-workspace-id", "workspace-1"]]);
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+
+    writeAdSalesCalendarRangeMode(storage, "month");
+
+    expect(values.get("telegram-ad-sales:calendar-range:workspace-1")).toBe("month");
+    expect(readAdSalesCalendarRangeMode(storage)).toBe("month");
+  });
+
   it("calculates underpricing boundaries", () => {
     const result = buildUnderpricingSummary({
       recommendedPrice: "180",
@@ -49,9 +65,9 @@ describe("telegram-ad-sales helpers", () => {
     expect(result.unallocatedAmount).toBe(150);
   });
 
-  it("expands network into unique channels", () => {
+  it("filters selected channels by network without re-adding hidden channels", () => {
     const result = expandNetworkChannelIds({
-      selectedChannelIds: ["channel-3"],
+      selectedChannelIds: ["channel-1", "channel-3"],
       selectedNetworkId: "network-1",
       networks: [
         {
@@ -82,7 +98,33 @@ describe("telegram-ad-sales helpers", () => {
       ],
     });
 
-    expect(result).toEqual(["channel-3", "channel-1", "channel-2"]);
+    expect(result).toEqual(["channel-1"]);
+  });
+
+  it("builds unique calendar slot ids for same day and product", () => {
+    const slots = buildAdCalendarSlots(
+      ["one", "two"].map((suffix) => ({
+        channelId: "channel-1",
+        date: "2026-08-01",
+        inventoryOpportunityKey: `cadence:channel-1:${suffix}:2026-08-01`,
+        scheduledAt: "2026-08-01T12:00:00.000Z",
+        timezone: "Europe/Warsaw",
+        source: "cadence",
+        state: "AVAILABLE",
+        blockingReason: null,
+        nextOrganicPostAt: null,
+        productId: "product-1",
+        expectedViews: 100,
+        recommendedPrice: "0",
+        minimumPrice: "0",
+        currency: "USD",
+        existingPlacement: null,
+        organicPostsCountForDay: 3,
+        adsCountForDay: 0,
+      })),
+    );
+
+    expect(new Set(slots.map((slot) => slot.id)).size).toBe(2);
   });
 
   it("formats local time consistently", () => {

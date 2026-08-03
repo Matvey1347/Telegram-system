@@ -1,7 +1,7 @@
 "use client";
 
 import type { TelegramAdSaleComputedPaymentStatus } from "@telegram-system/shared";
-import { AlertTriangle, Ban, CheckCircle2, CircleDashed, Clock3 } from "lucide-react";
+import { CheckCircle2, CircleDashed, Clock3 } from "lucide-react";
 import { channelLocalTime, type TelegramAdCalendarSlot } from "@/lib/telegram-ad-sales";
 
 const toneStyles: Record<TelegramAdCalendarSlot["tone"], string> = {
@@ -10,16 +10,7 @@ const toneStyles: Record<TelegramAdCalendarSlot["tone"], string> = {
   SOLD: "border-sky-700/60 bg-sky-950/20 text-sky-100",
   BLOCKED: "border-neutral-700 bg-neutral-900/60 text-neutral-200",
   CONFLICT: "border-rose-700/60 bg-rose-950/20 text-rose-100",
-  PAST: "border-neutral-800 bg-neutral-950 text-neutral-500",
-};
-
-const toneLabel: Record<TelegramAdCalendarSlot["tone"], string> = {
-  AVAILABLE: "Available",
-  RESERVED: "Reserved",
-  SOLD: "Sold",
-  BLOCKED: "Blocked",
-  CONFLICT: "Conflict",
-  PAST: "Past",
+  PAST: "border-rose-700/60 bg-rose-950/20 text-rose-100",
 };
 
 const paymentToneLabel: Record<TelegramAdSaleComputedPaymentStatus | "UNPAID", string> = {
@@ -29,12 +20,17 @@ const paymentToneLabel: Record<TelegramAdSaleComputedPaymentStatus | "UNPAID", s
   OVERPAID: "Overpaid",
 };
 
-function ToneIcon({ tone }: { tone: TelegramAdCalendarSlot["tone"] }) {
+function OpportunityIcon({ tone }: { tone: TelegramAdCalendarSlot["tone"] }) {
   if (tone === "AVAILABLE") return <CheckCircle2 size={14} />;
-  if (tone === "BLOCKED") return <Ban size={14} />;
-  if (tone === "CONFLICT") return <AlertTriangle size={14} />;
   if (tone === "PAST") return <Clock3 size={14} />;
   return <CircleDashed size={14} />;
+}
+
+function opportunityTitle(slot: TelegramAdCalendarSlot) {
+  if (slot.state === "AVAILABLE") return "Add Ad Slot";
+  if (slot.state === "PAST") return "Missed ad slot";
+  if (slot.existingPlacement) return "Ad placement";
+  return "No ad slot";
 }
 
 export function CalendarSlotCard({
@@ -52,24 +48,19 @@ export function CalendarSlotCard({
   agreedPrice?: string | null;
   onClick?: () => void;
 }) {
+  const interactive = Boolean(onClick);
   return (
     <button
       type="button"
+      disabled={!interactive}
       onClick={onClick}
-      className={`w-full rounded-xl border p-3 text-left transition hover:translate-y-[-1px] hover:bg-opacity-90 ${toneStyles[slot.tone]}`}
+      className={`w-full rounded-lg border p-2.5 text-left transition ${
+        interactive ? "hover:translate-y-[-1px] hover:bg-opacity-90" : "cursor-default"
+      } ${toneStyles[slot.tone]}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-            <ToneIcon tone={slot.tone} />
-            <span>{toneLabel[slot.tone]}</span>
-          </div>
-          <p className="mt-2 text-sm font-semibold">{channelLocalTime(slot.scheduledAt)}</p>
-          <p className="mt-1 text-xs opacity-80">{slot.timezone}</p>
-        </div>
-        <div className="rounded-full border border-current/20 px-2 py-1 text-[11px] font-medium uppercase tracking-wide">
-          {slot.productId ? "Product" : "Slot"}
-        </div>
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide">
+        <OpportunityIcon tone={slot.tone} />
+        <span>{opportunityTitle(slot)}</span>
       </div>
 
       {slot.existingPlacement ? (
@@ -78,7 +69,7 @@ export function CalendarSlotCard({
           <p className="text-xs opacity-80">{saleTitle || "Advertising sale"}</p>
           <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-wide">
             <span className="rounded-full border border-current/20 px-2 py-1">
-              {slot.existingPlacement.status}
+              {slot.existingPlacement.status.replaceAll("_", " ")}
             </span>
             {paymentStatus ? (
               <span className="rounded-full border border-current/20 px-2 py-1">
@@ -89,15 +80,13 @@ export function CalendarSlotCard({
           {agreedPrice ? (
             <p className="pt-1 text-xs opacity-90">Agreed {agreedPrice} {slot.currency}</p>
           ) : null}
+          {slot.existingPlacement.status !== "RESERVED" ? (
+            <p className="text-xs opacity-70">
+              Assigned time: {channelLocalTime(slot.scheduledAt, slot.timezone)}
+            </p>
+          ) : null}
         </div>
-      ) : (
-        <div className="mt-3 space-y-1 text-xs opacity-90">
-          <p>Expected views: {slot.expectedViews.toLocaleString()}</p>
-          <p>Recommended: {slot.recommendedPrice} {slot.currency}</p>
-          <p>Minimum: {slot.minimumPrice} {slot.currency}</p>
-          <p>{slot.blockingReason || slot.source}</p>
-        </div>
-      )}
+      ) : null}
     </button>
   );
 }

@@ -7,10 +7,11 @@ type TelegramEntityAvatarProps = {
   imageUrl?: string | null;
   kind?: 'channel' | 'mtproto' | 'person' | 'bot';
   alt?: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
 };
 
 const sizeConfig = {
+  xs: { box: 'h-5 w-5', icon: 10, label: 'text-[5px]' },
   sm: { box: 'h-8 w-8', icon: 14, label: 'text-[7px]' },
   md: { box: 'h-11 w-11', icon: 20, label: 'text-[9px]' },
   lg: { box: 'h-14 w-14', icon: 22, label: 'text-[9px]' },

@@ -7,6 +7,8 @@ export const telegramAdSalesKeys = {
   sales: (params?: Record<string, unknown>) =>
     ["telegram-ad-sales", "sales", params ?? {}] as const,
   sale: (saleId: string) => ["telegram-ad-sale", saleId] as const,
+  workspaceSettings: () => ["telegram-ad-sales", "workspace-settings"] as const,
+  preferences: () => ["telegram-ad-sales", "preferences"] as const,
   availability: (params: Record<string, unknown>) =>
     ["telegram-ad-availability", params] as const,
   products: (params?: Record<string, unknown>) =>
@@ -14,6 +16,7 @@ export const telegramAdSalesKeys = {
   channelProducts: (channelId: string) =>
     ["telegram-ad-products", "channel", channelId] as const,
   policy: (channelId: string) => ["telegram-ad-policy", channelId] as const,
+  baseline: (channelId: string) => ["telegram-ad-baseline", channelId] as const,
   priceHistory: (channelId: string, params?: Record<string, unknown>) =>
     ["telegram-ad-price-history", channelId, params ?? {}] as const,
   analytics: (params?: Record<string, unknown>) =>

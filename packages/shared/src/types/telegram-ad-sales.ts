@@ -136,6 +136,7 @@ export type TelegramAdWarningCode =
   | "LOW_DATA_QUALITY"
   | "FALLBACK_EXPECTED_VIEWS"
   | "INSUFFICIENT_POSTS_SAMPLE"
+  | "NOT_ENOUGH_DATA"
   | "MANUAL_SLOT_ONLY";
 
 export type TelegramAdStructuredWarning = {
@@ -169,8 +170,19 @@ export type TelegramAdProduct = {
   currency: string;
   isActive: boolean;
   position: number;
+  pricingWindowHours?: number | null;
+  pricingWindowLabel?: string | null;
+  estimatedViews?: number | null;
+  estimatedPrice?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TelegramAdChannelPricingSettings = {
+  channelId: string;
+  baseCpm: string | null;
+  currency: string;
+  updatedAt?: string | null;
 };
 
 export type TelegramAdSchedulePolicy = {
@@ -180,6 +192,7 @@ export type TelegramAdSchedulePolicy = {
   timezone: string;
   autoFrequencyEnabled: boolean;
   expectedOrganicPostsPerDay: string | null;
+  useWorkspaceDefault: boolean;
   organicPostsPerAdSlot: number;
   maxAdsPerDay: number;
   minHoursBetweenAds: number;
@@ -187,6 +200,25 @@ export type TelegramAdSchedulePolicy = {
   slotStrategy: TelegramAdSlotStrategy;
   fallbackSlotTimes: string[];
   allowManualSlots: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TelegramAdSalesWorkspaceSettings = {
+  workspaceId: string;
+  defaultOrganicPostsPerAdSlot: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TelegramAdSalesMemberPreferences = {
+  id: string;
+  workspaceId: string;
+  workspaceMemberId: string;
+  selectedChannelIds: string[];
+  selectedNetworkId: string | null;
+  calendarView: "week" | "month" | "list";
+  initialized: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -215,8 +247,8 @@ export type TelegramAdPriceSnapshot = {
 };
 
 export type TelegramAdPriceQuote = {
-  snapshotId: string;
-  expectedViews: number;
+  snapshotId: string | null;
+  expectedViews: number | null;
   targetCpm: string;
   recommendedPrice: string;
   minimumPrice: string;
@@ -225,9 +257,68 @@ export type TelegramAdPriceQuote = {
   warnings: TelegramAdStructuredWarning[];
 };
 
+export type TelegramAdChannelBaseline = {
+  channelId: string;
+  expectedViews: number | null;
+  averageViews: number | null;
+  medianViews: number | null;
+  adjustedViews: number | null;
+  postsSampleCount: number;
+  methodVersion: string;
+  dataQuality: "READY" | "NOT_ENOUGH_DATA";
+  warnings: string[];
+  fallbackSource: "POSTS" | "NONE";
+  sample: Array<{
+    postId: string | null;
+    date: string;
+    rawViews: number | null;
+    included: boolean;
+    reason: string | null;
+  }>;
+  pricing: TelegramAdChannelPricingSettings;
+  windows: {
+    final: {
+      expectedViews: number | null;
+      averageViews: number | null;
+      medianViews: number | null;
+      postsSampleCount: number;
+      dataQuality: "READY" | "NOT_ENOUGH_DATA";
+    };
+    h24: {
+      expectedViews: number | null;
+      averageViews: number | null;
+      medianViews: number | null;
+      postsSampleCount: number;
+      dataQuality: "READY" | "NOT_ENOUGH_DATA";
+    };
+    h48: {
+      expectedViews: number | null;
+      averageViews: number | null;
+      medianViews: number | null;
+      postsSampleCount: number;
+      dataQuality: "READY" | "NOT_ENOUGH_DATA";
+    };
+    h72: {
+      expectedViews: number | null;
+      averageViews: number | null;
+      medianViews: number | null;
+      postsSampleCount: number;
+      dataQuality: "READY" | "NOT_ENOUGH_DATA";
+    };
+    d7: {
+      expectedViews: number | null;
+      averageViews: number | null;
+      medianViews: number | null;
+      postsSampleCount: number;
+      dataQuality: "READY" | "NOT_ENOUGH_DATA";
+    };
+  };
+};
+
 export type TelegramAdAvailabilitySlot = {
   channelId: string;
   date: string;
+  inventoryOpportunityKey?: string | null;
   scheduledAt: string;
   timezone: string;
   source: string;
@@ -248,10 +339,19 @@ export type TelegramAdAvailabilitySlot = {
   adsCountForDay: number;
 };
 
+export type TelegramAdAvailabilityDaySummary = {
+  channelId: string;
+  date: string;
+  timezone: string;
+  organicPostsCountForDay: number;
+  adsCountForDay: number;
+};
+
 export type TelegramAdAvailabilityResponse = {
   from: string;
   to: string;
   slots: TelegramAdAvailabilitySlot[];
+  summaries: TelegramAdAvailabilityDaySummary[];
   warnings: TelegramAdStructuredWarning[];
 };
 
@@ -262,6 +362,7 @@ export type TelegramAdSalePlacement = {
   telegramChannelId: string;
   telegramChannelNetworkId: string | null;
   telegramAdProductId: string | null;
+  inventoryOpportunityKey: string | null;
   pricingSnapshotId: string | null;
   status: TelegramAdPlacementStatus;
   scheduledAt: string;

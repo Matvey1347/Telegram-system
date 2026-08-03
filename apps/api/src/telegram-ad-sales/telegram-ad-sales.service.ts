@@ -27,6 +27,7 @@ import {
   WorkspaceRole,
 } from '@prisma/client';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
+import { ResponseCacheService } from '../common/response-cache.service';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { WorkspaceService } from '../common/workspace.service';
@@ -77,6 +78,9 @@ import {
   TelegramAdCrmWorkspaceSettingsDto,
   CompleteTelegramAdvertiserTaskDto,
   SkipTelegramAdvertiserTaskDto,
+  UpdateTelegramAdChannelPricingDto,
+  UpdateTelegramAdSalesMemberPreferencesDto,
+  UpdateTelegramAdSalesWorkspaceSettingsDto,
   UpdateTelegramAdSalePaymentDto,
   UpdateTelegramAdvertiserContactDto,
   UpdateTelegramAdvertiserDto,
@@ -107,6 +111,7 @@ export class TelegramAdSalesService {
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
     private readonly logger: ApplicationLoggerService,
+    private readonly responseCache: ResponseCacheService,
     private readonly currencyConversionService: CurrencyConversionService,
     private readonly financeCategoriesService: FinanceCategoriesService,
     private readonly telegramChannelsService: TelegramChannelsService,
@@ -114,6 +119,34 @@ export class TelegramAdSalesService {
     private readonly sourceAccessService: TelegramSourceAccessService,
     private readonly encryptionService: TokenEncryptionService,
   ) {}
+
+  private availabilityCacheKey(params: {
+    workspaceId: string;
+    channelIds: string[];
+    networkId?: string | null;
+    productIds?: string[];
+    from: string;
+    to: string;
+    cacheBust?: string;
+  }) {
+    return [
+      'telegram-ad-sales',
+      'availability',
+      params.workspaceId,
+      params.from,
+      params.to,
+      params.networkId ?? 'all-networks',
+      [...params.channelIds].sort().join(','),
+      [...(params.productIds ?? [])].sort().join(',') || 'all-products',
+      params.cacheBust ?? 'cached',
+    ].join(':');
+  }
+
+  private invalidateAvailabilityCache(workspaceId: string) {
+    this.responseCache.clearByPrefix(
+      `telegram-ad-sales:availability:${workspaceId}:`,
+    );
+  }
 
   private async workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
@@ -156,6 +189,7 @@ export class TelegramAdSalesService {
       defaultCpm: decimalToString(product.defaultCpm),
       defaultFixedPrice: decimalToString(product.defaultFixedPrice),
       minimumPrice: decimalToString(product.minimumPrice),
+      estimatedPrice: decimalToString(product.estimatedPrice),
       createdAt: product.createdAt.toISOString(),
       updatedAt: product.updatedAt.toISOString(),
     };
@@ -360,14 +394,177 @@ export class TelegramAdSalesService {
     return {
       timezone,
       autoFrequencyEnabled: true,
-      expectedOrganicPostsPerDay: decimal(0),
+      expectedOrganicPostsPerDay: null,
+      useWorkspaceDefault: true,
       organicPostsPerAdSlot: 3,
-      maxAdsPerDay: 1,
-      minHoursBetweenAds: 72,
-      minDaysBetweenAds: 3,
+      maxAdsPerDay: 999,
+      minHoursBetweenAds: 0,
+      minDaysBetweenAds: 0,
       slotStrategy: TelegramAdSlotStrategy.BEFORE_ORGANIC_POST,
       fallbackSlotTimes: [],
       allowManualSlots: false,
+    };
+  }
+
+  private defaultProductTemplates() {
+    return [
+      {
+        name: '1/24',
+        topDurationMinutes: 60,
+        feedDurationHours: 24,
+        deleteAfterHours: 24,
+        isPermanent: false,
+        position: 0,
+      },
+      {
+        name: '2/48',
+        topDurationMinutes: 120,
+        feedDurationHours: 48,
+        deleteAfterHours: 48,
+        isPermanent: false,
+        position: 1,
+      },
+      {
+        name: '3/72',
+        topDurationMinutes: 180,
+        feedDurationHours: 72,
+        deleteAfterHours: 72,
+        isPermanent: false,
+        position: 2,
+      },
+      {
+        name: 'No auto-delete',
+        topDurationMinutes: 60,
+        feedDurationHours: null,
+        deleteAfterHours: null,
+        isPermanent: true,
+        position: 3,
+      },
+    ] as const;
+  }
+
+  private normalizeDefaultProductName(name: string) {
+    const normalized = name.trim().toLowerCase();
+    if (normalized === '1/permanent' || normalized === 'no auto-delete') {
+      return 'no auto-delete';
+    }
+    return normalized;
+  }
+
+  private async ensureDefaultProductsForChannel(params: {
+    workspaceId: string;
+    channelId: string;
+    currency: string;
+  }) {
+    const existing = await this.prisma.telegramAdProduct.findMany({
+      where: {
+        workspaceId: params.workspaceId,
+        telegramChannelId: params.channelId,
+      },
+      select: {
+        name: true,
+      },
+    });
+    const existingNames = new Set(
+      existing
+        .map((product) => this.normalizeDefaultProductName(product.name ?? ''))
+        .filter((name): name is string => Boolean(name)),
+    );
+    const missing = this.defaultProductTemplates().filter(
+      (template) => !existingNames.has(this.normalizeDefaultProductName(template.name)),
+    );
+    if (!missing.length) return;
+
+    await this.prisma.telegramAdProduct.createMany({
+      skipDuplicates: true,
+      data: missing.map((template) => ({
+        workspaceId: params.workspaceId,
+        telegramChannelId: params.channelId,
+        name: template.name,
+        description: null,
+        topDurationMinutes: template.topDurationMinutes,
+        feedDurationHours: template.feedDurationHours,
+        deleteAfterHours: template.deleteAfterHours,
+        isPermanent: template.isPermanent,
+        defaultPricingMode: TelegramAdPricingMode.CPM,
+        defaultCpm: null,
+        defaultFixedPrice: null,
+        minimumPrice: null,
+        currency: params.currency,
+        isActive: true,
+        position: template.position,
+      })),
+    });
+  }
+
+  private projectedOrganicPostsPerDay(params: {
+    channel: { timePosts?: Array<{ time: string }> };
+    policy: { expectedOrganicPostsPerDay?: Prisma.Decimal | number | null };
+    historicalOrganicPosts: number;
+    historyWindowDays: number;
+  }) {
+    const scheduledPerDay = params.channel.timePosts?.length ?? 0;
+    if (scheduledPerDay > 0) return scheduledPerDay;
+
+    const explicit = Number(params.policy.expectedOrganicPostsPerDay ?? 0);
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return Math.max(1, Math.round(explicit));
+    }
+
+    if (params.historicalOrganicPosts <= 0 || params.historyWindowDays <= 0) {
+      return 0;
+    }
+
+    return Math.max(
+      1,
+      Math.round(params.historicalOrganicPosts / params.historyWindowDays),
+    );
+  }
+
+  private projectedOrganicTimeline(params: {
+    dateKey: string;
+    timezone: string;
+    projectedCount: number;
+    scheduledTimes: Array<{ time: string }>;
+  }) {
+    const timeline: Array<{ id: string; at: Date }> = [];
+    if (params.projectedCount <= 0) return timeline;
+
+    const fallbackTimes = ['09:00', '13:00', '17:00', '21:00'];
+    for (let index = 0; index < params.projectedCount; index += 1) {
+      const scheduledTime =
+        params.scheduledTimes[index]?.time ??
+        fallbackTimes[index] ??
+        `${String((9 + index * 2) % 24).padStart(2, '0')}:00`;
+      timeline.push({
+        id: `projected:${params.dateKey}:${index}`,
+        at: zonedDateTimeToUtc(params.dateKey, scheduledTime, params.timezone),
+      });
+    }
+    return timeline;
+  }
+
+  private async resolveAdSalesWorkspaceSettings(workspaceId: string) {
+    return this.prisma.telegramAdSalesWorkspaceSettings.upsert({
+      where: { workspaceId },
+      create: { workspaceId, defaultOrganicPostsPerAdSlot: 3 },
+      update: {},
+    });
+  }
+
+  private mapAdSalesWorkspaceSettings(settings: any) {
+    return {
+      ...settings,
+      createdAt: settings.createdAt.toISOString(),
+      updatedAt: settings.updatedAt.toISOString(),
+    };
+  }
+
+  private mapAdSalesMemberPreferences(preferences: any) {
+    return {
+      ...preferences,
+      createdAt: preferences.createdAt.toISOString(),
+      updatedAt: preferences.updatedAt.toISOString(),
     };
   }
 
@@ -383,7 +580,15 @@ export class TelegramAdSalesService {
     const policy = await this.prisma.telegramAdSchedulePolicy.findFirst({
       where: { workspaceId, telegramChannelId: channelId },
     });
-    if (policy) return policy;
+    const workspaceSettings = await this.resolveAdSalesWorkspaceSettings(workspaceId);
+    if (policy) {
+      return policy.useWorkspaceDefault
+        ? {
+            ...policy,
+            organicPostsPerAdSlot: workspaceSettings.defaultOrganicPostsPerAdSlot,
+          }
+        : policy;
+    }
     return {
       id: 'virtual',
       workspaceId,
@@ -391,6 +596,7 @@ export class TelegramAdSalesService {
       createdAt: new Date(),
       updatedAt: new Date(),
       ...this.policyDefaults(timezone),
+      organicPostsPerAdSlot: workspaceSettings.defaultOrganicPostsPerAdSlot,
     };
   }
 
@@ -414,10 +620,12 @@ export class TelegramAdSalesService {
         orderBy: { postDate: 'desc' },
         take: 60,
         select: {
+          id: true,
           postDate: true,
           viewsCount: true,
           manualOwnViews: true,
           excludeFromAnalytics: true,
+          adSalePlacements: { select: { id: true }, take: 1 },
         },
       }),
       this.prisma.telegramChannelAudienceSnapshot.findFirst({
@@ -427,11 +635,282 @@ export class TelegramAdSalesService {
     ]);
 
     return calculateExpectedViews({
-      posts,
+      posts: posts.map((post) => ({
+        id: post.id,
+        postDate: post.postDate,
+        viewsCount: post.viewsCount,
+        manualOwnViews: post.manualOwnViews,
+        excludeFromAnalytics: post.excludeFromAnalytics,
+        adPlacementLinked: post.adSalePlacements.length > 0,
+      })),
       currentSubscribersCount: channel.currentSubscribersCount,
       ownViewsPerPost: channel.ownViewsPerPost,
       audienceSnapshot,
     });
+  }
+
+  private async loadPricingPosts(workspaceId: string, channelId: string) {
+    return this.prisma.telegramPost.findMany({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+      },
+      orderBy: { postDate: 'desc' },
+      take: 60,
+      select: {
+        id: true,
+        postDate: true,
+        viewsCount: true,
+        manualOwnViews: true,
+        excludeFromAnalytics: true,
+        adSalePlacements: { select: { id: true }, take: 1 },
+        metricSnapshots: {
+          select: {
+            viewsCount: true,
+            collectedAt: true,
+          },
+          orderBy: { collectedAt: 'asc' },
+        },
+      },
+    });
+  }
+
+  private resolvePricingWindow(product?: {
+    deleteAfterHours?: number | null;
+    isPermanent?: boolean;
+  } | null) {
+    if (!product) {
+      return { hours: null as number | null, label: 'Post' };
+    }
+    if (product.isPermanent) {
+      return { hours: 168, label: '7d placement' };
+    }
+    if (product.deleteAfterHours != null) {
+      return { hours: product.deleteAfterHours, label: `${product.deleteAfterHours}h placement` };
+    }
+    return { hours: null as number | null, label: 'Post' };
+  }
+
+  private selectWindowViews(
+    post: {
+      postDate: Date;
+      viewsCount: number | null;
+      metricSnapshots: Array<{ viewsCount: number | null; collectedAt: Date }>;
+    },
+    targetHours: number | null,
+    now: Date,
+  ) {
+    if (targetHours == null) {
+      return post.viewsCount;
+    }
+    const targetAt = new Date(post.postDate.getTime() + targetHours * 60 * 60 * 1000);
+    if (targetAt > now) {
+      return null;
+    }
+    const toleranceHours = targetHours <= 24 ? 8 : targetHours <= 48 ? 12 : 24;
+    const candidate =
+      [...post.metricSnapshots]
+        .filter(
+          (snapshot) =>
+            snapshot.viewsCount != null &&
+            snapshot.collectedAt.getTime() >= post.postDate.getTime(),
+        )
+        .map((snapshot) => ({
+          ...snapshot,
+          diff: Math.abs(snapshot.collectedAt.getTime() - targetAt.getTime()),
+        }))
+        .sort((left, right) => left.diff - right.diff)[0] ?? null;
+
+    if (!candidate || candidate.diff > toleranceHours * 60 * 60 * 1000) {
+      return null;
+    }
+
+    return candidate.viewsCount;
+  }
+
+  private async computeExpectedViewsForWindow(
+    workspaceId: string,
+    channelId: string,
+    targetHours: number | null,
+  ) {
+    const channel = await this.prisma.telegramChannel.findFirst({
+      where: { id: channelId, workspaceId },
+      select: {
+        id: true,
+        currentSubscribersCount: true,
+        ownViewsPerPost: true,
+      },
+    });
+    if (!channel) throw new NotFoundException('Telegram channel not found');
+    const posts = await this.loadPricingPosts(workspaceId, channelId);
+    const now = new Date();
+    return calculateExpectedViews({
+      now,
+      maxPostsForPrimary: 3,
+      posts: posts.map((post) => ({
+        id: post.id,
+        postDate: post.postDate,
+        viewsCount: this.selectWindowViews(post, targetHours, now),
+        manualOwnViews: post.manualOwnViews,
+        excludeFromAnalytics: post.excludeFromAnalytics,
+        adPlacementLinked: post.adSalePlacements.length > 0,
+      })),
+      currentSubscribersCount: channel.currentSubscribersCount,
+      ownViewsPerPost: channel.ownViewsPerPost,
+      audienceSnapshot: null,
+    });
+  }
+
+  private async computeExpectedViewsForProduct(
+    workspaceId: string,
+    channelId: string,
+    product?: {
+      deleteAfterHours?: number | null;
+      isPermanent?: boolean;
+    } | null,
+  ) {
+    const window = this.resolvePricingWindow(product);
+    const result = await this.computeExpectedViewsForWindow(workspaceId, channelId, window.hours);
+    return {
+      ...result,
+      pricingWindowHours: window.hours,
+      pricingWindowLabel: window.label,
+    };
+  }
+
+  private pricingSettingsForChannel(channel: {
+    id: string;
+    adBaseCpm?: Prisma.Decimal | null;
+    adBaseCurrency?: string | null;
+    updatedAt?: Date;
+  }) {
+    return {
+      channelId: channel.id,
+      baseCpm: decimalToString(channel.adBaseCpm),
+      currency: channel.adBaseCurrency || 'USD',
+      updatedAt: channel.updatedAt?.toISOString() ?? null,
+    };
+  }
+
+  private buildWindowSummary(result: Awaited<ReturnType<typeof this.computeExpectedViewsForWindow>>) {
+    return {
+      expectedViews: result.expectedViews,
+      averageViews: result.averageViews,
+      medianViews: result.medianViews,
+      postsSampleCount: result.postsSampleCount,
+      dataQuality: result.dataQuality,
+    };
+  }
+
+  private async buildProductPricingPreview(
+    workspaceId: string,
+    channel: {
+      id: string;
+      adBaseCpm?: Prisma.Decimal | null;
+      adBaseCurrency?: string | null;
+    },
+    product?: {
+      id?: string | null;
+      deleteAfterHours?: number | null;
+      isPermanent?: boolean;
+      defaultPricingMode?: TelegramAdPricingMode;
+      defaultCpm?: Prisma.Decimal | null;
+      defaultFixedPrice?: Prisma.Decimal | null;
+    } | null,
+    overrides?: {
+      pricingMode?: TelegramAdPricingMode;
+      targetCpm?: number | Prisma.Decimal | null;
+      minimumCpm?: number | Prisma.Decimal | null;
+      fixedPrice?: number | Prisma.Decimal | null;
+    },
+  ) {
+    const expectedViews = await this.computeExpectedViewsForProduct(workspaceId, channel.id, product);
+    if (expectedViews.expectedViews == null) {
+      return {
+        ...expectedViews,
+        currency: channel.adBaseCurrency || 'USD',
+        recommendedPrice: '0.00',
+        minimumPrice: '0.00',
+        targetCpm: decimalToString(decimal(overrides?.targetCpm ?? channel.adBaseCpm ?? product?.defaultCpm ?? 0)) || '0.00',
+      };
+    }
+    const pricingMode = overrides?.pricingMode ?? product?.defaultPricingMode ?? TelegramAdPricingMode.CPM;
+    const targetCpm = overrides?.targetCpm ?? channel.adBaseCpm ?? product?.defaultCpm ?? 0;
+    const minimumCpm = overrides?.minimumCpm ?? targetCpm ?? 0;
+    const pricing = calculatePricing({
+      expectedViews: expectedViews.expectedViews,
+      pricingMode,
+      targetCpm,
+      minimumCpm,
+      fixedPrice: overrides?.fixedPrice ?? product?.defaultFixedPrice ?? 0,
+    });
+    return {
+      ...expectedViews,
+      currency: channel.adBaseCurrency || 'USD',
+      recommendedPrice: decimalToString(pricing.recommendedPrice) ?? '0.00',
+      minimumPrice: decimalToString(pricing.minimumPrice) ?? '0.00',
+      targetCpm: decimalToString(pricing.targetCpm) ?? '0.00',
+    };
+  }
+
+  async getChannelBaseline(userId: string, channelId: string) {
+    const workspaceId = await this.workspace(userId);
+    const channel = await this.findWorkspaceChannel(workspaceId, channelId);
+    const [baseline, h24, h48, h72, d7] = await Promise.all([
+      this.computeExpectedViewsForWindow(workspaceId, channelId, null),
+      this.computeExpectedViewsForWindow(workspaceId, channelId, 24),
+      this.computeExpectedViewsForWindow(workspaceId, channelId, 48),
+      this.computeExpectedViewsForWindow(workspaceId, channelId, 72),
+      this.computeExpectedViewsForWindow(workspaceId, channelId, 168),
+    ]);
+    return {
+      channelId,
+      expectedViews: baseline.expectedViews,
+      averageViews: baseline.averageViews,
+      medianViews: baseline.medianViews,
+      adjustedViews: baseline.adjustedViews,
+      postsSampleCount: baseline.postsSampleCount,
+      methodVersion: baseline.methodVersion,
+      dataQuality: baseline.dataQuality,
+      warnings: baseline.warnings,
+      fallbackSource: baseline.fallbackSource,
+      sample: baseline.sample.map((item) => ({
+        ...item,
+        date: item.date.toISOString(),
+      })),
+      pricing: this.pricingSettingsForChannel(channel),
+      windows: {
+        final: this.buildWindowSummary(baseline),
+        h24: this.buildWindowSummary(h24),
+        h48: this.buildWindowSummary(h48),
+        h72: this.buildWindowSummary(h72),
+        d7: this.buildWindowSummary(d7),
+      },
+    };
+  }
+
+  async updateChannelPricing(
+    userId: string,
+    channelId: string,
+    dto: UpdateTelegramAdChannelPricingDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    await this.findWorkspaceChannel(workspaceId, channelId);
+    const channel = await this.prisma.telegramChannel.update({
+      where: { id: channelId },
+      data: {
+        ...(dto.baseCpm === undefined ? {} : { adBaseCpm: decimalOrNull(dto.baseCpm) }),
+        ...(dto.currency === undefined ? {} : { adBaseCurrency: dto.currency }),
+      },
+      select: {
+        id: true,
+        adBaseCpm: true,
+        adBaseCurrency: true,
+        updatedAt: true,
+      },
+    });
+    this.invalidateAvailabilityCache(workspaceId);
+    return this.pricingSettingsForChannel(channel);
   }
 
   private async ensurePlacementBelongsToSale(
@@ -481,7 +960,7 @@ export class TelegramAdSalesService {
 
   private async resolveSystemCategory(
     workspaceId: string,
-    key: 'telegram_ad_sales' | 'telegram_ad_sales_reversal',
+    key: 'channel_advertising_revenue' | 'telegram_ad_sales_reversal',
   ) {
     await this.financeCategoriesService.ensureSystemCategories(workspaceId);
     const category = await this.prisma.transactionCategory.findFirst({
@@ -960,6 +1439,15 @@ export class TelegramAdSalesService {
         timePosts: { orderBy: [{ position: 'asc' }, { time: 'asc' }] },
       },
     });
+    await Promise.all(
+      channels.map((channel) =>
+        this.ensureDefaultProductsForChannel({
+          workspaceId: params.workspaceId,
+          channelId: channel.id,
+          currency: channel.adBaseCurrency || 'USD',
+        }),
+      ),
+    );
     const [policies, products, placements] = await Promise.all([
       this.prisma.telegramAdSchedulePolicy.findMany({
         where: {
@@ -1032,7 +1520,7 @@ export class TelegramAdSalesService {
             id: product?.id ?? null,
             topDurationMinutes: product?.topDurationMinutes ?? null,
             currency: product?.currency ?? 'USD',
-            expectedViews: expectedViews.expectedViews,
+            expectedViews: expectedViews.expectedViews ?? 0,
             recommendedPrice: decimalToString(product?.defaultFixedPrice) ?? '0.00',
             minimumPrice: decimalToString(product?.minimumPrice) ?? '0.00',
           },
@@ -1591,12 +2079,28 @@ export class TelegramAdSalesService {
 
   async listChannelProducts(userId: string, channelId: string) {
     const workspaceId = await this.workspace(userId);
-    await this.findWorkspaceChannel(workspaceId, channelId);
+    const channel = await this.findWorkspaceChannel(workspaceId, channelId);
+    await this.ensureDefaultProductsForChannel({
+      workspaceId,
+      channelId,
+      currency: channel.adBaseCurrency || 'USD',
+    });
     const products = await this.prisma.telegramAdProduct.findMany({
       where: { workspaceId, telegramChannelId: channelId },
       orderBy: [{ isActive: 'desc' }, { position: 'asc' }, { createdAt: 'asc' }],
     });
-    return products.map((product) => this.mapProduct(product));
+    return Promise.all(
+      products.map(async (product) => {
+        const preview = await this.buildProductPricingPreview(workspaceId, channel, product);
+        return this.mapProduct({
+          ...product,
+          pricingWindowHours: preview.pricingWindowHours,
+          pricingWindowLabel: preview.pricingWindowLabel,
+          estimatedViews: preview.expectedViews,
+          estimatedPrice: decimal(preview.recommendedPrice),
+        });
+      }),
+    );
   }
 
   async createProduct(userId: string, channelId: string, dto: CreateTelegramAdProductDto) {
@@ -1621,6 +2125,7 @@ export class TelegramAdSalesService {
         position: dto.position ?? 0,
       },
     });
+    this.invalidateAvailabilityCache(workspaceId);
     return this.mapProduct(product);
   }
 
@@ -1648,11 +2153,125 @@ export class TelegramAdSalesService {
         ...(dto.position === undefined ? {} : { position: dto.position }),
       },
     });
+    this.invalidateAvailabilityCache(workspaceId);
     return this.mapProduct(product);
   }
 
   async deactivateProduct(userId: string, id: string) {
-    return this.updateProduct(userId, id, { isActive: false });
+    const workspaceId = await this.workspace(userId);
+    const existing = await this.prisma.telegramAdProduct.findFirst({
+      where: { id, workspaceId },
+    });
+    if (!existing) throw new NotFoundException('Telegram ad product not found');
+    const normalizedName = this.normalizeDefaultProductName(existing.name);
+    const isDefaultFormat = this.defaultProductTemplates().some(
+      (template) => this.normalizeDefaultProductName(template.name) === normalizedName,
+    );
+    if (isDefaultFormat) {
+      throw new BadRequestException('Default placement formats cannot be removed');
+    }
+    await this.prisma.telegramAdProduct.delete({
+      where: { id },
+    });
+    this.invalidateAvailabilityCache(workspaceId);
+    return { success: true };
+  }
+
+  async getAdSalesWorkspaceSettings(userId: string) {
+    const workspaceId = await this.workspace(userId);
+    return this.mapAdSalesWorkspaceSettings(
+      await this.resolveAdSalesWorkspaceSettings(workspaceId),
+    );
+  }
+
+  async updateAdSalesWorkspaceSettings(
+    userId: string,
+    dto: UpdateTelegramAdSalesWorkspaceSettingsDto,
+  ) {
+    const workspaceId = await this.workspace(userId);
+    const settings = await this.prisma.telegramAdSalesWorkspaceSettings.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        defaultOrganicPostsPerAdSlot: dto.defaultOrganicPostsPerAdSlot ?? 3,
+      },
+      update: {
+        ...(dto.defaultOrganicPostsPerAdSlot === undefined
+          ? {}
+          : { defaultOrganicPostsPerAdSlot: dto.defaultOrganicPostsPerAdSlot }),
+      },
+    });
+    this.invalidateAvailabilityCache(workspaceId);
+    return this.mapAdSalesWorkspaceSettings(settings);
+  }
+
+  async getAdSalesMemberPreferences(userId: string) {
+    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const existing = await this.prisma.telegramAdSalesMemberPreferences.findUnique({
+      where: { workspaceMemberId: membership.id },
+    });
+    if (existing) return this.mapAdSalesMemberPreferences(existing);
+    const preferences = await this.prisma.telegramAdSalesMemberPreferences.create({
+      data: {
+        workspaceId: membership.workspaceId,
+        workspaceMemberId: membership.id,
+        selectedChannelIds: [],
+        selectedNetworkId: null,
+        calendarView: 'week',
+        initialized: false,
+      },
+    });
+    return this.mapAdSalesMemberPreferences(preferences);
+  }
+
+  async updateAdSalesMemberPreferences(
+    userId: string,
+    dto: UpdateTelegramAdSalesMemberPreferencesDto,
+  ) {
+    const membership = await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const update: Prisma.TelegramAdSalesMemberPreferencesUpdateInput = {};
+    const create: Prisma.TelegramAdSalesMemberPreferencesCreateInput = {
+      workspace: { connect: { id: membership.workspaceId } },
+      workspaceMember: { connect: { id: membership.id } },
+      selectedChannelIds: [],
+      selectedNetworkId: null,
+      calendarView: 'week',
+      initialized: false,
+    };
+    if (dto.selectedChannelIds !== undefined) {
+      const uniqueIds = Array.from(new Set(dto.selectedChannelIds));
+      if (uniqueIds.length) {
+        const count = await this.prisma.telegramChannel.count({
+          where: { workspaceId: membership.workspaceId, id: { in: uniqueIds } },
+        });
+        if (count !== uniqueIds.length) {
+          throw new BadRequestException('Some selected channels do not belong to workspace');
+        }
+      }
+      update.selectedChannelIds = uniqueIds;
+      create.selectedChannelIds = uniqueIds;
+    }
+    if (dto.selectedNetworkId !== undefined) {
+      if (dto.selectedNetworkId) {
+        await this.findWorkspaceNetwork(membership.workspaceId, dto.selectedNetworkId);
+      }
+      update.selectedNetworkId = dto.selectedNetworkId;
+      create.selectedNetworkId = dto.selectedNetworkId;
+    }
+    if (dto.calendarView !== undefined) {
+      update.calendarView = dto.calendarView;
+      create.calendarView = dto.calendarView;
+    }
+    if (dto.initialized !== undefined) {
+      update.initialized = dto.initialized;
+      create.initialized = dto.initialized;
+    }
+    const preferences = await this.prisma.telegramAdSalesMemberPreferences.upsert({
+      where: { workspaceMemberId: membership.id },
+      create,
+      update,
+    });
+    return this.mapAdSalesMemberPreferences(preferences);
   }
 
   async getPolicy(userId: string, channelId: string) {
@@ -1665,38 +2284,45 @@ export class TelegramAdSalesService {
   async upsertPolicy(userId: string, channelId: string, dto: UpdateTelegramAdPolicyDto) {
     const workspaceId = await this.workspace(userId);
     await this.findWorkspaceChannel(workspaceId, channelId);
+    const workspaceTimezone = await this.resolveWorkspaceTimezone(workspaceId);
+    const defaults = this.policyDefaults(workspaceTimezone);
+    const useWorkspaceDefault = dto.useWorkspaceDefault ?? false;
+    const organicPostsPerAdSlot = dto.organicPostsPerAdSlot ?? defaults.organicPostsPerAdSlot;
     const policy = await this.prisma.telegramAdSchedulePolicy.upsert({
       where: { telegramChannelId: channelId },
       create: {
         workspaceId,
         telegramChannelId: channelId,
-        timezone: dto.timezone,
+        timezone: dto.timezone ?? workspaceTimezone,
         autoFrequencyEnabled: dto.autoFrequencyEnabled ?? true,
         expectedOrganicPostsPerDay: decimalOrNull(dto.expectedOrganicPostsPerDay),
-        organicPostsPerAdSlot: dto.organicPostsPerAdSlot,
-        maxAdsPerDay: dto.maxAdsPerDay,
-        minHoursBetweenAds: dto.minHoursBetweenAds,
-        minDaysBetweenAds: dto.minDaysBetweenAds,
-        slotStrategy: dto.slotStrategy,
+        useWorkspaceDefault,
+        organicPostsPerAdSlot,
+        maxAdsPerDay: dto.maxAdsPerDay ?? defaults.maxAdsPerDay,
+        minHoursBetweenAds: dto.minHoursBetweenAds ?? defaults.minHoursBetweenAds,
+        minDaysBetweenAds: dto.minDaysBetweenAds ?? defaults.minDaysBetweenAds,
+        slotStrategy: dto.slotStrategy ?? defaults.slotStrategy,
         fallbackSlotTimes: dto.fallbackSlotTimes ?? [],
         allowManualSlots: dto.allowManualSlots ?? false,
       },
       update: {
-        timezone: dto.timezone,
+        timezone: dto.timezone ?? workspaceTimezone,
         ...(dto.autoFrequencyEnabled === undefined ? {} : { autoFrequencyEnabled: dto.autoFrequencyEnabled }),
         ...(dto.expectedOrganicPostsPerDay === undefined
           ? {}
           : { expectedOrganicPostsPerDay: decimalOrNull(dto.expectedOrganicPostsPerDay) }),
-        organicPostsPerAdSlot: dto.organicPostsPerAdSlot,
-        maxAdsPerDay: dto.maxAdsPerDay,
-        minHoursBetweenAds: dto.minHoursBetweenAds,
-        minDaysBetweenAds: dto.minDaysBetweenAds,
-        slotStrategy: dto.slotStrategy,
-        fallbackSlotTimes: dto.fallbackSlotTimes ?? [],
-        allowManualSlots: dto.allowManualSlots ?? false,
+        ...(dto.useWorkspaceDefault === undefined ? {} : { useWorkspaceDefault }),
+        ...(dto.organicPostsPerAdSlot === undefined ? {} : { organicPostsPerAdSlot }),
+        ...(dto.maxAdsPerDay === undefined ? {} : { maxAdsPerDay: dto.maxAdsPerDay }),
+        ...(dto.minHoursBetweenAds === undefined ? {} : { minHoursBetweenAds: dto.minHoursBetweenAds }),
+        ...(dto.minDaysBetweenAds === undefined ? {} : { minDaysBetweenAds: dto.minDaysBetweenAds }),
+        ...(dto.slotStrategy === undefined ? {} : { slotStrategy: dto.slotStrategy }),
+        ...(dto.fallbackSlotTimes === undefined ? {} : { fallbackSlotTimes: dto.fallbackSlotTimes }),
+        ...(dto.allowManualSlots === undefined ? {} : { allowManualSlots: dto.allowManualSlots }),
       },
     });
-    return this.mapPolicy(policy);
+    this.invalidateAvailabilityCache(workspaceId);
+    return this.mapPolicy(await this.resolvePolicy(workspaceId, channelId, workspaceTimezone));
   }
 
   async recommendPolicy(userId: string, channelId: string, dto: RecommendTelegramAdPolicyDto) {
@@ -1731,20 +2357,32 @@ export class TelegramAdSalesService {
       throw new NotFoundException('Telegram ad product not found');
     }
 
-    const expectedViews = await this.computeExpectedViews(workspaceId, channel.id);
     const pricingMode = dto.pricingMode ?? product?.defaultPricingMode ?? TelegramAdPricingMode.CPM;
-    const minimumCpm =
-      dto.minimumCpm ??
-      (product?.minimumPrice != null && expectedViews.expectedViews > 0
-        ? Number(product.minimumPrice) * 1000 / expectedViews.expectedViews
-        : dto.targetCpm ?? Number(product?.defaultCpm ?? 0));
-    const pricing = calculatePricing({
-      expectedViews: expectedViews.expectedViews,
+    const preview = await this.buildProductPricingPreview(workspaceId, channel, product, {
       pricingMode,
-      targetCpm: dto.targetCpm ?? product?.defaultCpm ?? 0,
-      minimumCpm,
+      targetCpm: dto.targetCpm ?? channel.adBaseCpm ?? product?.defaultCpm ?? 0,
+      minimumCpm: dto.minimumCpm ?? dto.targetCpm ?? channel.adBaseCpm ?? product?.defaultCpm ?? 0,
       fixedPrice: dto.fixedPrice ?? product?.defaultFixedPrice ?? 0,
     });
+    if (preview.expectedViews == null) {
+      return {
+        snapshotId: null,
+        expectedViews: null,
+        targetCpm: preview.targetCpm,
+        recommendedPrice: '0.00',
+        minimumPrice: '0.00',
+        currency: dto.currency ?? preview.currency,
+        dataQuality: preview.dataQuality,
+        warnings: preview.warnings.map((code) => ({
+          code,
+          message: code,
+        })),
+        sample: preview.sample.map((item) => ({
+          ...item,
+          date: item.date.toISOString(),
+        })),
+      };
+    }
 
     const snapshot = await this.prisma.telegramAdPriceSnapshot.create({
       data: {
@@ -1752,22 +2390,24 @@ export class TelegramAdSalesService {
         telegramChannelId: channel.id,
         telegramAdProductId: product?.id ?? null,
         source: dto.source ?? 'quote',
-        methodVersion: expectedViews.methodVersion,
+        methodVersion: preview.methodVersion,
         statisticsWindowDays: 30,
-        postsSampleCount: expectedViews.postsSampleCount,
-        expectedViews: expectedViews.expectedViews,
-        averageViews: decimalOrNull(expectedViews.averageViews),
-        medianViews: decimalOrNull(expectedViews.medianViews),
-        adjustedViews: decimalOrNull(expectedViews.adjustedViews),
-        targetCpm: pricing.targetCpm,
-        minimumCpm: decimal(minimumCpm),
-        recommendedPrice: pricing.recommendedPrice,
-        minimumPrice: pricing.minimumPrice,
-        currency: dto.currency ?? product?.currency ?? 'USD',
+        postsSampleCount: preview.postsSampleCount,
+        expectedViews: preview.expectedViews,
+        averageViews: decimalOrNull(preview.averageViews),
+        medianViews: decimalOrNull(preview.medianViews),
+        adjustedViews: decimalOrNull(preview.adjustedViews),
+        targetCpm: decimal(preview.targetCpm),
+        minimumCpm: decimal(preview.targetCpm),
+        recommendedPrice: decimal(preview.recommendedPrice),
+        minimumPrice: decimal(preview.minimumPrice),
+        currency: dto.currency ?? preview.currency,
         metadata: {
-          dataQuality: expectedViews.dataQuality,
-          warnings: expectedViews.warnings,
-          fallbackSource: expectedViews.fallbackSource,
+          dataQuality: preview.dataQuality,
+          warnings: preview.warnings,
+          fallbackSource: preview.fallbackSource,
+          pricingWindowHours: preview.pricingWindowHours,
+          pricingWindowLabel: preview.pricingWindowLabel,
         },
       },
     });
@@ -1789,8 +2429,8 @@ export class TelegramAdSalesService {
       recommendedPrice: decimalToString(snapshot.recommendedPrice),
       minimumPrice: decimalToString(snapshot.minimumPrice),
       currency: snapshot.currency,
-      dataQuality: expectedViews.dataQuality,
-      warnings: [...expectedViews.warnings, ...pricing.warnings].map((code) => ({
+      dataQuality: preview.dataQuality,
+      warnings: [...preview.warnings].map((code) => ({
         code,
         message: code,
       })),
@@ -1830,6 +2470,18 @@ export class TelegramAdSalesService {
       throw new BadRequestException('Availability request cannot exceed 50 channels');
     }
 
+    const cacheKey = this.availabilityCacheKey({
+      workspaceId,
+      channelIds,
+      networkId: dto.networkId ?? null,
+      productIds: dto.productIds,
+      from: dto.from,
+      to: dto.to,
+      cacheBust: dto.cacheBust,
+    });
+
+    return this.responseCache.getOrSet(cacheKey, 30_000, async () => {
+
     const channels = await this.prisma.telegramChannel.findMany({
       where: { workspaceId, id: { in: channelIds } },
       include: { timePosts: { orderBy: [{ position: 'asc' }, { time: 'asc' }] } },
@@ -1837,11 +2489,21 @@ export class TelegramAdSalesService {
     if (channels.length !== channelIds.length) {
       throw new BadRequestException('Some channels do not belong to selected workspace');
     }
+    await Promise.all(
+      channels.map((channel) =>
+        this.ensureDefaultProductsForChannel({
+          workspaceId,
+          channelId: channel.id,
+          currency: channel.adBaseCurrency || 'USD',
+        }),
+      ),
+    );
 
-    const [policies, products, placements, managedOrganicPosts] = await Promise.all([
-      this.prisma.telegramAdSchedulePolicy.findMany({
-        where: { workspaceId, telegramChannelId: { in: channelIds } },
-      }),
+    const historyWindowDays = 30;
+    const historyFrom = new Date(
+      from.getTime() - historyWindowDays * 24 * 60 * 60 * 1000,
+    );
+    const [products, placements, telegramPosts, managedOrganicPosts] = await Promise.all([
       this.prisma.telegramAdProduct.findMany({
         where: {
           workspaceId,
@@ -1856,10 +2518,34 @@ export class TelegramAdSalesService {
           workspaceId,
           telegramChannelId: { in: channelIds },
           status: { in: ACTIVE_PLACEMENT_STATUSES },
-          scheduledAt: {
-            gte: new Date(from.getTime() - 7 * 24 * 60 * 60 * 1000),
+          OR: [
+            {
+              scheduledAt: {
+                gte: new Date(from.getTime() - 7 * 24 * 60 * 60 * 1000),
+                lte: new Date(to.getTime() + 24 * 60 * 60 * 1000),
+              },
+            },
+            { inventoryOpportunityKey: { not: null } },
+          ],
+        },
+        include: { sale: { select: { id: true, title: true, status: true, settlementCurrency: true } } },
+      }),
+      this.prisma.telegramPost.findMany({
+        where: {
+          workspaceId,
+          telegramChannelId: { in: channelIds },
+          postDate: {
+            gte: historyFrom,
             lte: new Date(to.getTime() + 24 * 60 * 60 * 1000),
           },
+          excludeFromAnalytics: false,
+          adSalePlacements: { none: {} },
+        },
+        select: {
+          id: true,
+          telegramChannelId: true,
+          telegramMessageId: true,
+          postDate: true,
         },
       }),
       this.prisma.telegramManagedPost.findMany({
@@ -1876,13 +2562,13 @@ export class TelegramAdSalesService {
           OR: [
             {
               scheduledAt: {
-                gte: from,
+                gte: historyFrom,
                 lte: new Date(to.getTime() + 24 * 60 * 60 * 1000),
               },
             },
             {
               publishedAt: {
-                gte: from,
+                gte: historyFrom,
                 lte: new Date(to.getTime() + 24 * 60 * 60 * 1000),
               },
             },
@@ -1893,124 +2579,216 @@ export class TelegramAdSalesService {
           telegramChannelId: true,
           scheduledAt: true,
           publishedAt: true,
+          telegramMessageIds: true,
         },
       }),
     ]);
 
-    const organicPostsByChannelDate = managedOrganicPosts.reduce(
-      (acc, post) => {
-        const effectiveAt = post.publishedAt ?? post.scheduledAt;
-        if (!effectiveAt) return acc;
-        const policyTimezone =
-          policies.find((item) => item.telegramChannelId === post.telegramChannelId)?.timezone ??
-          'Europe/Warsaw';
-        const key = `${post.telegramChannelId}:${utcDateKey(effectiveAt, policyTimezone)}`;
-        const current = acc.get(key) ?? [];
-        current.push(effectiveAt);
-        acc.set(key, current);
-        return acc;
-      },
-      new Map<string, Date[]>(),
-    );
-
     const slots: any[] = [];
+    const summaries: Array<{
+      channelId: string;
+      date: string;
+      timezone: string;
+      organicPostsCountForDay: number;
+      adsCountForDay: number;
+    }> = [];
+    const workspaceTimezone = await this.resolveWorkspaceTimezone(workspaceId);
+    const now = new Date();
     for (const channel of channels) {
-      const channelPolicy =
-        policies.find((policy) => policy.telegramChannelId === channel.id) ??
-        (await this.resolvePolicy(
-          workspaceId,
-          channel.id,
-          await this.resolveWorkspaceTimezone(workspaceId),
-        ));
+      const channelPolicy = await this.resolvePolicy(workspaceId, channel.id, workspaceTimezone);
       const channelProducts = products.filter((product) => product.telegramChannelId === channel.id);
-      const expectedViews = await this.computeExpectedViews(workspaceId, channel.id);
+      const defaultProductPreview = await this.buildProductPricingPreview(
+        workspaceId,
+        channel,
+        channelProducts[0] ?? null,
+      );
       const product =
         channelProducts[0] ??
         ({
           id: null,
           topDurationMinutes: null,
-          currency: 'USD',
-          expectedViews: expectedViews.expectedViews,
-          recommendedPrice: '0.00',
-          minimumPrice: '0.00',
+          currency: channel.adBaseCurrency || 'USD',
+          expectedViews: defaultProductPreview.expectedViews ?? 0,
+          recommendedPrice: defaultProductPreview.recommendedPrice,
+          minimumPrice: defaultProductPreview.minimumPrice,
         } as const);
-
-      for (let cursor = new Date(from); cursor <= to; cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)) {
+      const recommendedPrice = defaultProductPreview.recommendedPrice;
+      const minimumPrice = defaultProductPreview.minimumPrice;
+      const publishedMessageIds = new Set(
+        telegramPosts
+          .filter((post) => post.telegramChannelId === channel.id)
+          .map((post) => post.telegramMessageId),
+      );
+      const timeline = [
+        ...telegramPosts
+          .filter((post) => post.telegramChannelId === channel.id)
+          .map((post) => ({
+            id: `post:${post.id}`,
+            at: post.postDate,
+          })),
+        ...managedOrganicPosts
+          .filter((post) => post.telegramChannelId === channel.id)
+          .filter((post) => !post.telegramMessageIds.some((messageId) => publishedMessageIds.has(messageId)))
+          .map((post) => ({
+            id: `managed:${post.id}`,
+            at: post.publishedAt ?? post.scheduledAt,
+          })),
+      ]
+        .filter((item): item is { id: string; at: Date } => item.at instanceof Date)
+        .sort((left, right) => left.at.getTime() - right.at.getTime());
+      const cadence = Math.max(1, channelPolicy.organicPostsPerAdSlot);
+      const timelineByDate = new Map<string, Array<{ id: string; at: Date }>>();
+      for (const item of timeline) {
+        const dateKey = utcDateKey(item.at, channelPolicy.timezone);
+        const current = timelineByDate.get(dateKey) ?? [];
+        current.push(item);
+        timelineByDate.set(dateKey, current);
+      }
+      const historicalOrganicPosts = timeline.filter(
+        (item) => item.at >= historyFrom && item.at <= now,
+      ).length;
+      const projectedPostsPerDay = this.projectedOrganicPostsPerDay({
+        channel,
+        policy: channelPolicy,
+        historicalOrganicPosts,
+        historyWindowDays,
+      });
+      const typicalSlotsPerDay = Math.max(
+        1,
+        Math.round(projectedPostsPerDay / cadence),
+      );
+      let carryoverOrganicPosts = timeline.filter((item) => item.at < from).length % cadence;
+      let opportunityCounter = 0;
+      for (
+        let cursor = new Date(from);
+        cursor <= to;
+        cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)
+      ) {
         const dateKey = utcDateKey(cursor, channelPolicy.timezone);
-        const dayPlacements = placements.filter(
-          (placement) =>
-            placement.telegramChannelId === channel.id &&
-            utcDateKey(placement.scheduledAt, channelPolicy.timezone) === dateKey &&
-            placement.status !== TelegramAdPlacementStatus.CANCELLED,
+        const actualDayTimeline = (timelineByDate.get(dateKey) ?? []).sort(
+          (left, right) => left.at.getTime() - right.at.getTime(),
         );
-        const organicScheduledAt =
-          organicPostsByChannelDate
-            .get(`${channel.id}:${dateKey}`)
-            ?.slice()
-            .sort((left, right) => left.getTime() - right.getTime()) ?? [];
-        const daySlots = buildAvailabilitySlots({
-          now: new Date(),
-          dateKey,
-          policy: {
-            timezone: channelPolicy.timezone,
-            slotStrategy: channelPolicy.slotStrategy,
-            fallbackSlotTimes: channelPolicy.fallbackSlotTimes,
-            allowManualSlots: channelPolicy.allowManualSlots,
-            organicPostsPerAdSlot: channelPolicy.organicPostsPerAdSlot,
-            maxAdsPerDay: channelPolicy.maxAdsPerDay,
-            minHoursBetweenAds: channelPolicy.minHoursBetweenAds,
-            minDaysBetweenAds: channelPolicy.minDaysBetweenAds,
-          },
-          product: {
-            id: product.id,
-            topDurationMinutes: product.topDurationMinutes,
-            currency: product.currency,
-            expectedViews: expectedViews.expectedViews,
-            recommendedPrice: decimalToString(product.defaultFixedPrice) ?? '0.00',
-            minimumPrice: decimalToString(product.minimumPrice) ?? '0.00',
-          },
-          organicTimes:
-            channelPolicy.slotStrategy === TelegramAdSlotStrategy.FIXED_TIMES
-              ? channelPolicy.fallbackSlotTimes
-              : organicScheduledAt.map((value) =>
-                  utcTimeKey(value, channelPolicy.timezone),
-                ),
-          organicScheduledAt,
-          placements: dayPlacements.map((placement) => ({
-            id: placement.id,
-            saleId: placement.telegramAdSaleId,
-            status: placement.status,
-            scheduledAt: placement.scheduledAt,
-          })),
+        const useProjection =
+          actualDayTimeline.length === 0 && cursor.getTime() > now.getTime();
+        const dayTimeline = useProjection
+          ? this.projectedOrganicTimeline({
+              dateKey,
+              timezone: channelPolicy.timezone,
+              projectedCount: projectedPostsPerDay,
+              scheduledTimes: channel.timePosts,
+            })
+          : actualDayTimeline;
+        const totalOrganicForDay = dayTimeline.length;
+        const carryIn = carryoverOrganicPosts;
+        const rawSlotsForDay = Math.floor((carryIn + totalOrganicForDay) / cadence);
+        const totalSlotsForDay =
+          channelPolicy.maxAdsPerDay >= 0
+            ? Math.min(rawSlotsForDay, channelPolicy.maxAdsPerDay, typicalSlotsPerDay)
+            : Math.min(rawSlotsForDay, typicalSlotsPerDay);
+        carryoverOrganicPosts = (carryIn + totalOrganicForDay) % cadence;
+        summaries.push({
+          channelId: channel.id,
+          date: dateKey,
+          timezone: channelPolicy.timezone,
+          organicPostsCountForDay: totalOrganicForDay,
+          adsCountForDay: totalSlotsForDay,
         });
-        slots.push(
-          ...daySlots.map((slot) => ({
-            ...slot,
+        if (totalSlotsForDay <= 0) {
+          continue;
+        }
+        const placementsForDate = placements
+          .filter(
+            (placement) =>
+              placement.telegramChannelId === channel.id &&
+              placement.status !== TelegramAdPlacementStatus.CANCELLED &&
+              utcDateKey(placement.scheduledAt, channelPolicy.timezone) === dateKey,
+          )
+          .sort((left, right) => left.scheduledAt.getTime() - right.scheduledAt.getTime());
+        for (let slotIndex = 0; slotIndex < totalSlotsForDay; slotIndex += 1) {
+          opportunityCounter += 1;
+          const triggerPostIndex = Math.min(
+            dayTimeline.length - 1,
+            Math.max(0, (slotIndex + 1) * cadence - carryIn - 1),
+          );
+          const nextOrganicPostAt =
+            dayTimeline[triggerPostIndex]?.at ?? dayTimeline.at(-1)?.at ?? null;
+          const scheduledAt = nextOrganicPostAt
+            ? nextOrganicPostAt
+            : zonedDateTimeToUtc(dateKey, '12:00', channelPolicy.timezone);
+          if (scheduledAt < from) continue;
+          const opportunityKey = `cadence:${channel.id}:${opportunityCounter}:${dateKey}`;
+          const existingPlacement =
+            placements.find(
+              (placement) =>
+                placement.telegramChannelId === channel.id &&
+                placement.status !== TelegramAdPlacementStatus.CANCELLED &&
+                placement.inventoryOpportunityKey === opportunityKey,
+            ) ?? placementsForDate[slotIndex] ?? null;
+          const isPastCalendarDay =
+            dateKey < utcDateKey(now, channelPolicy.timezone);
+          const state = existingPlacement
+            ? existingPlacement.status === TelegramAdPlacementStatus.RESERVED
+              ? 'RESERVED'
+              : 'SOLD'
+            : isPastCalendarDay
+              ? 'PAST'
+              : 'AVAILABLE';
+          slots.push({
             channelId: channel.id,
-            scheduledAt: slot.scheduledAt.toISOString(),
-            nextOrganicPostAt: slot.nextOrganicPostAt?.toISOString() ?? null,
-          })),
-        );
+            date: dateKey,
+            inventoryOpportunityKey: opportunityKey,
+            scheduledAt: scheduledAt.toISOString(),
+            timezone: channelPolicy.timezone,
+            source: 'cadence',
+            state,
+            blockingReason: null,
+            nextOrganicPostAt: nextOrganicPostAt?.toISOString() ?? null,
+            productId: product.id,
+            expectedViews: defaultProductPreview.expectedViews ?? 0,
+            recommendedPrice,
+            minimumPrice,
+            currency: defaultProductPreview.currency,
+            existingPlacement: existingPlacement
+              ? {
+                  id: existingPlacement.id,
+                  saleId: existingPlacement.telegramAdSaleId,
+                  status: existingPlacement.status,
+                  scheduledAt: existingPlacement.scheduledAt.toISOString(),
+                  title: existingPlacement.sale?.title ?? null,
+                  saleStatus: existingPlacement.sale?.status ?? null,
+                  paymentStatus: null,
+                  agreedPrice: decimalToString(existingPlacement.agreedPrice),
+                  currency: existingPlacement.currency,
+                }
+              : null,
+            organicPostsCountForDay: totalOrganicForDay,
+            adsCountForDay: totalSlotsForDay,
+          });
+        }
       }
     }
 
-    return {
-      from: dto.from,
-      to: dto.to,
-      slots,
-      warnings: [],
-    };
+      return {
+        from: dto.from,
+        to: dto.to,
+        slots,
+        summaries,
+        warnings: [],
+      };
+    });
   }
 
   async analyticsSummary(userId: string, query: TelegramAdAnalyticsQueryDto) {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
+    const now = new Date();
+    const periodMs = Math.max(1, to.getTime() - from.getTime());
     const dataset = await this.adAnalyticsDataset({ workspaceId, from, to });
     const nextSevenDays = await this.inventorySlotsForChannels({
       workspaceId,
       channelIds: dataset.channels.map((channel) => channel.id),
-      from: new Date('2026-08-01T00:00:00.000Z'),
-      to: new Date('2026-08-07T23:59:59.999Z'),
+      from: now,
+      to: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
     });
     const inventory = this.summarizeInventory(nextSevenDays);
     const channelRollup = dataset.channels.map((channel) => {
@@ -2068,17 +2846,15 @@ export class TelegramAdSalesService {
     }, decimal(0));
     const alerts = await this.analyticsAlerts(userId, query);
 
-    const startOfMonth = new Date('2026-08-01T00:00:00.000Z');
-    const previousMonthStart = new Date('2026-07-01T00:00:00.000Z');
-    const previousMonthEnd = new Date('2026-07-31T23:59:59.999Z');
+    const previousPeriodStart = new Date(from.getTime() - periodMs);
+    const previousPeriodEnd = new Date(from.getTime() - 1);
     const currentMonthRevenue = dataset.placements
-      .filter((placement) => placement.scheduledAt >= startOfMonth)
       .reduce((sum, placement) => sum.add(decimal(placement.agreedPrice)), decimal(0));
     const previousMonthRevenue = (
       await this.adAnalyticsDataset({
         workspaceId,
-        from: previousMonthStart,
-        to: previousMonthEnd,
+        from: previousPeriodStart,
+        to: previousPeriodEnd,
       })
     ).placements.reduce(
       (sum, placement) => sum.add(decimal(placement.agreedPrice)),
@@ -2103,7 +2879,7 @@ export class TelegramAdSalesService {
       paidRevenue: decimalToString(paidRevenue),
       accountsReceivable: decimalToString(outstanding),
       upcomingPlacements: dataset.placements.filter(
-        (placement) => placement.scheduledAt > new Date('2026-08-01T00:00:00.000Z'),
+        (placement) => placement.scheduledAt > now,
       ).length,
       availableSlotsNext7Days: inventory.availableSlots,
       slotFillRate: Number((inventory.bookingFillRate * 100).toFixed(2)),
@@ -2165,6 +2941,8 @@ export class TelegramAdSalesService {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findWorkspaceChannel(workspaceId, channelId);
     const { from, to, timezone } = this.analyticsRange(query);
+    const now = new Date();
+    const overdueCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const dataset = await this.adAnalyticsDataset({
       workspaceId,
       from,
@@ -2332,12 +3110,12 @@ export class TelegramAdSalesService {
       },
       operations: {
         upcomingPlacements: placements.filter(
-          (placement) => placement.scheduledAt > new Date('2026-08-01T00:00:00.000Z'),
+          (placement) => placement.scheduledAt > now,
         ).length,
         upcomingDeletions: placements.filter(
           (placement) =>
             placement.plannedDeleteAt &&
-            placement.plannedDeleteAt > new Date('2026-08-01T00:00:00.000Z') &&
+            placement.plannedDeleteAt > now &&
             !placement.deletedAt,
         ).length,
         overdueUnpaidSales: [
@@ -2352,7 +3130,7 @@ export class TelegramAdSalesService {
                   decimal(0),
                 );
                 return (
-                  placement.sale.createdAt < new Date('2026-07-25T00:00:00.000Z') &&
+                  placement.sale.createdAt < overdueCutoff &&
                   allocated.lt(decimal(placement.agreedPrice))
                 );
               })
@@ -2504,6 +3282,7 @@ export class TelegramAdSalesService {
   async revenueSeries(userId: string, query: TelegramAdAnalyticsSeriesQueryDto) {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
+    const overdueCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const granularity = query.granularity ?? 'day';
     const channelIds = query.channelId ? [query.channelId] : undefined;
     const dataset = await this.adAnalyticsDataset({
@@ -2685,6 +3464,7 @@ export class TelegramAdSalesService {
   async analyticsAlerts(userId: string, query: TelegramAdAlertsQueryDto) {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
+    const overdueCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const dataset = await this.adAnalyticsDataset({ workspaceId, from, to });
     const inventory = await this.inventoryAnalytics(userId, query);
     const items = [
@@ -2698,7 +3478,7 @@ export class TelegramAdSalesService {
             decimal(0),
           );
           return (
-            placement.sale.createdAt < new Date('2026-07-25T00:00:00.000Z') &&
+            placement.sale.createdAt < overdueCutoff &&
             paid.lt(decimal(placement.agreedPrice))
           );
         })
@@ -3703,6 +4483,7 @@ export class TelegramAdSalesService {
       },
       include: this.includeSaleRelations(),
     });
+    this.invalidateAvailabilityCache(workspaceId);
     if (sale.advertiserId) {
       await this.recalculateAdvertiserStats(workspaceId, sale.advertiserId);
     }
@@ -3756,35 +4537,48 @@ export class TelegramAdSalesService {
           targetCpm: snapshot.targetCpm,
         }
       : null;
-    const placement = await this.prisma.telegramAdSalePlacement.create({
-      data: {
-        workspaceId,
-        telegramAdSaleId: sale.id,
-        telegramChannelId: channel.id,
-        telegramChannelNetworkId: dto.telegramChannelNetworkId ?? null,
-        telegramAdProductId: product?.id ?? null,
-        pricingSnapshotId: snapshot?.id ?? null,
-        status: TelegramAdPlacementStatus.DRAFT,
-        scheduledAt: new Date(dto.scheduledAt),
-        timezone: dto.timezone,
-        pricingMode: dto.pricingMode ?? product?.defaultPricingMode ?? TelegramAdPricingMode.CPM,
-        expectedViews: dto.expectedViews ?? expectedViewsResult?.expectedViews ?? 0,
-        quotedCpm: decimalOrNull(dto.quotedCpm),
-        recommendedPrice: decimalOrNull(dto.recommendedPrice) ?? expectedViewsResult?.recommendedPrice ?? decimal(0),
-        minimumPrice: decimalOrNull(dto.minimumPrice) ?? expectedViewsResult?.minimumPrice ?? decimal(0),
-        agreedPrice:
-          decimalOrNull(dto.agreedPrice) ??
-          expectedViewsResult?.recommendedPrice ??
-          decimalOrNull(product?.defaultFixedPrice) ??
-          decimal(0),
-        currency: dto.currency ?? snapshot?.currency ?? product?.currency ?? sale.settlementCurrency,
-        topDurationMinutesSnapshot: product?.topDurationMinutes ?? null,
-        feedDurationHoursSnapshot: product?.feedDurationHours ?? null,
-        deleteAfterHoursSnapshot: product?.deleteAfterHours ?? null,
-        isPermanentSnapshot: product?.isPermanent ?? false,
-        manualPriceReason: dto.manualPriceReason?.trim() || null,
-      },
-    });
+    let placement;
+    try {
+      placement = await this.prisma.telegramAdSalePlacement.create({
+        data: {
+          workspaceId,
+          telegramAdSaleId: sale.id,
+          telegramChannelId: channel.id,
+          telegramChannelNetworkId: dto.telegramChannelNetworkId ?? null,
+          telegramAdProductId: product?.id ?? null,
+          inventoryOpportunityKey: dto.inventoryOpportunityKey?.trim() || null,
+          pricingSnapshotId: snapshot?.id ?? null,
+          status: TelegramAdPlacementStatus.DRAFT,
+          scheduledAt: new Date(dto.scheduledAt),
+          timezone: dto.timezone,
+          pricingMode: dto.pricingMode ?? product?.defaultPricingMode ?? TelegramAdPricingMode.CPM,
+          expectedViews: dto.expectedViews ?? expectedViewsResult?.expectedViews ?? 0,
+          quotedCpm: decimalOrNull(dto.quotedCpm),
+          recommendedPrice: decimalOrNull(dto.recommendedPrice) ?? expectedViewsResult?.recommendedPrice ?? decimal(0),
+          minimumPrice: decimalOrNull(dto.minimumPrice) ?? expectedViewsResult?.minimumPrice ?? decimal(0),
+          agreedPrice:
+            decimalOrNull(dto.agreedPrice) ??
+            expectedViewsResult?.recommendedPrice ??
+            decimalOrNull(product?.defaultFixedPrice) ??
+            decimal(0),
+          currency: dto.currency ?? snapshot?.currency ?? product?.currency ?? sale.settlementCurrency,
+          topDurationMinutesSnapshot: product?.topDurationMinutes ?? null,
+          feedDurationHoursSnapshot: product?.feedDurationHours ?? null,
+          deleteAfterHoursSnapshot: product?.deleteAfterHours ?? null,
+          isPermanentSnapshot: product?.isPermanent ?? false,
+          manualPriceReason: dto.manualPriceReason?.trim() || null,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('This ad opportunity is already booked');
+      }
+      throw error;
+    }
+    this.invalidateAvailabilityCache(workspaceId);
     return this.mapPlacement(placement);
   }
 
@@ -3834,6 +4628,7 @@ export class TelegramAdSalesService {
         ...(dto.telegramPostId === undefined ? {} : { telegramPostId: dto.telegramPostId || null }),
       },
     });
+    this.invalidateAvailabilityCache(workspaceId);
     return {
       ...this.mapPlacement(updated),
       warnings:
@@ -3860,7 +4655,7 @@ export class TelegramAdSalesService {
       dto.currency,
       paidAt,
     );
-    const category = await this.resolveSystemCategory(workspaceId, 'telegram_ad_sales');
+    const category = await this.resolveSystemCategory(workspaceId, 'channel_advertising_revenue');
     const allocationPlacementIds = dto.allocations.map((item) => item.placementId);
     const placements = sale.placements.filter((placement: any) =>
       allocationPlacementIds.includes(placement.id),
@@ -4093,6 +4888,34 @@ export class TelegramAdSalesService {
   ) {
     const workspaceId = await this.workspace(userId);
     const placement = await this.ensurePlacementBelongsToSale(workspaceId, saleId, placementId);
+    if (
+      placement.status === TelegramAdPlacementStatus.CANCELLED ||
+      placement.status === TelegramAdPlacementStatus.COMPLETED
+    ) {
+      throw new BadRequestException('Placement cannot accept a managed post in its current status');
+    }
+    if (!dto.managedPostId && !dto.telegramPostId) {
+      throw new BadRequestException('managedPostId or telegramPostId is required');
+    }
+    if (dto.telegramPostId) {
+      const telegramPost = await this.prisma.telegramPost.findFirst({
+        where: {
+          id: dto.telegramPostId,
+          workspaceId,
+          telegramChannelId: placement.telegramChannelId,
+        },
+      });
+      if (!telegramPost) throw new NotFoundException('Telegram post not found');
+      const updated = await this.prisma.telegramAdSalePlacement.update({
+        where: { id: placementId },
+        data: {
+          telegramPostId: telegramPost.id,
+          status: TelegramAdPlacementStatus.PUBLISHED,
+          publishedAt: telegramPost.postDate,
+        },
+      });
+      return this.mapPlacement(this.appendPlacementFinancials(updated));
+    }
     const managedPost = await this.prisma.telegramManagedPost.findFirst({
       where: {
         id: dto.managedPostId,
@@ -4101,12 +4924,33 @@ export class TelegramAdSalesService {
       },
     });
     if (!managedPost) throw new NotFoundException('Managed post not found');
-    if (managedPost.status === TelegramManagedPostStatus.PUBLISHED) {
-      throw new BadRequestException('Published managed post cannot be reattached');
+    let telegramPostId: string | null = null;
+    if (
+      managedPost.status === TelegramManagedPostStatus.PUBLISHED &&
+      managedPost.telegramMessageIds.length
+    ) {
+      const telegramPost = await this.prisma.telegramPost.findFirst({
+        where: {
+          workspaceId,
+          telegramChannelId: placement.telegramChannelId,
+          telegramMessageId: { in: managedPost.telegramMessageIds },
+        },
+        orderBy: { postDate: 'desc' },
+      });
+      telegramPostId = telegramPost?.id ?? null;
     }
     const updated = await this.prisma.telegramAdSalePlacement.update({
       where: { id: placementId },
-      data: { managedPostId: managedPost.id },
+      data: {
+        managedPostId: managedPost.id,
+        ...(managedPost.status === TelegramManagedPostStatus.PUBLISHED
+          ? {
+              status: TelegramAdPlacementStatus.PUBLISHED,
+              publishedAt: managedPost.publishedAt ?? placement.scheduledAt,
+              telegramPostId,
+            }
+          : {}),
+      },
     });
     return this.mapPlacement(this.appendPlacementFinancials(updated));
   }

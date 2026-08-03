@@ -13,11 +13,43 @@ import type {
 } from "./api";
 
 export type TelegramAdCalendarView = "week" | "month" | "list";
+export type TelegramAdSalesCalendarRangeMode = "week" | "month";
 export type TelegramAdSalesTab =
   | "calendar"
   | "sales"
   | "analytics"
   | "settings";
+
+const AD_SALES_CALENDAR_RANGE_STORAGE_PREFIX = "telegram-ad-sales:calendar-range";
+
+function adSalesCalendarRangeStorageKey(storage: Pick<Storage, "getItem">) {
+  const workspaceId = storage.getItem("selected-workspace-id") || "default";
+  return `${AD_SALES_CALENDAR_RANGE_STORAGE_PREFIX}:${workspaceId}`;
+}
+
+export function readAdSalesCalendarRangeMode(
+  storage: Pick<Storage, "getItem"> | null | undefined,
+): TelegramAdSalesCalendarRangeMode | null {
+  if (!storage) return null;
+  try {
+    const value = storage.getItem(adSalesCalendarRangeStorageKey(storage));
+    return value === "week" || value === "month" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeAdSalesCalendarRangeMode(
+  storage: Pick<Storage, "getItem" | "setItem"> | null | undefined,
+  view: TelegramAdSalesCalendarRangeMode,
+) {
+  if (!storage) return;
+  try {
+    storage.setItem(adSalesCalendarRangeStorageKey(storage), view);
+  } catch {
+    // Storage can be unavailable in restricted browsing modes.
+  }
+}
 
 export type TelegramAdCalendarSlotTone =
   | "AVAILABLE"
@@ -130,36 +162,51 @@ export function autoAllocatePayment(params: {
 
 export function expandNetworkChannelIds(params: {
   selectedChannelIds: string[];
+  allChannelIds?: string[];
   selectedNetworkId?: string | null;
   networks: TelegramChannelNetwork[];
 }): string[] {
-  const ids = new Set(params.selectedChannelIds);
   if (params.selectedNetworkId) {
     const network = params.networks.find(
       (item) => item.id === params.selectedNetworkId,
     );
-    for (const channel of network?.channels ?? []) {
-      ids.add(channel.id);
+    const networkChannelIds = (network?.channels ?? []).map((channel) => channel.id);
+    const networkIds = new Set(networkChannelIds);
+    if (!params.selectedChannelIds.length) {
+      return networkChannelIds;
     }
+    return params.selectedChannelIds.filter((channelId) => networkIds.has(channelId));
   }
-  return [...ids];
+  if (!params.selectedChannelIds.length) {
+    return Array.from(new Set(params.allChannelIds ?? []));
+  }
+  return Array.from(new Set(params.selectedChannelIds));
 }
 
-export function channelLocalDateKey(value: string | Date) {
+export function channelLocalDateKey(value: string | Date, timezone = "Europe/Warsaw") {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
   return `${year}-${month}-${day}`;
 }
 
-export function channelLocalTime(value: string | Date) {
+export function channelLocalTime(value: string | Date, timezone = "Europe/Warsaw") {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 export function availabilityStateTone(
@@ -188,9 +235,12 @@ export function availabilityStateTone(
 export function buildAdCalendarSlots(
   slots: TelegramAdAvailabilitySlot[],
 ): TelegramAdCalendarSlot[] {
-  return slots.map((slot) => ({
+  return slots.map((slot, index) => ({
     ...slot,
-    id: `${slot.channelId}:${slot.scheduledAt}:${slot.productId ?? "default"}`,
+    id:
+      slot.inventoryOpportunityKey ||
+      slot.existingPlacement?.id ||
+      `${slot.channelId}:${slot.scheduledAt}:${slot.productId ?? "default"}:${index}`,
     tone: availabilityStateTone(slot.state),
   }));
 }
@@ -200,7 +250,7 @@ export function groupSlotsByChannelDay(
 ): Map<string, TelegramAdCalendarSlot[]> {
   const grouped = new Map<string, TelegramAdCalendarSlot[]>();
   for (const slot of buildAdCalendarSlots(slots)) {
-    const key = `${slot.channelId}:${channelLocalDateKey(slot.scheduledAt)}`;
+    const key = `${slot.channelId}:${channelLocalDateKey(slot.scheduledAt, slot.timezone)}`;
     const current = grouped.get(key) ?? [];
     current.push(slot);
     grouped.set(key, current);

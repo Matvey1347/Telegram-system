@@ -3,6 +3,7 @@
 import {
   Children,
   PropsWithChildren,
+  forwardRef,
   isValidElement,
   useEffect,
   useLayoutEffect,
@@ -203,14 +204,17 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 
   const selected = options.find((o) => o.value === currentValue);
   const menuOptions = options.filter((o) => !o.hidden);
+  const showSearch = menuOptions.length > 5;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const filteredMenuOptions = menuOptions.filter((option) =>
-    option.label
-      .toLocaleLowerCase()
-      .includes(search.trim().toLocaleLowerCase()),
-  );
+  const filteredMenuOptions = showSearch
+    ? menuOptions.filter((option) =>
+        option.label
+          .toLocaleLowerCase()
+          .includes(search.trim().toLocaleLowerCase()),
+      )
+    : menuOptions;
 
   const pickFirstFilteredOption = () => {
     const normalizedSearch = search.trim();
@@ -274,26 +278,28 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       </button>
       {open ? (
         <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
-          <div className="border-b border-neutral-800 p-2">
-            <input
-              autoFocus
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setOpen(false);
-                  setSearch("");
-                  return;
-                }
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  pickFirstFilteredOption();
-                }
-              }}
-              placeholder="Search..."
-              className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
-            />
-          </div>
+          {showSearch ? (
+            <div className="border-b border-neutral-800 p-2">
+              <input
+                autoFocus
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setOpen(false);
+                    setSearch("");
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    pickFirstFilteredOption();
+                  }
+                }}
+                placeholder="Search..."
+                className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2.5 py-2 text-sm text-white outline-none placeholder:text-neutral-500 focus:border-blue-600"
+              />
+            </div>
+          ) : null}
           <div className="max-h-60 overflow-auto">
             {filteredMenuOptions.map((opt) => (
               <button
@@ -367,6 +373,7 @@ export function CurrencySelect({
 type MultiSelectOption = {
   value: string;
   label: string;
+  selectedLabel?: string;
   iconUrl?: string;
   iconEmoji?: string;
   iconFallback?: string;
@@ -380,6 +387,7 @@ export function MultiSelect({
   searchPlaceholder = "Search...",
   disabled = false,
   className = "",
+  allSelectedLabel,
 }: {
   value: string[];
   onChange: (value: string[]) => void;
@@ -388,6 +396,7 @@ export function MultiSelect({
   searchPlaceholder?: string;
   disabled?: boolean;
   className?: string;
+  allSelectedLabel?: string;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -408,6 +417,7 @@ export function MultiSelect({
 
   const selectedSet = useMemo(() => new Set(value), [value]);
   const selectedOptions = options.filter((option) => selectedSet.has(option.value));
+  const isAllSelected = options.length > 0 && selectedOptions.length === options.length;
   const filteredOptions = options.filter((option) =>
     option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
@@ -435,6 +445,9 @@ export function MultiSelect({
       >
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
           {selectedOptions.length ? (
+            isAllSelected && allSelectedLabel ? (
+              <span className="text-neutral-100">{allSelectedLabel}</span>
+            ) : (
             selectedOptions.map((option) => (
               <span
                 key={option.value}
@@ -445,9 +458,10 @@ export function MultiSelect({
                   iconEmoji={option.iconEmoji}
                   fallback={option.iconFallback}
                 />
-                <span className="truncate">{option.label}</span>
+                <span className="truncate">{option.selectedLabel ?? option.label}</span>
               </span>
             ))
+            )
           ) : (
             <span className="text-neutral-400">{placeholder}</span>
           )}
@@ -1014,7 +1028,8 @@ export function CustomSelect({
     null,
   );
   const selected = options.find((o) => o.value === value);
-  const filteredOptions = searchable
+  const showSearch = searchable && options.length > 5;
+  const filteredOptions = showSearch
     ? options.filter((option) =>
         option.label
           .toLocaleLowerCase()
@@ -1143,7 +1158,7 @@ export function CustomSelect({
               className={`z-[120] overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl ${dropdownClassName}`.trim()}
               style={dropdownStyle}
             >
-              {searchable ? (
+              {showSearch ? (
                 <div className="border-b border-neutral-800 p-2">
                   <input
                     autoFocus
@@ -1290,27 +1305,32 @@ export function IconButton({
   );
 }
 
-export function TooltipBubble({
-  children,
-  side = "top",
-  align = "center",
-  className = "",
-}: {
+export const TooltipBubble = forwardRef<HTMLSpanElement, {
   children: React.ReactNode;
   side?: "top" | "bottom";
   align?: "left" | "center" | "right";
   className?: string;
-}) {
+  style?: React.CSSProperties;
+  floating?: boolean;
+}>(function TooltipBubble({
+  children,
+  side = "top",
+  align = "center",
+  className = "",
+  style,
+  floating = false,
+}, ref) {
   const positionClass =
-    side === "top"
+    floating ? "" : side === "top"
       ? "bottom-full mb-3"
       : "top-full mt-3";
   const alignClass =
-    align === "left"
+    floating ? "" : align === "left"
       ? "left-0"
       : align === "right"
         ? "right-0"
         : "left-1/2 -translate-x-1/2";
+  const layerClass = floating ? "fixed" : "absolute";
   const arrowAnchorClass =
     align === "left"
       ? "left-4"
@@ -1324,7 +1344,9 @@ export function TooltipBubble({
 
   return (
     <span
-      className={`pointer-events-none absolute z-50 w-max max-w-[calc(100vw-2rem)] rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs leading-relaxed text-neutral-100 shadow-xl ${positionClass} ${alignClass} ${className}`}
+      ref={ref}
+      style={style}
+      className={`pointer-events-none ${layerClass} z-50 w-max max-w-[calc(100vw-2rem)] rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs leading-relaxed text-neutral-100 shadow-xl ${positionClass} ${alignClass} ${className}`}
     >
       {children}
       <span
@@ -1333,7 +1355,7 @@ export function TooltipBubble({
       />
     </span>
   );
-}
+});
 
 export function Tooltip({
   content,
@@ -1348,16 +1370,90 @@ export function Tooltip({
   align?: "left" | "center" | "right";
   className?: string;
 }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const bubbleRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+
+  useEffect(() => setMounted(true), []);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !mounted) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const left =
+      align === "left"
+        ? rect.left
+        : align === "right"
+          ? rect.right
+          : rect.left + rect.width / 2;
+    const top = side === "top" ? rect.top - 12 : rect.bottom + 12;
+    setPosition({
+      left: Math.max(12, Math.min(window.innerWidth - 12, left)),
+      top,
+    });
+  }, [align, mounted, open, side]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (triggerRef.current?.contains(target)) return;
+      if (bubbleRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open]);
+
+  const transform =
+    align === "left"
+      ? "translateX(0)"
+      : align === "right"
+        ? "translateX(-100%)"
+        : "translateX(-50%)";
+
   return (
-    <span className={`group relative inline-flex ${className}`}>
+    <span
+      ref={triggerRef}
+      className={`inline-flex ${className}`}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+      onClick={() => setOpen((current) => !current)}
+    >
       {children}
-      <TooltipBubble
-        side={side}
-        align={align}
-        className="hidden whitespace-normal group-hover:block group-focus-within:block"
-      >
-        {content}
-      </TooltipBubble>
+      {mounted && open
+        ? createPortal(
+            <TooltipBubble
+              ref={bubbleRef}
+              side={side}
+              align={align}
+              floating
+              className="whitespace-normal"
+              style={{
+                left: position.left,
+                top: position.top,
+                transform:
+                  side === "top"
+                    ? `${transform} translateY(-100%)`
+                    : transform,
+              }}
+            >
+              {content}
+            </TooltipBubble>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }

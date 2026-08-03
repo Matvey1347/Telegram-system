@@ -75,19 +75,36 @@ export class UpdateTelegramAdProductDto {
 }
 
 export class UpdateTelegramAdPolicyDto {
-  @IsString() timezone!: string;
+  @IsOptional() @IsString() timezone?: string;
   @IsOptional() @IsBoolean() autoFrequencyEnabled?: boolean;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) expectedOrganicPostsPerDay?: number | null;
-  @Type(() => Number) @IsInt() @Min(1) organicPostsPerAdSlot!: number;
-  @Type(() => Number) @IsInt() @Min(0) maxAdsPerDay!: number;
-  @Type(() => Number) @IsInt() @Min(0) minHoursBetweenAds!: number;
-  @Type(() => Number) @IsInt() @Min(0) minDaysBetweenAds!: number;
-  @IsEnum(TelegramAdSlotStrategy) slotStrategy!: TelegramAdSlotStrategy;
+  @IsOptional() @IsBoolean() useWorkspaceDefault?: boolean;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) organicPostsPerAdSlot?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) maxAdsPerDay?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) minHoursBetweenAds?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) minDaysBetweenAds?: number;
+  @IsOptional() @IsEnum(TelegramAdSlotStrategy) slotStrategy?: TelegramAdSlotStrategy;
   @IsOptional()
   @IsArray()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { each: true })
   fallbackSlotTimes?: string[];
   @IsOptional() @IsBoolean() allowManualSlots?: boolean;
+}
+
+export class UpdateTelegramAdSalesWorkspaceSettingsDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) defaultOrganicPostsPerAdSlot?: number;
+}
+
+export class UpdateTelegramAdChannelPricingDto {
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) baseCpm?: number | null;
+  @IsOptional() @Transform(normalizeCurrency) @IsString() @Matches(/^[A-Z]{3}$/) currency?: string;
+}
+
+export class UpdateTelegramAdSalesMemberPreferencesDto {
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) selectedChannelIds?: string[];
+  @IsOptional() @ValidateIf((_, value) => value !== null) @IsString() selectedNetworkId?: string | null;
+  @IsOptional() @IsIn(['week', 'month', 'list']) calendarView?: string;
+  @IsOptional() @IsBoolean() initialized?: boolean;
 }
 
 export class RecommendTelegramAdPolicyDto {
@@ -116,6 +133,8 @@ export class TelegramAdAvailabilityQueryDto {
   @IsOptional() @IsArray() @ArrayMaxSize(50) @IsString({ each: true }) channelIds?: string[];
   @IsOptional() @IsString() networkId?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) productIds?: string[];
+  /** A one-off client nonce used only by the explicit Refresh action. */
+  @IsOptional() @IsString() cacheBust?: string;
 }
 
 export class TelegramAdSalesQueryDto extends PaginationQueryDto {
@@ -265,8 +284,26 @@ export class TelegramAdCrmMemberSettingsDto {
 }
 
 export class TelegramAdAnalyticsQueryDto {
-  @IsOptional() @IsDateString() dateFrom?: string;
-  @IsOptional() @IsDateString() dateTo?: string;
+  @IsOptional()
+  @Transform(({ value, obj }: { value: unknown; obj?: Record<string, unknown> }) =>
+    typeof value === 'string'
+      ? value
+      : typeof obj?.from === 'string'
+        ? obj.from
+        : value,
+  )
+  @IsDateString()
+  dateFrom?: string;
+  @IsOptional()
+  @Transform(({ value, obj }: { value: unknown; obj?: Record<string, unknown> }) =>
+    typeof value === 'string'
+      ? value
+      : typeof obj?.to === 'string'
+        ? obj.to
+        : value,
+  )
+  @IsDateString()
+  dateTo?: string;
   @IsOptional() @IsString() timezone?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(366) rangeDays?: number;
   @IsOptional() @IsIn(['PREVIOUS_PERIOD', 'PREVIOUS_30_DAYS', 'PREVIOUS_MONTH', 'CUSTOM', 'NONE']) compareMode?: 'PREVIOUS_PERIOD' | 'PREVIOUS_30_DAYS' | 'PREVIOUS_MONTH' | 'CUSTOM' | 'NONE';
@@ -379,6 +416,7 @@ export class CreateTelegramAdSalePlacementDto {
   @IsString() telegramChannelId!: string;
   @IsOptional() @IsString() telegramChannelNetworkId?: string | null;
   @IsOptional() @IsString() telegramAdProductId?: string | null;
+  @IsOptional() @IsString() inventoryOpportunityKey?: string | null;
   @IsOptional() @IsString() pricingSnapshotId?: string | null;
   @IsDateString() scheduledAt!: string;
   @IsString() timezone!: string;
@@ -442,7 +480,8 @@ export class CreatePlacementManagedPostDto {
 }
 
 export class AttachPlacementManagedPostDto {
-  @IsString() managedPostId!: string;
+  @IsOptional() @IsString() managedPostId?: string;
+  @IsOptional() @IsString() telegramPostId?: string;
 }
 
 export class SchedulePlacementDto {
