@@ -2,13 +2,13 @@ import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
-import { SaleWizardModal } from "./sale-wizard-modal";
+import { AdSaleModal } from "./ad-sale-modal";
 
-function renderModal(overrides: Partial<ComponentProps<typeof SaleWizardModal>> = {}) {
+function renderModal(overrides: Partial<ComponentProps<typeof AdSaleModal>> = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const props: ComponentProps<typeof SaleWizardModal> = {
+  const props: ComponentProps<typeof AdSaleModal> = {
     open: true,
     onClose: vi.fn(),
     accounts: [
@@ -78,12 +78,12 @@ function renderModal(overrides: Partial<ComponentProps<typeof SaleWizardModal>> 
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <SaleWizardModal {...props} />
+      <AdSaleModal {...props} />
     </QueryClientProvider>,
   );
 }
 
-describe("SaleWizardModal", () => {
+describe("AdSaleModal", () => {
   it("uses one toggled field for network or channel selection", () => {
     renderModal();
 
@@ -148,22 +148,48 @@ describe("SaleWizardModal", () => {
     expect(screen.getByDisplayValue("12:00")).toBeTruthy();
   });
 
-  it("finishes loading published posts instead of leaving the placement skeleton visible", async () => {
-    const { container } = renderModal({
-      onLoadPublishedPosts: vi.fn().mockResolvedValue([
-        {
-          id: "post-1",
-          title: "Published campaign post",
-          publishedAt: "2026-08-02T10:00:00.000Z",
-        },
-      ]),
+  it("loads published posts on open and uses the selected post time", async () => {
+    const onLoadPublishedPosts = vi.fn().mockResolvedValue([
+      {
+        id: "post-1",
+        title: "Published campaign post",
+        publishedAt: "2026-08-02T17:00:00+02:00",
+      },
+    ]);
+    renderModal({
+      onLoadPublishedPosts,
     });
 
-    await screen.findByText("Advertising post");
+    expect(await screen.findByText("Advertising post")).toBeTruthy();
+    expect(onLoadPublishedPosts).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("12:00")).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "Not linked to a published post" }));
-    expect(await screen.findByRole("button", { name: /Published campaign post/ })).toBeTruthy();
-    await waitFor(() => {
-      expect(container.querySelector(".animate-pulse")).toBeNull();
+    expect(onLoadPublishedPosts).toHaveBeenCalledTimes(1);
+
+    const postOption = await screen.findByRole("button", {
+      name: /17:00 · Published campaign post/,
     });
+    fireEvent.click(postOption);
+
+    expect(screen.getByDisplayValue("17:00")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /17:00 · Published campaign post/ })).toBeTruthy();
+  });
+
+  it("keeps the post selector available and retries after a loading failure", async () => {
+    const onLoadPublishedPosts = vi.fn().mockRejectedValue(new Error("Telegram unavailable"));
+    renderModal({ onLoadPublishedPosts });
+
+    const selector = await screen.findByRole("button", {
+      name: "Not linked to a published post",
+    });
+    fireEvent.click(selector);
+    await waitFor(() => expect(screen.queryByText("Loading posts...")).toBeNull());
+
+    fireEvent.click(selector);
+    expect(onLoadPublishedPosts).toHaveBeenCalledTimes(1);
+    fireEvent.click(selector);
+    await waitFor(() => expect(onLoadPublishedPosts).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Advertising post")).toBeTruthy();
   });
 });

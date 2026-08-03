@@ -18,6 +18,7 @@ import { accountDisplayName } from "@/lib/account-display";
 import {
   buildUnderpricingSummary,
   channelLocalDateKey,
+  channelLocalTime,
   expandNetworkChannelIds,
   getChannelOptionLabel,
   toNumber,
@@ -111,7 +112,7 @@ function createPlacementDraft(params: {
   };
 }
 
-export function SaleWizardModal({
+export function AdSaleModal({
   open,
   onClose,
   accounts,
@@ -331,36 +332,36 @@ export function SaleWizardModal({
     });
   }, [effectiveChannelIds, productsByChannelId, workspaceTimezone]);
 
-  useEffect(() => {
-    if (!open) return;
-    for (const placement of placements) {
-      const cacheKey = `${placement.channelId}:${placement.date}`;
-      if (publishedPostRequestsRef.current.has(cacheKey)) continue;
-      const requestToken = Symbol(cacheKey);
-      publishedPostRequestsRef.current.set(cacheKey, requestToken);
-      setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: true }));
-      void onLoadPublishedPosts({
+  const loadPublishedPosts = async (placement: SalePlacementDraft) => {
+    const cacheKey = `${placement.channelId}:${placement.date}`;
+    if (publishedPostRequestsRef.current.has(cacheKey)) return;
+
+    const requestToken = Symbol(cacheKey);
+    let requestFailed = false;
+    publishedPostRequestsRef.current.set(cacheKey, requestToken);
+    setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: true }));
+
+    try {
+      const posts = await onLoadPublishedPosts({
         channelId: placement.channelId,
         date: placement.date,
         timezone: placement.timezone,
-      })
-        .then((posts) => {
-          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
-            setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: posts }));
-          }
-        })
-        .catch(() => {
-          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
-            setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: [] }));
-          }
-        })
-        .finally(() => {
-          if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
-            setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: false }));
-          }
-        });
+      });
+      if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+        setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: posts }));
+      }
+    } catch {
+      requestFailed = true;
+      if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+        setPublishedPostsByPlacement((current) => ({ ...current, [cacheKey]: [] }));
+      }
+    } finally {
+      if (publishedPostRequestsRef.current.get(cacheKey) === requestToken) {
+        setPostsLoadingByPlacement((current) => ({ ...current, [cacheKey]: false }));
+        if (requestFailed) publishedPostRequestsRef.current.delete(cacheKey);
+      }
     }
-  }, [onLoadPublishedPosts, open, placements]);
+  };
 
   const quoteRequests = useMemo<QuoteRequestDraft[]>(
     () =>
@@ -501,7 +502,7 @@ export function SaleWizardModal({
     try {
       const normalizedContact = advertiserContact.trim();
       const derivedAdvertiserName = selectedAdvertiser?.displayName || normalizedContact;
-      const result = await onSubmit({
+      const submission = onSubmit({
         advertiserId: selectedAdvertiserId,
         createAdvertiser: !selectedAdvertiserId,
         advertiserName: derivedAdvertiserName,
@@ -529,6 +530,8 @@ export function SaleWizardModal({
           telegramPostId: placement.telegramPostId ?? null,
         })),
       });
+      onClose();
+      const result = await submission;
 
       if (result.conflicts?.length) {
         const byPlacementId = new Map(
@@ -546,8 +549,6 @@ export function SaleWizardModal({
         setSubmissionError("Some placements conflict with existing reservations.");
         return;
       }
-
-      onClose();
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : "Could not create sale");
     }
@@ -881,36 +882,61 @@ export function SaleWizardModal({
                     {(() => {
                       const postsKey = `${placement.channelId}:${placement.date}`;
                       const posts = publishedPostsByPlacement[postsKey] ?? [];
-                      return postsLoadingByPlacement[postsKey] ? (
-                        <div className="mt-3 flex items-center gap-3">
-                          <Skeleton className="h-4 w-28" />
-                          <Skeleton className="h-10 flex-1" />
-                        </div>
-                      ) : posts.length ? (
+                      const postsLoading = postsLoadingByPlacement[postsKey] ?? false;
+                      return (
                         <div className="mt-3">
                           <FormField label="Advertising post">
-                            <Select
-                              value={placement.telegramPostId ?? ""}
-                              onChange={(event) =>
-                                setPlacements((current) =>
-                                  current.map((item) =>
-                                    item.key === placement.key
-                                      ? { ...item, telegramPostId: event.target.value || null }
-                                      : item,
-                                  ),
-                                )
-                              }
+                            <div
+                              onClickCapture={(event) => {
+                                const trigger = event.currentTarget.querySelector("button");
+                                const clickedButton = (event.target as HTMLElement).closest("button");
+                                const selectorIsClosed =
+                                  event.currentTarget.querySelectorAll("button").length === 1;
+                                if (clickedButton === trigger && selectorIsClosed) {
+                                  void loadPublishedPosts(placement);
+                                }
+                              }}
                             >
-                              <option value="">Not linked to a published post</option>
-                              {posts.map((post) => (
-                                <option key={post.id} value={post.id}>
-                                  {new Date(post.publishedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {post.title}
-                                </option>
-                              ))}
-                            </Select>
+                              <Select
+                                value={placement.telegramPostId ?? ""}
+                                onChange={(event) => {
+                                  const selectedPost = posts.find(
+                                    (post) => post.id === event.target.value,
+                                  );
+                                  setPlacements((current) =>
+                                    current.map((item) =>
+                                      item.key === placement.key
+                                        ? {
+                                            ...item,
+                                            telegramPostId: selectedPost?.id ?? null,
+                                            time: selectedPost
+                                              ? channelLocalTime(
+                                                  selectedPost.publishedAt,
+                                                  item.timezone,
+                                                )
+                                              : item.time,
+                                          }
+                                        : item,
+                                    ),
+                                  );
+                                }}
+                              >
+                                <option value="">Not linked to a published post</option>
+                                {postsLoading ? (
+                                  <option value="__loading" disabled>
+                                    Loading posts...
+                                  </option>
+                                ) : null}
+                                {posts.map((post) => (
+                                  <option key={post.id} value={post.id}>
+                                    {channelLocalTime(post.publishedAt, placement.timezone)} · {post.title}
+                                  </option>
+                                ))}
+                              </Select>
+                            </div>
                           </FormField>
                         </div>
-                      ) : null;
+                      );
                     })()}
 
                     {priceSummary.isBelowMinimum ? (

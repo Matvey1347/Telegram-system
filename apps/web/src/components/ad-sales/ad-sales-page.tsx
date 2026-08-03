@@ -59,7 +59,7 @@ import {
   type SaleActionKey,
 } from "@/components/ad-sales/sale-status-actions";
 import { RegisterPaymentModal } from "@/components/ad-sales/register-payment-modal";
-import { SaleWizardModal } from "@/components/ad-sales/sale-wizard-modal";
+import { AdSaleModal } from "@/components/ad-sales/ad-sale-modal";
 import { AdSalesAnalyticsPanel } from "@/components/ad-sales/ad-sales-analytics-panel";
 import {
   accountsApi,
@@ -386,7 +386,7 @@ export function AdSalesPage() {
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { pushToast } = useAppToast();
+  const { pushToast, startOperation } = useAppToast();
   const [tab, setTab] = useState<TelegramAdSalesTab>(() => routeTabFromPathname(pathname));
   const [calendarView, setCalendarView] = useState<SlotsLayoutView>("calendar");
   const [calendarRangeMode, setCalendarRangeMode] =
@@ -408,8 +408,8 @@ export function AdSalesPage() {
   const [underpricedOnly, setUnderpricedOnly] = useState(false);
   const [unpaidOnly, setUnpaidOnly] = useState(false);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
-  const [saleWizardOpen, setSaleWizardOpen] = useState(false);
-  const [wizardSeedSlot, setWizardSeedSlot] = useState<TelegramAdAvailabilitySlot | null>(null);
+  const [adSaleModalOpen, setAdSaleModalOpen] = useState(false);
+  const [adSaleSeedSlot, setAdSaleSeedSlot] = useState<TelegramAdAvailabilitySlot | null>(null);
   const [paymentSaleId, setPaymentSaleId] = useState<string | null>(null);
   const [postEditorPlacement, setPostEditorPlacement] = useState<{
     saleId: string;
@@ -728,7 +728,7 @@ export function AdSalesPage() {
     queries: effectiveChannelIds.map((channelId) => ({
       queryKey: telegramAdSalesKeys.channelProducts(channelId),
       queryFn: () => telegramAdSalesApi.listChannelProducts(channelId),
-      enabled: tab === "settings" || saleWizardOpen,
+      enabled: tab === "settings" || adSaleModalOpen,
       staleTime: 60 * 1000,
     })),
   });
@@ -935,8 +935,8 @@ export function AdSalesPage() {
     }
   };
 
-  async function handleCreateSale(payload: Parameters<NonNullable<React.ComponentProps<typeof SaleWizardModal>["onSubmit"]>>[0]) {
-    const seedSlot = wizardSeedSlot;
+  async function handleCreateSale(payload: Parameters<NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>>[0]) {
+    const seedSlot = adSaleSeedSlot;
     const sale = await telegramAdSalesApi.createSale({
       advertiserId: payload.advertiserId,
       createAdvertiser: payload.createAdvertiser,
@@ -1062,12 +1062,35 @@ export function AdSalesPage() {
           );
         }
       }
-      pushToast("Ad sale reserved successfully.", "success");
       return { sale: reserved };
     } catch (error) {
       await invalidateTelegramAdSalesQueries(queryClient, {
         saleId: refreshed.id,
         channelIds: refreshed.placements.map((placement) => placement.telegramChannelId),
+      });
+      throw error;
+    }
+  }
+
+  async function submitAdSale(
+    payload: Parameters<NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>>[0],
+  ) {
+    const operation = startOperation({
+      id: `ad-sale-create:${Date.now()}`,
+      title: "Creating ad sale",
+      message: "Saving the sale and reserving its placements...",
+    });
+    try {
+      const result = await handleCreateSale(payload);
+      operation.succeed({
+        title: "Ad sale created",
+        message: "The ad sale was created and reserved successfully.",
+      });
+      return result;
+    } catch (error) {
+      operation.fail({
+        title: "Ad sale creation failed",
+        message: error instanceof Error ? error.message : "Could not create the ad sale.",
       });
       throw error;
     }
@@ -1141,8 +1164,8 @@ export function AdSalesPage() {
             <Button
               className="shrink-0 whitespace-nowrap xl:self-end"
               onClick={() => {
-                setWizardSeedSlot(null);
-                setSaleWizardOpen(true);
+                setAdSaleSeedSlot(null);
+                setAdSaleModalOpen(true);
               }}
             >
               <span className="inline-flex items-center gap-2">
@@ -1265,8 +1288,8 @@ export function AdSalesPage() {
           sales={salesQuery.data?.items ?? []}
           daySummaries={availabilityDaySummaries}
           onCreateFromSlot={(slot) => {
-            setWizardSeedSlot(slot);
-            setSaleWizardOpen(true);
+            setAdSaleSeedSlot(slot);
+            setAdSaleModalOpen(true);
           }}
         />
       ) : null}
@@ -1386,18 +1409,18 @@ export function AdSalesPage() {
         />
       ) : null}
 
-      <SaleWizardModal
-        open={saleWizardOpen}
-        onClose={() => setSaleWizardOpen(false)}
+      <AdSaleModal
+        open={adSaleModalOpen}
+        onClose={() => setAdSaleModalOpen(false)}
         accounts={accounts as Account[]}
         channels={saleableChannels}
         networks={saleableNetworks as TelegramChannelNetwork[]}
         productsByChannelId={productsByChannelId}
         defaultCurrency={settings?.primaryCurrency || "USD"}
         workspaceTimezone={workspaceTimezone}
-        initialChannelId={wizardSeedSlot?.channelId ?? null}
-        initialScheduledAt={wizardSeedSlot?.scheduledAt ?? null}
-        initialInventoryOpportunityKey={wizardSeedSlot?.inventoryOpportunityKey ?? null}
+        initialChannelId={adSaleSeedSlot?.channelId ?? null}
+        initialScheduledAt={adSaleSeedSlot?.scheduledAt ?? null}
+        initialInventoryOpportunityKey={adSaleSeedSlot?.inventoryOpportunityKey ?? null}
         onSearchAdvertisers={(query) => telegramAdSalesApi.searchAdvertisers({ q: query, limit: 5 })}
         onRequestQuote={async ({ channelId, productId, pricingMode, currency }) =>
           telegramAdSalesApi.createQuote({
@@ -1426,7 +1449,7 @@ export function AdSalesPage() {
             publishedAt: post.postDate,
           }));
         }}
-        onSubmit={handleCreateSale}
+        onSubmit={submitAdSale}
       />
 
       <RegisterPaymentModal
