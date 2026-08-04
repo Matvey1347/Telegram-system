@@ -51,5 +51,10 @@ export async function invalidateTelegramChannelQueries(
     queryClient.invalidateQueries({
       queryKey: ["telegram-managed-post-link-targets", channelId],
     }),
+    queryClient.invalidateQueries({ queryKey: ["ad-campaigns"] }),
+    queryClient.invalidateQueries({ queryKey: ["ad-campaigns-performance"] }),
+    queryClient.invalidateQueries({
+      queryKey: ["telegram-channel-campaigns", channelId],
+    }),
   ]);
 }

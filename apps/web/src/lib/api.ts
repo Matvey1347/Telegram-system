@@ -1496,6 +1496,78 @@ export type AdCampaignAnalyticsFields = AdCampaignAnalyticsInput & {
   analyticsLastAutoSyncedAt?: string | null;
   analyticsLastManualSyncedAt?: string | null;
 };
+export type AdmissionAnalyticsDataQuality =
+  | "GOOD"
+  | "PARTIAL"
+  | "INSUFFICIENT"
+  | "SUSPICIOUS";
+export type AdmissionAnalyticsDetectionMode =
+  | "EXACT_DELTA"
+  | "BOOTSTRAPPED_CUMULATIVE";
+export type AdmissionAnalyticsBaselineMethod =
+  | "PRE_ADMISSION"
+  | "EARLIEST_OBSERVED"
+  | "UNAVAILABLE";
+export type AdCampaignAdmissionViewPoint = {
+  collectedAt: string;
+  avgViews: number | null;
+  cumulativeAvgViewsUplift: number | null;
+  incrementalAvgViewsUplift: number | null;
+  estimatedActiveSubscribers: number | null;
+  activationRate: number | null;
+};
+export type AdCampaignAdmissionLatestBatch = {
+  id: string;
+  status: "ACTIVE" | "CLOSED";
+  detectionMode: AdmissionAnalyticsDetectionMode;
+  dataQuality: AdmissionAnalyticsDataQuality;
+  dataQualityReason: string | null;
+  analysisStartedAt: string;
+  firstObservedAt: string;
+  endedAt: string | null;
+  timeBoundarySource?: string;
+  releasedSubscribersCount: number;
+  baselineMethod: AdmissionAnalyticsBaselineMethod;
+  baselineAvgViews: number | null;
+  currentAvgViews: number | null;
+  cumulativeAvgViewsUplift: number | null;
+  incrementalAvgViewsUplift: number | null;
+  estimatedActiveSubscribers: number | null;
+  activationRate: number | null;
+  trackedPostsCount: number;
+  originalTrackedPostsCount: number;
+  lastCollectedAt: string | null;
+};
+export type AdCampaignAdmissionViewAnalytics = {
+  batchesCount: number;
+  latestBatch: AdCampaignAdmissionLatestBatch | null;
+  points: AdCampaignAdmissionViewPoint[];
+};
+export type AdCampaignAdmissionAnalyticsHistory =
+  AdCampaignAdmissionViewAnalytics & {
+    campaign: { id: string; title: string };
+    batches: Array<
+      AdCampaignAdmissionLatestBatch & {
+        startedAt: string;
+        timeBoundarySource: string;
+        joinedBefore: number;
+        joinedAfter: number;
+        requestedBefore: number;
+        requestedAfter: number;
+        sourceLinks: unknown;
+        baselineSnapshotAt: string | null;
+        baselineAvgReactions: number | null;
+        points: Array<
+          AdCampaignAdmissionViewPoint & {
+            avgReactions: number | null;
+            trackedPostsCount: number;
+            dataQuality: AdmissionAnalyticsDataQuality;
+            dataQualityReason: string | null;
+          }
+        >;
+      }
+    >;
+  };
 export type AdCampaign = AdCampaignAnalyticsFields & {
   id: string;
   title: string;
@@ -1533,6 +1605,7 @@ export type AdCampaign = AdCampaignAnalyticsFields & {
   assignedMember?: WorkspaceMember | null;
   hypothesisLinks?: AdCampaignHypothesisLink[];
   inviteLinkHistory?: AdCampaignInviteLinkHistory | null;
+  admissionViewAnalytics?: AdCampaignAdmissionViewAnalytics | null;
   analytics?: {
     joinedCount: number;
     requestedCount?: number;
@@ -2889,6 +2962,12 @@ export const adCampaignsApi = {
       await api.get<AdCampaignInviteLinkHistory>(
         `/ad-campaigns/${id}/invite-link-history`,
         { params: { limit } },
+      )
+    ).data,
+  admissionViewAnalytics: async (id: string) =>
+    (
+      await api.get<AdCampaignAdmissionAnalyticsHistory>(
+        `/ad-campaigns/${id}/admission-view-analytics`,
       )
     ).data,
 };

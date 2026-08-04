@@ -57,6 +57,14 @@ export class AdCampaignsController {
     return this.service.inviteLinkHistory(user.sub, id, Number(limit || 120));
   }
 
+  @Get(':id/admission-view-analytics')
+  admissionViewAnalytics(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+  ) {
+    return this.service.admissionViewAnalytics(user.sub, id);
+  }
+
   @Patch(':id/analytics-input')
   updateAnalyticsInput(
     @CurrentUser() user: JwtUser,

@@ -1,13 +1,18 @@
 "use client";
 
-import { type MouseEventHandler, useMemo, useState } from "react";
+import { type MouseEventHandler, type ReactNode, useMemo, useState } from "react";
 import { TrendingUp } from "lucide-react";
+import { Line, LineChart, ResponsiveContainer } from "recharts";
+import { CampaignAdmissionViewAnalyticsModal } from "@/components/ad-campaigns/campaign-admission-view-analytics-modal";
 import { CampaignInviteLinkHistoryModal } from "@/components/ad-campaigns/campaign-invite-link-history-modal";
 import { PromoPreviewModal } from "@/components/ad-campaigns/promo-preview-modal";
 import { IconAvatar } from "@/components/icons/icon-avatar";
-import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
 import { IconButton } from "@/components/ui/primitives";
 import { InviteLinkPreviewModal } from "@/components/telegram/invite-link-preview-modal";
+import {
+  MetricPreviewLabel,
+  resolveMetricPreviewIcon,
+} from "@/lib/metric-preview-icons";
 import { convertMoney, formatMoney } from "@/lib/money";
 import type {
   AdCampaign,
@@ -502,6 +507,7 @@ function PerformanceCell({
   onShowKpiTooltip,
   onHideKpiTooltip,
   onOpenHistory,
+  onOpenAdmissionAnalytics,
 }: {
   campaign: AdCampaign;
   cost: number;
@@ -520,6 +526,7 @@ function PerformanceCell({
   onShowKpiTooltip: (channel: TelegramChannel | undefined, element: HTMLElement) => void;
   onHideKpiTooltip: () => void;
   onOpenHistory?: () => void;
+  onOpenAdmissionAnalytics?: () => void;
 }) {
   const kpiTextClass = kpiMetricTextClass(kpiStatus);
   const cardClass = performanceCardClass(kpiStatus);
@@ -680,6 +687,170 @@ function PerformanceCell({
           </div>
         </div>
       ) : null}
+      <AdmissionViewUpliftBlock
+        campaign={campaign}
+        onOpenDetails={onOpenAdmissionAnalytics}
+      />
+    </div>
+  );
+}
+
+function AdmissionViewUpliftBlock({
+  campaign,
+  onOpenDetails,
+}: {
+  campaign: AdCampaign;
+  onOpenDetails?: () => void;
+}) {
+  const analytics = campaign.admissionViewAnalytics;
+  const batch = analytics?.latestBatch;
+  if (!batch) return null;
+  const isBootstrap = batch.detectionMode === "BOOTSTRAPPED_CUMULATIVE";
+  const isObserved = batch.baselineMethod === "EARLIEST_OBSERVED";
+  const hasBaseline = batch.baselineAvgViews != null;
+  const currentAvgViews = batch.currentAvgViews;
+  const uplift = batch.cumulativeAvgViewsUplift;
+  const incremental = batch.incrementalAvgViewsUplift;
+  const qualityWarning =
+    batch.dataQuality !== "GOOD" ? batch.dataQualityReason || batch.dataQuality : null;
+  const sparklinePoints = (analytics?.points || [])
+    .map((point, index) => ({
+      index,
+      value: point.cumulativeAvgViewsUplift ?? 0,
+    }))
+    .filter((point) => Number.isFinite(point.value));
+
+  return (
+    <div className="mt-3 border-t border-slate-800 pt-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <MetricPreviewLabel
+            label="View uplift"
+            metricKey="views"
+            className="text-xs font-semibold text-slate-100"
+          />
+          <span
+            className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] uppercase text-slate-400"
+            title={
+              isBootstrap
+                ? "Reconstructed from the first available invite-link snapshot."
+                : "Detected from a positive joined-count delta between two invite-link snapshots."
+            }
+          >
+            {isBootstrap ? "Reconstructed" : "Exact"}
+          </span>
+        </div>
+        {onOpenDetails ? (
+          <button
+            type="button"
+            onClick={onOpenDetails}
+            className="text-xs text-slate-300 hover:text-white"
+          >
+            Details
+          </button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-[1fr_auto] gap-3">
+        <div className="space-y-1.5 text-xs text-slate-400">
+          <MetricRow
+            label={isBootstrap ? "Joined before first tracked sync" : "Joined"}
+            metricKey="joined"
+          >
+            <span className="text-slate-100">
+              +{formatMetric(batch.releasedSubscribersCount)}
+            </span>
+          </MetricRow>
+          {hasBaseline && currentAvgViews != null ? (
+            <MetricRow
+              label={isObserved ? "Observed avg views" : "Avg views"}
+              metricKey="views"
+            >
+              <span className="text-slate-100">
+                {formatMetric(batch.baselineAvgViews)} → {formatMetric(currentAvgViews)}
+              </span>
+            </MetricRow>
+          ) : null}
+          {uplift != null ? (
+            <MetricRow
+              label={isObserved ? "Observed view growth" : "View uplift"}
+              metricKey="views"
+            >
+              <span className="text-emerald-200">+{formatMetric(uplift)}</span>
+              {incremental != null ? (
+                <span className="text-slate-500"> · Last sync +{formatMetric(incremental)}</span>
+              ) : null}
+            </MetricRow>
+          ) : (
+            <p>View growth: not enough historical post data</p>
+          )}
+          {batch.estimatedActiveSubscribers != null ? (
+            <MetricRow label="Estimated active" metricKey="active">
+              <span className="text-slate-100">
+                {formatMetric(batch.estimatedActiveSubscribers)} /{" "}
+                {formatMetric(batch.releasedSubscribersCount)}
+              </span>
+              {batch.activationRate != null ? (
+                <span className="text-slate-500">
+                  {" "}
+                  · {isBootstrap ? "Activation estimate" : "Activation"}{" "}
+                  {formatPercent(batch.activationRate)}
+                </span>
+              ) : null}
+            </MetricRow>
+          ) : null}
+          {qualityWarning ? (
+            <p className="text-amber-200">{qualityWarning}</p>
+          ) : null}
+        </div>
+        {sparklinePoints.length > 1 ? (
+          <div className="h-14 w-24">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={sparklinePoints}>
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke="#34d399"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MetricRow({
+  label,
+  metricKey,
+  children,
+}: {
+  label: string;
+  metricKey: string;
+  children: ReactNode;
+}) {
+  const preview = resolveMetricPreviewIcon({ label, metricKey });
+  const Icon = preview?.icon;
+  return (
+    <div className="grid grid-cols-[18px_minmax(96px,max-content)_minmax(0,1fr)] items-center gap-x-2 text-xs leading-5">
+      <span className="flex h-5 w-[18px] items-center justify-center">
+        {Icon ? (
+          <Icon
+            size={14}
+            className={preview?.toneClassName ?? "text-slate-400"}
+            aria-hidden="true"
+          />
+        ) : null}
+      </span>
+      <span className="flex h-5 items-center whitespace-nowrap text-slate-400">
+        {label}
+      </span>
+      <span className="flex min-w-0 items-center text-slate-400">
+        {children}
+      </span>
     </div>
   );
 }
@@ -901,6 +1072,8 @@ export function AdCampaignsTable({
     top: number;
   } | null>(null);
   const [historyCampaign, setHistoryCampaign] = useState<AdCampaign | null>(null);
+  const [admissionAnalyticsCampaign, setAdmissionAnalyticsCampaign] =
+    useState<AdCampaign | null>(null);
 
   const normalizedCampaigns = useMemo(
     () =>
@@ -1069,6 +1242,9 @@ export function AdCampaignsTable({
                     onShowKpiTooltip={showKpiTooltip}
                     onHideKpiTooltip={() => setKpiTooltip(null)}
                     onOpenHistory={() => setHistoryCampaign(row.campaign)}
+                    onOpenAdmissionAnalytics={() =>
+                      setAdmissionAnalyticsCampaign(row.campaign)
+                    }
                   />
                 </td>
                 {showHypotheses ? (
@@ -1120,6 +1296,10 @@ export function AdCampaignsTable({
       <CampaignInviteLinkHistoryModal
         campaign={historyCampaign}
         onClose={() => setHistoryCampaign(null)}
+      />
+      <CampaignAdmissionViewAnalyticsModal
+        campaign={admissionAnalyticsCampaign}
+        onClose={() => setAdmissionAnalyticsCampaign(null)}
       />
     </>
   );

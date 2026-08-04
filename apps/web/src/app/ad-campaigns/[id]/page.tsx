@@ -8,7 +8,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { PageTabHead } from '@/components/layout/page-tab-head';
 import { Button, Card, LoadingState, PageHeader } from '@/components/ui/primitives';
 import { TelegramEntityAvatar } from '@/components/telegram/telegram-entity-avatar';
-import { adCampaignsApi, currenciesApi } from '@/lib/api';
+import { adCampaignsApi, currenciesApi, type AdCampaign } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 import { useAppToast } from '@/providers/toast-provider';
 
@@ -112,6 +112,7 @@ export default function AdCampaignDetailPage() {
           </Card>
 
           <AnalyticsPanel campaign={campaign} currency={currencySettings?.primaryCurrency || campaign.currency} />
+          <AdmissionViewAnalyticsPanel campaign={campaign} />
 
           <section className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
             <Card>
@@ -263,6 +264,69 @@ function AnalyticsPanel({ campaign, currency }: { campaign: any; currency: strin
       <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
         {metrics.map((metric) => <MetricCard key={metric.label} title={metric.label} value={metric.display} />)}
       </div>
+    </Card>
+  );
+}
+
+function AdmissionViewAnalyticsPanel({ campaign }: { campaign: AdCampaign }) {
+  const batch = campaign.admissionViewAnalytics?.latestBatch;
+  if (!batch) return null;
+  const observed = batch.baselineMethod === 'EARLIEST_OBSERVED';
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold">View uplift</h3>
+          <p className="text-sm text-slate-400">
+            {batch.detectionMode === 'BOOTSTRAPPED_CUMULATIVE'
+              ? 'Reconstructed from existing invite-link snapshots'
+              : 'Detected from invite-link joined-count deltas'}
+          </p>
+        </div>
+        <span className={`rounded border px-2 py-0.5 text-xs ${batch.dataQuality === 'GOOD' ? 'border-emerald-700 text-emerald-200' : 'border-amber-700 text-amber-200'}`}>
+          {batch.dataQuality}
+        </span>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
+        <MetricCard title="Released" value={`+${formatNumber(batch.releasedSubscribersCount)}`} />
+        <MetricCard
+          title={observed ? 'Observed avg views' : 'Avg views'}
+          value={
+            batch.baselineAvgViews == null || batch.currentAvgViews == null
+              ? '-'
+              : `${formatNumber(batch.baselineAvgViews)} → ${formatNumber(batch.currentAvgViews)}`
+          }
+        />
+        <MetricCard
+          title={observed ? 'Observed view growth' : 'View uplift'}
+          value={
+            batch.cumulativeAvgViewsUplift == null
+              ? 'Not enough historical post data'
+              : `+${formatNumber(batch.cumulativeAvgViewsUplift)}`
+          }
+        />
+        <MetricCard
+          title="Estimated active"
+          value={
+            batch.estimatedActiveSubscribers == null
+              ? '-'
+              : `${formatNumber(batch.estimatedActiveSubscribers)} / ${formatNumber(batch.releasedSubscribersCount)}`
+          }
+        />
+        <MetricCard
+          title={batch.detectionMode === 'BOOTSTRAPPED_CUMULATIVE' ? 'Activation estimate' : 'Activation'}
+          value={batch.activationRate == null ? '-' : formatPercent(batch.activationRate)}
+        />
+        <MetricCard title="Last sync uplift" value={batch.incrementalAvgViewsUplift == null ? '-' : `+${formatNumber(batch.incrementalAvgViewsUplift)}`} />
+      </div>
+      {batch.baselineMethod === 'EARLIEST_OBSERVED' ? (
+        <p className="mt-3 rounded border border-amber-800 bg-amber-950/20 px-3 py-2 text-sm text-amber-100">
+          Observed growth from the earliest available post snapshot
+        </p>
+      ) : null}
+      {batch.dataQualityReason ? (
+        <p className="mt-3 text-sm text-slate-400">{batch.dataQualityReason}</p>
+      ) : null}
     </Card>
   );
 }

@@ -94,6 +94,8 @@ import {
   UpdatePostGroupDto,
 } from './dto';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
+import { AdCampaignAdmissionAnalyticsService } from '../ad-campaigns/ad-campaign-admission-analytics.service';
+import { AdCampaignAdmissionBackfillService } from '../ad-campaigns/ad-campaign-admission-backfill.service';
 import {
   telegramHtmlToManagedMarkup,
   telegramHtmlToMtprotoHtml,
@@ -349,6 +351,8 @@ export class TelegramChannelsService {
       info: () => undefined,
       writeStructured: () => undefined,
     } as unknown) as ApplicationLoggerService,
+    private readonly admissionAnalyticsService?: AdCampaignAdmissionAnalyticsService,
+    private readonly admissionBackfillService?: AdCampaignAdmissionBackfillService,
   ) {}
 
   private workspace(userId: string) {
@@ -8479,7 +8483,8 @@ export class TelegramChannelsService {
     dto: SyncNowDto = {},
     onProgress?: BulkProgressCallback,
   ) {
-    const startedAt = Date.now();
+    const syncStartedAt = new Date();
+    const startedAt = syncStartedAt.getTime();
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const selection = this.resolveSyncSelection(
@@ -8533,6 +8538,7 @@ export class TelegramChannelsService {
     let channelStatsSync: any = null;
     let managedPostsSync: any = null;
     let audienceSnapshot: any = null;
+    let admissionAnalytics: any = null;
 
     if (selection.syncIncludePublicInfo) {
       const currentStep = nextProgressStep();
@@ -8824,6 +8830,75 @@ export class TelegramChannelsService {
             ),
       );
     }
+    const admissionAnalyticsStartedAt = Date.now();
+    try {
+      if (!this.admissionAnalyticsService || !this.admissionBackfillService) {
+        admissionAnalytics = {
+          status: 'skipped',
+          backfilledCampaigns: 0,
+          createdBatches: 0,
+          createdPoints: 0,
+          reason: 'admission analytics service unavailable',
+        };
+        steps.push(
+          this.syncStepSkipped(
+            'admission_analytics',
+            admissionAnalyticsStartedAt,
+            'Admission analytics service unavailable',
+          ),
+        );
+      } else {
+        admissionAnalytics =
+          await this.admissionAnalyticsService.processCompletedChannelSync({
+            workspaceId,
+            telegramChannelId: channelId,
+            syncStartedAt,
+            syncCompletedAt: new Date(),
+            inviteLinksSynced: Boolean(selection.syncIncludeInviteLinks),
+            postMetricsSynced: Boolean(selection.syncIncludePostMetrics),
+            backfill: (backfillParams) =>
+              this.admissionBackfillService!.backfillChannelCampaigns(
+                backfillParams,
+              ),
+          });
+        steps.push(
+          admissionAnalytics.status === 'skipped'
+            ? this.syncStepSkipped(
+                'admission_analytics',
+                admissionAnalyticsStartedAt,
+                admissionAnalytics.reason || 'Admission analytics skipped',
+                admissionAnalytics,
+              )
+            : this.syncStepSuccess(
+                'admission_analytics',
+                admissionAnalyticsStartedAt,
+                'Admission analytics processed',
+                admissionAnalytics,
+              ),
+        );
+      }
+    } catch (error) {
+      this.admissionAnalyticsService?.logFailure(error);
+      admissionAnalytics = {
+        status: 'failed',
+        backfilledCampaigns: 0,
+        createdBatches: 0,
+        createdPoints: 0,
+        reason:
+          error instanceof Error
+            ? error.message
+            : 'Admission analytics failed',
+      };
+      steps.push(
+        this.syncStepFailure(
+          'admission_analytics',
+          admissionAnalyticsStartedAt,
+          error,
+          'ADMISSION_ANALYTICS_FAILED',
+          'Admission analytics failed',
+        ),
+      );
+    }
     await this.notifyTaskProgress(
       onProgress,
       nextProgressStep(),
@@ -8860,6 +8935,7 @@ export class TelegramChannelsService {
       channelStatsSync,
       managedPostsSync,
       audienceSnapshot,
+      admissionAnalytics,
     } satisfies SyncOperationResult & Record<string, unknown>;
     this.applicationLogger.info({
       level:

@@ -47,6 +47,7 @@ const metricKeyMatches: Record<string, MetricIconMatch> = {
   subscribers: { tokens: [], icon: Users, toneClassName: "text-violet-300" },
   avgViews: { tokens: [], icon: Eye, toneClassName: "text-sky-300" },
   views: { tokens: [], icon: Eye, toneClassName: "text-sky-300" },
+  active: { tokens: [], icon: UserCheck, toneClassName: "text-emerald-300" },
   cpa: { tokens: [], icon: BadgeDollarSign, toneClassName: "text-emerald-300" },
   err: { tokens: [], icon: Percent, toneClassName: "text-teal-300" },
   reactions: { tokens: [], icon: Sparkles, toneClassName: "text-fuchsia-300" },

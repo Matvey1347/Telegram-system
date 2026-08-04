@@ -26,6 +26,8 @@ export class AdCampaignsService {
     'unknown';
   private inviteLinkSnapshotStorageState: 'unknown' | 'available' | 'missing' =
     'unknown';
+  private admissionAnalyticsStorageState: 'unknown' | 'available' | 'missing' =
+    'unknown';
 
   constructor(
     private prisma: PrismaService,
@@ -93,6 +95,25 @@ export class AdCampaignsService {
   }
 
   private isInviteLinkSnapshotStorageMissing(error: unknown) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+    if (error.code === 'P2021') return true;
+    if (error.code !== 'P2010') return false;
+
+    const originalCode =
+      (
+        error.meta as
+          | {
+              driverAdapterError?: {
+                cause?: { originalCode?: string };
+              };
+            }
+          | undefined
+      )?.driverAdapterError?.cause?.originalCode ?? null;
+
+    return originalCode === '42P01';
+  }
+
+  private isAdmissionAnalyticsStorageMissing(error: unknown) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
     if (error.code === 'P2021') return true;
     if (error.code !== 'P2010') return false;
@@ -485,6 +506,161 @@ export class AdCampaignsService {
       );
     }
     return historyByCampaignId;
+  }
+
+  private shapeAdmissionViewAnalytics(
+    batches: Array<any>,
+    pointLimit = 30,
+    campaignJoinedCount?: number | null,
+  ) {
+    const sortedBatches = [...batches].sort(
+      (a, b) =>
+        new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
+    );
+    const latestBatch = sortedBatches[0] ?? null;
+    const latestPointByBatch = new Map<string, any>();
+    for (const batch of sortedBatches) {
+      const latestPoint =
+        [...(batch.viewSnapshots ?? [])].sort(
+          (a, b) =>
+            new Date(b.collectedAt).getTime() -
+            new Date(a.collectedAt).getTime(),
+        )[0] ?? null;
+      if (latestPoint) latestPointByBatch.set(batch.id, latestPoint);
+    }
+    const latestPoints = latestBatch?.viewSnapshots ?? [];
+    const latestPoint =
+      [...latestPoints].sort(
+        (a, b) =>
+          new Date(b.collectedAt).getTime() - new Date(a.collectedAt).getTime(),
+      )[0] ?? null;
+    const points = latestPoints
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(a.collectedAt).getTime() - new Date(b.collectedAt).getTime(),
+      )
+      .slice(-pointLimit)
+      .map((point) => ({
+        collectedAt: point.collectedAt,
+        avgViews: point.avgViews,
+        cumulativeAvgViewsUplift: point.cumulativeAvgViewsUplift,
+        incrementalAvgViewsUplift: point.incrementalAvgViewsUplift,
+        estimatedActiveSubscribers: point.estimatedActiveSubscribers,
+        activationRate: point.activationRate,
+      }));
+    const releasedSubscribersCount =
+      campaignJoinedCount != null && Number.isFinite(Number(campaignJoinedCount))
+        ? Math.max(0, Number(campaignJoinedCount))
+        : sortedBatches.reduce(
+            (sum, batch) => sum + Number(batch.releasedSubscribersCount || 0),
+            0,
+          );
+    const cumulativeAvgViewsUplift = [...latestPointByBatch.values()].reduce(
+      (sum, point) => sum + Math.max(0, Number(point.cumulativeAvgViewsUplift || 0)),
+      0,
+    );
+    const incrementalAvgViewsUplift = [...latestPointByBatch.values()].reduce(
+      (sum, point) => sum + Math.max(0, Number(point.incrementalAvgViewsUplift || 0)),
+      0,
+    );
+    const estimatedActiveSubscribers = Math.min(
+      releasedSubscribersCount,
+      Math.round(cumulativeAvgViewsUplift),
+    );
+    const activationRate =
+      releasedSubscribersCount > 0
+        ? (estimatedActiveSubscribers / releasedSubscribersCount) * 100
+        : null;
+
+    return {
+      batchesCount: sortedBatches.length,
+      latestBatch: latestBatch
+        ? {
+            id: latestBatch.id,
+            status: latestBatch.status,
+            detectionMode: latestBatch.detectionMode,
+            dataQuality: latestBatch.dataQuality,
+            dataQualityReason: latestBatch.dataQualityReason,
+            analysisStartedAt: latestBatch.analysisStartedAt,
+            firstObservedAt: latestBatch.firstObservedAt,
+            endedAt: latestBatch.endedAt,
+            releasedSubscribersCount,
+            baselineMethod: latestBatch.baselineMethod,
+            baselineAvgViews: latestBatch.baselineAvgViews,
+            currentAvgViews: latestPoint?.avgViews ?? null,
+            cumulativeAvgViewsUplift: latestPointByBatch.size
+              ? cumulativeAvgViewsUplift
+              : null,
+            incrementalAvgViewsUplift: latestPointByBatch.size
+              ? incrementalAvgViewsUplift
+              : null,
+            estimatedActiveSubscribers: latestPointByBatch.size
+              ? estimatedActiveSubscribers
+              : null,
+            activationRate,
+            trackedPostsCount: latestPoint?.trackedPostsCount ?? 0,
+            originalTrackedPostsCount: latestBatch.trackedPostsCount,
+            lastCollectedAt: latestPoint?.collectedAt ?? null,
+          }
+        : null,
+      points,
+    };
+  }
+
+  private async preloadAdmissionViewAnalytics(
+    workspaceId: string,
+    campaignIds: string[],
+    pointLimit = 30,
+    campaignJoinedCounts = new Map<string, number>(),
+  ) {
+    if (!campaignIds.length) return new Map<string, ReturnType<AdCampaignsService["shapeAdmissionViewAnalytics"]>>();
+    if (this.admissionAnalyticsStorageState === 'missing') {
+      return new Map(
+        campaignIds.map((id) => [id, this.shapeAdmissionViewAnalytics([], pointLimit)]),
+      );
+    }
+    let batches: any[] = [];
+    try {
+      batches = await this.prisma.adCampaignAdmissionBatch.findMany({
+        where: { workspaceId, adCampaignId: { in: campaignIds } },
+        orderBy: [{ adCampaignId: 'asc' }, { startedAt: 'desc' }],
+        include: {
+          viewSnapshots: {
+            orderBy: { collectedAt: 'desc' },
+            take: pointLimit,
+          },
+        },
+      });
+      this.admissionAnalyticsStorageState = 'available';
+    } catch (error) {
+      if (!this.isAdmissionAnalyticsStorageMissing(error)) throw error;
+      this.admissionAnalyticsStorageState = 'missing';
+      return new Map(
+        campaignIds.map((id) => [id, this.shapeAdmissionViewAnalytics([], pointLimit)]),
+      );
+    }
+    const byCampaignId = new Map<string, any[]>();
+    for (const batch of batches) {
+      const list = byCampaignId.get(batch.adCampaignId) ?? [];
+      list.push(batch);
+      byCampaignId.set(batch.adCampaignId, list);
+    }
+    const result = new Map<
+      string,
+      ReturnType<AdCampaignsService["shapeAdmissionViewAnalytics"]>
+    >();
+    for (const id of campaignIds) {
+      result.set(
+        id,
+        this.shapeAdmissionViewAnalytics(
+          byCampaignId.get(id) ?? [],
+          pointLimit,
+          campaignJoinedCounts.get(id) ?? null,
+        ),
+      );
+    }
+    return result;
   }
 
   private selectedPromoIds(dto: {
@@ -943,6 +1119,9 @@ export class AdCampaignsService {
     preloadedInviteLinkHistory?: ReturnType<
       AdCampaignsService["buildCampaignInviteLinkHistoryPayload"]
     > | null,
+    admissionViewAnalytics?: ReturnType<
+      AdCampaignsService["shapeAdmissionViewAnalytics"]
+    > | null,
   ) {
     const analytics = await this.campaignMetrics(row);
     const linkedPromos = this.normalizeSelectionIds([
@@ -1016,6 +1195,8 @@ export class AdCampaignsService {
           row.advertisingChannels.length >
         1,
       inviteLinkHistory,
+      admissionViewAnalytics:
+        admissionViewAnalytics ?? this.shapeAdmissionViewAnalytics([]),
       analytics,
     };
   }
@@ -1154,9 +1335,30 @@ export class AdCampaignsService {
       workspaceId,
       rows.items,
     );
+    const campaignJoinedCounts = new Map<string, number>(
+      rows.items.map((row: any) => [
+        row.id,
+        Array.isArray(row.inviteLinks)
+          ? row.inviteLinks.reduce(
+              (sum: number, link: any) => sum + Number(link.joinedCount || 0),
+              0,
+            )
+          : Number(row.joinedCount || row.analytics?.joinedCount || 0),
+      ]),
+    );
+    const preloadedAdmissionAnalytics = await this.preloadAdmissionViewAnalytics(
+      workspaceId,
+      rows.items.map((row: any) => row.id),
+      30,
+      campaignJoinedCounts,
+    );
     const items = await Promise.all(
       rows.items.map((row) =>
-        this.shapeCampaign(row, preloadedInviteLinkHistories.get(row.id) ?? null),
+        this.shapeCampaign(
+          row,
+          preloadedInviteLinkHistories.get(row.id) ?? null,
+          preloadedAdmissionAnalytics.get(row.id) ?? null,
+        ),
       ),
     );
     return createPaginatedResponse(items, rows.totalItems, pagination);
@@ -1179,6 +1381,18 @@ export class AdCampaignsService {
       });
     }
     if (!row) throw new NotFoundException('Campaign not found');
+    const campaignJoinedCount = Array.isArray(row.inviteLinks)
+      ? row.inviteLinks.reduce(
+          (sum: number, link: any) => sum + Number(link.joinedCount || 0),
+          0,
+        )
+      : Number(row.joinedCount || row.analytics?.joinedCount || 0);
+    const admissionViewAnalytics = await this.preloadAdmissionViewAnalytics(
+      workspaceId,
+      [row.id],
+      30,
+      new Map([[row.id, campaignJoinedCount]]),
+    );
     return this.shapeCampaign(
       row,
       this.buildCampaignInviteLinkHistoryPayload(
@@ -1194,7 +1408,92 @@ export class AdCampaignsService {
         },
         [],
       ),
+      admissionViewAnalytics.get(row.id) ?? null,
     );
+  }
+
+  async admissionViewAnalytics(userId: string, id: string) {
+    const workspaceId = await this.workspace(userId);
+    const campaign = await this.prisma.adCampaign.findFirst({
+      where: { id, workspaceId },
+      select: { id: true, title: true },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    let batches: any[] = [];
+    if (this.admissionAnalyticsStorageState !== 'missing') {
+      try {
+        batches = await this.prisma.adCampaignAdmissionBatch.findMany({
+          where: { workspaceId, adCampaignId: id },
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+          include: {
+            viewSnapshots: {
+              orderBy: { collectedAt: 'asc' },
+            },
+          },
+        });
+        this.admissionAnalyticsStorageState = 'available';
+      } catch (error) {
+        if (!this.isAdmissionAnalyticsStorageMissing(error)) throw error;
+        this.admissionAnalyticsStorageState = 'missing';
+      }
+    }
+    return {
+      campaign,
+      ...this.shapeAdmissionViewAnalytics(batches, 500),
+      batches: batches.map((batch) => {
+        const latestPoint = [...batch.viewSnapshots].sort(
+          (a, b) =>
+            new Date(b.collectedAt).getTime() -
+            new Date(a.collectedAt).getTime(),
+        )[0];
+        return {
+          id: batch.id,
+          status: batch.status,
+          detectionMode: batch.detectionMode,
+          dataQuality: batch.dataQuality,
+          dataQualityReason: batch.dataQualityReason,
+          analysisStartedAt: batch.analysisStartedAt,
+          firstObservedAt: batch.firstObservedAt,
+          startedAt: batch.startedAt,
+          endedAt: batch.endedAt,
+          timeBoundarySource: batch.timeBoundarySource,
+          releasedSubscribersCount: batch.releasedSubscribersCount,
+          joinedBefore: batch.joinedBefore,
+          joinedAfter: batch.joinedAfter,
+          requestedBefore: batch.requestedBefore,
+          requestedAfter: batch.requestedAfter,
+          sourceLinks: batch.sourceLinks,
+          baselineSnapshotAt: batch.baselineSnapshotAt,
+          baselineMethod: batch.baselineMethod,
+          trackedPosts: batch.trackedPosts,
+          trackedPostsCount: latestPoint?.trackedPostsCount ?? 0,
+          originalTrackedPostsCount: batch.trackedPostsCount,
+          baselineAvgViews: batch.baselineAvgViews,
+          baselineAvgReactions: batch.baselineAvgReactions,
+          currentAvgViews: latestPoint?.avgViews ?? null,
+          cumulativeAvgViewsUplift:
+            latestPoint?.cumulativeAvgViewsUplift ?? null,
+          incrementalAvgViewsUplift:
+            latestPoint?.incrementalAvgViewsUplift ?? null,
+          estimatedActiveSubscribers:
+            latestPoint?.estimatedActiveSubscribers ?? null,
+          activationRate: latestPoint?.activationRate ?? null,
+          lastCollectedAt: latestPoint?.collectedAt ?? null,
+          points: batch.viewSnapshots.map((point) => ({
+            collectedAt: point.collectedAt,
+            avgViews: point.avgViews,
+            avgReactions: point.avgReactions,
+            cumulativeAvgViewsUplift: point.cumulativeAvgViewsUplift,
+            incrementalAvgViewsUplift: point.incrementalAvgViewsUplift,
+            estimatedActiveSubscribers: point.estimatedActiveSubscribers,
+            activationRate: point.activationRate,
+            trackedPostsCount: point.trackedPostsCount,
+            dataQuality: point.dataQuality,
+            dataQualityReason: point.dataQualityReason,
+          })),
+        };
+      }),
+    };
   }
 
   async inviteLinkHistory(userId: string, id: string, limit = 120) {

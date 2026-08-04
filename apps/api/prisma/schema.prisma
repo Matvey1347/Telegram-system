@@ -304,6 +304,37 @@ enum TelegramAdvertiserAutomationExecutionStatus {
   FAILED
 }
 
+enum AdCampaignAdmissionBatchStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum AdCampaignAdmissionDetectionMode {
+  EXACT_DELTA
+  BOOTSTRAPPED_CUMULATIVE
+}
+
+enum AdCampaignAdmissionTimeBoundarySource {
+  CAMPAIGN_ACTUAL_START
+  CAMPAIGN_START
+  INVITE_LINK_CREATED
+  AUDIENCE_SNAPSHOT
+  FIRST_INVITE_SNAPSHOT
+}
+
+enum AdCampaignAdmissionBaselineMethod {
+  PRE_ADMISSION
+  EARLIEST_OBSERVED
+  UNAVAILABLE
+}
+
+enum AdCampaignAdmissionDataQuality {
+  GOOD
+  PARTIAL
+  INSUFFICIENT
+  SUSPICIOUS
+}
+
 enum TelegramAdPlacementAdvertiserResultSource {
   MANUAL
   ADVERTISER_REPORTED
@@ -379,6 +410,8 @@ model Workspace {
   telegramChannelDataSources        TelegramChannelDataSource[]
   telegramChannelStatsSnapshots     TelegramChannelStatsSnapshot[]
   telegramChannelAudienceSnapshots  TelegramChannelAudienceSnapshot[]
+  adCampaignAdmissionBatches         AdCampaignAdmissionBatch[]
+  adCampaignAdmissionBackfillStates  AdCampaignAdmissionBackfillState[]
   telegramChannelNetworks           TelegramChannelNetwork[]
   telegramChannelNetworkMembers     TelegramChannelNetworkMember[]
   telegramChannelStatsPoints        TelegramChannelStatsPoint[]
@@ -851,6 +884,8 @@ model TelegramChannel {
   adAnalyses                TelegramChannelAdAnalysis[]
   timePosts                 TelegramChannelTimePost[]
   adProducts                TelegramAdProduct[]
+  admissionBatches          AdCampaignAdmissionBatch[]
+  admissionBackfillStates   AdCampaignAdmissionBackfillState[]
   adSchedulePolicy          TelegramAdSchedulePolicy?
   adPriceSnapshots          TelegramAdPriceSnapshot[]
   adInventoryDailySnapshots TelegramAdInventoryDailySnapshot[]
@@ -1821,11 +1856,97 @@ model AdCampaign {
 
   inviteLinks         TelegramInviteLink[]
   inviteLinkSnapshots TelegramInviteLinkSnapshot[]
+  admissionBatches    AdCampaignAdmissionBatch[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, assignedMemberId])
+}
+
+model AdCampaignAdmissionBatch {
+  id                       String                                  @id @default(cuid())
+  workspaceId              String
+  adCampaignId             String
+  telegramChannelId        String
+  status                   AdCampaignAdmissionBatchStatus          @default(ACTIVE)
+  detectionMode            AdCampaignAdmissionDetectionMode
+  analysisStartedAt        DateTime
+  firstObservedAt          DateTime
+  startedAt                DateTime
+  endedAt                  DateTime?
+  timeBoundarySource       AdCampaignAdmissionTimeBoundarySource
+  releasedSubscribersCount Int
+  joinedBefore             Int                                     @default(0)
+  joinedAfter              Int                                     @default(0)
+  requestedBefore          Int                                     @default(0)
+  requestedAfter           Int                                     @default(0)
+  sourceLinks              Json
+  baselineSnapshotAt       DateTime?
+  baselineMethod           AdCampaignAdmissionBaselineMethod       @default(UNAVAILABLE)
+  trackedPosts             Json
+  trackedPostsCount        Int                                     @default(0)
+  baselineAvgViews         Float?
+  baselineAvgReactions     Float?
+  dataQuality              AdCampaignAdmissionDataQuality          @default(GOOD)
+  dataQualityReason        String?
+  batchFingerprint         String                                  @unique
+  createdAt                DateTime                                @default(now())
+  updatedAt                DateTime                                @updatedAt
+
+  workspace       Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adCampaign      AdCampaign                        @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel                   @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  viewSnapshots   AdCampaignAdmissionViewSnapshot[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, adCampaignId, status])
+  @@index([workspaceId, telegramChannelId, startedAt], map: "AdmissionBatch_workspace_channel_started_idx")
+  @@index([adCampaignId, status])
+  @@index([telegramChannelId, startedAt])
+  @@index([startedAt])
+}
+
+model AdCampaignAdmissionViewSnapshot {
+  id                         String                         @id @default(cuid())
+  batchId                    String
+  collectedAt                DateTime
+  sourceMetricCollectedAt    DateTime
+  avgViews                   Float?
+  avgReactions               Float?
+  cumulativeAvgViewsUplift   Float?
+  incrementalAvgViewsUplift  Float?
+  estimatedActiveSubscribers Int?
+  activationRate             Float?
+  trackedPostsCount          Int                            @default(0)
+  channelSubscribersCount    Int?
+  joinedCount                Int?
+  requestedCount             Int?
+  dataQuality                AdCampaignAdmissionDataQuality @default(GOOD)
+  dataQualityReason          String?
+  createdAt                  DateTime                       @default(now())
+
+  batch AdCampaignAdmissionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, sourceMetricCollectedAt], map: "AdmissionViewSnapshot_batch_metric_key")
+  @@index([batchId, collectedAt])
+}
+
+model AdCampaignAdmissionBackfillState {
+  id                            String   @id @default(cuid())
+  workspaceId                   String
+  telegramChannelId             String
+  completedAt                   DateTime
+  lastProcessedInviteSnapshotAt DateTime?
+  version                       Int      @default(1)
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, telegramChannelId, version], map: "AdmissionBackfillState_workspace_channel_version_key")
+  @@index([workspaceId, telegramChannelId], map: "AdmissionBackfillState_workspace_channel_idx")
 }
 
 model AdHypothesis {

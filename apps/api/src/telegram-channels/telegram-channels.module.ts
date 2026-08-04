@@ -4,8 +4,10 @@ import { TelegramChannelsService } from './telegram-channels.service';
 import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
 import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
+import { AdCampaignsModule } from '../ad-campaigns/ad-campaigns.module';
 
 @Module({
+  imports: [AdCampaignsModule],
   controllers: [TelegramChannelsController],
   providers: [
     TelegramChannelsService,
