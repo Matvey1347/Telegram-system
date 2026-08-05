@@ -17,25 +17,25 @@ Updated: 2026-08-04
 | 9 | `apps/web/src/lib/api.ts` | 2235 | frontend |
 | 10 | `apps/api/src/ad-campaigns/ad-campaigns.service.ts` | 1864 | backend |
 | 11 | `apps/web/src/components/ui/primitives.tsx` | 1854 | frontend |
-| 12 | `apps/web/src/lib/api-types.ts` | 1487 | frontend |
-| 13 | `apps/web/src/components/ad-campaigns/campaigns-table.tsx` | 1307 | frontend |
-| 14 | `apps/api/src/telegram-user-accounts/telegram-user-accounts.service.ts` | 1217 | backend |
-| 15 | `apps/web/src/components/telegram/telegram-account-panels.tsx` | 1178 | frontend |
-| 16 | `apps/web/src/components/icons/icon-picker.tsx` | 1111 | frontend |
-| 17 | `apps/web/src/components/ad-sales/ad-sale-modal.tsx` | 1048 | frontend |
-| 18 | `apps/api/src/ad-campaigns/ad-campaign-admission-analytics.service.ts` | 1010 | backend |
-| 19 | `apps/api/src/ad-hypotheses/ad-hypotheses.service.ts` | 902 | backend |
-| 20 | `apps/web/src/components/telegram/telegram-post-preview.tsx` | 897 | frontend |
-| 21 | `packages/shared/src/types/telegram-ad-sales.ts` | 857 | shared |
-| 22 | `apps/api/src/transactions/transactions.service.ts` | 818 | backend |
-| 23 | `apps/web/src/app/system-logs/page.tsx` | 806 | frontend |
-| 24 | `apps/web/src/components/telegram/telegram-text-editor.tsx` | 720 | frontend |
-| 25 | `apps/api/src/telegram-channels/telegram-channels.controller.ts` | 648 | backend |
-| 26 | `apps/web/src/app/page.tsx` | 629 | frontend |
-| 27 | `apps/api/src/telegram-ad-sales/telegram-ad-sales.controller.ts` | 628 | backend |
-| 28 | `apps/api/src/dashboard/dashboard.service.ts` | 617 | backend |
-| 29 | `apps/web/src/components/layout/app-shell.tsx` | 601 | frontend |
-| 30 | `apps/api/src/telegram/shared/telegram-source-access.service.ts` | 571 | backend |
+| 12 | `apps/web/src/components/ad-campaigns/campaigns-table.tsx` | 1307 | frontend |
+| 13 | `apps/api/src/telegram-user-accounts/telegram-user-accounts.service.ts` | 1217 | backend |
+| 14 | `apps/web/src/components/telegram/telegram-account-panels.tsx` | 1178 | frontend |
+| 15 | `apps/web/src/components/icons/icon-picker.tsx` | 1111 | frontend |
+| 16 | `apps/web/src/components/ad-sales/ad-sale-modal.tsx` | 1048 | frontend |
+| 17 | `apps/api/src/ad-campaigns/ad-campaign-admission-analytics.service.ts` | 1010 | backend |
+| 18 | `apps/api/src/ad-hypotheses/ad-hypotheses.service.ts` | 902 | backend |
+| 19 | `apps/web/src/components/telegram/telegram-post-preview.tsx` | 897 | frontend |
+| 20 | `packages/shared/src/types/telegram-ad-sales.ts` | 857 | shared |
+| 21 | `apps/api/src/transactions/transactions.service.ts` | 818 | backend |
+| 22 | `apps/web/src/app/system-logs/page.tsx` | 806 | frontend |
+| 23 | `apps/web/src/components/telegram/telegram-text-editor.tsx` | 720 | frontend |
+| 24 | `apps/api/src/telegram-channels/telegram-channels.controller.ts` | 648 | backend |
+| 25 | `apps/web/src/app/page.tsx` | 629 | frontend |
+| 26 | `apps/api/src/telegram-ad-sales/telegram-ad-sales.controller.ts` | 628 | backend |
+| 27 | `apps/api/src/dashboard/dashboard.service.ts` | 617 | backend |
+| 28 | `apps/web/src/components/layout/app-shell.tsx` | 601 | frontend |
+| 29 | `apps/api/src/telegram/shared/telegram-source-access.service.ts` | 571 | backend |
+| 30 | `apps/api/src/telegram-ad-sales/dto.ts` | 547 | backend |
 
 ## Backend Findings
 
@@ -49,7 +49,7 @@ Updated: 2026-08-04
 ## Frontend Findings
 
 - Page files often mix React Query, URL/localStorage state, business calculations, modals and large UI sections.
-- `apps/web/src/lib/api.ts` was a single API choke point. Type-only contracts are now extracted into `apps/web/src/lib/api-types.ts`, and `applicationLogsApi` has moved to `apps/web/src/lib/application-logs-api.ts`; remaining domain endpoint facades still need to split.
+- `apps/web/src/lib/api.ts` was a single API choke point. Type-only contracts now live in domain modules under `apps/web/src/lib/api-types/`, `apps/web/src/lib/api-types.ts` is only a compatibility barrel, and `applicationLogsApi` has moved to `apps/web/src/lib/application-logs-api.ts`; remaining domain endpoint facades still need to split.
 - `apps/web/src/components/ui/primitives.tsx` contains useful primitives, but also several heavier controls. It should be split by primitive family only when call sites are stable.
 - Query key centralization was partial: `telegram-ad-sales-query.ts` existed, but most pages used inline array keys. `apps/web/src/lib/query-keys.ts` now provides shared factories.
 

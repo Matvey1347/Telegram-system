@@ -38,7 +38,7 @@ Measured before edits:
 | Largest backend file | `apps/api/src/telegram-channels/telegram-channels.service.ts` - 11019 |
 | Largest frontend file | `apps/web/src/app/telegram-posts/page.tsx` - 6775 |
 
-`apps/web/src/lib/api.ts` was reduced from 3575 lines to 2235 lines by extracting type-only API contracts into `apps/web/src/lib/api-types.ts`, moving `applicationLogsApi` to `apps/web/src/lib/application-logs-api.ts`, and removing a now-unused managed-feedback helper. `apps/api/src/ad-campaigns/ad-campaigns.service.ts` was reduced to 1864 lines by extracting invite-link history payload construction. Transitional architecture allowances match current sizes so any growth fails `pnpm architecture:check`.
+`apps/web/src/lib/api.ts` was reduced from 3575 lines to 2235 lines by extracting type-only API contracts, moving `applicationLogsApi` to `apps/web/src/lib/application-logs-api.ts`, and removing a now-unused managed-feedback helper. The temporary 1486-line `apps/web/src/lib/api-types.ts` type warehouse was split into domain modules under `apps/web/src/lib/api-types/`, leaving `apps/web/src/lib/api-types.ts` as an 11-line compatibility barrel. `apps/api/src/ad-campaigns/ad-campaigns.service.ts` was reduced to 1864 lines by extracting invite-link history payload construction. Transitional architecture allowances match current sizes so any growth fails `pnpm architecture:check`.
 
 ## Large Files
 
@@ -63,7 +63,6 @@ Measured before edits:
 - All files above.
 - `apps/api/src/ad-campaigns/ad-campaigns.service.ts`
 - `apps/web/src/components/ui/primitives.tsx`
-- `apps/web/src/lib/api-types.ts`
 - `apps/web/src/components/ad-campaigns/campaigns-table.tsx`
 - `apps/api/src/telegram-user-accounts/telegram-user-accounts.service.ts`
 - `apps/web/src/components/telegram/telegram-account-panels.tsx`
@@ -170,7 +169,7 @@ Pre-existing results before implementation:
 
 | Command | Result |
 |---|---|
-| `pnpm architecture:check` | pass: 278 production TS/TSX files scanned; transitional allowances match current sizes |
+| `pnpm architecture:check` | pass: 289 production TS/TSX files scanned; transitional allowances match current sizes |
 | `pnpm --filter @telegram-system/shared typecheck` | pass |
 | `pnpm --filter api typecheck` | pass |
 | `pnpm --filter api test -- --runInBand` | pass: 30 suites, 209 tests |
@@ -194,7 +193,8 @@ Pre-existing results before implementation:
 
 - `integration-reviewer` checked the dirty refactor diff after the frontend/backend/design-system slices.
 - Medium finding fixed: restored `AdHypothesisCampaignSummary` re-export from `@/lib/api`.
-- Low finding fixed: latest validation docs now report 278 production files scanned by `pnpm architecture:check`.
+- Low finding fixed: latest validation docs now report 289 production files scanned by `pnpm architecture:check`.
+- Follow-up fixed: `apps/web/src/lib/api-types.ts` is no longer a transitional god file; it now re-exports focused type modules from `apps/web/src/lib/api-types/`.
 - Remaining artifact note: `telegram-system.zip` is untracked and should stay out of the refactor commit unless intentionally archived.
 
 ## Manual QA Plan

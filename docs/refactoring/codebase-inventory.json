@@ -550,129 +550,329 @@
   },
   {
     "path": "apps/web/src/lib/api-types.ts",
-    "lines": 1487,
+    "lines": 11,
     "category": "frontend",
     "responsibilities": [
-      "interactive UI controls"
+      "compatibility barrel for frontend API contract types"
     ],
     "imports": [
-      "@telegram-system/shared"
+      "./api-types/ad-campaigns",
+      "./api-types/ad-hypotheses",
+      "./api-types/core",
+      "./api-types/dashboard",
+      "./api-types/finance",
+      "./api-types/telegram-channel-analytics",
+      "./api-types/telegram-channel-networks",
+      "./api-types/telegram-channels",
+      "./api-types/telegram-invite-links",
+      "./api-types/telegram-posts",
+      "./api-types/telegram-sources"
     ],
     "publicExports": [
-      "Account",
-      "AccountMe",
-      "AccountTransactionStats",
-      "AdCampaign",
-      "AdCampaignAdmissionAnalyticsHistory",
-      "AdCampaignAdmissionLatestBatch",
-      "AdCampaignAdmissionViewAnalytics",
-      "AdCampaignAdmissionViewPoint",
-      "AdCampaignAnalyticsFields",
-      "AdCampaignAnalyticsInput",
-      "AdCampaignAnalyticsSummary",
-      "AdCampaignHypothesisLink",
-      "AdCampaignInviteLinkHistory",
-      "AdCampaignKpiStatus",
-      "AdCampaignPerformanceSummary",
-      "AdHypothesis",
-      "AdHypothesisCampaign",
-      "AdHypothesisCampaignSummary",
-      "AdHypothesisDetail",
-      "AdHypothesisInviteLinkHistory",
-      "AdHypothesisKpiStatus",
-      "AdHypothesisStatus",
-      "AdHypothesisSummary",
-      "AdmissionAnalyticsBaselineMethod",
-      "AdmissionAnalyticsDataQuality",
-      "AdmissionAnalyticsDetectionMode",
-      "AdvertisingChannel",
-      "ApiErrorPayload",
-      "AssignedMember",
-      "AuthResponse",
-      "CreateAdHypothesisPayload",
-      "CreateTelegramChannelNetworkPayload",
-      "Currency",
-      "CurrencyDisplayMode",
-      "DailyAnalyticsSyncRun",
-      "DashboardSummary",
-      "EntityAssignment",
-      "GlobalSearchResult",
-      "Icon",
-      "IconType",
-      "ImportedTelegramSource",
-      "InviteLinkHistoryPoint",
-      "InviteLinkHistorySummary",
-      "MeResponse",
-      "PaginationParams",
-      "PostGroup",
-      "PostGroupStatusSummary",
-      "Promo",
-      "PromptNote",
-      "TelegramAccountChannelImportItem",
-      "TelegramAnalyticsSources",
-      "TelegramBot",
-      "TelegramChannel",
-      "TelegramChannelAdAnalysis",
-      "TelegramChannelAdAnalysisPayload",
-      "TelegramChannelAdAnalysisStatus",
-      "TelegramChannelAdminLink",
-      "TelegramChannelAnalyticsResponse",
-      "TelegramChannelAnalyticsSummary",
-      "TelegramChannelAudience",
-      "TelegramChannelAudienceSnapshot",
-      "TelegramChannelDataType",
-      "TelegramChannelFinancialSummary",
-      "TelegramChannelImportPayload",
-      "TelegramChannelNetwork",
-      "TelegramChannelNetworkChannelSummary",
-      "TelegramChannelNetworkDetail",
-      "TelegramChannelNetworkKpiStatus",
-      "TelegramChannelNetworkMember",
-      "TelegramChannelNetworkSummary",
-      "TelegramChannelSourceAccess",
-      "TelegramChannelSourceRole",
-      "TelegramChannelSyncNowPayload",
-      "TelegramChannelSyncSelection",
-      "TelegramChannelTimePost",
-      "TelegramInviteLink",
-      "TelegramInviteLinkHistory",
-      "TelegramManagedPost",
-      "TelegramManagedPostLinkTarget",
-      "TelegramManagedPostRemoteStatus",
-      "TelegramManagedPostRevision",
-      "TelegramManagedPostStatus",
-      "TelegramPost",
-      "TelegramPostAnalyticsItem",
-      "TelegramSourceChannelAccess",
-      "TelegramSourcePermissions",
-      "TelegramSourceType",
-      "TelegramSyncResult",
-      "TelegramSyncedDialogChannel",
-      "TelegramUserAccount",
-      "TelegramUserAccountSyncDialogsResponse",
-      "Transaction",
-      "TransactionCategory",
-      "TransactionType",
-      "Transfer",
-      "UpdateAdHypothesisPayload",
-      "UpdateTelegramChannelNetworkPayload",
-      "User",
-      "WorkspaceInfo",
-      "WorkspaceMember",
-      "WorkspaceRole"
+      "re-exported domain API contract types"
     ],
-    "candidatesForExtraction": [
-      "split high-line-count module by cohesive responsibilities",
-      "compare with reusable UI primitives before local controls"
-    ],
+    "candidatesForExtraction": [],
     "testFiles": [
       "apps/web/src/lib/telegram-ad-sales-query.test.ts",
-      "apps/web/src/lib/telegram-ad-sales.test.ts",
-      "apps/web/src/lib/telegram-calendar-scheduler.test.ts",
-      "apps/web/src/lib/telegram-post-title.test.ts",
-      "apps/web/src/lib/telegram-posts-url.test.ts"
+      "apps/web/src/lib/telegram-post-title.test.ts"
     ],
-    "risk": "medium"
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/ad-campaigns.ts",
+    "lines": 249,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./telegram-channels",
+      "./telegram-invite-links",
+      "./ad-hypotheses"
+    ],
+    "publicExports": [
+      "Promo",
+      "AdvertisingChannel",
+      "ImportedTelegramSource",
+      "AdCampaignHypothesisLink",
+      "AdCampaignKpiStatus",
+      "AdCampaignAnalyticsInput",
+      "AdCampaignAnalyticsFields",
+      "AdmissionAnalyticsDataQuality",
+      "AdmissionAnalyticsDetectionMode",
+      "AdmissionAnalyticsBaselineMethod",
+      "AdCampaignAdmissionViewPoint",
+      "AdCampaignAdmissionLatestBatch",
+      "AdCampaignAdmissionViewAnalytics",
+      "AdCampaignAdmissionAnalyticsHistory",
+      "AdCampaign",
+      "AdCampaignAnalyticsSummary",
+      "DailyAnalyticsSyncRun",
+      "AdCampaignPerformanceSummary"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/ad-hypotheses.ts",
+    "lines": 140,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./ad-campaigns",
+      "./telegram-channels",
+      "./telegram-invite-links"
+    ],
+    "publicExports": [
+      "AdHypothesisStatus",
+      "AdHypothesisKpiStatus",
+      "AdHypothesisCampaignSummary",
+      "AdHypothesisSummary",
+      "AdHypothesis",
+      "AdHypothesisCampaign",
+      "AdHypothesisDetail",
+      "AdHypothesisInviteLinkHistory",
+      "CreateAdHypothesisPayload",
+      "UpdateAdHypothesisPayload"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/core.ts",
+    "lines": 140,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [],
+    "publicExports": [
+      "BulkActionResult",
+      "BulkActionResultItem",
+      "PaginatedResponse",
+      "PaginationMeta",
+      "StructuredApiError",
+      "SyncOperationResult",
+      "TelegramChannelAccessMode",
+      "WorkspaceRole",
+      "PaginationParams",
+      "CurrencyDisplayMode",
+      "IconType",
+      "Icon",
+      "WorkspaceInfo",
+      "User",
+      "AuthResponse",
+      "MeResponse",
+      "AccountMe",
+      "WorkspaceMember",
+      "AssignedMember",
+      "EntityAssignment",
+      "GlobalSearchResult",
+      "Currency"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/dashboard.ts",
+    "lines": 94,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./finance",
+      "./ad-campaigns"
+    ],
+    "publicExports": [
+      "DashboardSummary"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/finance.ts",
+    "lines": 84,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core"
+    ],
+    "publicExports": [
+      "TransactionType",
+      "AccountTransactionStats",
+      "Account",
+      "TransactionCategory",
+      "Transaction",
+      "Transfer"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-channel-analytics.ts",
+    "lines": 131,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./telegram-channels",
+      "./telegram-posts",
+      "./telegram-invite-links",
+      "./ad-campaigns"
+    ],
+    "publicExports": [
+      "TelegramChannelAudience",
+      "TelegramChannelAudienceSnapshot",
+      "TelegramChannelFinancialSummary",
+      "TelegramChannelAnalyticsSummary",
+      "TelegramChannelAnalyticsResponse"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-channel-networks.ts",
+    "lines": 78,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core"
+    ],
+    "publicExports": [
+      "TelegramChannelNetworkKpiStatus",
+      "TelegramChannelNetworkSummary",
+      "TelegramChannelNetworkMember",
+      "TelegramChannelNetworkChannelSummary",
+      "TelegramChannelNetwork",
+      "TelegramChannelNetworkDetail",
+      "CreateTelegramChannelNetworkPayload",
+      "UpdateTelegramChannelNetworkPayload"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-channels.ts",
+    "lines": 199,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./telegram-channel-analytics"
+    ],
+    "publicExports": [
+      "TelegramChannelAdAnalysisStatus",
+      "TelegramChannelAdAnalysis",
+      "TelegramChannelAdAnalysisPayload",
+      "TelegramChannelAdminLink",
+      "TelegramChannelTimePost",
+      "TelegramChannel",
+      "TelegramSyncResult",
+      "TelegramChannelSyncSelection",
+      "TelegramChannelSyncNowPayload",
+      "TelegramChannelImportPayload",
+      "TelegramAccountChannelImportItem",
+      "ApiErrorPayload"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-invite-links.ts",
+    "lines": 79,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./ad-campaigns"
+    ],
+    "publicExports": [
+      "TelegramInviteLink",
+      "InviteLinkHistoryPoint",
+      "InviteLinkHistorySummary",
+      "TelegramInviteLinkHistory",
+      "AdCampaignInviteLinkHistory"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-posts.ts",
+    "lines": 184,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core",
+      "./telegram-channels"
+    ],
+    "publicExports": [
+      "TelegramPost",
+      "TelegramManagedPostStatus",
+      "TelegramManagedPostRemoteStatus",
+      "TelegramManagedPost",
+      "TelegramManagedPostRevision",
+      "TelegramManagedPostLinkTarget",
+      "PromptNote",
+      "PostGroupStatusSummary",
+      "PostGroup",
+      "TelegramPostAnalyticsItem"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
+  },
+  {
+    "path": "apps/web/src/lib/api-types/telegram-sources.ts",
+    "lines": 143,
+    "category": "frontend",
+    "responsibilities": [
+      "domain frontend API contract types"
+    ],
+    "imports": [
+      "./core"
+    ],
+    "publicExports": [
+      "TelegramUserAccount",
+      "TelegramBot",
+      "TelegramSourceType",
+      "TelegramChannelSourceRole",
+      "TelegramChannelDataType",
+      "TelegramSourcePermissions",
+      "TelegramSourceChannelAccess",
+      "TelegramSyncedDialogChannel",
+      "TelegramUserAccountSyncDialogsResponse",
+      "TelegramChannelSourceAccess",
+      "TelegramAnalyticsSources"
+    ],
+    "candidatesForExtraction": [],
+    "testFiles": [],
+    "risk": "low"
   },
   {
     "path": "apps/web/src/components/ad-campaigns/campaigns-table.tsx",
