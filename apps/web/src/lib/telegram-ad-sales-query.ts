@@ -1,6 +1,13 @@
 "use client";
 
 import type { QueryClient } from "@tanstack/react-query";
+import {
+  accountKeys,
+  currencyKeys,
+  dashboardKeys,
+  telegramChannelKeys,
+  telegramPostKeys,
+} from "./query-keys";
 
 export const telegramAdSalesKeys = {
   root: ["telegram-ad-sales"] as const,
@@ -46,27 +53,27 @@ export async function invalidateTelegramAdSalesQueries(
 ) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.root }),
-    queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] }),
-    queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-    queryClient.invalidateQueries({ queryKey: ["accounts"] }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-channels"] }),
-    queryClient.invalidateQueries({ queryKey: ["currency-settings"] }),
-    queryClient.invalidateQueries({ queryKey: ["currency-rates"] }),
+    queryClient.invalidateQueries({ queryKey: dashboardKeys.summary() }),
+    queryClient.invalidateQueries({ queryKey: accountKeys.transactions() }),
+    queryClient.invalidateQueries({ queryKey: accountKeys.accounts() }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.list() }),
+    queryClient.invalidateQueries({ queryKey: currencyKeys.settings() }),
+    queryClient.invalidateQueries({ queryKey: currencyKeys.rates() }),
     ...(params?.saleId
       ? [queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.sale(params.saleId) })]
       : []),
     ...((params?.channelIds ?? []).flatMap((channelId) => [
       queryClient.invalidateQueries({
-        queryKey: ["telegram-managed-posts-calendar", channelId],
+        queryKey: telegramPostKeys.managedCalendar(channelId),
       }),
       queryClient.invalidateQueries({
-        queryKey: ["telegram-managed-posts", channelId],
+        queryKey: telegramPostKeys.managed(channelId),
       }),
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-financial-summary", channelId],
+        queryKey: telegramChannelKeys.financialSummary(channelId),
       }),
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-analytics", channelId],
+        queryKey: telegramChannelKeys.analytics(channelId),
       }),
     ])),
   ]);

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { authApi } from '@/lib/api';
 import { AUTH_TOKEN_CHANGED_EVENT, getAccessToken } from '@/lib/auth';
+import { authKeys } from '@/lib/query-keys';
 
 export function useAuth() {
   const [token, setToken] = useState<string | null | undefined>(undefined);
@@ -23,7 +24,7 @@ export function useAuth() {
 
   const isTokenReady = token !== undefined;
   const query = useQuery({
-    queryKey: ['auth', 'me'],
+    queryKey: authKeys.me(),
     queryFn: authApi.me,
     enabled: !!token,
     retry: false,

@@ -8,7 +8,10 @@ import {
   sumInviteLinkAttributedSubscribers,
   sumInviteLinkJoinedSubscribers,
 } from '../common/analytics/invite-link-metrics';
-import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
+import {
+  createPaginatedResponse,
+  normalizePagination,
+} from '../common/pagination/pagination.utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { FinanceCategoriesService } from '../finance-categories/finance-categories.service';
@@ -19,6 +22,10 @@ import {
   UpdateAdCampaignDto,
 } from './dto';
 import { AdCampaignAnalyticsService } from './ad-campaign-analytics.service';
+import {
+  buildCampaignInviteLinkHistoryPayload,
+  type CampaignInviteLinkHistoryPayload,
+} from './invite-link-history';
 
 @Injectable()
 export class AdCampaignsService {
@@ -147,7 +154,11 @@ export class AdCampaignsService {
   }
 
   private normalizeSelectionIds(ids: Array<string | null | undefined>) {
-    return [...new Set(ids.map((value) => String(value || '').trim()).filter(Boolean))];
+    return [
+      ...new Set(
+        ids.map((value) => String(value || '').trim()).filter(Boolean),
+      ),
+    ];
   }
 
   private resolveCampaignCustomTitleTemplate(
@@ -157,280 +168,8 @@ export class AdCampaignsService {
     return value || null;
   }
 
-  private renderCampaignTitleTemplate(
-    template: string,
-    placementDate: Date,
-  ) {
+  private renderCampaignTitleTemplate(template: string, placementDate: Date) {
     return template.replace(/\[date\]/gi, this.formatDatePart(placementDate));
-  }
-
-  private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number }>(
-    rows: T[],
-  ) {
-    let peakJoinedCount = 0;
-    let peakTotalAttributed = 0;
-    return rows.map((row) => {
-      const joinedCount = Number(row.joinedCount || 0);
-      const requestedCount = Number(row.requestedCount || 0);
-      const totalAttributed = joinedCount + requestedCount;
-      peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
-      peakTotalAttributed = Math.max(peakTotalAttributed, totalAttributed);
-      const drawdownFromPeak = Math.max(0, peakTotalAttributed - totalAttributed);
-      const drawdownPercent =
-        peakTotalAttributed > 0
-          ? (drawdownFromPeak / peakTotalAttributed) * 100
-          : 0;
-      return {
-        syncedAt: row.syncedAt,
-        joinedCount,
-        requestedCount,
-        totalAttributed,
-        peakJoinedCount,
-        drawdownFromPeak,
-        drawdownPercent,
-      };
-    });
-  }
-
-  private inviteLinkSyntheticHistoryPoint(params: {
-    syncedAt?: Date | null;
-    joinedCount?: number | null;
-    requestedCount?: number | null;
-    isRevoked?: boolean | null;
-  }) {
-    return {
-      syncedAt: params.syncedAt ?? new Date(),
-      joinedCount: Number(params.joinedCount ?? 0),
-      requestedCount: Number(params.requestedCount ?? 0),
-      isRevoked: Boolean(params.isRevoked),
-    };
-  }
-
-  private appendCurrentInviteLinkHistoryRowIfChanged<
-    T extends {
-      syncedAt: Date;
-      joinedCount: number;
-      requestedCount: number;
-      isRevoked?: boolean | null;
-    },
-  >(
-    rows: T[],
-    current: {
-      syncedAt?: Date | null;
-      joinedCount?: number | null;
-      requestedCount?: number | null;
-      isRevoked?: boolean | null;
-    },
-  ) {
-    const currentJoinedCount = Number(current.joinedCount ?? 0);
-    const currentRequestedCount = Number(current.requestedCount ?? 0);
-    const currentRevoked = Boolean(current.isRevoked);
-    const latest = rows[rows.length - 1] ?? null;
-    if (
-      latest &&
-      Number(latest.joinedCount || 0) === currentJoinedCount &&
-      Number(latest.requestedCount || 0) === currentRequestedCount &&
-      Boolean(latest.isRevoked) === currentRevoked
-    ) {
-      return rows;
-    }
-    return [
-      ...rows,
-      this.inviteLinkSyntheticHistoryPoint({
-        syncedAt: current.syncedAt ?? new Date(),
-        joinedCount: currentJoinedCount,
-        requestedCount: currentRequestedCount,
-        isRevoked: currentRevoked,
-      }),
-    ];
-  }
-
-  private inviteLinkHistorySummary<
-    T extends {
-      joinedCount: number;
-      requestedCount: number;
-      totalAttributed: number;
-      peakJoinedCount: number;
-      drawdownFromPeak: number;
-      drawdownPercent: number;
-    },
-  >(points: T[]) {
-    const current = points[points.length - 1] ?? null;
-    const peakJoinedCount = points.reduce(
-      (max, point) => Math.max(max, Number(point.peakJoinedCount || 0)),
-      0,
-    );
-    const peakRequestedCount = points.reduce(
-      (max, point) => Math.max(max, Number(point.requestedCount || 0)),
-      0,
-    );
-    const peakTotalAttributed = points.reduce(
-      (max, point) => Math.max(max, Number(point.totalAttributed || 0)),
-      0,
-    );
-    return {
-      currentJoinedCount: Number(current?.joinedCount || 0),
-      currentRequestedCount: Number(current?.requestedCount || 0),
-      currentTotalAttributed:
-        Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
-      peakJoinedCount,
-      peakRequestedCount,
-      peakTotalAttributed,
-      drawdownFromPeak: Number(current?.drawdownFromPeak || 0),
-      drawdownPercent: Number(current?.drawdownPercent || 0),
-      hasHighDropoff: Number(current?.drawdownPercent || 0) >= 15,
-    };
-  }
-
-  private buildCampaignInviteLinkHistoryPayload(
-    campaign: {
-      id: string;
-      title?: string | null;
-      inviteLinks: Array<{
-        id: string;
-        name: string;
-        url: string;
-        joinedCount: number;
-        requestedCount?: number | null;
-        isRevoked: boolean;
-        lastSyncedAt?: Date | null;
-        createdAt?: Date | null;
-        updatedAt?: Date | null;
-      }>;
-    },
-    rowsAsc: Array<{
-      inviteLinkId: string;
-      syncedAt: Date;
-      joinedCount: number;
-      requestedCount: number;
-      isRevoked: boolean | null;
-    }>,
-    limit = 120,
-  ) {
-    const maxPoints = Math.max(2, Math.min(365, limit));
-    const grouped = new Map<
-      string,
-      { syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked: boolean }
-    >();
-    for (const row of rowsAsc) {
-      const key = row.syncedAt.toISOString();
-      const current = grouped.get(key);
-      if (current) {
-        current.joinedCount += Number(row.joinedCount || 0);
-        current.requestedCount += Number(row.requestedCount || 0);
-        current.isRevoked = current.isRevoked && Boolean(row.isRevoked);
-      } else {
-        grouped.set(key, {
-          syncedAt: row.syncedAt,
-          joinedCount: Number(row.joinedCount || 0),
-          requestedCount: Number(row.requestedCount || 0),
-          isRevoked: Boolean(row.isRevoked),
-        });
-      }
-    }
-
-    const currentAggregateSyncedAt = campaign.inviteLinks.reduce<Date | null>(
-      (latest, link) => {
-        const candidate =
-          link.lastSyncedAt ?? link.updatedAt ?? link.createdAt ?? null;
-        if (!candidate) return latest;
-        if (!latest || candidate.getTime() > latest.getTime()) return candidate;
-        return latest;
-      },
-      null,
-    );
-    const aggregateRows = this.appendCurrentInviteLinkHistoryRowIfChanged(
-      [...grouped.values()].slice(-maxPoints),
-      {
-        syncedAt: currentAggregateSyncedAt,
-        joinedCount: campaign.inviteLinks.reduce(
-          (sum, link) => sum + Number(link.joinedCount || 0),
-          0,
-        ),
-        requestedCount: campaign.inviteLinks.reduce(
-          (sum, link) => sum + Number(link.requestedCount || 0),
-          0,
-        ),
-        isRevoked:
-          campaign.inviteLinks.length > 0 &&
-          campaign.inviteLinks.every((link) => Boolean(link.isRevoked)),
-      },
-    ).slice(-maxPoints);
-    const aggregatePoints = this.inviteLinkHistoryPoints(
-      aggregateRows.length
-        ? aggregateRows
-        : [
-            this.inviteLinkSyntheticHistoryPoint({
-              joinedCount: campaign.inviteLinks.reduce(
-                (sum, link) => sum + Number(link.joinedCount || 0),
-                0,
-              ),
-              requestedCount: campaign.inviteLinks.reduce(
-                (sum, link) => sum + Number(link.requestedCount || 0),
-                0,
-              ),
-              isRevoked:
-                campaign.inviteLinks.length > 0 &&
-                campaign.inviteLinks.every((link) => Boolean(link.isRevoked)),
-            }),
-          ],
-    );
-
-    const perLinkRows = new Map<
-      string,
-      Array<{ syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked: boolean }>
-    >();
-    for (const row of rowsAsc) {
-      const list = perLinkRows.get(row.inviteLinkId) ?? [];
-      list.push({
-        syncedAt: row.syncedAt,
-        joinedCount: Number(row.joinedCount || 0),
-        requestedCount: Number(row.requestedCount || 0),
-        isRevoked: Boolean(row.isRevoked),
-      });
-      perLinkRows.set(row.inviteLinkId, list);
-    }
-
-    const inviteLinks = campaign.inviteLinks.map((link) => {
-      const linkRows = this.appendCurrentInviteLinkHistoryRowIfChanged(
-        (perLinkRows.get(link.id) ?? []).slice(-maxPoints),
-        {
-          syncedAt: link.lastSyncedAt ?? link.updatedAt ?? link.createdAt ?? null,
-          joinedCount: link.joinedCount,
-          requestedCount: link.requestedCount,
-          isRevoked: link.isRevoked,
-        },
-      ).slice(-maxPoints);
-      const points = this.inviteLinkHistoryPoints(
-        linkRows.length
-          ? linkRows
-          : [
-              this.inviteLinkSyntheticHistoryPoint({
-                joinedCount: link.joinedCount,
-                requestedCount: link.requestedCount,
-                isRevoked: link.isRevoked,
-              }),
-            ],
-      );
-      return {
-        ...link,
-        points,
-        summary: this.inviteLinkHistorySummary(points),
-      };
-    });
-
-    return {
-      campaign: {
-        id: campaign.id,
-        title: campaign.title,
-      },
-      inviteLinks,
-      points: aggregatePoints,
-      summary: {
-        ...this.inviteLinkHistorySummary(aggregatePoints),
-        inviteLinksCount: campaign.inviteLinks.length,
-      },
-    };
   }
 
   private async preloadCampaignInviteLinkHistories(
@@ -438,7 +177,8 @@ export class AdCampaignsService {
     rows: any[],
     limit = 120,
   ) {
-    if (!rows.length) return new Map<string, ReturnType<AdCampaignsService["buildCampaignInviteLinkHistoryPayload"]>>();
+    if (!rows.length)
+      return new Map<string, CampaignInviteLinkHistoryPayload>();
     const campaignIds = rows.map((row) => row.id);
     let snapshotRows: Array<{
       adCampaignId: string | null;
@@ -455,8 +195,15 @@ export class AdCampaignsService {
             workspaceId,
             adCampaignId: { in: campaignIds },
           },
-          orderBy: [{ adCampaignId: 'asc' }, { syncedAt: 'asc' }, { inviteLinkId: 'asc' }],
-          take: Math.max(2, Math.min(5000, limit * Math.max(1, campaignIds.length))),
+          orderBy: [
+            { adCampaignId: 'asc' },
+            { syncedAt: 'asc' },
+            { inviteLinkId: 'asc' },
+          ],
+          take: Math.max(
+            2,
+            Math.min(5000, limit * Math.max(1, campaignIds.length)),
+          ),
           select: {
             adCampaignId: true,
             inviteLinkId: true,
@@ -483,7 +230,7 @@ export class AdCampaignsService {
 
     const historyByCampaignId = new Map<
       string,
-      ReturnType<AdCampaignsService["buildCampaignInviteLinkHistoryPayload"]>
+      CampaignInviteLinkHistoryPayload
     >();
     for (const row of rows) {
       const inviteLinks = Array.isArray(row.inviteLinks)
@@ -494,7 +241,7 @@ export class AdCampaignsService {
         : [];
       historyByCampaignId.set(
         row.id,
-        this.buildCampaignInviteLinkHistoryPayload(
+        buildCampaignInviteLinkHistoryPayload(
           {
             id: row.id,
             title: row.title,
@@ -550,18 +297,21 @@ export class AdCampaignsService {
         activationRate: point.activationRate,
       }));
     const releasedSubscribersCount =
-      campaignJoinedCount != null && Number.isFinite(Number(campaignJoinedCount))
+      campaignJoinedCount != null &&
+      Number.isFinite(Number(campaignJoinedCount))
         ? Math.max(0, Number(campaignJoinedCount))
         : sortedBatches.reduce(
             (sum, batch) => sum + Number(batch.releasedSubscribersCount || 0),
             0,
           );
     const cumulativeAvgViewsUplift = [...latestPointByBatch.values()].reduce(
-      (sum, point) => sum + Math.max(0, Number(point.cumulativeAvgViewsUplift || 0)),
+      (sum, point) =>
+        sum + Math.max(0, Number(point.cumulativeAvgViewsUplift || 0)),
       0,
     );
     const incrementalAvgViewsUplift = [...latestPointByBatch.values()].reduce(
-      (sum, point) => sum + Math.max(0, Number(point.incrementalAvgViewsUplift || 0)),
+      (sum, point) =>
+        sum + Math.max(0, Number(point.incrementalAvgViewsUplift || 0)),
       0,
     );
     const estimatedActiveSubscribers = Math.min(
@@ -614,10 +364,17 @@ export class AdCampaignsService {
     pointLimit = 30,
     campaignJoinedCounts = new Map<string, number>(),
   ) {
-    if (!campaignIds.length) return new Map<string, ReturnType<AdCampaignsService["shapeAdmissionViewAnalytics"]>>();
+    if (!campaignIds.length)
+      return new Map<
+        string,
+        ReturnType<AdCampaignsService['shapeAdmissionViewAnalytics']>
+      >();
     if (this.admissionAnalyticsStorageState === 'missing') {
       return new Map(
-        campaignIds.map((id) => [id, this.shapeAdmissionViewAnalytics([], pointLimit)]),
+        campaignIds.map((id) => [
+          id,
+          this.shapeAdmissionViewAnalytics([], pointLimit),
+        ]),
       );
     }
     let batches: any[] = [];
@@ -637,7 +394,10 @@ export class AdCampaignsService {
       if (!this.isAdmissionAnalyticsStorageMissing(error)) throw error;
       this.admissionAnalyticsStorageState = 'missing';
       return new Map(
-        campaignIds.map((id) => [id, this.shapeAdmissionViewAnalytics([], pointLimit)]),
+        campaignIds.map((id) => [
+          id,
+          this.shapeAdmissionViewAnalytics([], pointLimit),
+        ]),
       );
     }
     const byCampaignId = new Map<string, any[]>();
@@ -648,7 +408,7 @@ export class AdCampaignsService {
     }
     const result = new Map<
       string,
-      ReturnType<AdCampaignsService["shapeAdmissionViewAnalytics"]>
+      ReturnType<AdCampaignsService['shapeAdmissionViewAnalytics']>
     >();
     for (const id of campaignIds) {
       result.set(
@@ -667,10 +427,7 @@ export class AdCampaignsService {
     promoId?: string | null;
     promoIds?: string[] | null;
   }) {
-    return this.normalizeSelectionIds([
-      ...(dto.promoIds || []),
-      dto.promoId,
-    ]);
+    return this.normalizeSelectionIds([...(dto.promoIds || []), dto.promoId]);
   }
 
   private selectedInviteLinkIds(dto: {
@@ -690,7 +447,11 @@ export class AdCampaignsService {
   ) {
     if (!promoIds.length) return;
     const promos = await this.prisma.promo.findMany({
-      where: { id: { in: promoIds }, workspaceId, telegramChannelId: channelId },
+      where: {
+        id: { in: promoIds },
+        workspaceId,
+        telegramChannelId: channelId,
+      },
       select: { id: true },
     });
     if (promos.length !== promoIds.length) {
@@ -802,7 +563,9 @@ export class AdCampaignsService {
       where: {
         workspaceId,
         OR: [
-          ...(username ? [{ username: { equals: username, mode: 'insensitive' } }] : []),
+          ...(username
+            ? [{ username: { equals: username, mode: 'insensitive' } }]
+            : []),
           ...(source?.name ? [{ title: source.name }] : []),
         ],
       },
@@ -955,7 +718,9 @@ export class AdCampaignsService {
     const sourceLabel = this.shortenBlock(
       firstSource?.title || firstSource?.name || 'source',
     );
-    const promosById = new Map((promo || []).map((item: any) => [item.id, item]));
+    const promosById = new Map(
+      (promo || []).map((item: any) => [item.id, item]),
+    );
     const orderedPromos = promoIds
       .map((promoId) => promosById.get(promoId))
       .filter((promo): promo is { title?: string | null } => Boolean(promo));
@@ -983,7 +748,8 @@ export class AdCampaignsService {
       );
     }
     const conflictingLink = links.find(
-      (link: any) => link.adCampaignId && link.adCampaignId !== currentCampaignId,
+      (link: any) =>
+        link.adCampaignId && link.adCampaignId !== currentCampaignId,
     );
     if (conflictingLink) {
       throw new BadRequestException(
@@ -1116,21 +882,24 @@ export class AdCampaignsService {
 
   private async shapeCampaign(
     row: any,
-    preloadedInviteLinkHistory?: ReturnType<
-      AdCampaignsService["buildCampaignInviteLinkHistoryPayload"]
-    > | null,
+    preloadedInviteLinkHistory?: CampaignInviteLinkHistoryPayload | null,
     admissionViewAnalytics?: ReturnType<
-      AdCampaignsService["shapeAdmissionViewAnalytics"]
+      AdCampaignsService['shapeAdmissionViewAnalytics']
     > | null,
   ) {
     const analytics = await this.campaignMetrics(row);
     const linkedPromos = this.normalizeSelectionIds([
       row.promo?.id,
-      ...(Array.isArray(row.promos) ? row.promos.map((item: any) => item?.promo?.id) : []),
-    ]).map((promoId) => {
-      if (row.promo?.id === promoId) return row.promo;
-      return row.promos.find((item: any) => item.promo?.id === promoId)?.promo;
-    }).filter(Boolean);
+      ...(Array.isArray(row.promos)
+        ? row.promos.map((item: any) => item?.promo?.id)
+        : []),
+    ])
+      .map((promoId) => {
+        if (row.promo?.id === promoId) return row.promo;
+        return row.promos.find((item: any) => item.promo?.id === promoId)
+          ?.promo;
+      })
+      .filter(Boolean);
     const inviteLinks = Array.isArray(row.inviteLinks) ? row.inviteLinks : [];
     const telegramInviteLink =
       inviteLinks.find((link: any) => link.id === row.telegramInviteLinkId) ||
@@ -1331,10 +1100,8 @@ export class AdCampaignsService {
       this.campaignPromoStorageState = 'missing';
       rows = await loadRows(false);
     }
-    const preloadedInviteLinkHistories = await this.preloadCampaignInviteLinkHistories(
-      workspaceId,
-      rows.items,
-    );
+    const preloadedInviteLinkHistories =
+      await this.preloadCampaignInviteLinkHistories(workspaceId, rows.items);
     const campaignJoinedCounts = new Map<string, number>(
       rows.items.map((row: any) => [
         row.id,
@@ -1346,12 +1113,13 @@ export class AdCampaignsService {
           : Number(row.joinedCount || row.analytics?.joinedCount || 0),
       ]),
     );
-    const preloadedAdmissionAnalytics = await this.preloadAdmissionViewAnalytics(
-      workspaceId,
-      rows.items.map((row: any) => row.id),
-      30,
-      campaignJoinedCounts,
-    );
+    const preloadedAdmissionAnalytics =
+      await this.preloadAdmissionViewAnalytics(
+        workspaceId,
+        rows.items.map((row: any) => row.id),
+        30,
+        campaignJoinedCounts,
+      );
     const items = await Promise.all(
       rows.items.map((row) =>
         this.shapeCampaign(
@@ -1395,7 +1163,7 @@ export class AdCampaignsService {
     );
     return this.shapeCampaign(
       row,
-      this.buildCampaignInviteLinkHistoryPayload(
+      buildCampaignInviteLinkHistoryPayload(
         {
           id: row.id,
           title: row.title,
@@ -1534,7 +1302,10 @@ export class AdCampaignsService {
           orderBy: [{ syncedAt: 'desc' }, { inviteLinkId: 'asc' }],
           take: Math.max(
             2,
-            Math.min(2000, limit * Math.max(1, campaign.inviteLinks.length || 1)),
+            Math.min(
+              2000,
+              limit * Math.max(1, campaign.inviteLinks.length || 1),
+            ),
           ),
           select: {
             inviteLinkId: true,
@@ -1551,7 +1322,7 @@ export class AdCampaignsService {
       }
     }
 
-    return this.buildCampaignInviteLinkHistoryPayload(
+    return buildCampaignInviteLinkHistoryPayload(
       {
         id: campaign.id,
         title: campaign.title,
@@ -1568,7 +1339,11 @@ export class AdCampaignsService {
   async create(userId: string, dto: CreateAdCampaignDto) {
     const promoIds = this.selectedPromoIds(dto);
     const inviteLinkIds = this.selectedInviteLinkIds(dto);
-    const { workspaceId, assignedMemberId } = await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId);
+    const { workspaceId, assignedMemberId } =
+      await this.workspaceService.resolveAssignedMemberId(
+        userId,
+        dto.assignedMemberId,
+      );
     await this.ensurePromosBelongToChannel(
       workspaceId,
       promoIds,
@@ -1622,7 +1397,10 @@ export class AdCampaignsService {
           promoId: promoIds[0] || null,
           telegramInviteLinkId: inviteLinkIds[0] || null,
           title: customTitleTemplate
-            ? this.renderCampaignTitleTemplate(customTitleTemplate, placementDate)
+            ? this.renderCampaignTitleTemplate(
+                customTitleTemplate,
+                placementDate,
+              )
             : generatedTitle,
           customTitleTemplate,
           status: 'planned',
@@ -1640,7 +1418,12 @@ export class AdCampaignsService {
       });
 
       await this.replaceCampaignPromos(tx, row.id, promoIds);
-      await this.replaceCampaignInviteLinks(tx, workspaceId, row.id, inviteLinkIds);
+      await this.replaceCampaignInviteLinks(
+        tx,
+        workspaceId,
+        row.id,
+        inviteLinkIds,
+      );
 
       if (advertisingSources.channelIds.length) {
         await (tx as any).adCampaignTelegramChannelPlacement.createMany({
@@ -1678,14 +1461,21 @@ export class AdCampaignsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException('Campaign not found');
-    const assignedMemberId = dto.assignedMemberId === undefined ? undefined : (
-      await this.workspaceService.resolveAssignedMemberId(userId, dto.assignedMemberId)
-    ).assignedMemberId;
+    const assignedMemberId =
+      dto.assignedMemberId === undefined
+        ? undefined
+        : (
+            await this.workspaceService.resolveAssignedMemberId(
+              userId,
+              dto.assignedMemberId,
+            )
+          ).assignedMemberId;
 
-    const hasPromoSelection = dto.promoIds !== undefined || dto.promoId !== undefined;
+    const hasPromoSelection =
+      dto.promoIds !== undefined || dto.promoId !== undefined;
     const hasInviteLinkSelection =
       dto.inviteLinkIds !== undefined || dto.telegramInviteLinkId !== undefined;
-    const existingPromoLinks = await this.hasCampaignPromoStorage()
+    const existingPromoLinks = (await this.hasCampaignPromoStorage())
       ? await (this.prisma as any).adCampaignPromo.findMany({
           where: { adCampaignId: id },
           select: { promoId: true },
@@ -1701,7 +1491,9 @@ export class AdCampaignsService {
           where: { workspaceId, adCampaignId: id },
           select: { id: true },
         })
-      ).map((link) => link.id).concat(existing.telegramInviteLinkId || []),
+      )
+        .map((link) => link.id)
+        .concat(existing.telegramInviteLinkId || []),
     );
     const nextPromoIds = hasPromoSelection
       ? this.selectedPromoIds(dto)
@@ -1790,7 +1582,10 @@ export class AdCampaignsService {
         where: { id },
         data: {
           title: customTitleTemplate
-            ? this.renderCampaignTitleTemplate(customTitleTemplate, nextPlacementDate)
+            ? this.renderCampaignTitleTemplate(
+                customTitleTemplate,
+                nextPlacementDate,
+              )
             : generatedTitle,
           customTitleTemplate,
           telegramChannelId: dto.telegramChannelId,
@@ -1878,7 +1673,9 @@ export class AdCampaignsService {
     const linkedRequestedCount =
       sumInviteLinkAttributedSubscribers(inviteLinks) - linkedJoinedCount;
     const joinedCount =
-      linkedJoinedCount > 0 ? linkedJoinedCount : Number(campaign.joinedCount ?? 0);
+      linkedJoinedCount > 0
+        ? linkedJoinedCount
+        : Number(campaign.joinedCount ?? 0);
     const requestedCount =
       linkedJoinedCount > 0
         ? linkedRequestedCount
@@ -2010,7 +1807,8 @@ export class AdCampaignsService {
         const quality = String(campaign.adDataQuality || 'normal');
         if (quality === 'anomalous') acc.anomalousCount += 1;
         else if (quality === 'suspicious') acc.suspiciousCount += 1;
-        else if (quality === 'normal' || quality === 'borderline') acc.normalDataCount += 1;
+        else if (quality === 'normal' || quality === 'borderline')
+          acc.normalDataCount += 1;
         if (campaign.hasSubscriberBasePollution) acc.pollutedCount += 1;
         return acc;
       },
@@ -2022,8 +1820,15 @@ export class AdCampaignsService {
       },
     );
     const metric = (campaign: any) =>
-      Number(campaign.cappedActiveCpa ?? campaign.activeCpa ?? campaign.cpa ?? Number.POSITIVE_INFINITY);
-    const ranked = campaigns.filter((campaign) => Number.isFinite(metric(campaign)));
+      Number(
+        campaign.cappedActiveCpa ??
+          campaign.activeCpa ??
+          campaign.cpa ??
+          Number.POSITIVE_INFINITY,
+      );
+    const ranked = campaigns.filter((campaign) =>
+      Number.isFinite(metric(campaign)),
+    );
     const bestRanked = ranked.filter(
       (campaign) =>
         campaign.adDataQuality !== 'anomalous' &&
@@ -2034,8 +1839,7 @@ export class AdCampaignsService {
       totalSpend,
       totalNewSubscribers,
       totalActiveSubscribersFromAd,
-      avgCpa:
-        totalNewSubscribers > 0 ? totalSpend / totalNewSubscribers : null,
+      avgCpa: totalNewSubscribers > 0 ? totalSpend / totalNewSubscribers : null,
       avgActiveCpa:
         totalActiveSubscribersFromAd > 0
           ? totalSpend / totalActiveSubscribersFromAd
@@ -2047,8 +1851,12 @@ export class AdCampaignsService {
       acceptableCount: statusCounts.acceptable || 0,
       badCount: statusCounts.bad || 0,
       unknownCount: statusCounts.unknown || 0,
-      bestCampaigns: [...bestRanked].sort((a, b) => metric(a) - metric(b)).slice(0, 5),
-      worstCampaigns: [...ranked].sort((a, b) => metric(b) - metric(a)).slice(0, 5),
+      bestCampaigns: [...bestRanked]
+        .sort((a, b) => metric(a) - metric(b))
+        .slice(0, 5),
+      worstCampaigns: [...ranked]
+        .sort((a, b) => metric(b) - metric(a))
+        .slice(0, 5),
       lastDailyAnalyticsSync,
     };
   }

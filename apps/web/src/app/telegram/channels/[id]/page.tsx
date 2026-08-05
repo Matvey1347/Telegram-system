@@ -80,6 +80,7 @@ import {
 } from "@/lib/api";
 import { usePagination } from "@/hooks/use-pagination";
 import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
+import { currencyKeys, telegramChannelKeys, telegramPostKeys } from "@/lib/query-keys";
 import { invalidateTelegramChannelQueries } from "@/lib/telegram-query-invalidation";
 import { useAppToast } from "@/providers/toast-provider";
 
@@ -334,8 +335,7 @@ export default function TelegramChannelAnalyticsPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: [
-      "telegram-channel-analytics",
-      id,
+      ...telegramChannelKeys.analytics(id),
       rangeParams.from,
       rangeParams.to,
     ],
@@ -343,25 +343,25 @@ export default function TelegramChannelAnalyticsPage() {
       getTelegramChannelAnalytics(id, rangeParams.from, rangeParams.to),
   });
   const { data: channel, isLoading: isChannelLoading } = useQuery({
-    queryKey: ["telegram-channel", id],
+    queryKey: telegramChannelKeys.detail(id),
     queryFn: () => telegramChannelsApi.get(id),
   });
   const { data: audience, isLoading: isAudienceLoading } = useQuery({
-    queryKey: ["telegram-channel-audience", id],
+    queryKey: telegramChannelKeys.audience(id),
     queryFn: () => telegramChannelsApi.audience(id),
   });
   const {
     data: financialSummary,
     isLoading: isFinancialSummaryLoading,
   } = useQuery({
-    queryKey: ["telegram-channel-financial-summary", id],
+    queryKey: telegramChannelKeys.financialSummary(id),
     queryFn: () => telegramChannelsApi.financialSummary(id),
   });
   const {
     data: audienceSnapshots = [],
     isLoading: isAudienceSnapshotsLoading,
   } = useQuery({
-    queryKey: ["telegram-channel-audience-snapshots", id],
+    queryKey: telegramChannelKeys.audienceSnapshots(id),
     queryFn: () => telegramChannelsApi.audienceSnapshots(id, 80),
   });
   const {
@@ -370,13 +370,12 @@ export default function TelegramChannelAnalyticsPage() {
     isFetching: isPostsFetching,
     error: postsError,
   } = useQuery({
-    queryKey: [
-      "telegram-channel-posts",
+    queryKey: telegramPostKeys.channelPostsPage(
       id,
       postsPagination.page,
       postsPagination.pageSize,
       postsSearch,
-    ],
+    ),
     queryFn: () =>
       getTelegramChannelPosts(id, {
         page: postsPagination.page,
@@ -390,13 +389,12 @@ export default function TelegramChannelAnalyticsPage() {
     isLoading: isInviteLinksLoading,
     isFetching: isInviteLinksFetching,
   } = useQuery({
-    queryKey: [
-      "telegram-channel-invite-links",
+    queryKey: telegramChannelKeys.inviteLinksPage(
       id,
       inviteLinksPagination.page,
       inviteLinksPagination.pageSize,
       inviteLinksSearch,
-    ],
+    ),
     queryFn: () =>
       getTelegramChannelInviteLinks(id, {
         page: inviteLinksPagination.page,
@@ -410,13 +408,12 @@ export default function TelegramChannelAnalyticsPage() {
     isLoading: isCampaignsLoading,
     isFetching: isCampaignsFetching,
   } = useQuery({
-    queryKey: [
-      "telegram-channel-campaigns",
+    queryKey: telegramChannelKeys.campaignsPage(
       id,
       campaignsPagination.page,
       campaignsPagination.pageSize,
       campaignsSearch,
-    ],
+    ),
     queryFn: () =>
       adCampaignsApi.listPage({
         telegramChannelId: id,
@@ -427,11 +424,11 @@ export default function TelegramChannelAnalyticsPage() {
     enabled: openSections.campaigns,
   });
   const { data: currencySettings } = useQuery({
-    queryKey: ["currency-settings"],
+    queryKey: currencyKeys.settings(),
     queryFn: currenciesApi.getSettings,
   });
   const { data: rates } = useQuery({
-    queryKey: ["currency-rates"],
+    queryKey: currencyKeys.rates(),
     queryFn: currenciesApi.listRates,
   });
 
@@ -590,17 +587,17 @@ export default function TelegramChannelAnalyticsPage() {
     mutationFn: (nextSettings: SettingsState) =>
       telegramChannelsApi.updateQuiet(id, buildChannelSettingsPayload(nextSettings)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel", id] });
+      queryClient.invalidateQueries({ queryKey: telegramChannelKeys.detail(id) });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-analytics", id],
+        queryKey: telegramChannelKeys.analytics(id),
       });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience", id],
+        queryKey: telegramChannelKeys.audience(id),
       });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-financial-summary", id],
+        queryKey: telegramChannelKeys.financialSummary(id),
       });
-      queryClient.invalidateQueries({ queryKey: ["telegram-channels"] });
+      queryClient.invalidateQueries({ queryKey: telegramChannelKeys.list() });
       pushToast("Settings saved.", "success");
     },
     onError: (error: any) =>
@@ -620,15 +617,15 @@ export default function TelegramChannelAnalyticsPage() {
       };
     }) => telegramChannelsApi.updatePostManualMetrics(id, postId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["telegram-channel-posts", id] });
+      queryClient.invalidateQueries({ queryKey: telegramPostKeys.channelPosts(id) });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience", id],
+        queryKey: telegramChannelKeys.audience(id),
       });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-financial-summary", id],
+        queryKey: telegramChannelKeys.financialSummary(id),
       });
       queryClient.invalidateQueries({
-        queryKey: ["telegram-channel-audience-snapshots", id],
+        queryKey: telegramChannelKeys.audienceSnapshots(id),
       });
       pushToast("Post correction saved.", "success");
     },

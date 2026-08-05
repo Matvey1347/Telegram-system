@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Select } from '@/components/ui/primitives';
 import { workspaceMembersApi } from '@/lib/api';
+import { memberKeys } from '@/lib/query-keys';
 import { useAuth } from '@/hooks/use-auth';
 
 export function MemberSelect({
@@ -21,7 +22,7 @@ export function MemberSelect({
 }) {
   const { workspace } = useAuth();
   const members = useQuery({
-    queryKey: ['workspace-members'],
+    queryKey: memberKeys.members(),
     queryFn: workspaceMembersApi.list,
   });
   const current = members.data?.find((member) => member.isCurrentUser);

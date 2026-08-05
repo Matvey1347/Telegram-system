@@ -758,7 +758,7 @@ describe('TelegramAdSalesService', () => {
           placementId: 'placement-1',
           title: 'Overdue unpaid sale',
           details: 'still unpaid',
-          scheduledAt: null,
+          scheduledAt: '2026-08-02T10:00:00.000Z',
           amount: '50',
           currency: 'USD',
         },

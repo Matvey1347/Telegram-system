@@ -10,6 +10,34 @@
 - Domain services: feature modules in `apps/api/src/*` own business rules and Prisma orchestration. Reuse helpers before adding parallel logic paths.
 - Frontend providers/components/lib: providers own app-wide state and feedback; `components` own reusable UI; `lib` owns shared client behavior, request utilities, and cross-page flows.
 
+## Architecture workflow
+
+- For features touching frontend and backend, the main Codex agent acts as tech lead/integrator.
+- First define the end-to-end flow and API contract, then split implementation by non-overlapping files.
+- Backend and frontend agents must not independently invent different request/response shapes.
+- Parallel write agents must never edit the same files.
+- Significant refactors use `docs/refactoring/PROJECT_REFACTOR_EXEC_PLAN.md` and update progress as work lands.
+- After implementation, the tech lead verifies integration, workspace isolation, query invalidation, tests and docs.
+
+## Reuse before creation
+
+Before adding a selector, picker, modal, table, form field, metric card, chart wrapper, page header, query hook or API type, search for existing implementations:
+
+- `rg "function .*Select|const .*Select|MultiSelect|CustomSelect" apps/web/src`
+- `rg "DateInput|DateRangeInput|Picker|Modal|Table|PageHeader|Metric" apps/web/src`
+- `rg "queryKey:|invalidateQueries|useQuery|useMutation" apps/web/src`
+- `rg "export type|export interface" packages/shared/src apps/web/src/lib apps/api/src`
+- `rg "PrismaService|workspaceId|WorkspaceService" apps/api/src`
+
+Prefer existing primitives, `apps/web/src/lib/query-keys.ts`, shared contracts and Telegram adapters over local duplicates.
+
+## Required reading
+
+- Frontend tasks: `apps/web/AGENTS.md`, `docs/design-system/BRAND_GUIDE.md`, `docs/design-system/COMPONENT_CATALOG.md`.
+- Backend tasks: `apps/api/AGENTS.md`, the relevant domain module, Prisma schema and existing tests.
+- Shared contract tasks: `packages/shared/AGENTS.md`, backend DTO/controller and frontend API client usage.
+- Cross-stack tasks: shared contracts, frontend API client, controller/DTO, relevant query keys and invalidation paths.
+
 ## Before changing code
 
 1. Read neighboring files before editing.
@@ -86,13 +114,31 @@ If behavior must work "across the site", do not patch multiple pages separately.
 
 A change is not done until:
 
+- backend/frontend/shared contracts are synchronized where relevant;
+- loading/error/empty states are handled for user-visible UI;
+- query invalidation uses shared key factories where possible;
+- authorization and workspace isolation are checked;
 - tests exist;
-- relevant lint/build commands pass;
+- relevant lint/typecheck/build commands are run and results are reported;
 - usages were checked;
 - shared types are updated where needed;
 - error paths are handled;
 - duplicate implementations are removed;
+- documentation is updated when a new pattern appears;
 - manual QA steps are written in the final handoff.
+
+## File-size policy
+
+- Do not create new god files.
+- Target handwritten production files at 100-400 lines.
+- `pnpm architecture:check` warns above 500 lines and enforces hard policy above 800 lines.
+- App Router `page.tsx` files must trend below 300 lines and should only read params/search params and render feature containers.
+- API compatibility facades must trend below 400 lines; type barrels/index files below 250 lines; UI barrels below 150 lines.
+- Existing files above these limits are transitional debt only. They are tracked in `scripts/check-architecture.mjs` as shrinking-only baseline entries and must never grow.
+- `ARCHITECTURE_STRICT=1 pnpm architecture:check` is the final gate: no transitional baseline, no god-file exceptions.
+- Significant refactors must reduce or remove transitional baseline entries instead of adding new ones.
+- When touching a file over the limit, consider a local cohesive extraction, but do not mix unrelated mass refactors into small features.
+- Run `pnpm architecture:check` after architecture-sensitive changes.
 
 ## No overengineering
 

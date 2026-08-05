@@ -77,6 +77,7 @@ function main() {
   }
 
   const commands = [];
+  commands.push("pnpm architecture:check");
 
   if (touchesAny(files, ["packages/shared/"])) {
     commands.push("pnpm --filter @telegram-system/shared lint");

@@ -1,18 +1,24 @@
 import type { QueryClient } from "@tanstack/react-query";
+import {
+  adCampaignKeys,
+  telegramAccountKeys,
+  telegramChannelKeys,
+  telegramPostKeys,
+} from "./query-keys";
 
 export async function invalidateTelegramAccessQueries(queryClient: QueryClient) {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["telegram-user-accounts"] }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-bots"] }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-source-channels"] }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-channel-sources"] }),
+    queryClient.invalidateQueries({ queryKey: telegramAccountKeys.accounts() }),
+    queryClient.invalidateQueries({ queryKey: telegramAccountKeys.bots() }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.sourceChannels() }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.sources() }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-publishing-capabilities"],
+      queryKey: telegramChannelKeys.publishingCapabilities(),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-analytics-sources"],
+      queryKey: telegramChannelKeys.analyticsSources(),
     }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-channels"] }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.list() }),
   ]);
 }
 
@@ -21,40 +27,40 @@ export async function invalidateTelegramChannelQueries(
   channelId: string,
 ) {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["telegram-channels"] }),
-    queryClient.invalidateQueries({ queryKey: ["telegram-channel", channelId] }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.list() }),
+    queryClient.invalidateQueries({ queryKey: telegramChannelKeys.detail(channelId) }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-analytics", channelId],
+      queryKey: telegramChannelKeys.analytics(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-posts", channelId],
+      queryKey: telegramPostKeys.channelPosts(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-analytics-sources", channelId],
+      queryKey: telegramChannelKeys.analyticsSources(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-audience", channelId],
+      queryKey: telegramChannelKeys.audience(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-financial-summary", channelId],
+      queryKey: telegramChannelKeys.financialSummary(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["channel-invite-links", channelId],
+      queryKey: telegramChannelKeys.inviteLinks(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-audience-snapshots", channelId],
+      queryKey: telegramChannelKeys.audienceSnapshots(channelId),
     }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-managed-posts", channelId],
+      queryKey: telegramPostKeys.managed(channelId),
     }),
-    queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
+    queryClient.invalidateQueries({ queryKey: telegramPostKeys.postGroups(channelId) }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-managed-post-link-targets", channelId],
+      queryKey: telegramPostKeys.linkTargets(channelId),
     }),
-    queryClient.invalidateQueries({ queryKey: ["ad-campaigns"] }),
-    queryClient.invalidateQueries({ queryKey: ["ad-campaigns-performance"] }),
+    queryClient.invalidateQueries({ queryKey: adCampaignKeys.list() }),
+    queryClient.invalidateQueries({ queryKey: adCampaignKeys.performance() }),
     queryClient.invalidateQueries({
-      queryKey: ["telegram-channel-campaigns", channelId],
+      queryKey: telegramChannelKeys.campaigns(channelId),
     }),
   ]);
 }
