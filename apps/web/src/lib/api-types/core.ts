@@ -58,6 +58,15 @@ export type AuthResponse = {
   workspace: WorkspaceInfo;
 };
 export type MeResponse = { user: User; workspace: WorkspaceInfo };
+export type TelegramAccountCapabilitySummary = {
+  isPremium: boolean;
+  captionLengthMax: number;
+  messageLengthMax: number;
+  maxUploadFileSizeMb: number;
+  supportsCustomEmoji: boolean;
+  checkedAt: string;
+  limitsSource: "telegram_config" | "fallback";
+};
 export type AccountMe = {
   id: string;
   email: string;
@@ -81,8 +90,19 @@ export type AccountMe = {
       | "connected"
       | "error"
       | "disabled";
+    capabilities?: TelegramAccountCapabilitySummary | null;
   }>;
   workspace: WorkspaceInfo;
+};
+export type WorkspaceMemberSelectOption = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: WorkspaceRole;
+  avatarIconId?: string | null;
+  avatarIcon?: Icon | null;
+  user: User;
+  isCurrentUser: boolean;
 };
 export type WorkspaceMember = {
   id: string;

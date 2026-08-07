@@ -32,12 +32,14 @@ import {
   RotateCcw,
   Rocket,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { IconAvatar } from "@/components/icons/icon-avatar";
 import { IconPicker } from "@/components/icons/icon-picker";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
+import { ManagedPostsImportModal } from "@/components/telegram/managed-posts-import-modal";
 import { TelegramImageUpload } from "@/components/telegram/telegram-image-upload";
 import {
   TelegramTextEditor,
@@ -57,10 +59,11 @@ import {
   type Icon,
   type PostGroup,
   type PromptNote,
-  type TelegramChannel,
+  type TelegramChannelSelectOption as TelegramChannel,
   type TelegramManagedPost,
   type TelegramManagedPostRevision,
   type TelegramChannelTimePost,
+  type WorkspaceMemberSelectOption as WorkspaceMember,
 } from "@/lib/api";
 import {
   buildCalendarDayScheduleSlots,
@@ -76,6 +79,7 @@ import {
   extractAutoPrefilledPostTitle,
   getNextGroupedPostNumber,
 } from "@/lib/telegram-post-title";
+import { memberKeys, telegramChannelKeys } from "@/lib/query-keys";
 import type {
   ScheduleManagedPostsBatchItem,
   TelegramManagedPostCalendarResult,
@@ -337,6 +341,7 @@ export default function TelegramPostsPage() {
   const queryClient = useQueryClient();
   const { pushToast, setProgress, clearProgress } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const channelId = searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
   const groupId = searchParams.get("groupId") || "";
@@ -349,12 +354,10 @@ export default function TelegramPostsPage() {
   })();
   const currentRoutePostView: PostViewMode = initialPostView || "editor";
   const channels = useQuery({
-    queryKey: ["telegram-channels"],
-    queryFn: () => telegramChannelsApi.list(),
+    queryKey: telegramChannelKeys.select({ canPostMessagesOnly: true }),
+    queryFn: () => telegramChannelsApi.select({ canPostMessagesOnly: true }),
   });
-  const availableChannels = (channels.data || []).filter(
-    (channel) => channel.preview?.canPostMessages,
-  );
+  const availableChannels = channels.data || [];
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
@@ -452,6 +455,16 @@ export default function TelegramPostsPage() {
                 />
               </div>
               <Button
+                variant="secondary"
+                className="shrink-0"
+                onClick={() => setImportModalOpen(true)}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Upload size={15} />
+                  Import
+                </span>
+              </Button>
+              <Button
                 className="shrink-0"
                 onClick={() => {
                   router.replace(
@@ -472,6 +485,13 @@ export default function TelegramPostsPage() {
           ) : undefined
         }
       />
+      {channel ? (
+        <ManagedPostsImportModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          channelId={channel.id}
+        />
+      ) : null}
       {channels.isLoading ? <LoadingState /> : null}
       {!channels.isLoading && !channels.error && !availableChannels.length ? (
         <EmptyState text="No Telegram channels with publishing access" />
@@ -486,6 +506,7 @@ export default function TelegramPostsPage() {
             channelUsername={channel.username}
             channelTelegramChatId={channel.telegramChatId}
             channelTimePosts={channel.timePosts || []}
+            channelPublishingCapabilities={channel.publishingCapabilities}
             newPostToken={newPostToken}
             initialPostId={postId}
             initialGroupId={groupId}
@@ -515,6 +536,7 @@ function TelegramPostWorkspace({
   channelUsername,
   channelTelegramChatId,
   channelTimePosts,
+  channelPublishingCapabilities,
   newPostToken,
   initialPostId,
   initialGroupId,
@@ -529,6 +551,10 @@ function TelegramPostWorkspace({
   channelUsername?: string | null;
   channelTelegramChatId?: string | null;
   channelTimePosts: TelegramChannelTimePost[];
+  channelPublishingCapabilities?: {
+    captionLengthMax: number;
+    messageLengthMax: number;
+  } | null;
   newPostToken: number;
   initialPostId: string;
   initialGroupId: string;
@@ -700,13 +726,8 @@ function TelegramPostWorkspace({
     queryFn: () => promptNotesApi.list({ telegramChannelId: channelId }),
   });
   const members = useQuery({
-    queryKey: ["workspace-members"],
-    queryFn: workspaceMembersApi.list,
-  });
-  const publishingCapabilities = useQuery({
-    queryKey: ["telegram-publishing-capabilities", channelId],
-    queryFn: () => telegramChannelsApi.publishingCapabilities(channelId),
-    enabled: Boolean(channelId),
+    queryKey: memberKeys.membersSelect(),
+    queryFn: () => workspaceMembersApi.select(),
   });
 
   useEffect(() => {
@@ -767,8 +788,7 @@ function TelegramPostWorkspace({
     }
   };
 
-  const currentMemberId =
-    members.data?.find((member) => member.isCurrentUser)?.id ?? null;
+  const currentMemberId = members.data?.find((member) => member.isCurrentUser)?.id ?? null;
   const telegramImportedSystemGroup = useMemo(
     () =>
       (postGroups.data || []).find(
@@ -976,9 +996,10 @@ function TelegramPostWorkspace({
   );
   const editorIsSaving = editingIsSaving || Boolean(creatingPostId);
   const effectiveCaptionLengthMax =
-    publishingCapabilities.data?.captionLengthMax ?? 1024;
+    channelPublishingCapabilities?.captionLengthMax ?? 1024;
   const effectiveMessageLengthMax =
-    publishingCapabilities.data?.messageLengthMax ?? TELEGRAM_TEXT_MESSAGE_LIMIT;
+    channelPublishingCapabilities?.messageLengthMax ??
+    TELEGRAM_TEXT_MESSAGE_LIMIT;
   const hasLongImageText =
     imageUrls.length > 0 && text.length > effectiveCaptionLengthMax;
   const publishedLongImageTextMode =

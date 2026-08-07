@@ -22,8 +22,8 @@ export function MemberSelect({
 }) {
   const { workspace } = useAuth();
   const members = useQuery({
-    queryKey: memberKeys.members(),
-    queryFn: workspaceMembersApi.list,
+    queryKey: memberKeys.membersSelect(),
+    queryFn: () => workspaceMembersApi.select(),
   });
   const current = members.data?.find((member) => member.isCurrentUser);
   const canAssignOthers =

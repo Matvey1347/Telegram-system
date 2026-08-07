@@ -21,6 +21,16 @@ import { normalizeTelegramUsername } from '../telegram/shared/telegram-import.he
 
 @Injectable()
 export class WorkspaceMembersService {
+  private readonly memberSelect = {
+    id: true,
+    workspaceId: true,
+    userId: true,
+    role: true,
+    avatarIconId: true,
+    avatarIcon: true,
+    user: { select: { id: true, email: true, name: true } },
+  } satisfies Prisma.WorkspaceMemberSelect;
+
   private readonly memberInclude = {
     user: { select: { id: true, email: true, name: true } },
     avatarIcon: true,
@@ -215,6 +225,18 @@ export class WorkspaceMembersService {
         workspaceTotal,
       ),
     }));
+  }
+
+  async selectOptions(userId: string) {
+    const membership =
+      await this.workspaceService.resolveWorkspaceMembershipForUser(userId);
+    const rows = await this.prisma.workspaceMember.findMany({
+      where: { workspaceId: membership.workspaceId },
+      select: this.memberSelect,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return rows.map((row) => this.toResponse(row, userId));
   }
 
   async memberInvestments(userId: string, memberId: string) {

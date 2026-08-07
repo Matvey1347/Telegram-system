@@ -6,6 +6,7 @@ export const authKeys = {
 export const workspaceKeys = {
   workspaces: () => ["workspaces"] as const,
   members: () => ["workspace-members"] as const,
+  membersSelect: () => ["workspace-members", "select"] as const,
 };
 
 export const currencyKeys = {
@@ -33,6 +34,12 @@ export const dashboardKeys = {
 export const telegramChannelKeys = {
   root: ["telegram-channels"] as const,
   list: () => ["telegram-channels"] as const,
+  select: (params?: { canPostMessagesOnly?: boolean }) =>
+    [
+      "telegram-channels",
+      "select",
+      params?.canPostMessagesOnly ?? null,
+    ] as const,
   detail: (channelId: string) => ["telegram-channel", channelId] as const,
   analytics: (channelId: string) =>
     ["telegram-channel-analytics", channelId] as const,

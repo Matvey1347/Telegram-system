@@ -304,22 +304,12 @@ export class TelegramSourceAccessService {
     workspaceId: string,
     channelId: string,
   ): Promise<TelegramPublishingCapabilities> {
-    const sources = await this.sourcesForChannel(workspaceId, channelId);
-    const source =
-      sources.find(
-        (item) =>
-          item.sourceType === TelegramSourceType.MTPROTO &&
-          item.permissions.canPostMessages,
-      ) ??
-      sources.find(
-        (item) =>
-          item.sourceType === TelegramSourceType.BOT &&
-          item.permissions.canPostMessages,
-      ) ??
-      null;
-
-    if (!source) {
-      return {
+    const capabilities = await this.publishingCapabilitiesForChannels(
+      workspaceId,
+      [channelId],
+    );
+    return (
+      capabilities.get(channelId) ?? {
         source: null,
         captionLengthMax: BOT_API_CAPTION_LIMIT,
         messageLengthMax: BOT_API_MESSAGE_LIMIT,
@@ -327,66 +317,146 @@ export class TelegramSourceAccessService {
         supportsCustomEmoji: false,
         checkedAt: null,
         isFallback: true,
-      };
-    }
+      }
+    );
+  }
 
-    if (source.sourceType === TelegramSourceType.BOT) {
-      return {
-        source: {
-          sourceId: source.sourceId,
-          sourceType: 'BOT',
-          displayName: source.displayName,
-          avatarUrl: source.avatarUrl ?? null,
-          isPremium: false,
-        },
-        captionLengthMax: BOT_API_CAPTION_LIMIT,
-        messageLengthMax: BOT_API_MESSAGE_LIMIT,
-        maxUploadFileSizeMb: null,
-        supportsCustomEmoji: false,
-        checkedAt: null,
-        isFallback: false,
-      };
-    }
+  async publishingCapabilitiesForChannels(
+    workspaceId: string,
+    channelIds: string[],
+  ): Promise<Map<string, TelegramPublishingCapabilities>> {
+    const uniqueChannelIds = [...new Set(channelIds.filter(Boolean))];
+    if (!uniqueChannelIds.length) return new Map();
 
-    const account = await this.prisma.telegramUserAccountIntegration.findFirst({
-      where: { id: source.sourceId, workspaceId, isActive: true },
-      select: {
-        id: true,
-        isPremium: true,
-        captionLengthMax: true,
-        messageLengthMax: true,
-        premiumCheckedAt: true,
-        premiumCapabilities: true,
-      },
+    const rows = await this.prisma.telegramChannelSourceAccess.findMany({
+      where: { workspaceId, channelId: { in: uniqueChannelIds } },
+      orderBy: [{ role: 'asc' }, { updatedAt: 'desc' }],
     });
+    const [bots, accounts] = await Promise.all([
+      this.prisma.telegramBotIntegration.findMany({
+        where: {
+          workspaceId,
+          isActive: true,
+          id: {
+            in: rows
+              .filter((row) => row.sourceType === TelegramSourceType.BOT)
+              .map((row) => row.sourceId),
+          },
+        },
+      }),
+      this.prisma.telegramUserAccountIntegration.findMany({
+        where: {
+          workspaceId,
+          isActive: true,
+          id: {
+            in: rows
+              .filter((row) => row.sourceType === TelegramSourceType.MTPROTO)
+              .map((row) => row.sourceId),
+          },
+        },
+        select: {
+          id: true,
+          label: true,
+          username: true,
+          phoneMasked: true,
+          firstName: true,
+          lastName: true,
+          photoUrl: true,
+          isPremium: true,
+          captionLengthMax: true,
+          messageLengthMax: true,
+          premiumCheckedAt: true,
+          premiumCapabilities: true,
+        },
+      }),
+    ]);
 
-    const premiumCapabilities =
-      (account?.premiumCapabilities as
-        | {
-            maxUploadFileSizeMb?: number;
-            supportsCustomEmoji?: boolean;
-            limitsSource?: string;
-          }
-        | null
-        | undefined) ?? null;
+    const botById = new Map(bots.map((bot) => [bot.id, bot]));
+    const accountById = new Map(accounts.map((account) => [account.id, account]));
+    const result = new Map<string, TelegramPublishingCapabilities>();
 
-    return {
-      source: {
-        sourceId: source.sourceId,
-        sourceType: 'MTPROTO',
-        displayName: source.displayName,
-        avatarUrl: source.avatarUrl ?? null,
-        isPremium: Boolean(account?.isPremium),
-      },
-      captionLengthMax: account?.captionLengthMax ?? BOT_API_CAPTION_LIMIT,
-      messageLengthMax: account?.messageLengthMax ?? BOT_API_MESSAGE_LIMIT,
-      maxUploadFileSizeMb: premiumCapabilities?.maxUploadFileSizeMb ?? null,
-      supportsCustomEmoji: Boolean(
-        premiumCapabilities?.supportsCustomEmoji ?? account?.isPremium,
-      ),
-      checkedAt: account?.premiumCheckedAt?.toISOString() ?? null,
-      isFallback: premiumCapabilities?.limitsSource === 'fallback',
-    };
+    for (const channelId of uniqueChannelIds) {
+      const preferredSource =
+        rows.find(
+          (row) =>
+            row.channelId === channelId &&
+            row.sourceType === TelegramSourceType.MTPROTO &&
+            row.canPostMessages &&
+            accountById.has(row.sourceId),
+        ) ??
+        rows.find(
+          (row) =>
+            row.channelId === channelId &&
+            row.sourceType === TelegramSourceType.BOT &&
+            row.canPostMessages &&
+            botById.has(row.sourceId),
+        ) ??
+        null;
+
+      if (!preferredSource) {
+        result.set(channelId, {
+          source: null,
+          captionLengthMax: BOT_API_CAPTION_LIMIT,
+          messageLengthMax: BOT_API_MESSAGE_LIMIT,
+          maxUploadFileSizeMb: null,
+          supportsCustomEmoji: false,
+          checkedAt: null,
+          isFallback: true,
+        });
+        continue;
+      }
+
+      if (preferredSource.sourceType === TelegramSourceType.BOT) {
+        const bot = botById.get(preferredSource.sourceId);
+        result.set(channelId, {
+          source: {
+            sourceId: preferredSource.sourceId,
+            sourceType: 'BOT',
+            displayName: this.botDisplayName(bot),
+            avatarUrl: null,
+            isPremium: false,
+          },
+          captionLengthMax: BOT_API_CAPTION_LIMIT,
+          messageLengthMax: BOT_API_MESSAGE_LIMIT,
+          maxUploadFileSizeMb: null,
+          supportsCustomEmoji: false,
+          checkedAt: null,
+          isFallback: false,
+        });
+        continue;
+      }
+
+      const account = accountById.get(preferredSource.sourceId);
+      const premiumCapabilities =
+        (account?.premiumCapabilities as
+          | {
+              maxUploadFileSizeMb?: number;
+              supportsCustomEmoji?: boolean;
+              limitsSource?: string;
+            }
+          | null
+          | undefined) ?? null;
+
+      result.set(channelId, {
+        source: {
+          sourceId: preferredSource.sourceId,
+          sourceType: 'MTPROTO',
+          displayName: this.accountDisplayName(account),
+          avatarUrl: account?.photoUrl ?? null,
+          isPremium: Boolean(account?.isPremium),
+        },
+        captionLengthMax: account?.captionLengthMax ?? BOT_API_CAPTION_LIMIT,
+        messageLengthMax: account?.messageLengthMax ?? BOT_API_MESSAGE_LIMIT,
+        maxUploadFileSizeMb: premiumCapabilities?.maxUploadFileSizeMb ?? null,
+        supportsCustomEmoji: Boolean(
+          premiumCapabilities?.supportsCustomEmoji ?? account?.isPremium,
+        ),
+        checkedAt: account?.premiumCheckedAt?.toISOString() ?? null,
+        isFallback: premiumCapabilities?.limitsSource === 'fallback',
+      });
+    }
+
+    return result;
   }
 
   async analyticsSources(workspaceId: string, channelId: string) {

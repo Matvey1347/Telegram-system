@@ -22,8 +22,10 @@ import {
   CreateTelegramChannelDto,
   HistoricalSyncDto,
   ImportTelegramChannelDto,
+  ImportTelegramManagedPostsDto,
   ManagedPostLinkTargetsQueryDto,
   ManagedPostsCalendarQueryDto,
+  TelegramChannelSelectQueryDto,
   TelegramChannelInviteLinksQueryDto,
   TelegramChannelListQueryDto,
   TelegramChannelPostsQueryDto,
@@ -72,6 +74,13 @@ export class TelegramChannelsController {
     @Query() query: TelegramChannelListQueryDto,
   ) {
     return this.service.findAll(user.sub, query);
+  }
+  @Get('select')
+  select(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramChannelSelectQueryDto,
+  ) {
+    return this.service.selectOptions(user.sub, query);
   }
   @Post() create(
     @CurrentUser() user: JwtUser,
@@ -332,6 +341,14 @@ export class TelegramChannelsController {
     @Body() dto: CreateTelegramManagedPostDto,
   ) {
     return this.service.createManagedPost(user.sub, id, dto);
+  }
+  @Post(':id/managed-posts/import')
+  importManagedPosts(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ImportTelegramManagedPostsDto,
+  ) {
+    return this.service.importManagedPosts(user.sub, id, dto);
   }
   @Patch(':id/managed-posts/:postId')
   updateManagedPost(

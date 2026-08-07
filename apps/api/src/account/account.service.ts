@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { WorkspaceRole } from '@prisma/client';
+import type { TelegramAccountCapabilities } from '@telegram-system/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { UpdateMeDto, UpdatePasswordDto, UpdateWorkspaceDto } from './dto';
@@ -22,6 +23,39 @@ export class AccountService {
     private readonly telegramChannelsService: TelegramChannelsService,
   ) {}
 
+  private mapAccountCapabilities(account: {
+    isPremium: boolean;
+    captionLengthMax: number;
+    messageLengthMax: number;
+    premiumCheckedAt: Date | null;
+    premiumCapabilities: Prisma.JsonValue | null;
+  }): TelegramAccountCapabilities | null {
+    if (!account.premiumCheckedAt) return null;
+    const premiumCapabilities =
+      account.premiumCapabilities &&
+      typeof account.premiumCapabilities === 'object' &&
+      !Array.isArray(account.premiumCapabilities)
+        ? (account.premiumCapabilities as Record<string, unknown>)
+        : null;
+
+    return {
+      isPremium: account.isPremium,
+      captionLengthMax: account.captionLengthMax,
+      messageLengthMax: account.messageLengthMax,
+      maxUploadFileSizeMb: Number(
+        premiumCapabilities?.maxUploadFileSizeMb ?? 0,
+      ),
+      supportsCustomEmoji: Boolean(
+        premiumCapabilities?.supportsCustomEmoji,
+      ),
+      checkedAt: account.premiumCheckedAt.toISOString(),
+      limitsSource:
+        premiumCapabilities?.limitsSource === 'telegram_config'
+          ? 'telegram_config'
+          : 'fallback',
+    };
+  }
+
   async me(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
@@ -35,7 +69,7 @@ export class AccountService {
       avatarIcon: membership.avatarIcon ?? null,
       telegramUsername: (membership as { telegramUsername?: string | null })
         .telegramUsername ?? null,
-      assignedTelegramUserAccounts:
+      assignedTelegramUserAccounts: (
         await this.prisma.telegramUserAccountIntegration.findMany({
           where: {
             workspaceId: membership.workspaceId,
@@ -50,9 +84,18 @@ export class AccountService {
             lastName: true,
             photoUrl: true,
             status: true,
+            isPremium: true,
+            captionLengthMax: true,
+            messageLengthMax: true,
+            premiumCheckedAt: true,
+            premiumCapabilities: true,
           },
           orderBy: { createdAt: 'asc' },
-        }),
+        })
+      ).map((account) => ({
+        ...account,
+        capabilities: this.mapAccountCapabilities(account),
+      })),
       workspace: {
         id: membership.workspace.id,
         name: membership.workspace.name,

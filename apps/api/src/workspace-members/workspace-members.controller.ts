@@ -24,6 +24,11 @@ export class WorkspaceMembersController {
     return this.service.list(user.sub);
   }
 
+  @Get('select')
+  select(@CurrentUser() user: JwtUser) {
+    return this.service.selectOptions(user.sub);
+  }
+
   @Get('investments/summary')
   investmentsSummary(@CurrentUser() user: JwtUser) {
     return this.service.investmentsSummary(user.sub);

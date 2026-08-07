@@ -65,6 +65,38 @@ export type TelegramManagedPost = {
   createdAt: string;
   updatedAt: string;
 };
+export type TelegramManagedPostsImportRow = {
+  title?: unknown;
+  text?: unknown;
+  icon?: unknown;
+  emoji?: unknown;
+  iconText?: unknown;
+  imageUrl?: unknown;
+  imageUrls?: unknown;
+  groupPosition?: unknown;
+  order?: unknown;
+};
+export type TelegramManagedPostsImportPayload = {
+  postGroupId?: string | null;
+  assignedMemberId?: string;
+  rows: TelegramManagedPostsImportRow[];
+};
+export type TelegramManagedPostsImportResultRow =
+  | {
+      index: number;
+      status: "skipped";
+      error: string;
+    }
+  | {
+      index: number;
+      status: "created";
+      post: TelegramManagedPost;
+    };
+export type TelegramManagedPostsImportResult = {
+  createdCount: number;
+  skippedCount: number;
+  rows: TelegramManagedPostsImportResultRow[];
+};
 export type TelegramManagedPostRevision = {
   id: string;
   telegramManagedPostId: string;

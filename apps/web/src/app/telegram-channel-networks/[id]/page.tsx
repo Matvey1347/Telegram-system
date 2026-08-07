@@ -21,10 +21,11 @@ import {
 import {
   telegramChannelNetworksApi,
   telegramChannelsApi,
-  type TelegramChannel,
+  type TelegramChannelSelectOption as TelegramChannel,
   type TelegramChannelNetworkChannelSummary,
   type TelegramChannelNetworkKpiStatus,
 } from "@/lib/api";
+import { telegramChannelKeys } from "@/lib/query-keys";
 import { useAppToast } from "@/providers/toast-provider";
 
 function toNumber(value: unknown) {
@@ -62,7 +63,7 @@ function decisionText(status?: TelegramChannelNetworkKpiStatus) {
 }
 
 function isOwnChannel(channel: TelegramChannel) {
-  return Array.isArray(channel.adminLinks) && channel.adminLinks.length > 0;
+  return channel.canPostMessages;
 }
 
 export default function TelegramChannelNetworkDetailPage() {
@@ -78,8 +79,8 @@ export default function TelegramChannelNetworkDetailPage() {
     queryFn: () => telegramChannelNetworksApi.get(id),
   });
   const { data: channels = [] } = useQuery({
-    queryKey: ["telegram-channels"],
-    queryFn: telegramChannelsApi.list,
+    queryKey: telegramChannelKeys.select(),
+    queryFn: () => telegramChannelsApi.select(),
   });
   const updateMutation = useMutation({
     mutationFn: (payload: {

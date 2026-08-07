@@ -5,6 +5,7 @@ import type {
   ScheduleManagedPostsBatchPayload,
 } from '@telegram-system/shared';
 import {
+  Allow,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -175,6 +176,31 @@ export class CreateTelegramManagedPostDto {
   @IsOptional() @IsArray() @IsString({ each: true }) imageUrls?: string[];
   @IsOptional() @IsString() assignedMemberId?: string;
   @IsOptional() @IsString() icon?: string | null;
+}
+
+export class ImportTelegramManagedPostRowDto {
+  @Allow() title?: unknown;
+  @Allow() text?: unknown;
+  @Allow() icon?: unknown;
+  @Allow() emoji?: unknown;
+  @Allow() iconText?: unknown;
+  @Allow() imageUrl?: unknown;
+  @Allow() imageUrls?: unknown;
+  @Allow() groupPosition?: unknown;
+  @Allow() order?: unknown;
+}
+
+export class ImportTelegramManagedPostsDto {
+  @IsOptional() @IsString() postGroupId?: string | null;
+  @IsOptional() @IsString() assignedMemberId?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImportTelegramManagedPostRowDto)
+  rows!: ImportTelegramManagedPostRowDto[];
+}
+
+export class TelegramChannelSelectQueryDto {
+  @IsOptional() @Type(() => Boolean) @IsBoolean() canPostMessagesOnly?: boolean;
 }
 
 export class UpdateTelegramManagedPostDto {

@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountDisplayName } from '@/lib/account-display';
-import { Account, TelegramChannel, Transaction, TransactionCategory, TransactionQuery, WorkspaceMember, accountsApi, currenciesApi, telegramChannelsApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
+import { Account, TelegramChannelSelectOption as TelegramChannel, Transaction, TransactionCategory, TransactionQuery, WorkspaceMemberSelectOption as WorkspaceMember, accountsApi, currenciesApi, telegramChannelsApi, transactionCategoriesApi, transactionsApi, workspaceMembersApi } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, ConfirmDeleteModal, DateInput, DateRangeInput, EmptyState, ErrorState, FormField, IconButton, Input, Modal, PageHeader, Select, TableLoadingState } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
@@ -85,7 +85,7 @@ export default function TransactionsPage() {
     queryKey: ['transactions', filters],
     queryFn: () => transactionsApi.list(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) as TransactionQuery),
   });
-  const { data: members } = useQuery({ queryKey: ['workspace-members'], queryFn: workspaceMembersApi.list });
+  const { data: members } = useQuery({ queryKey: ['workspace-members', 'select'], queryFn: () => workspaceMembersApi.select() });
   const { data: filterCategories } = useQuery({ queryKey: ['transaction-categories', filters.type], queryFn: () => transactionCategoriesApi.list(filters.type === 'income' ? 'income' : 'expense'), enabled: filters.type === 'income' || filters.type === 'expense' });
   const createMutation = useMutation({
     mutationFn: transactionsApi.create,
@@ -310,7 +310,7 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   const memberId = watch('memberId') ?? '';
   const telegramChannelId = watch('telegramChannelId') ?? '';
   const { data: categories } = useQuery({ queryKey: ['transaction-categories', type], queryFn: () => transactionCategoriesApi.list(type), enabled: open && !!type });
-  const { data: telegramChannels } = useQuery({ queryKey: ['telegram-channels', 'transactions-modal'], queryFn: telegramChannelsApi.list, enabled: open });
+  const { data: telegramChannels } = useQuery({ queryKey: ['telegram-channels', 'select', 'transactions-modal'], queryFn: () => telegramChannelsApi.select(), enabled: open });
   const selectedCategory = useMemo(() => categories?.find((c) => c.id === categoryId), [categories, categoryId]);
   const isInvestment = type === 'income' && selectedCategory?.key === 'investment';
   const isBuyChannels = isBuyChannelsCategory(selectedCategory);

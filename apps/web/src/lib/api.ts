@@ -482,6 +482,7 @@ import type {
   TelegramChannelAudienceSnapshot,
   TelegramChannelFinancialSummary,
   TelegramChannelImportPayload,
+  TelegramChannelSelectOption,
   TelegramChannelNetwork,
   TelegramChannelNetworkDetail,
   TelegramChannelNetworkSummary,
@@ -491,6 +492,9 @@ import type {
   TelegramInviteLinkHistory,
   TelegramManagedPost,
   TelegramManagedPostLinkTarget,
+  TelegramManagedPostsImportRow,
+  TelegramManagedPostsImportPayload,
+  TelegramManagedPostsImportResult,
   TelegramManagedPostRevision,
   TelegramPost,
   TelegramPostAnalyticsItem,
@@ -505,6 +509,7 @@ import type {
   UpdateTelegramChannelNetworkPayload,
   WorkspaceInfo,
   WorkspaceMember,
+  WorkspaceMemberSelectOption,
 } from "./api-types";
 export type {
   TelegramChannelAccessMode,
@@ -583,6 +588,7 @@ export type {
   TelegramChannelNetworkKpiStatus,
   TelegramChannelNetworkMember,
   TelegramChannelNetworkSummary,
+  TelegramChannelSelectOption,
   TelegramChannelSourceAccess,
   TelegramChannelSourceRole,
   TelegramChannelSyncNowPayload,
@@ -593,6 +599,10 @@ export type {
   TelegramManagedPost,
   TelegramManagedPostLinkTarget,
   TelegramManagedPostRemoteStatus,
+  TelegramManagedPostsImportRow,
+  TelegramManagedPostsImportPayload,
+  TelegramManagedPostsImportResult,
+  TelegramManagedPostsImportResultRow,
   TelegramManagedPostRevision,
   TelegramManagedPostStatus,
   TelegramPost,
@@ -613,6 +623,7 @@ export type {
   User,
   WorkspaceInfo,
   WorkspaceMember,
+  WorkspaceMemberSelectOption,
   WorkspaceRole,
 } from "./api-types";
 
@@ -781,6 +792,9 @@ const quietCrud = <T>(path: string) => ({
 
 export const workspaceMembersApi = {
   ...crud<WorkspaceMember>("/workspace-members"),
+  select: async () =>
+    (await api.get<WorkspaceMemberSelectOption[]>("/workspace-members/select"))
+      .data,
   investments: async (memberId: string) =>
     (await api.get<Transaction[]>(`/workspace-members/${memberId}/investments`))
       .data,
@@ -943,6 +957,13 @@ export const transfersApi = {
 };
 export const telegramChannelsApi = {
   ...crud<TelegramChannel>("/telegram-channels"),
+  select: async (params?: { canPostMessagesOnly?: boolean }) =>
+    (
+      await api.get<TelegramChannelSelectOption[]>(
+        "/telegram-channels/select",
+        { params },
+      )
+    ).data,
   listPage: async (params?: PaginationParams) =>
     getPaginated<TelegramChannel>("/telegram-channels", params),
   list: async () => getAllPaginatedItems<TelegramChannel>("/telegram-channels"),
@@ -1125,6 +1146,16 @@ export const telegramChannelsApi = {
         background
           ? silentFeedbackConfig
           : undefined,
+      )
+    ).data,
+  importManagedPosts: async (
+    channelId: string,
+    payload: TelegramManagedPostsImportPayload,
+  ) =>
+    (
+      await api.post<TelegramManagedPostsImportResult>(
+        `/telegram-channels/${channelId}/managed-posts/import`,
+        payload,
       )
     ).data,
   updateManagedPost: async (

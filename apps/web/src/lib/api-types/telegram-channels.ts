@@ -1,5 +1,6 @@
 import type { SyncOperationResult, StructuredApiError, TelegramChannelAccessMode, EntityAssignment, Icon, WorkspaceMember } from "./core";
 import type { TelegramChannelAudience, TelegramChannelFinancialSummary } from "./telegram-channel-analytics";
+import type { TelegramPublishingCapabilities } from "@telegram-system/shared";
 
 export type TelegramChannelAdAnalysisStatus =
   | "NEW"
@@ -148,6 +149,18 @@ export type TelegramChannel = EntityAssignment & {
       };
     };
   };
+};
+
+export type TelegramChannelSelectOption = {
+  id: string;
+  title: string;
+  username?: string | null;
+  telegramChatId?: string | null;
+  photoUrl?: string | null;
+  isActive: boolean;
+  timePosts?: TelegramChannelTimePost[];
+  canPostMessages: boolean;
+  publishingCapabilities: TelegramPublishingCapabilities;
 };
 
 export type TelegramSyncResult = SyncOperationResult & {

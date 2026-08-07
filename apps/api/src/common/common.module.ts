@@ -5,6 +5,7 @@ import { TokenEncryptionService } from './security/token-encryption.service';
 import { WorkspaceService } from './workspace.service';
 import { ResponseCacheService } from './response-cache.service';
 import { RequestContextModule } from './request-context/request-context.module';
+import { MemoryMonitorService } from './observability/memory-monitor.service';
 
 @Global()
 @Module({
@@ -15,12 +16,14 @@ import { RequestContextModule } from './request-context/request-context.module';
     TokenEncryptionService,
     SchemaBootstrapService,
     ResponseCacheService,
+    MemoryMonitorService,
   ],
   exports: [
     WorkspaceService,
     CurrencyConversionService,
     TokenEncryptionService,
     ResponseCacheService,
+    MemoryMonitorService,
   ],
 })
 export class CommonModule {}
