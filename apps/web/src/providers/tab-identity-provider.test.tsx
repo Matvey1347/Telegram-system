@@ -238,6 +238,46 @@ describe("TabIdentityProvider", () => {
     expect(iconHref("icon")).toBe(channelIcon);
   });
 
+  it("uses Calendar metadata for canonical telegram post calendar routes", async () => {
+    currentPathname = "/telegram-posts/channel-1/calendar";
+    currentSearch = "";
+
+    renderWithTabProvider();
+
+    await waitFor(() => {
+      expect(document.title).toBe("Calendar · Telegram System");
+    });
+    expectEmojiFavicon("🗓️");
+  });
+
+  it("uses cached route identity for canonical telegram post routes", async () => {
+    currentPathname = "/telegram-posts/channel-1/editor";
+    currentSearch = "postId=post-1";
+    const channelIcon =
+      "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%232563eb'/%3E%3C/svg%3E";
+    const cacheKey = buildRouteTabIdentityCacheKey({
+      pathname: currentPathname,
+      searchParams: new URLSearchParams(currentSearch),
+    });
+
+    window.sessionStorage.setItem(
+      `tab-identity:route:${encodeURIComponent(cacheKey)}`,
+      JSON.stringify({
+        title: "Posts · Cached Canonical Channel · Telegram System",
+        emoji: "✈️",
+        color: "#1d4ed8",
+        iconUrl: channelIcon,
+      }),
+    );
+
+    renderWithTabProvider();
+
+    await waitFor(() => {
+      expect(document.title).toBe("Posts · Cached Canonical Channel · Telegram System");
+    });
+    expect(iconHref("icon")).toBe(channelIcon);
+  });
+
   it("uses cached route identity immediately on hard reload before channel query resolves", async () => {
     currentPathname = "/telegram-posts";
     currentSearch = "channelId=channel-1&postView=calendar";

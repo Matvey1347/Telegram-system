@@ -22,18 +22,18 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null; emoji?: string | null } | null }) {
+function iconOptionProps(item: { name: string; iconPresentation?: { type: 'image'; url: string } | { type: 'unicode'; value: string } | null }) {
   return {
-    'data-icon-url': item.icon?.imageUrl ?? undefined,
-    'data-icon-emoji': item.icon?.emoji ?? undefined,
+    'data-icon-url': item.iconPresentation?.type === 'image' ? item.iconPresentation.url : undefined,
+    'data-icon-emoji': item.iconPresentation?.type === 'unicode' ? item.iconPresentation.value : undefined,
     'data-icon-fallback': item.name,
   };
 }
 
 function memberOptionProps(member: WorkspaceMember) {
   return {
-    'data-icon-url': member.avatarIcon?.imageUrl ?? undefined,
-    'data-icon-emoji': member.avatarIcon?.emoji ?? undefined,
+    'data-icon-url': member.avatarPresentation?.type === 'image' ? member.avatarPresentation.url : undefined,
+    'data-icon-emoji': member.avatarPresentation?.type === 'unicode' ? member.avatarPresentation.value : undefined,
     'data-icon-fallback': member.user.name,
   };
 }
@@ -139,7 +139,7 @@ export default function TransactionsPage() {
                     <div className="flex items-center gap-2">
                       <InlineIconPicker
                         iconId={t.iconId ?? null}
-                        icon={t.icon}
+                        icon={t.iconPresentation}
                         onChange={(iconId) => updateTransactionIconMutation.mutate({ id: t.id, iconId })}
                         className="shrink-0"
                       />
@@ -157,7 +157,7 @@ export default function TransactionsPage() {
                   <div className="flex items-center gap-2">
                     <InlineIconPicker
                       iconId={t.categoryRef?.iconId ?? null}
-                      icon={t.categoryRef?.icon}
+                      icon={t.categoryRef?.iconPresentation}
                       onChange={(iconId) => t.categoryRef?.id && updateCategoryIconMutation.mutate({ id: t.categoryRef.id, iconId })}
                       className="shrink-0"
                     />
@@ -168,7 +168,7 @@ export default function TransactionsPage() {
                   <div className="flex items-center gap-2">
                     <InlineIconPicker
                       iconId={t.account?.iconId ?? null}
-                      icon={t.account?.icon}
+                      icon={t.account?.iconPresentation}
                       onChange={(iconId) => t.account?.id && updateAccountIconMutation.mutate({ id: t.account.id, iconId })}
                       className="shrink-0"
                     />
@@ -376,7 +376,7 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
-        <IconPicker iconId={watch('iconId') ?? null} icon={initial?.icon} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} />
+        <IconPicker iconId={watch('iconId') ?? null} icon={initial?.iconPresentation} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} />
         <FormField label="Type">
           <Select
             {...register('type')}

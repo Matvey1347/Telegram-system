@@ -16,6 +16,7 @@
 - Keep mutation invalidation narrow and typed.
 - Do not add inline string-array query keys when a shared factory exists; add the factory first when the key is cross-page or domain-owned.
 - Preserve selected selector values even if they are not in the current search/pagination result.
+- Treat backend read models as purpose-built contracts. Do not compensate for trimmed collection responses with per-row detail fetches or frontend join systems unless the workflow explicitly needs that shape.
 
 ## Design System
 
@@ -29,7 +30,7 @@
 - Add `"use client"` only where hooks/browser APIs are required.
 - Avoid importing feature-heavy modules into low-level UI primitives.
 - Keep browser-only APIs inside effects or guarded code.
-- Render entity icons/avatars with `IconAvatar` using hydrated `iconPresentation`, `avatarPresentation`, or legacy hydrated `Icon` objects. Do not add `/icons/:id` React Query calls for display-only icon rendering; `IconPicker` may load icons only for selection/editing.
+- Render entity icons/avatars with `IconAvatar` using hydrated `iconPresentation` or `avatarPresentation`. Do not pass raw `Icon` records to ordinary display, and do not add `/icons/:id` React Query calls for display-only icon rendering; `IconPicker` may load icons only for selection/editing.
 
 ## States And Accessibility
 

@@ -22,7 +22,7 @@ export function AccountName({
         <span className="inline-flex shrink-0 items-center gap-1 align-middle text-sm font-medium leading-none text-neutral-300">
           <span className="text-neutral-500" aria-hidden="true">(</span>
           <IconAvatar
-            icon={member.avatarIcon}
+            icon={member.avatarPresentation}
             label={member.user.name}
             size="xs"
             className="!h-6 !w-6 !rounded-full text-xs"

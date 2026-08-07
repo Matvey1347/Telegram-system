@@ -283,8 +283,23 @@ export class TelegramChannelsService {
   private telegramManagedPostOriginColumnsAvailable: boolean | null = null;
   private ensureTelegramManagedPostOriginColumnsPromise: Promise<void> | null =
     null;
+  private readonly iconSelect = {
+    id: true,
+    type: true,
+    name: true,
+    emoji: true,
+    imageUrl: true,
+  } as const;
+  private readonly memberSummarySelect = {
+    id: true,
+    role: true,
+    telegramUsername: true,
+    avatarIconId: true,
+    avatarIcon: { select: this.iconSelect },
+    user: { select: { id: true, name: true } },
+  } as const;
   private readonly managedPostInclude = {
-    assignedMember: WorkspaceService.assignedMemberInclude,
+    assignedMember: { select: this.memberSummarySelect },
     group: {
       select: {
         id: true,
@@ -298,13 +313,6 @@ export class TelegramChannelsService {
         sidebarPosition: true,
       },
     },
-  } as const;
-  private readonly iconSelect = {
-    id: true,
-    type: true,
-    name: true,
-    emoji: true,
-    imageUrl: true,
   } as const;
   private readonly inviteLinkReadSelectWithoutRequestedCount = {
     id: true,
@@ -330,7 +338,7 @@ export class TelegramChannelsService {
     creatorMatchSource: true,
     createdAt: true,
     updatedAt: true,
-    adCampaign: true,
+    adCampaign: { select: { id: true, title: true } },
     creatorMember: WorkspaceService.assignedMemberInclude,
   } as const;
   private readonly inviteLinkSyncExistingSelect = {
@@ -1149,7 +1157,9 @@ export class TelegramChannelsService {
           i."emoji" AS "icon_emoji",
           i."imageUrl" AS "icon_image_url"
         FROM "TelegramChannelTimePost" tp
+        JOIN "TelegramChannel" c ON c."id" = tp."telegramChannelId"
         LEFT JOIN "Icon" i ON i."id" = tp."iconId"
+          AND (i."workspaceId" = c."workspaceId" OR i."workspaceId" IS NULL)
         WHERE tp."telegramChannelId" IN (${Prisma.join(
           uniqueChannelIds.map((id) => Prisma.sql`${id}`),
         )})
@@ -1173,15 +1183,17 @@ export class TelegramChannelsService {
         time: row.time,
         position: row.position,
         iconId: row.iconId,
-        icon: row.icon_id
-          ? {
+        iconPresentation: iconToResolvedEmoji(
+          row.icon_id
+            ? {
               id: row.icon_id,
-              type: row.icon_type,
+              type: row.icon_type as 'emoji' | 'image',
               name: row.icon_name,
               emoji: row.icon_emoji,
               imageUrl: row.icon_image_url,
             }
-          : null,
+            : null,
+        ),
       });
       grouped.set(row.telegramChannelId, items);
     }
@@ -2730,10 +2742,18 @@ export class TelegramChannelsService {
   private normalizeInviteLinkRequestedCount<T extends object>(
     link: T,
   ): T & { requestedCount: number } {
-    const value = link as T & { requestedCount?: number | null };
+    const value = link as T & {
+      requestedCount?: number | null;
+      creatorMember?: {
+        avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+      } | null;
+    };
     return {
       ...link,
       requestedCount: Number(value.requestedCount ?? 0),
+      creatorMember: value.creatorMember
+        ? this.memberSummary(value.creatorMember)
+        : value.creatorMember,
     };
   }
 
@@ -4650,9 +4670,37 @@ export class TelegramChannelsService {
   }
 
   private readonly postGroupBaseInclude = {
-    createdByMember: WorkspaceService.assignedMemberInclude,
-    telegramChannel: true,
+    createdByMember: { select: this.memberSummarySelect },
+    telegramChannel: { select: { id: true, title: true } },
   } as const;
+  private readonly postGroupListSelect = {
+    id: true,
+    workspaceId: true,
+    telegramChannelId: true,
+    title: true,
+    description: true,
+    icon: true,
+    isSystem: true,
+    systemKey: true,
+    statusNumberingEnabled: true,
+    createdByMemberId: true,
+    sidebarPosition: true,
+    createdAt: true,
+    updatedAt: true,
+    ...this.postGroupBaseInclude,
+  } as const;
+
+  private memberSummary<
+    T extends {
+      avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+    },
+  >(member: T) {
+    const { avatarIcon, ...rest } = member;
+    return {
+      ...rest,
+      avatarPresentation: iconToResolvedEmoji(avatarIcon),
+    };
+  }
 
   private async loadIconsByIds(
     workspaceId: string,
@@ -4684,6 +4732,9 @@ export class TelegramChannelsService {
     T extends {
       workspaceId: string;
       icon?: string | null;
+      assignedMember?: {
+        avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+      } | null;
       group?: Record<string, unknown> | null;
     },
   >(
@@ -4703,17 +4754,15 @@ export class TelegramChannelsService {
       : new Map();
     return posts.map((post) => ({
       ...post,
-      iconData: post.icon ? (iconsById.get(post.icon) ?? null) : null,
+      assignedMember: post.assignedMember
+        ? this.memberSummary(post.assignedMember)
+        : post.assignedMember,
       iconPresentation: post.icon
         ? iconToResolvedEmoji(iconsById.get(post.icon))
         : null,
       group: post.group
         ? {
             ...post.group,
-            iconData:
-              typeof post.group.icon === 'string'
-                ? (iconsById.get(post.group.icon) ?? null)
-                : null,
             iconPresentation:
               typeof post.group.icon === 'string'
                 ? iconToResolvedEmoji(iconsById.get(post.group.icon))
@@ -4727,6 +4776,9 @@ export class TelegramChannelsService {
     T extends {
       workspaceId: string;
       icon?: string | null;
+      createdByMember?: {
+        avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+      } | null;
       posts?: Array<{ icon?: string | null }>;
     },
   >(groups: T[]) {
@@ -4742,14 +4794,15 @@ export class TelegramChannelsService {
       : new Map();
     return groups.map((group) => ({
       ...group,
-      iconData: group.icon ? (iconsById.get(group.icon) ?? null) : null,
+      createdByMember: group.createdByMember
+        ? this.memberSummary(group.createdByMember)
+        : group.createdByMember,
       iconPresentation: group.icon
         ? iconToResolvedEmoji(iconsById.get(group.icon))
         : null,
       posts: group.posts
         ? group.posts.map((post) => ({
             ...post,
-            iconData: post.icon ? (iconsById.get(post.icon) ?? null) : null,
             iconPresentation: post.icon
               ? iconToResolvedEmoji(iconsById.get(post.icon))
               : null,
@@ -4881,7 +4934,15 @@ export class TelegramChannelsService {
     const workspaceId = await this.workspace(userId);
     await this.ensurePostGroupSystemColumnsAvailable();
     if (query.telegramChannelId) {
-      const channel = await this.findOne(userId, query.telegramChannelId);
+      const channel = await this.prisma.telegramChannel.findFirst({
+        where: {
+          id: query.telegramChannelId,
+          workspaceId,
+          isActive: true,
+        },
+        select: { id: true, assignedMemberId: true },
+      });
+      if (!channel) throw new NotFoundException('Telegram channel not found');
       await this.ensureTelegramImportedSystemGroup(
         workspaceId,
         query.telegramChannelId,
@@ -4903,20 +4964,34 @@ export class TelegramChannelsService {
     const [groups, totalItems] = await this.prisma.$transaction([
       this.prisma.postGroup.findMany({
         where,
-        include: {
-          ...this.postGroupBaseInclude,
-          posts: { select: { status: true } },
-        },
+        select: this.postGroupListSelect,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: pagination.skip,
         take: pagination.take,
       }),
       this.prisma.postGroup.count({ where }),
     ]);
-    const items = groups.map(({ posts, ...group }) => ({
+    const statusCounts = groups.length
+      ? await this.prisma.telegramManagedPost.groupBy({
+          by: ['groupId', 'status'],
+          where: {
+            workspaceId,
+            groupId: { in: groups.map((group) => group.id) },
+          },
+          _count: { _all: true },
+        })
+      : [];
+    const statusesByGroupId = new Map<string, TelegramManagedPostStatus[]>();
+    for (const row of statusCounts) {
+      if (!row.groupId) continue;
+      const statuses = statusesByGroupId.get(row.groupId) ?? [];
+      statuses.push(...Array(row._count._all).fill(row.status));
+      statusesByGroupId.set(row.groupId, statuses);
+    }
+    const items = groups.map((group) => ({
       ...group,
-      postsCount: posts.length,
-      statusSummary: postGroupStatusSummary(posts.map((post) => post.status)),
+      postsCount: statusesByGroupId.get(group.id)?.length ?? 0,
+      statusSummary: postGroupStatusSummary(statusesByGroupId.get(group.id) ?? []),
     }));
     return createPaginatedResponse(
       await this.attachPostGroupIcons(items),
@@ -5307,6 +5382,12 @@ export class TelegramChannelsService {
             telegramRemoteStatus: item.telegramRemoteStatus,
             telegramMessageUrls: item.telegramMessageUrls,
             hasMedia: item.imageUrls.length > 0,
+            plannerFormatId: item.plannerFormatId,
+            plannerSlotId: item.plannerSlotId,
+            plannerRunId: item.plannerRunId,
+            plannerPlannedAt: item.plannerPlannedAt?.toISOString() ?? null,
+            plannerProvenance: item.plannerProvenance,
+            isAutoPlanned: Boolean(item.plannerRunId && item.plannerSlotId),
             group: item.group,
             assignedMember: {
               id: item.assignedMember.id,
@@ -6796,7 +6877,7 @@ export class TelegramChannelsService {
         id: post.id,
         title: post.title,
         icon: post.icon,
-        iconData: post.iconData,
+        iconPresentation: post.iconPresentation,
         status: post.status,
         telegramRemoteStatus: post.telegramRemoteStatus,
         groupId: post.groupId,

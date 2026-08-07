@@ -206,16 +206,12 @@ function makePost(
     assignedMemberId: "member-1",
     assignedMember: {
       id: "member-1",
-      workspaceId: "workspace-1",
-      userId: "user-1",
       role: "member",
-      createdAt: "2026-07-01T00:00:00.000Z",
+      avatarPresentation: null,
       user: {
         id: "user-1",
-        email: "member@example.com",
         name: "Member",
       },
-      isCurrentUser: false,
     },
     icon: null,
     groupId: null,

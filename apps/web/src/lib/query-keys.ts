@@ -79,6 +79,10 @@ export const telegramPostKeys = {
   managed: (channelId: string) => ["telegram-managed-posts", channelId] as const,
   managedCalendar: (channelId: string) =>
     ["telegram-managed-posts-calendar", channelId] as const,
+  plannerFormats: (channelId: string) =>
+    ["telegram-managed-posts-calendar-planner-formats", channelId] as const,
+  plannerSlots: (channelId: string) =>
+    ["telegram-managed-posts-calendar-planner-slots", channelId] as const,
   linkTargets: (channelId: string) =>
     ["telegram-managed-post-link-targets", channelId] as const,
   channelPosts: (channelId: string) =>

@@ -53,6 +53,7 @@ import {
   type TelegramChannelSourceAccess,
 } from "@/lib/api";
 import { scheduleProgressDismiss, syncProgressToToast } from "@/lib/progress";
+import { buildTelegramPostsUrl } from "@/lib/telegram-posts-url";
 import {
   Button,
   ConfirmDeleteModal,
@@ -2231,7 +2232,10 @@ export default function TelegramChannelsPage() {
                         {hasAdminLink ? (
                           channel.preview?.canPostMessages ? (
                             <Link
-                              href={`/telegram-posts?channelId=${channel.id}`}
+                              href={buildTelegramPostsUrl({
+                                channelId: channel.id,
+                                postView: "editor",
+                              })}
                               className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-blue-500/40 bg-blue-600/95 text-center text-sm font-medium text-white shadow-[0_10px_24px_rgba(37,99,235,0.18)] transition hover:border-blue-400 hover:bg-blue-500"
                             >
                               <Send size={16} />

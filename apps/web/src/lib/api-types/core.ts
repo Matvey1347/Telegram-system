@@ -109,6 +109,14 @@ export type WorkspaceMemberSelectOption = {
   user: User;
   isCurrentUser: boolean;
 };
+export type MemberSummary = {
+  id: string;
+  role?: WorkspaceRole;
+  telegramUsername?: string | null;
+  avatarIconId?: string | null;
+  avatarPresentation?: ResolvedEmoji | null;
+  user: Pick<User, "id" | "name">;
+};
 export type WorkspaceMember = {
   id: string;
   workspaceId: string;

@@ -16,6 +16,8 @@ import type { JwtUser } from '../common/current-user.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   DeepSyncDto,
+  CreatePostPlannerFormatDto,
+  CreatePostPlannerSlotDto,
   CreatePostGroupDto,
   CreateTelegramChannelAdAnalysisDto,
   CreateTelegramManagedPostDto,
@@ -32,6 +34,9 @@ import {
   TelegramManagedPostsQueryDto,
   MovePostChannelDto,
   PostGroupsQueryDto,
+  PostPlannerApplyDto,
+  PostPlannerPreviewDto,
+  PostPlannerRerollDayDto,
   PostIdsDto,
   PublishPostGroupDto,
   ReorderManagedPostSidebarDto,
@@ -48,9 +53,12 @@ import {
   UpdateTelegramChannelAdAnalysisDto,
   UpdateTelegramPostManualMetricsDto,
   UpdateTelegramManagedPostDto,
+  UpdatePostPlannerFormatDto,
+  UpdatePostPlannerSlotDto,
   UpdatePostGroupDto,
 } from './dto';
 import { TelegramChannelsService } from './telegram-channels.service';
+import { TelegramPostCalendarPlannerService } from './telegram-post-calendar-planner.service';
 import { StreamResponseService } from '../common/stream/stream-response.service';
 
 @UseGuards(JwtAuthGuard)
@@ -58,6 +66,7 @@ import { StreamResponseService } from '../common/stream/stream-response.service'
 export class TelegramChannelsController {
   constructor(
     private service: TelegramChannelsService,
+    private readonly postCalendarPlanner: TelegramPostCalendarPlannerService,
     private readonly streamResponse: StreamResponseService,
   ) {}
   private async streamBulkAction(
@@ -272,6 +281,88 @@ export class TelegramChannelsController {
     @Query() query: ManagedPostsCalendarQueryDto,
   ) {
     return this.service.managedPostsCalendar(user.sub, id, query);
+  }
+  @Get(':id/managed-posts/calendar-planner/formats')
+  postPlannerFormats(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.postCalendarPlanner.listFormats(user.sub, id);
+  }
+  @Post(':id/managed-posts/calendar-planner/formats')
+  createPostPlannerFormat(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: CreatePostPlannerFormatDto,
+  ) {
+    return this.postCalendarPlanner.createFormat(user.sub, id, dto);
+  }
+  @Patch(':id/managed-posts/calendar-planner/formats/:formatId')
+  updatePostPlannerFormat(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('formatId') formatId: string,
+    @Body() dto: UpdatePostPlannerFormatDto,
+  ) {
+    return this.postCalendarPlanner.updateFormat(user.sub, id, formatId, dto);
+  }
+  @Delete(':id/managed-posts/calendar-planner/formats/:formatId')
+  deletePostPlannerFormat(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('formatId') formatId: string,
+  ) {
+    return this.postCalendarPlanner.deleteFormat(user.sub, id, formatId);
+  }
+  @Get(':id/managed-posts/calendar-planner/slots')
+  postPlannerSlots(@CurrentUser() user: JwtUser, @Param('id') id: string) {
+    return this.postCalendarPlanner.listSlots(user.sub, id);
+  }
+  @Post(':id/managed-posts/calendar-planner/slots')
+  createPostPlannerSlot(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: CreatePostPlannerSlotDto,
+  ) {
+    return this.postCalendarPlanner.createSlot(user.sub, id, dto);
+  }
+  @Patch(':id/managed-posts/calendar-planner/slots/:slotId')
+  updatePostPlannerSlot(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('slotId') slotId: string,
+    @Body() dto: UpdatePostPlannerSlotDto,
+  ) {
+    return this.postCalendarPlanner.updateSlot(user.sub, id, slotId, dto);
+  }
+  @Delete(':id/managed-posts/calendar-planner/slots/:slotId')
+  deletePostPlannerSlot(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Param('slotId') slotId: string,
+  ) {
+    return this.postCalendarPlanner.deleteSlot(user.sub, id, slotId);
+  }
+  @Post(':id/managed-posts/calendar-planner/preview')
+  previewPostPlanner(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: PostPlannerPreviewDto,
+  ) {
+    return this.postCalendarPlanner.preview(user.sub, id, dto);
+  }
+  @Post(':id/managed-posts/calendar-planner/apply')
+  applyPostPlanner(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: PostPlannerApplyDto,
+  ) {
+    return this.postCalendarPlanner.apply(user.sub, id, dto);
+  }
+  @Post(':id/managed-posts/calendar-planner/reroll-day')
+  rerollPostPlannerDay(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: PostPlannerRerollDayDto,
+  ) {
+    return this.postCalendarPlanner.rerollDay(user.sub, id, dto);
   }
   @Post(':id/managed-posts/sync')
   syncManagedPosts(@CurrentUser() user: JwtUser, @Param('id') id: string) {

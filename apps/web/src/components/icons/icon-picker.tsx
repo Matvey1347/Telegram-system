@@ -35,11 +35,14 @@ type IconPickerProps = {
   iconId?: string | null;
   icon?: Icon | ResolvedEmoji | null;
   onChange: (iconId: string | null) => void;
+  onEmojiChange?: (emoji: string | null) => void;
   buttonLabel?: string;
   className?: string;
   iconClassName?: string;
   compact?: boolean;
   bare?: boolean;
+  disabled?: boolean;
+  allowImages?: boolean;
   onPendingChange?: (pending: boolean) => void;
 };
 
@@ -133,11 +136,14 @@ export function IconPicker({
   iconId,
   icon,
   onChange,
+  onEmojiChange,
   buttonLabel = "Add icon",
   className = "",
   iconClassName = "",
   compact = false,
   bare = false,
+  disabled = false,
+  allowImages = true,
   onPendingChange,
 }: IconPickerProps) {
   const qc = useQueryClient();
@@ -180,12 +186,15 @@ export function IconPicker({
   const iconsQuery = useQuery({
     queryKey: ["icons", search],
     queryFn: () => iconsApi.list(search || undefined),
-    enabled: open && tab === "icons",
+    enabled: allowImages && open && tab === "icons",
   });
 
   const customIcons = useMemo(
-    () => (iconsQuery.data ?? []).filter((icon) => icon.type === "image"),
-    [iconsQuery.data],
+    () =>
+      allowImages
+        ? (iconsQuery.data ?? []).filter((icon) => icon.type === "image")
+        : [],
+    [allowImages, iconsQuery.data],
   );
 
   const createEmojiMutation = useMutation({
@@ -329,7 +338,7 @@ export function IconPicker({
   }, [search]);
 
   const currentIcon =
-    optimisticIcon ??
+    iconToResolvedEmoji(optimisticIcon) ??
     iconToResolvedEmoji(icon) ??
     (iconId ? iconToResolvedEmoji(selectedIcon) : null);
 
@@ -404,13 +413,14 @@ export function IconPicker({
 
   const handleFile = useCallback(
     (file?: File) => {
+      if (!allowImages) return;
       if (!file) return;
       if (!file.type.startsWith("image/")) return;
       setUpload(null);
       setTab("upload");
       uploadFile(file);
     },
-    [uploadFile],
+    [allowImages, uploadFile],
   );
 
   useEffect(() => {
@@ -444,34 +454,54 @@ export function IconPicker({
   );
   const savedRecent = useMemo(
     () =>
-      recentIcons
-        .filter((icon): icon is RecentSavedIcon => icon.kind === "saved")
-        .filter((item) => matchesRecentSaved(item, normalizedSearch)),
-    [normalizedSearch, recentIcons],
+      allowImages
+        ? recentIcons
+            .filter((icon): icon is RecentSavedIcon => icon.kind === "saved")
+            .filter((item) => matchesRecentSaved(item, normalizedSearch))
+        : [],
+    [allowImages, normalizedSearch, recentIcons],
   );
   const hasRecentItems = standardRecent.length > 0 || savedRecent.length > 0;
   const totalSearchResults = filteredStandardIcons.length + customIcons.length;
 
-  const selectRecentStandard = (item: RecentStandardIcon) => {
+  const selectEmoji = (item: RecentStandardIcon | EmojiIcon) => {
+    setOpen(false);
+    if (onEmojiChange) {
+      const recentItem: RecentStandardIcon = {
+        kind: "standard",
+        name: item.name,
+        emoji: item.emoji,
+        category: item.category,
+        keywords: item.keywords,
+      };
+      onEmojiChange(item.emoji);
+      setRecentIcons((prev) =>
+        [
+          recentItem,
+          ...prev.filter(
+            (current) =>
+              !(current.kind === "standard" && current.emoji === item.emoji),
+          ),
+        ].slice(0, RECENT_LIMIT),
+      );
+      setSearch("");
+      return;
+    }
     setOptimisticIcon({
       id: "",
       type: "emoji",
       name: item.name,
       emoji: item.emoji,
     });
-    setOpen(false);
     createEmojiMutation.mutate(item);
   };
 
+  const selectRecentStandard = (item: RecentStandardIcon) => {
+    selectEmoji(item);
+  };
+
   const selectStandardIcon = (item: EmojiIcon) => {
-    setOptimisticIcon({
-      id: "",
-      type: "emoji",
-      name: item.name,
-      emoji: item.emoji,
-    });
-    setOpen(false);
-    createEmojiMutation.mutate(item);
+    selectEmoji(item);
   };
 
   const selectRecentSaved = (item: RecentSavedIcon) => {
@@ -548,7 +578,9 @@ export function IconPicker({
       <button
         type="button"
         ref={triggerRef}
+        disabled={disabled}
         onClick={() => {
+          if (disabled) return;
           if (open) {
             closePicker();
             return;
@@ -556,13 +588,13 @@ export function IconPicker({
           setStandardIconsReady(false);
           setOpen(true);
         }}
-        className={
+        className={`${
           bare
             ? `inline-flex items-center justify-center text-neutral-100 hover:opacity-80 ${className}`
             : compact
               ? `flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800 ${className}`
               : `flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${className}`
-        }
+        }${disabled ? " cursor-not-allowed opacity-50" : ""}`}
       >
         {currentIcon ? (
             <IconAvatar
@@ -591,26 +623,32 @@ export function IconPicker({
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
-                      {tabOrder.map((item) => (
-                        <button
-                          key={item}
-                          type="button"
-                          onClick={() => {
-                            if (item === "icons" && tab !== "icons")
-                              setStandardIconsReady(false);
-                            setTab(item);
-                          }}
-                          className={`rounded-md px-2.5 py-1 text-sm capitalize ${tab === item ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}
-                        >
-                          {item}
-                        </button>
-                      ))}
+                      {tabOrder
+                        .filter((item) => allowImages || item !== "upload")
+                        .map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            onClick={() => {
+                              if (item === "icons" && tab !== "icons")
+                                setStandardIconsReady(false);
+                              setTab(item);
+                            }}
+                            className={`rounded-md px-2.5 py-1 text-sm capitalize ${tab === item ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}
+                          >
+                            {item}
+                          </button>
+                        ))}
                     </div>
                     <button
                       type="button"
                       onClick={() => {
                         setOptimisticIcon(null);
-                        onChange(null);
+                        if (onEmojiChange) {
+                          onEmojiChange(null);
+                        } else {
+                          onChange(null);
+                        }
                         closePicker();
                       }}
                       className="mr-1 text-sm text-neutral-400 hover:text-white"
@@ -739,7 +777,7 @@ export function IconPicker({
                                   }}
                                 >
                                   <IconAvatar
-                                    icon={icon}
+                                    icon={iconToResolvedEmoji(icon)}
                                     label={icon.name}
                                     size="xs"
                                     bordered={false}
@@ -793,7 +831,7 @@ export function IconPicker({
                                     onClick={() => selectRecentSaved(item)}
                                   >
                                     <IconAvatar
-                                      icon={item.icon}
+                                      icon={iconToResolvedEmoji(item.icon)}
                                       label={item.icon.name}
                                       size="xs"
                                       bordered={false}
@@ -868,77 +906,79 @@ export function IconPicker({
                             )}
                           </div>
 
-                          <div
-                            ref={(node) => {
-                              sectionRefs.current.custom = node;
-                            }}
-                            className="mt-3 scroll-mt-3 border-t border-neutral-800/70 pt-2.5"
-                          >
-                            <div className="mb-1.5 flex items-center justify-between">
-                              <p className="text-sm font-medium text-neutral-300">
-                                Custom
-                              </p>
-                              <p className="text-xs text-neutral-500">
-                                {customIcons.length} results
-                              </p>
+                          {allowImages ? (
+                            <div
+                              ref={(node) => {
+                                sectionRefs.current.custom = node;
+                              }}
+                              className="mt-3 scroll-mt-3 border-t border-neutral-800/70 pt-2.5"
+                            >
+                              <div className="mb-1.5 flex items-center justify-between">
+                                <p className="text-sm font-medium text-neutral-300">
+                                  Custom
+                                </p>
+                                <p className="text-xs text-neutral-500">
+                                  {customIcons.length} results
+                                </p>
+                              </div>
+                              {iconsQuery.isLoading ? (
+                                <p className="text-sm text-neutral-400">
+                                  Loading custom icons...
+                                </p>
+                              ) : null}
+                              <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
+                                {customIcons.map((icon) => (
+                                  <button
+                                    key={icon.id}
+                                    type="button"
+                                    className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
+                                    title={icon.name}
+                                    onClick={() => {
+                                      const recentItem: RecentSavedIcon = {
+                                        kind: "saved",
+                                        icon: {
+                                          id: icon.id,
+                                          type: icon.type,
+                                          name: icon.name,
+                                          emoji: icon.emoji,
+                                          imageUrl: icon.imageUrl,
+                                        },
+                                      };
+                                      setRecentIcons((prev) =>
+                                        [
+                                          recentItem,
+                                          ...prev.filter(
+                                            (current) =>
+                                              !(
+                                                current.kind === "saved" &&
+                                                current.icon.id === icon.id
+                                              ),
+                                          ),
+                                        ].slice(0, RECENT_LIMIT),
+                                      );
+                                      setOptimisticIcon(icon);
+                                      qc.setQueryData(["icon", icon.id], icon);
+                                      onChange(icon.id);
+                                      setOpen(false);
+                                    }}
+                                  >
+                                    <IconAvatar
+                                      icon={iconToResolvedEmoji(icon)}
+                                      label={icon.name}
+                                      size="xs"
+                                      bordered={false}
+                                      className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0"
+                                    />
+                                  </button>
+                                ))}
+                              </div>
+                              {!iconsQuery.isLoading && !customIcons.length ? (
+                                <p className="mt-3 text-sm text-neutral-400">
+                                  No custom icons yet.
+                                </p>
+                              ) : null}
                             </div>
-                            {iconsQuery.isLoading ? (
-                              <p className="text-sm text-neutral-400">
-                                Loading custom icons...
-                              </p>
-                            ) : null}
-                            <div className="grid grid-cols-8 justify-items-center gap-1 sm:grid-cols-10">
-                              {customIcons.map((icon) => (
-                                <button
-                                  key={icon.id}
-                                  type="button"
-                                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-transparent hover:border-neutral-700 hover:bg-neutral-900"
-                                  title={icon.name}
-                                  onClick={() => {
-                                    const recentItem: RecentSavedIcon = {
-                                      kind: "saved",
-                                      icon: {
-                                        id: icon.id,
-                                        type: icon.type,
-                                        name: icon.name,
-                                        emoji: icon.emoji,
-                                        imageUrl: icon.imageUrl,
-                                      },
-                                    };
-                                    setRecentIcons((prev) =>
-                                      [
-                                        recentItem,
-                                        ...prev.filter(
-                                          (current) =>
-                                            !(
-                                              current.kind === "saved" &&
-                                              current.icon.id === icon.id
-                                            ),
-                                        ),
-                                      ].slice(0, RECENT_LIMIT),
-                                    );
-                                    setOptimisticIcon(icon);
-                                    qc.setQueryData(["icon", icon.id], icon);
-                                    onChange(icon.id);
-                                    setOpen(false);
-                                  }}
-                                >
-                                  <IconAvatar
-                                    icon={icon}
-                                    label={icon.name}
-                                    size="xs"
-                                    bordered={false}
-                                    className="!h-[20px] !w-[20px] !rounded-none !bg-transparent !border-0"
-                                  />
-                                </button>
-                              ))}
-                            </div>
-                            {!iconsQuery.isLoading && !customIcons.length ? (
-                              <p className="mt-3 text-sm text-neutral-400">
-                                No custom icons yet.
-                              </p>
-                            ) : null}
-                          </div>
+                          ) : null}
                         </>
                       )}
                     </div>
@@ -946,7 +986,9 @@ export function IconPicker({
                     {!isSearching ? (
                       <div className="mt-2 shrink-0 bg-neutral-900/95 py-1 backdrop-blur">
                         <div className="flex items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap">
-                          {sectionTabs.map(({ section, icon: Icon, label }) => {
+                          {sectionTabs
+                            .filter(({ section }) => allowImages || section !== "custom")
+                            .map(({ section, icon: Icon, label }) => {
                             const disabled =
                               section === "recent"
                                 ? !hasRecentItems

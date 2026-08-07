@@ -100,8 +100,8 @@ function accountSelectOption(account: Account) {
   return {
     value: account.id,
     label: `${accountDisplayName(account)} (${account.currency})`,
-    iconUrl: account.icon?.imageUrl ?? undefined,
-    iconEmoji: account.icon?.emoji ?? undefined,
+    iconUrl: account.iconPresentation?.type === 'image' ? account.iconPresentation.url : undefined,
+    iconEmoji: account.iconPresentation?.type === 'unicode' ? account.iconPresentation.value : undefined,
     iconFallback: account.name,
   };
 }
@@ -1079,13 +1079,7 @@ function PromoList({ promos, onOpenPromo, inline = false }: { promos: Promo[]; o
 }
 
 function PromoVisual({ promo }: { promo: Promo }) {
-  if (promo.icon?.imageUrl) {
-    return <img src={promo.icon.imageUrl} alt="" className="h-4 w-4 rounded-full object-cover" />;
-  }
-  if (promo.icon?.emoji) {
-    return <span className="inline-flex h-4 w-4 items-center justify-center text-[13px] leading-none">{promo.icon.emoji}</span>;
-  }
-  return null;
+  return <IconAvatar icon={promo.iconPresentation} label={promo.title} size="xs" bordered={false} className="!bg-transparent" />;
 }
 
 function InviteLinkList({ inviteLinks, inline = false }: { inviteLinks: TelegramInviteLink[]; inline?: boolean }) {
@@ -1207,8 +1201,8 @@ function HypothesisLinks({ links }: { links: any[] }) {
 
 function MemberChip({ member }: { member: NonNullable<AdCampaign['assignedMember']> }) {
   const label = member.user?.name || 'Member';
-  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
-  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  const avatarImageUrl = member.avatarPresentation?.type === 'image' ? member.avatarPresentation.url : undefined;
+  const avatarEmoji = member.avatarPresentation?.type === 'unicode' ? member.avatarPresentation.value : undefined;
   return (
     <a
       href="/workspace-members"
@@ -1360,7 +1354,7 @@ function PromosSection({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <PromoIcon iconId={promo.iconId} icon={promo.icon} title={promo.title} />
+                    <PromoIcon iconId={promo.iconId} icon={promo.iconPresentation} title={promo.title} />
                     <h3 className="truncate text-lg font-semibold text-white">{promo.title}</h3>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1387,7 +1381,7 @@ function PromoIcon({
   title,
 }: {
   iconId?: string | null;
-  icon?: Promo['icon'];
+  icon?: Promo['iconPresentation'];
   title: string;
 }) {
   const resolvedIcon = icon;
@@ -1405,8 +1399,8 @@ function PromoIcon({
 
 function PromoAssignedMemberChip({ member }: { member: NonNullable<Promo['assignedMember']> }) {
   const label = member.user?.name || 'Member';
-  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
-  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  const avatarImageUrl = member.avatarPresentation?.type === 'image' ? member.avatarPresentation.url : undefined;
+  const avatarEmoji = member.avatarPresentation?.type === 'unicode' ? member.avatarPresentation.value : undefined;
   return (
     <a
       href="/workspace-members"
@@ -1466,9 +1460,9 @@ function HypothesesSection({
                   <td className="px-4 py-4">
                     <div className="space-y-3">
                       <div className="flex items-start gap-3">
-                        {hypothesis.icon ? (
+                        {hypothesis.iconPresentation ? (
                           <IconAvatar
-                            icon={hypothesis.icon}
+                            icon={hypothesis.iconPresentation}
                             label={hypothesis.name}
                             size="xs"
                             bordered={false}
@@ -2332,8 +2326,8 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     const liveOptions = availablePromos.map((promo: Promo) => ({
       value: promo.id,
       label: promo.title,
-      iconUrl: promo.icon?.imageUrl ?? undefined,
-      iconEmoji: promo.icon?.emoji ?? undefined,
+      iconUrl: promo.iconPresentation?.type === 'image' ? promo.iconPresentation.url : undefined,
+      iconEmoji: promo.iconPresentation?.type === 'unicode' ? promo.iconPresentation.value : undefined,
       iconFallback: promo.title,
       description: promo.telegramChannel?.title,
       searchText: promo.text,
@@ -2341,8 +2335,8 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
     const initialOptions = (initial?.promos || (initial?.promo ? [initial.promo] : [])).map((promo: Promo) => ({
       value: promo.id,
       label: promo.title,
-      iconUrl: promo.icon?.imageUrl ?? undefined,
-      iconEmoji: promo.icon?.emoji ?? undefined,
+      iconUrl: promo.iconPresentation?.type === 'image' ? promo.iconPresentation.url : undefined,
+      iconEmoji: promo.iconPresentation?.type === 'unicode' ? promo.iconPresentation.value : undefined,
       iconFallback: promo.title,
       description: promo.telegramChannel?.title,
       searchText: promo.text,
@@ -2354,10 +2348,12 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
       value: inviteLink.id,
       label: inviteLink.name,
       iconUrl:
-        inviteLink.creatorMember?.avatarIcon?.imageUrl ??
+        (inviteLink.creatorMember?.avatarPresentation?.type === 'image'
+          ? inviteLink.creatorMember.avatarPresentation.url
+          : null) ??
         inviteLink.creatorPhotoUrl ??
         undefined,
-      iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
+      iconEmoji: inviteLink.creatorMember?.avatarPresentation?.type === 'unicode' ? inviteLink.creatorMember.avatarPresentation.value : undefined,
       iconFallback:
         inviteLink.creatorMember?.user?.name ??
         inviteLink.creatorFirstName ??
@@ -2372,10 +2368,12 @@ function CampaignModal({ open, onClose, onSubmit, title, initial, channels }: an
       value: inviteLink.id,
       label: inviteLink.name,
       iconUrl:
-        inviteLink.creatorMember?.avatarIcon?.imageUrl ??
+        (inviteLink.creatorMember?.avatarPresentation?.type === 'image'
+          ? inviteLink.creatorMember.avatarPresentation.url
+          : null) ??
         inviteLink.creatorPhotoUrl ??
         undefined,
-      iconEmoji: inviteLink.creatorMember?.avatarIcon?.emoji ?? undefined,
+      iconEmoji: inviteLink.creatorMember?.avatarPresentation?.type === 'unicode' ? inviteLink.creatorMember.avatarPresentation.value : undefined,
       iconFallback:
         inviteLink.creatorMember?.user?.name ??
         inviteLink.creatorFirstName ??

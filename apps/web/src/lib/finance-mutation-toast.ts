@@ -1,4 +1,4 @@
-import type { Icon } from '@/lib/api';
+import type { ResolvedEmoji } from '@/lib/api';
 
 type PushToast = (
   message: string,
@@ -11,7 +11,7 @@ type FinanceToastOptions = {
   action: 'created' | 'updated';
   entityLabel: string;
   name: string;
-  icon?: Icon | null;
+  icon?: ResolvedEmoji | null;
 };
 
 export function pushFinanceMutationToast(
@@ -20,7 +20,7 @@ export function pushFinanceMutationToast(
 ) {
   const verb = action === 'created' ? 'created' : 'updated';
   pushToast(`${entityLabel} ${verb}: ${name}`, 'success', 3500, {
-    emoji: icon?.emoji ?? null,
-    imageUrl: icon?.imageUrl ?? null,
+    emoji: icon?.type === 'unicode' ? icon.value : null,
+    imageUrl: icon?.type === 'image' ? icon.url : null,
   });
 }

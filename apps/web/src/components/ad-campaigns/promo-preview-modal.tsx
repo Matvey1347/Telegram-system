@@ -1,27 +1,12 @@
 "use client";
 
 import { TelegramPostPreview } from "@/components/telegram/telegram-post-preview";
+import { IconAvatar } from "@/components/icons/icon-avatar";
 import { Modal } from "@/components/ui/primitives";
 import type { Promo } from "@/lib/api";
 
 function PromoVisual({ promo }: { promo: Promo }) {
-  if (promo.icon?.imageUrl) {
-    return (
-      <img
-        src={promo.icon.imageUrl}
-        alt=""
-        className="h-8 w-8 rounded-full object-cover"
-      />
-    );
-  }
-  if (promo.icon?.emoji) {
-    return (
-      <span className="inline-flex h-8 w-8 items-center justify-center text-2xl leading-none">
-        {promo.icon.emoji}
-      </span>
-    );
-  }
-  return null;
+  return <IconAvatar icon={promo.iconPresentation} label={promo.title} size="sm" bordered={false} className="!bg-transparent" />;
 }
 
 function PromoAssignedMemberChip({
@@ -30,8 +15,8 @@ function PromoAssignedMemberChip({
   member: NonNullable<Promo["assignedMember"]>;
 }) {
   const label = member.user?.name || "Member";
-  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
-  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  const avatarImageUrl = member.avatarPresentation?.type === "image" ? member.avatarPresentation.url : undefined;
+  const avatarEmoji = member.avatarPresentation?.type === "unicode" ? member.avatarPresentation.value : undefined;
   return (
     <a
       href="/workspace-members"

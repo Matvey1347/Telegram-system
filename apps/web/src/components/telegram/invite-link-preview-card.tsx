@@ -210,7 +210,7 @@ export function InviteLinkPreviewCard({
           <div className="mt-1.5 flex items-center gap-2.5">
             {link.creatorMember ? (
               <IconAvatar
-                icon={link.creatorMember.avatarIcon}
+                icon={link.creatorMember.avatarPresentation}
                 label={link.creatorMember.user.name}
                 size="sm"
               />

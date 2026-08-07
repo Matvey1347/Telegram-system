@@ -215,11 +215,11 @@ export function ManagedPostsImportModal({
           iconEmoji:
             presentation?.type === "unicode"
               ? presentation.value
-              : (group.iconData?.emoji ?? undefined),
+              : undefined,
           iconUrl:
             presentation?.type === "image"
               ? presentation.url
-              : (group.iconData?.imageUrl ?? undefined),
+              : undefined,
           iconFallback: group.title,
         };
       }),

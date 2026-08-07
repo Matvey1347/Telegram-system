@@ -75,7 +75,7 @@ Before adding a primitive or domain wrapper, search for an existing selector, da
 - Import: `@/components/icons/icon-picker`, `@/components/icons/inline-icon-picker`
 - Use for emoji/image icon assignment.
 - Do not create separate emoji pickers unless the workflow cannot use icon semantics.
-- Pass hydrated `iconPresentation`, `avatarPresentation`, or `Icon` data for display. Do not add entity render paths that call `/icons/:id`.
+- Pass hydrated `iconPresentation` or `avatarPresentation` for display. Do not pass raw `Icon` records or add entity render paths that call `/icons/:id`.
 
 ### `TelegramPostPreview`
 

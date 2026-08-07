@@ -45,8 +45,8 @@ export function MemberSelect({
         <option
           key={member.id}
           value={member.id}
-          data-icon-url={member.avatarIcon?.imageUrl ?? undefined}
-          data-icon-emoji={member.avatarIcon?.emoji ?? undefined}
+          data-icon-url={member.avatarPresentation?.type === 'image' ? member.avatarPresentation.url : undefined}
+          data-icon-emoji={member.avatarPresentation?.type === 'unicode' ? member.avatarPresentation.value : undefined}
           data-icon-fallback={member.user.name}
         >
           {member.user.name}

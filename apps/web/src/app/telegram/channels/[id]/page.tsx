@@ -70,7 +70,7 @@ import {
   getTelegramChannelPosts,
   syncTelegramChannelNowWithProgress,
   telegramChannelsApi,
-  type Icon,
+  type ResolvedEmoji,
   type TelegramChannel,
   type TelegramChannelAudienceSnapshot,
   type TelegramInviteLink,
@@ -480,13 +480,13 @@ export default function TelegramChannelAnalyticsPage() {
         title: string;
         time: string;
         iconId?: string | null;
-        icon?: Icon | null;
+        iconPresentation?: ResolvedEmoji | null;
       }) => ({
         id: item.id,
         title: item.title,
         time: item.time,
         iconId: item.iconId || null,
-        icon: item.icon || null,
+        iconPresentation: item.iconPresentation || null,
       })),
     });
   }, [channel, data?.channel]);
@@ -1876,7 +1876,7 @@ type SettingsState = {
     title: string;
     time: string;
     iconId?: string | null;
-    icon?: Icon | null;
+    iconPresentation?: ResolvedEmoji | null;
   }>;
 };
 
@@ -2204,7 +2204,7 @@ function TimePostsControl({
         title: "",
         time: "17:00",
         iconId: null,
-        icon: null,
+        iconPresentation: null,
       },
     ]);
   };
@@ -2269,8 +2269,12 @@ function TimePostsControl({
                     <IconPicker
                       compact
                       iconId={item.iconId || null}
+                      icon={item.iconPresentation || null}
                       onChange={(iconId) =>
-                        updateTimePost(index, { iconId: iconId || null, icon: null })
+                        updateTimePost(index, {
+                          iconId: iconId || null,
+                          iconPresentation: null,
+                        })
                       }
                       buttonLabel="Pick icon"
                     />

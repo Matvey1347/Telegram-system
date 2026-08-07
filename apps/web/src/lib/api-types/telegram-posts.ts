@@ -1,4 +1,4 @@
-import type { Icon, ResolvedEmoji, WorkspaceMember } from "./core";
+import type { Icon, MemberSummary, ResolvedEmoji } from "./core";
 import type { TelegramChannel } from "./telegram-channels";
 
 export type TelegramPost = {
@@ -39,7 +39,6 @@ export type TelegramManagedPostGroupSummary = {
   telegramChannelId: string;
   title: string;
   icon?: string | null;
-  iconData?: Icon | null;
   iconPresentation?: ResolvedEmoji | null;
   isSystem?: boolean;
   systemKey?: string | null;
@@ -52,9 +51,8 @@ export type TelegramManagedPost = {
   telegramChannelId: string;
   origin: "SYSTEM" | "TELEGRAM";
   assignedMemberId: string;
-  assignedMember: WorkspaceMember;
+  assignedMember: MemberSummary;
   icon?: string | null;
-  iconData?: Icon | null;
   iconPresentation?: ResolvedEmoji | null;
   groupId?: string | null;
   groupPosition?: number | null;
@@ -134,7 +132,6 @@ export type TelegramManagedPostRevision = {
   lastError?: string | null;
   assignedMemberId: string;
   icon?: string | null;
-  iconData?: Icon | null;
   iconPresentation?: ResolvedEmoji | null;
   groupId?: string | null;
   groupPosition?: number | null;
@@ -147,7 +144,6 @@ export type TelegramManagedPostLinkTarget = {
   id: string;
   title: string;
   icon?: string | null;
-  iconData?: Icon | null;
   iconPresentation?: ResolvedEmoji | null;
   status: TelegramManagedPostStatus;
   telegramRemoteStatus: TelegramManagedPostRemoteStatus;
@@ -171,7 +167,7 @@ export type PromptNote = {
   telegramChannelId?: string | null;
   telegramChannelIds: string[];
   postGroupId?: string | null;
-  assignedMember?: WorkspaceMember | null;
+  assignedMember?: MemberSummary | null;
   telegramChannel?: TelegramChannel | null;
   postGroup?: PostGroup | null;
   createdAt: string;
@@ -198,15 +194,14 @@ export type PostGroup = {
   title: string;
   description?: string | null;
   icon?: string | null;
-  iconData?: Icon | null;
   iconPresentation?: ResolvedEmoji | null;
   isSystem?: boolean;
   systemKey?: string | null;
   statusNumberingEnabled?: boolean;
   createdByMemberId: string;
   sidebarPosition?: number | null;
-  createdByMember: WorkspaceMember;
-  telegramChannel?: TelegramChannel;
+  createdByMember: MemberSummary;
+  telegramChannel?: Pick<TelegramChannel, "id" | "title">;
   posts?: TelegramManagedPost[];
   postsCount?: number;
   statusSummary: PostGroupStatusSummary;

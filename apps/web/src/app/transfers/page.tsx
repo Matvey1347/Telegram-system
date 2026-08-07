@@ -32,10 +32,10 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function iconOptionProps(item: { name: string; icon?: { imageUrl?: string | null; emoji?: string | null } | null }) {
+function iconOptionProps(item: { name: string; iconPresentation?: { type: 'image'; url: string } | { type: 'unicode'; value: string } | null }) {
   return {
-    'data-icon-url': item.icon?.imageUrl ?? undefined,
-    'data-icon-emoji': item.icon?.emoji ?? undefined,
+    'data-icon-url': item.iconPresentation?.type === 'image' ? item.iconPresentation.url : undefined,
+    'data-icon-emoji': item.iconPresentation?.type === 'unicode' ? item.iconPresentation.value : undefined,
     'data-icon-fallback': item.name,
   };
 }
@@ -215,10 +215,10 @@ function transferDefaults(initial?: Transfer): Values {
     : { fromAccountId: '', toAccountId: '', fromAmount: 0, toAmount: 0, date: formatLocalDate(new Date()), description: '' };
 }
 
-function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'icon'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
+function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'iconPresentation'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <InlineIconPicker iconId={account?.iconId ?? null} icon={account?.icon} onChange={onIconChange} className="shrink-0" />
+      <InlineIconPicker iconId={account?.iconId ?? null} icon={account?.iconPresentation} onChange={onIconChange} className="shrink-0" />
       <span className="min-w-0 truncate">{account?.name ?? fallback}</span>
     </div>
   );

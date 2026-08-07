@@ -34,6 +34,10 @@ import type {
   TelegramAdSalesMemberPreferences,
   TelegramAdSalesWorkspaceSettings,
   ScheduleManagedPostsBatchPayload,
+  TelegramPostPlannerApplyResult,
+  TelegramPostPlannerFormat,
+  TelegramPostPlannerPreviewResult,
+  TelegramPostPlannerSlot,
   TelegramPublishingCapabilities,
 } from "@telegram-system/shared";
 import { createApplicationLogsApi } from "./application-logs-api";
@@ -516,6 +520,7 @@ import type {
   Transfer,
   UpdateAdHypothesisPayload,
   UpdateTelegramChannelNetworkPayload,
+  MemberSummary,
   WorkspaceInfo,
   WorkspaceMember,
   WorkspaceMemberSelectOption,
@@ -633,6 +638,7 @@ export type {
   UpdateAdHypothesisPayload,
   UpdateTelegramChannelNetworkPayload,
   User,
+  MemberSummary,
   WorkspaceInfo,
   WorkspaceMember,
   WorkspaceMemberSelectOption,
@@ -1072,6 +1078,156 @@ export const telegramChannelsApi = {
       await api.get<TelegramManagedPostCalendarResult>(
         `/telegram-channels/${channelId}/managed-posts/calendar`,
         { params },
+      )
+    ).data,
+  postPlannerFormats: async (channelId: string) =>
+    (
+      await api.get<TelegramPostPlannerFormat[]>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats`,
+      )
+    ).data,
+  createPostPlannerFormat: async (
+    channelId: string,
+    payload: {
+      name: string;
+      description?: string | null;
+      icon?: string | null;
+      position?: number;
+      isActive?: boolean;
+    },
+  ) =>
+    (
+      await api.post<TelegramPostPlannerFormat>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats`,
+        payload,
+      )
+    ).data,
+  updatePostPlannerFormat: async (
+    channelId: string,
+    formatId: string,
+    payload: {
+      name?: string;
+      description?: string | null;
+      icon?: string | null;
+      position?: number;
+      isActive?: boolean;
+    },
+  ) =>
+    (
+      await api.patch<TelegramPostPlannerFormat>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats/${formatId}`,
+        payload,
+      )
+    ).data,
+  deletePostPlannerFormat: async (channelId: string, formatId: string) =>
+    (
+      await api.delete<TelegramPostPlannerFormat>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats/${formatId}`,
+      )
+    ).data,
+  postPlannerSlots: async (channelId: string) =>
+    (
+      await api.get<TelegramPostPlannerSlot[]>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots`,
+      )
+    ).data,
+  createPostPlannerSlot: async (
+    channelId: string,
+    payload: {
+      formatId?: string | null;
+      postGroupIds?: string[];
+      weekday: number;
+      time: string;
+      timezone?: string;
+      position?: number;
+      isActive?: boolean;
+    },
+  ) =>
+    (
+      await api.post<TelegramPostPlannerSlot>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots`,
+        payload,
+      )
+    ).data,
+  updatePostPlannerSlot: async (
+    channelId: string,
+    slotId: string,
+    payload: {
+      formatId?: string | null;
+      postGroupIds?: string[];
+      weekday?: number;
+      time?: string;
+      timezone?: string;
+      position?: number;
+      isActive?: boolean;
+    },
+  ) =>
+    (
+      await api.patch<TelegramPostPlannerSlot>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots/${slotId}`,
+        payload,
+      )
+    ).data,
+  deletePostPlannerSlot: async (channelId: string, slotId: string) =>
+    (
+      await api.delete<TelegramPostPlannerSlot>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots/${slotId}`,
+      )
+    ).data,
+  previewPostPlanner: async (
+    channelId: string,
+    payload: {
+      from: string;
+      to: string;
+      timezone?: string;
+      postGroupIds?: string[];
+      formatIds?: string[];
+      formatWeights?: Record<string, number>;
+      limit?: number;
+      rerollOffset?: number;
+    },
+  ) =>
+    (
+      await api.post<TelegramPostPlannerPreviewResult>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/preview`,
+        payload,
+      )
+    ).data,
+  applyPostPlanner: async (
+    channelId: string,
+    payload: {
+      from: string;
+      to: string;
+      timezone?: string;
+      postGroupIds?: string[];
+      formatIds?: string[];
+      formatWeights?: Record<string, number>;
+      limit?: number;
+      rerollOffset?: number;
+    },
+  ) =>
+    (
+      await api.post<TelegramPostPlannerApplyResult>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/apply`,
+        payload,
+      )
+    ).data,
+  rerollPostPlannerDay: async (
+    channelId: string,
+    payload: {
+      date: string;
+      timezone?: string;
+      postGroupIds?: string[];
+      formatIds?: string[];
+      formatWeights?: Record<string, number>;
+      limit?: number;
+      rerollOffset?: number;
+    },
+  ) =>
+    (
+      await api.post<TelegramPostPlannerApplyResult>(
+        `/telegram-channels/${channelId}/managed-posts/calendar-planner/reroll-day`,
+        payload,
       )
     ).data,
   syncManagedPosts: async (channelId: string) =>

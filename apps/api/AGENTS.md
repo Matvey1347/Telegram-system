@@ -24,6 +24,7 @@
 - Reuse DTOs and shared contracts when shapes cross to the frontend.
 - Preserve specific exceptions instead of replacing them with generic internal errors.
 - For icon/avatar display, resolve stored `Icon` data to `ResolvedEmoji` with `iconPresentation` or `avatarPresentation`; never require the frontend to call `/icons/:id` just to render an entity.
+- Shape read responses explicitly. Avoid `include: true` for nested collection relations unless the endpoint genuinely needs the full relation; prefer compact `select` summaries and response mappers for list/table/card/calendar endpoints.
 
 ## Service Decomposition
 
@@ -46,4 +47,5 @@
 - `rg "class .*Service|@Injectable" apps/api/src`
 - `rg "PrismaService|workspaceId|WorkspaceService" apps/api/src`
 - `rg "TelegramMtprotoClient|telegramBot|Bot API" apps/api/src`
+- `rg "include:|select:|telegramChannel: true|createdByMember: true" apps/api/src`
 - `rg "describe\\(|it\\(" apps/api/src/<domain>`

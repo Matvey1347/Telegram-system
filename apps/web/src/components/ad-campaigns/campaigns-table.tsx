@@ -30,7 +30,7 @@ function InviteLinkCreatorAvatar({
   if (inviteLink.creatorMember) {
     return (
       <IconAvatar
-        icon={inviteLink.creatorMember.avatarIcon}
+        icon={inviteLink.creatorMember.avatarPresentation}
         label={inviteLink.creatorMember.user?.name || inviteLink.name}
         size="xs"
         className="rounded-full"
@@ -308,23 +308,7 @@ function hypothesisStatusClass(status?: string) {
 }
 
 function PromoVisual({ promo }: { promo: Promo }) {
-  if (promo.icon?.imageUrl) {
-    return (
-      <img
-        src={promo.icon.imageUrl}
-        alt=""
-        className="h-4 w-4 rounded-full object-cover"
-      />
-    );
-  }
-  if (promo.icon?.emoji) {
-    return (
-      <span className="inline-flex h-4 w-4 items-center justify-center text-[13px] leading-none">
-        {promo.icon.emoji}
-      </span>
-    );
-  }
-  return null;
+  return <IconAvatar icon={promo.iconPresentation} label={promo.title} size="xs" bordered={false} className="!bg-transparent" />;
 }
 
 function SourceChip({
@@ -386,8 +370,8 @@ function MemberChip({
   member: NonNullable<AdCampaign["assignedMember"]>;
 }) {
   const label = member.user?.name || "Member";
-  const avatarImageUrl = member.avatarIcon?.imageUrl ?? undefined;
-  const avatarEmoji = member.avatarIcon?.emoji ?? undefined;
+  const avatarImageUrl = member.avatarPresentation?.type === "image" ? member.avatarPresentation.url : undefined;
+  const avatarEmoji = member.avatarPresentation?.type === "unicode" ? member.avatarPresentation.value : undefined;
   return (
     <a
       href="/workspace-members"

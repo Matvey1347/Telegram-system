@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { WorkspaceService } from '../common/workspace.service';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreatePromptNoteDto,
@@ -20,8 +21,69 @@ export class PromptNotesService {
     private readonly workspaceService: WorkspaceService,
   ) {}
 
+  private readonly iconSelect = {
+    id: true,
+    type: true,
+    name: true,
+    emoji: true,
+    imageUrl: true,
+  } satisfies Prisma.IconSelect;
+
+  private readonly assignedMemberSelect = {
+    id: true,
+    role: true,
+    telegramUsername: true,
+    avatarIconId: true,
+    avatarIcon: { select: this.iconSelect },
+    user: { select: { id: true, name: true } },
+  } satisfies Prisma.WorkspaceMemberSelect;
+
+  private readonly promptNoteSelect = {
+    id: true,
+    workspaceId: true,
+    title: true,
+    content: true,
+    emoji: true,
+    iconId: true,
+    assignedMemberId: true,
+    telegramChannelId: true,
+    telegramChannelIds: true,
+    postGroupId: true,
+    createdAt: true,
+    updatedAt: true,
+    icon: { select: this.iconSelect },
+    assignedMember: { select: this.assignedMemberSelect },
+  } satisfies Prisma.PromptNoteSelect;
+
   private workspace(userId: string) {
     return this.workspaceService.resolveWorkspaceIdForUser(userId);
+  }
+
+  private withPresentation<T extends {
+    icon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+    assignedMember?: {
+      id: string;
+      role: unknown;
+      telegramUsername?: string | null;
+      avatarIconId?: string | null;
+      avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] | null;
+      user: { id: string; name: string | null };
+    } | null;
+  }>(note: T) {
+    return {
+      ...note,
+      iconPresentation: iconToResolvedEmoji(note.icon),
+      assignedMember: note.assignedMember
+        ? {
+            id: note.assignedMember.id,
+            role: note.assignedMember.role,
+            telegramUsername: note.assignedMember.telegramUsername,
+            avatarIconId: note.assignedMember.avatarIconId,
+            user: note.assignedMember.user,
+            avatarPresentation: iconToResolvedEmoji(note.assignedMember.avatarIcon),
+          }
+        : note.assignedMember,
+    };
   }
 
   async findAll(userId: string, query: PromptNotesQueryDto) {
@@ -69,26 +131,25 @@ export class PromptNotesService {
     const [items, totalItems] = await this.prisma.$transaction([
       this.prisma.promptNote.findMany({
         where,
-        include: {
-          icon: true,
-          assignedMember: { include: { user: true, avatarIcon: true } },
-          telegramChannel: true,
-          postGroup: true,
-        },
+        select: this.promptNoteSelect,
         orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         skip: pagination.skip,
         take: pagination.take,
       }),
       this.prisma.promptNote.count({ where }),
     ]);
-    return createPaginatedResponse(items, totalItems, pagination);
+    return createPaginatedResponse(
+      items.map((item) => this.withPresentation(item)),
+      totalItems,
+      pagination,
+    );
   }
 
   async create(userId: string, dto: CreatePromptNoteDto) {
     const workspaceId = await this.workspace(userId);
     const title = dto.title?.trim() ?? '';
     const context = await this.resolveContext(workspaceId, dto);
-    return this.prisma.promptNote.create({
+    const note = await this.prisma.promptNote.create({
       data: {
         workspaceId,
         title,
@@ -96,13 +157,9 @@ export class PromptNotesService {
         emoji: this.normalizeEmoji(dto.emoji),
         ...context,
       },
-      include: {
-        icon: true,
-        assignedMember: { include: { user: true, avatarIcon: true } },
-        telegramChannel: true,
-        postGroup: true,
-      },
+      select: this.promptNoteSelect,
     });
+    return this.withPresentation(note);
   }
 
   async update(userId: string, id: string, dto: UpdatePromptNoteDto) {
@@ -114,7 +171,7 @@ export class PromptNotesService {
     if (!note) throw new NotFoundException('Prompt note not found');
     const title = dto.title?.trim();
     const context = await this.resolveContext(workspaceId, dto);
-    return this.prisma.promptNote.update({
+    const updated = await this.prisma.promptNote.update({
       where: { id },
       data: {
         title,
@@ -124,13 +181,9 @@ export class PromptNotesService {
           : {}),
         ...context,
       },
-      include: {
-        icon: true,
-        assignedMember: { include: { user: true, avatarIcon: true } },
-        telegramChannel: true,
-        postGroup: true,
-      },
+      select: this.promptNoteSelect,
     });
+    return this.withPresentation(updated);
   }
 
   async remove(userId: string, id: string) {

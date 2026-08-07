@@ -609,9 +609,9 @@ export const TelegramTextEditor = forwardRef<TelegramTextEditorHandle, TelegramT
                     onClick={() => applyInternalLink(target)}
                     className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-neutral-800"
                   >
-                    {target.iconData ? (
+                    {target.iconPresentation ? (
                       <IconAvatar
-                        icon={target.iconData}
+                        icon={target.iconPresentation}
                         label={target.title}
                         size="xs"
                         bordered={false}

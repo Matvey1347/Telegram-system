@@ -6,6 +6,7 @@ import {
 } from '../common/analytics/invite-link-metrics';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import { resolveChannelKpiStatus } from '../common/analytics/channel-financial-summary';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 
@@ -426,7 +427,7 @@ export class DashboardService {
       row.cumulativeProfitAfterInvestments = cumulativeProfitAfterInvestments;
     }
 
-    const categoryMap = new Map<string, { id?: string | null; name: string; type: string; amount: number; count: number; iconId?: string | null; icon?: unknown }>();
+    const categoryMap = new Map<string, { id?: string | null; name: string; type: string; amount: number; count: number; iconId?: string | null; icon?: Parameters<typeof iconToResolvedEmoji>[0] | null }>();
     for (const transaction of [...periodRevenueTransactions, ...periodExpenseTransactions]) {
       const category = transaction.categoryRef;
       const key = `${transaction.type}:${transaction.categoryId ?? transaction.category}`;
@@ -542,7 +543,13 @@ export class DashboardService {
       activeSubscribersEstimate,
       anomalousChannelsCount,
       dailyTrend: [...dailyMap.values()],
-      categoryBreakdown: [...categoryMap.values()].sort((a, b) => b.amount - a.amount).slice(0, 8),
+      categoryBreakdown: [...categoryMap.values()]
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 8)
+        .map((row) => ({
+          ...row,
+          iconPresentation: iconToResolvedEmoji(row.icon),
+        })),
       accountBalances: accountRows
         .map((row) => ({
           id: row.account.id,
@@ -550,6 +557,7 @@ export class DashboardService {
           currency: row.account.currency,
           iconId: row.account.iconId,
           icon: row.account.icon,
+          iconPresentation: iconToResolvedEmoji(row.account.icon),
           balance: row.balance,
           primary: row.primary,
           secondary: row.secondary,

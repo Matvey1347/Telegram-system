@@ -420,6 +420,8 @@ model Workspace {
   telegramPosts                          TelegramPost[]
   telegramManagedPosts                   TelegramManagedPost[]
   telegramManagedPostRevisions           TelegramManagedPostRevision[]
+  telegramPostPlannerFormats             TelegramPostPlannerFormat[]
+  telegramPostPlannerSlots               TelegramPostPlannerSlot[]
   telegramAdProducts                     TelegramAdProduct[]
   telegramAdSchedulePolicies             TelegramAdSchedulePolicy[]
   telegramAdSalesWorkspaceSettings       TelegramAdSalesWorkspaceSettings?
@@ -875,6 +877,8 @@ model TelegramChannel {
   posts                     TelegramPost[]
   managedPosts              TelegramManagedPost[]
   managedPostRevisions      TelegramManagedPostRevision[]
+  postPlannerFormats        TelegramPostPlannerFormat[]
+  postPlannerSlots          TelegramPostPlannerSlot[]
   postGroups                PostGroup[]
   promptNotes               PromptNote[]
   statsSnapshots            TelegramChannelStatsSnapshot[]
@@ -2227,6 +2231,11 @@ model TelegramManagedPost {
   messageLengthMaxUsed Int?
   publishMode          String?
   lastError            String?
+  plannerFormatId      String?
+  plannerSlotId        String?
+  plannerRunId         String?
+  plannerPlannedAt     DateTime?
+  plannerProvenance    Json?
   assignedMemberId     String
   icon                 String?
   groupId              String?
@@ -2238,6 +2247,8 @@ model TelegramManagedPost {
   telegramChannel  TelegramChannel               @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
   assignedMember   WorkspaceMember               @relation("TelegramManagedPostAssignedMember", fields: [assignedMemberId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   group            PostGroup?                    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  plannerFormat    TelegramPostPlannerFormat?    @relation(fields: [plannerFormatId], references: [id], onDelete: SetNull)
+  plannerSlot      TelegramPostPlannerSlot?      @relation(fields: [plannerSlotId], references: [id], onDelete: SetNull)
   revisions        TelegramManagedPostRevision[]
   adSalePlacements TelegramAdSalePlacement[]     @relation("TelegramAdPlacementManagedPost")
 
@@ -2251,8 +2262,58 @@ model TelegramManagedPost {
   @@index([groupId, groupPosition])
   @@index([groupId, status, statusPosition])
   @@index([telegramChannelId, sidebarPosition])
+  @@index([workspaceId, telegramChannelId, plannerRunId])
+  @@index([workspaceId, telegramChannelId, plannerSlotId])
   @@index([status, scheduledAt])
   @@index([workspaceId, telegramChannelId, origin, status, scheduledAt])
+}
+
+model TelegramPostPlannerFormat {
+  id                String  @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  name              String
+  description       String?
+  icon              String?
+  position          Int     @default(0)
+  isActive          Boolean @default(true)
+
+  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel        @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  slots           TelegramPostPlannerSlot[]
+  plannedPosts    TelegramManagedPost[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, telegramChannelId, name])
+  @@index([workspaceId, telegramChannelId, position])
+  @@index([workspaceId, telegramChannelId, isActive])
+}
+
+model TelegramPostPlannerSlot {
+  id                String  @id @default(cuid())
+  workspaceId       String
+  telegramChannelId String
+  formatId          String?
+  postGroupIds      String[] @default([])
+  weekday           Int
+  time              String  @db.VarChar(5)
+  timezone          String
+  position          Int     @default(0)
+  isActive          Boolean @default(true)
+
+  workspace       Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  telegramChannel TelegramChannel             @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  format          TelegramPostPlannerFormat?  @relation(fields: [formatId], references: [id], onDelete: SetNull)
+  plannedPosts    TelegramManagedPost[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, telegramChannelId, weekday, position])
+  @@index([workspaceId, telegramChannelId, isActive])
+  @@index([workspaceId, telegramChannelId, formatId])
 }
 
 model TelegramManagedPostRevision {

@@ -107,6 +107,12 @@ If behavior must work "across the site", do not patch multiple pages separately.
 - Backend entity responses must include resolved display data (`iconPresentation` or `avatarPresentation`) whenever the frontend needs to render an icon/avatar.
 - Frontend lists, cards, tables and headers must not make `/icons/:id` requests only to render an existing entity. See `docs/emoji-architecture.md`.
 
+## API read models
+
+- Prisma models are not API contracts. Collection/read endpoints should use explicit purpose-built selects or mappers instead of returning full nested Prisma relations by convenience.
+- List and detail endpoints may use different read models. Use compact relation summaries for nested display data, and keep heavy media/config/technical fields out of collections unless the use case needs them.
+- Do not remove useful nested display data only to create frontend HTTP joins or N+1 requests. Response shaping must preserve workspace isolation, required presentation fields, and DB query performance.
+
 ## Tests required
 
 - Every new feature needs a happy path.

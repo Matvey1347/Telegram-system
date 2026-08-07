@@ -107,7 +107,7 @@ export default function FinancePage() {
             {accounts?.map((account) => (
               <EntityCard
                 key={account.id}
-                title={<div className="flex items-center gap-2"><InlineIconPicker iconId={account.iconId ?? null} icon={account.icon} onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })} /><AccountName account={account} /></div>}
+                title={<div className="flex items-center gap-2"><InlineIconPicker iconId={account.iconId ?? null} icon={account.iconPresentation} onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })} /><AccountName account={account} /></div>}
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <MoneyStack amount={account.balance ?? account.calculatedBalance} currency={account.currency} settings={settings} rates={rates} amountInPrimary={account.convertedCurrency === settings?.primaryCurrency ? account.convertedBalance : null} />
@@ -132,7 +132,7 @@ export default function FinancePage() {
                     <td className="px-3 py-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <InlineIconPicker iconId={transaction.iconId ?? null} icon={transaction.icon} onChange={(iconId) => updateTransactionIconMutation.mutate({ id: transaction.id, iconId })} className="shrink-0" />
+                          <InlineIconPicker iconId={transaction.iconId ?? null} icon={transaction.iconPresentation} onChange={(iconId) => updateTransactionIconMutation.mutate({ id: transaction.id, iconId })} className="shrink-0" />
                           <div className="truncate font-medium text-white">{getTransactionTitle(transaction)}</div>
                         </div>
                         <div className={`mt-1 text-xs ${transaction.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
@@ -145,13 +145,13 @@ export default function FinancePage() {
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
-                        <InlineIconPicker iconId={transaction.categoryRef?.iconId ?? null} icon={transaction.categoryRef?.icon} onChange={(iconId) => transaction.categoryRef?.id && updateCategoryIconMutation.mutate({ id: transaction.categoryRef.id, iconId })} className="shrink-0" />
+                        <InlineIconPicker iconId={transaction.categoryRef?.iconId ?? null} icon={transaction.categoryRef?.iconPresentation} onChange={(iconId) => transaction.categoryRef?.id && updateCategoryIconMutation.mutate({ id: transaction.categoryRef.id, iconId })} className="shrink-0" />
                         <span>{transaction.categoryRef?.name ?? transaction.category}</span>
                       </div>
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
-                        <InlineIconPicker iconId={transaction.account?.iconId ?? null} icon={transaction.account?.icon} onChange={(iconId) => transaction.account?.id && updateAccountIconMutation.mutate({ id: transaction.account.id, iconId })} className="shrink-0" />
+                        <InlineIconPicker iconId={transaction.account?.iconId ?? null} icon={transaction.account?.iconPresentation} onChange={(iconId) => transaction.account?.id && updateAccountIconMutation.mutate({ id: transaction.account.id, iconId })} className="shrink-0" />
                         <AccountName account={transaction.account} />
                       </div>
                     </td>
@@ -192,7 +192,7 @@ export default function FinancePage() {
               return (
                 <EntityCard
                   key={category.id}
-                  title={<div className="flex items-center gap-2"><InlineIconPicker iconId={category.iconId ?? null} icon={category.icon} onChange={(iconId) => updateCategoryIconMutation.mutate({ id: category.id, iconId })} /><span>{category.name}</span></div>}
+                  title={<div className="flex items-center gap-2"><InlineIconPicker iconId={category.iconId ?? null} icon={category.iconPresentation} onChange={(iconId) => updateCategoryIconMutation.mutate({ id: category.id, iconId })} /><span>{category.name}</span></div>}
                 >
                   <div className="space-y-3">
                     <div>
@@ -303,10 +303,10 @@ function AccountStatLine({ label, value, currency, displayMode, tone }: { label:
   );
 }
 
-function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'icon' | 'assignedMember'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
+function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'iconPresentation' | 'assignedMember'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <InlineIconPicker iconId={account?.iconId ?? null} icon={account?.icon} onChange={onIconChange} className="shrink-0" />
+      <InlineIconPicker iconId={account?.iconId ?? null} icon={account?.iconPresentation} onChange={onIconChange} className="shrink-0" />
       <AccountName account={account} fallback={fallback} className="min-w-0" />
     </div>
   );

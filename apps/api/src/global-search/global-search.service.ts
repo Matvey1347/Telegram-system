@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 
@@ -44,6 +45,14 @@ export class GlobalSearchService {
         },
       },
     }));
+  }
+
+  private iconResult(icon?: Parameters<typeof iconToResolvedEmoji>[0] | null) {
+    const resolved = iconToResolvedEmoji(icon);
+    return {
+      iconUrl: resolved?.type === 'image' ? resolved.url : undefined,
+      iconEmoji: resolved?.type === 'unicode' ? resolved.value : undefined,
+    };
   }
 
   private limited<T>(items: T[], limit = 40) {
@@ -241,7 +250,7 @@ export class GlobalSearchService {
           ],
         },
         include: {
-          icon: { select: { imageUrl: true, emoji: true } },
+          icon: { select: { id: true, type: true, name: true, imageUrl: true, emoji: true } },
           telegramChannel: { select: { id: true, title: true, photoUrl: true } },
           postGroup: { select: { id: true, title: true, telegramChannelId: true } },
         },
@@ -274,8 +283,7 @@ export class GlobalSearchService {
         title: transaction.description || transaction.categoryRef?.name || transaction.category,
         subtitle: `${transaction.type} · ${transaction.account?.name || transaction.currency}`,
         href: `/transactions?search=${encodeURIComponent(query)}`,
-        iconUrl: transaction.icon?.imageUrl || transaction.categoryRef?.icon?.imageUrl,
-        iconEmoji: transaction.icon?.emoji || transaction.categoryRef?.icon?.emoji,
+        ...this.iconResult(transaction.icon ?? transaction.categoryRef?.icon),
       })),
       ...members.map((member): SearchResult => ({
         id: member.id,
@@ -284,8 +292,7 @@ export class GlobalSearchService {
         title: member.user.name,
         subtitle: `${member.user.email} · ${member.role}`,
         href: '/workspace-members',
-        iconUrl: member.avatarIcon?.imageUrl,
-        iconEmoji: member.avatarIcon?.emoji,
+        ...this.iconResult(member.avatarIcon),
       })),
       ...channels.map((channel): SearchResult => ({
         id: channel.id,
@@ -358,7 +365,7 @@ export class GlobalSearchService {
           label: 'Post',
           title: post.title,
           subtitle: [post.status.toLowerCase(), post.telegramChannel.title, post.group?.title].filter(Boolean).join(' · '),
-          href: `/telegram-posts?channelId=${post.telegramChannelId}&postId=${post.id}`,
+          href: `/telegram-posts/${encodeURIComponent(post.telegramChannelId)}/editor?postId=${encodeURIComponent(post.id)}`,
           iconUrl: icon?.imageUrl || post.telegramChannel.photoUrl,
           iconEmoji: icon?.emoji,
         };
@@ -375,7 +382,7 @@ export class GlobalSearchService {
             `${group._count.posts} post${group._count.posts === 1 ? '' : 's'}`,
             `${group._count.promptNotes} note${group._count.promptNotes === 1 ? '' : 's'}`,
           ].join(' · '),
-          href: `/telegram-posts?channelId=${group.telegramChannelId}&groupId=${group.id}`,
+          href: `/telegram-posts?channelId=${encodeURIComponent(group.telegramChannelId)}&groupId=${encodeURIComponent(group.id)}`,
           iconUrl: icon?.imageUrl || group.telegramChannel.photoUrl,
           iconEmoji: icon?.emoji,
         };
@@ -400,10 +407,10 @@ export class GlobalSearchService {
           title,
           subtitle: channelSubtitle,
           href: targetChannelId
-            ? `/telegram-posts?channelId=${targetChannelId}&noteId=${note.id}`
+            ? `/telegram-posts/${encodeURIComponent(targetChannelId)}/editor?noteId=${encodeURIComponent(note.id)}`
             : '/telegram-posts',
-          iconUrl: note.icon?.imageUrl,
-          iconEmoji: note.icon?.emoji || note.emoji,
+          ...this.iconResult(note.icon),
+          iconEmoji: this.iconResult(note.icon).iconEmoji || note.emoji,
         };
       }),
     ]);

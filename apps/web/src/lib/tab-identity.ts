@@ -86,6 +86,25 @@ function parseAccountFilter(value: string | null) {
   return value === "people" ? "people" : "mtproto";
 }
 
+function telegramPostsRouteView(pathname: string, get: (key: string) => string | null) {
+  if (pathname === "/telegram-posts") {
+    return get("groupId")
+      ? "Groups"
+      : get("postView") === "calendar"
+        ? "Calendar"
+        : "Posts";
+  }
+
+  if (/^\/telegram-posts\/[^/]+\/calendar$/u.test(pathname)) {
+    return "Calendar";
+  }
+  if (/^\/telegram-posts\/[^/]+\/editor$/u.test(pathname)) {
+    return "Posts";
+  }
+
+  return null;
+}
+
 export function resolveRouteTabIdentity({
   pathname,
   searchParams,
@@ -132,13 +151,9 @@ export function resolveRouteTabIdentity({
       ? { title: pageTitle("Catalog"), emoji: "🔎", color: "#7c2d12" }
       : { title: pageTitle("Channels"), emoji: "📣", color: "#0f766e" };
   }
-  if (pathname === "/telegram-posts") {
-    const view =
-      get("groupId")
-        ? "Groups"
-        : get("postView") === "calendar"
-          ? "Calendar"
-          : "Posts";
+  const telegramPostsView = telegramPostsRouteView(pathname, get);
+  if (telegramPostsView) {
+    const view = telegramPostsView;
     const emoji = view === "Groups" ? "🗂️" : view === "Calendar" ? "🗓️" : "✈️";
     const color =
       view === "Groups" ? "#475569" : view === "Calendar" ? "#7c2d12" : "#1d4ed8";

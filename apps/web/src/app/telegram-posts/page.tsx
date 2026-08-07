@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { createPortal } from "react-dom";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useMutation,
   useQueries,
@@ -63,7 +63,6 @@ import {
   workspaceMembersApi,
   type BulkActionResult,
   type BulkActionResultItem,
-  type Icon,
   type PostGroup,
   type PromptNote,
   type ResolvedEmoji,
@@ -73,13 +72,13 @@ import {
   type TelegramChannelTimePost,
   type WorkspaceMemberSelectOption as WorkspaceMember,
 } from "@/lib/api";
-import { iconToResolvedEmoji } from "@/lib/resolved-emoji";
 import {
   buildCalendarDayScheduleSlots,
   getCalendarSchedulablePosts,
   localTimeKey,
 } from "@/lib/telegram-calendar-scheduler";
 import {
+  buildTelegramPostsLegacyRedirectUrl,
   buildTelegramPostsUrl,
   type TelegramPostsRouteView,
 } from "@/lib/telegram-posts-url";
@@ -88,10 +87,13 @@ import {
   normalizeManagedPostNumbering,
 } from "@/lib/telegram-post-numbering";
 import { extractAutoPrefilledPostTitle } from "@/lib/telegram-post-title";
-import { memberKeys, telegramChannelKeys } from "@/lib/query-keys";
+import { memberKeys, telegramChannelKeys, telegramPostKeys } from "@/lib/query-keys";
 import type {
   ScheduleManagedPostsBatchItem,
   TelegramManagedPostCalendarResult,
+  TelegramPostPlannerApplyResult,
+  TelegramPostPlannerFormat,
+  TelegramPostPlannerSlot,
 } from "@telegram-system/shared";
 import {
   Button,
@@ -104,6 +106,7 @@ import {
   Input,
   LoadingState,
   Modal,
+  MultiSelect,
   PageHeader,
   Textarea,
   TimeInput,
@@ -118,6 +121,10 @@ type LongTextMode = "IMAGES_THEN_TEXT" | "CAPTION_THEN_TEXT";
 type PostStatusTab = "PUBLISHED" | "SCHEDULED" | "DRAFT";
 type PostViewMode = TelegramPostsRouteView;
 type InitialPostView = PostViewMode | null;
+type TelegramPostsPageProps = {
+  routeChannelId?: string | null;
+  routePostView?: TelegramPostsRouteView | null;
+};
 type PendingPostSave = {
   id: string;
   title: string;
@@ -125,12 +132,55 @@ type PendingPostSave = {
   groupId?: string | null;
   mode: PublishingMode;
 };
+type PlannerSlotDraft = {
+  timePostId: string;
+  groupIds: string[];
+};
 
-function selectIconProps(icon?: Icon | ResolvedEmoji | null) {
-  const resolved = iconToResolvedEmoji(icon);
-  if (!resolved) return {};
-  if (resolved.type === "image") return { iconUrl: resolved.url };
-  return { iconEmoji: resolved.value };
+const plannerFormatWeightsPreferenceKey = (channelId: string) =>
+  `telegram-posts-planner-format-weights:${channelId}`;
+
+function selectIconProps(icon?: ResolvedEmoji | null) {
+  if (!icon) return {};
+  if (icon.type === "image") return { iconUrl: icon.url };
+  return { iconEmoji: icon.value };
+}
+
+function plannerFormatResolvedIcon(icon?: string | null): ResolvedEmoji | null {
+  const value = icon?.trim();
+  return value ? { type: "unicode", value, name: value } : null;
+}
+
+function PlannerFormatEmojiPicker({
+  value,
+  disabled,
+  onChange,
+  onError,
+}: {
+  value?: string | null;
+  disabled?: boolean;
+  onChange: (nextIcon: string | null) => void | Promise<void>;
+  onError: (error: unknown) => void;
+}) {
+  const handleEmojiChange = async (emoji: string | null) => {
+    await onChange(emoji);
+  };
+
+  return (
+    <IconPicker
+      compact
+      allowImages={false}
+      disabled={disabled}
+      icon={plannerFormatResolvedIcon(value)}
+      onChange={() => {}}
+      onEmojiChange={(emoji) => {
+        void handleEmojiChange(emoji).catch(onError);
+      }}
+      buttonLabel="Add emoji"
+      className="h-9 w-9"
+      iconClassName="!h-5 !w-5 !bg-transparent"
+    />
+  );
 }
 type PostSidebarSection = {
   key: string;
@@ -296,6 +346,12 @@ function addMonths(value: Date, amount: number) {
   return new Date(value.getFullYear(), value.getMonth() + amount, 1);
 }
 
+function addDays(value: Date, amount: number) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 function toLocalDateKey(value: Date | string) {
   const date = value instanceof Date ? value : new Date(value);
   const year = date.getFullYear();
@@ -358,25 +414,36 @@ function calendarStatusIcon(status: "SCHEDULED" | "PUBLISHED") {
   return status === "SCHEDULED" ? "🕒" : "✅";
 }
 
-export default function TelegramPostsPage() {
-  const pathname = usePathname();
+export function TelegramPostsPageClient({
+  routeChannelId,
+  routePostView,
+}: TelegramPostsPageProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { pushToast, setProgress, clearProgress } = useAppToast();
   const [newPostToken, setNewPostToken] = useState(0);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const channelId = searchParams.get("channelId") || "";
+  const routeChannelIdValue = routeChannelId?.trim() || "";
+  const channelId = routeChannelIdValue || searchParams.get("channelId") || "";
   const postId = searchParams.get("postId") || "";
   const groupId = searchParams.get("groupId") || "";
   const noteId = searchParams.get("noteId") || "";
   const initialPostView = (() => {
+    if (routePostView) return routePostView;
     const value = searchParams.get("postView");
     if (value === "calendar") return "calendar";
     if (value === "editor") return "editor";
     return null;
   })();
   const currentRoutePostView: PostViewMode = initialPostView || "editor";
+  const legacyRedirectUrl = useMemo(
+    () =>
+      routeChannelIdValue
+        ? null
+        : buildTelegramPostsLegacyRedirectUrl(searchParams),
+    [routeChannelIdValue, searchParams],
+  );
   const channels = useQuery({
     queryKey: telegramChannelKeys.select({ canPostMessagesOnly: true }),
     queryFn: () => telegramChannelsApi.select({ canPostMessagesOnly: true }),
@@ -385,6 +452,11 @@ export default function TelegramPostsPage() {
   const channel =
     availableChannels.find((item) => item.id === channelId) ||
     availableChannels[0];
+  useEffect(() => {
+    if (!legacyRedirectUrl) return;
+    router.replace(legacyRedirectUrl);
+  }, [legacyRedirectUrl, router]);
+
   useEffect(() => {
     if (typeof window === "undefined" || !availableChannels.length) return;
     const params = new URLSearchParams(searchParams.toString());
@@ -411,12 +483,15 @@ export default function TelegramPostsPage() {
         ? savedChannelId
         : availableChannels[0]?.id;
       if (!fallbackChannelId) return;
-      params.set("channelId", fallbackChannelId);
       params.delete("postId");
-      if (!params.get("groupId")) {
-        params.set("postView", currentRoutePostView);
-      }
-      router.replace(`${pathname}?${params.toString()}`);
+      router.replace(
+        buildTelegramPostsUrl({
+          channelId: fallbackChannelId,
+          groupId: params.get("groupId"),
+          postView: params.get("groupId") ? null : currentRoutePostView,
+          extraParams: params,
+        }),
+      );
       return;
     }
 
@@ -424,22 +499,24 @@ export default function TelegramPostsPage() {
       ? savedChannelId
       : availableChannels[0]?.id;
     if (!fallbackChannelId) return;
-    params.set("channelId", fallbackChannelId);
-    if (!params.get("groupId")) {
-      params.set("postView", currentRoutePostView);
-    }
-    router.replace(`${pathname}?${params.toString()}`);
+    router.replace(
+      buildTelegramPostsUrl({
+        channelId: fallbackChannelId,
+        groupId: params.get("groupId"),
+        postView: params.get("groupId") ? null : currentRoutePostView,
+        extraParams: params,
+      }),
+    );
   }, [
     availableChannels,
     channelId,
     currentRoutePostView,
-    pathname,
     router,
     searchParams,
   ]);
 
   useEffect(() => {
-    if (!channelId || groupId || initialPostView) return;
+    if (routeChannelIdValue || !channelId || groupId || initialPostView) return;
     router.replace(
       buildTelegramPostsUrl({
         channelId,
@@ -448,7 +525,15 @@ export default function TelegramPostsPage() {
         postView: "editor",
       }),
     );
-  }, [channelId, groupId, initialPostView, noteId, postId, router]);
+  }, [
+    channelId,
+    groupId,
+    initialPostView,
+    noteId,
+    postId,
+    routeChannelIdValue,
+    router,
+  ]);
 
   const navigateToChannel = (nextChannelId: string) => {
     if (typeof window !== "undefined") {
@@ -560,6 +645,8 @@ export default function TelegramPostsPage() {
   );
 }
 
+export default TelegramPostsPageClient;
+
 function TelegramPostWorkspace({
   channelId,
   channelTitle,
@@ -625,6 +712,46 @@ function TelegramPostWorkspace({
     useState<Record<string, string>>({});
   const [calendarBatchBusy, setCalendarBatchBusy] = useState(false);
   const [showAdSalesOverlay, setShowAdSalesOverlay] = useState(true);
+  const [autoPlannerOpen, setAutoPlannerOpen] = useState(false);
+  const [autoPlannerBusy, setAutoPlannerBusy] = useState(false);
+  const [autoPlannerDays, setAutoPlannerDays] = useState(7);
+  const [autoPlannerFrom, setAutoPlannerFrom] = useState(() =>
+    toLocalDateKey(new Date()),
+  );
+  const [autoPlannerTo, setAutoPlannerTo] = useState(() =>
+    toLocalDateKey(addDays(new Date(), 6)),
+  );
+  const [autoPlannerFormatIds, setAutoPlannerFormatIds] = useState<string[]>(
+    [],
+  );
+  const [autoPlannerGroupIds, setAutoPlannerGroupIds] = useState<string[]>([]);
+  const [newPlannerFormatName, setNewPlannerFormatName] = useState("");
+  const [newPlannerFormatIcon, setNewPlannerFormatIcon] = useState("");
+  const [plannerSlotDraftsByFormatId, setPlannerSlotDraftsByFormatId] =
+    useState<Record<string, PlannerSlotDraft>>({});
+  const [deletingPlannerFormat, setDeletingPlannerFormat] =
+    useState<TelegramPostPlannerFormat | null>(null);
+  const [deletingPlannerSlot, setDeletingPlannerSlot] =
+    useState<TelegramPostPlannerSlot | null>(null);
+  const [calendarPlannerFitFormatId, setCalendarPlannerFitFormatId] =
+    useState<string | null>(null);
+  const [calendarPlannerFitRerollOffset, setCalendarPlannerFitRerollOffset] =
+    useState(0);
+  const [plannerFormatWeights, setPlannerFormatWeights] = useState<
+    Record<string, number>
+  >(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(
+        plannerFormatWeightsPreferenceKey(channelId),
+      );
+      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [autoPlannerResult, setAutoPlannerResult] =
+    useState<TelegramPostPlannerApplyResult | null>(null);
   const [editing, setEditing] = useState<TelegramManagedPost | null>(null);
   const [title, setTitle] = useState("");
   const [titleManuallyEdited, setTitleManuallyEdited] = useState(false);
@@ -752,6 +879,16 @@ function TelegramPostWorkspace({
     queryKey: ["post-groups", channelId],
     queryFn: () =>
       telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
+  });
+  const plannerFormats = useQuery({
+    queryKey: telegramPostKeys.plannerFormats(channelId),
+    queryFn: () => telegramChannelsApi.postPlannerFormats(channelId),
+    enabled: workspaceView === "posts" && postView === "calendar",
+  });
+  const plannerSlots = useQuery({
+    queryKey: telegramPostKeys.plannerSlots(channelId),
+    queryFn: () => telegramChannelsApi.postPlannerSlots(channelId),
+    enabled: workspaceView === "posts" && postView === "calendar",
   });
   const promptNotes = useQuery({
     queryKey: ["prompt-notes", { telegramChannelId: channelId }],
@@ -1170,6 +1307,82 @@ function TelegramPostWorkspace({
       ),
     [calendarPresetScheduleSlots],
   );
+  const plannerFormatOptions = useMemo(
+    () =>
+      (plannerFormats.data || []).map((format) => ({
+        value: format.id,
+        label: format.name,
+        iconFallback: format.name,
+      })),
+    [plannerFormats.data],
+  );
+  const plannerGroupOptions = useMemo(
+    () =>
+      (postGroups.data || []).map((group) => ({
+        value: group.id,
+        label: group.title,
+        iconEmoji:
+          group.iconPresentation?.type === "unicode"
+            ? group.iconPresentation.value
+            : undefined,
+        iconUrl:
+          group.iconPresentation?.type === "image"
+            ? group.iconPresentation.url
+            : undefined,
+        iconFallback: group.title,
+      })),
+    [postGroups.data],
+  );
+  const plannerTimePostOptions = useMemo(
+    () =>
+      channelTimePosts.map((slot) => ({
+        value: slot.id,
+        label: `${slot.time} · ${slot.title}`,
+        iconEmoji:
+          slot.iconPresentation?.type === "unicode"
+            ? slot.iconPresentation.value
+            : undefined,
+        iconUrl:
+          slot.iconPresentation?.type === "image"
+            ? slot.iconPresentation.url
+            : undefined,
+        iconFallback: slot.title,
+      })),
+    [channelTimePosts],
+  );
+  const plannerSlotsByFormatId = useMemo(() => {
+    const grouped = new Map<string, TelegramPostPlannerSlot[]>();
+    for (const slot of plannerSlots.data || []) {
+      if (!slot.formatId) continue;
+      const current = grouped.get(slot.formatId) || [];
+      current.push(slot);
+      grouped.set(slot.formatId, current);
+    }
+    for (const slots of grouped.values()) {
+      slots.sort((left, right) => left.position - right.position || left.time.localeCompare(right.time));
+    }
+    return grouped;
+  }, [plannerSlots.data]);
+  const plannerFormatsWithWeights = useMemo(
+    () =>
+      (plannerFormats.data || []).map((format) => ({
+        format,
+        weight: Math.max(
+          0,
+          Math.min(100, plannerFormatWeights[format.id] ?? 100),
+        ),
+        slots: plannerSlotsByFormatId.get(format.id) || [],
+      })),
+    [plannerFormatWeights, plannerFormats.data, plannerSlotsByFormatId],
+  );
+  const hasEnabledPlannerFormatWeight = plannerFormatsWithWeights.some(
+    (item) => item.weight > 0,
+  );
+  const hasPlannerFormatSlots = plannerFormatsWithWeights.some(
+    (item) => item.slots.length > 0,
+  );
+  const canUsePlannerFormatSlots =
+    !hasPlannerFormatSlots || hasEnabledPlannerFormatWeight;
   const calendarSchedulablePosts = useMemo(
     () =>
       getCalendarSchedulablePosts(posts.data || [], {
@@ -1462,6 +1675,161 @@ function TelegramPostWorkspace({
     );
   };
 
+  const invalidatePlannerCalendar = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.managed(channelId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.managedCalendar(channelId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: [
+          "telegram-ad-availability",
+          "telegram-posts-overlay",
+          channelId,
+        ],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.postGroups(channelId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.plannerFormats(channelId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.plannerSlots(channelId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: telegramPostKeys.linkTargets(channelId),
+      }),
+    ]);
+  };
+
+  const runPlannerMutation = async (
+    action: () => Promise<unknown>,
+    successMessage: string,
+  ) => {
+    if (autoPlannerBusy) return;
+    setAutoPlannerBusy(true);
+    try {
+      await action();
+      await invalidatePlannerCalendar();
+      pushToast(successMessage, "success");
+    } catch (error) {
+      pushToast(
+        error instanceof Error ? error.message : "Could not update planner",
+        "error",
+      );
+    } finally {
+      setAutoPlannerBusy(false);
+    }
+  };
+
+  const createPlannerFormat = async () => {
+    const name = newPlannerFormatName.trim();
+    if (!name || autoPlannerBusy) return;
+    setAutoPlannerBusy(true);
+    try {
+      await telegramChannelsApi.createPostPlannerFormat(channelId, {
+        name,
+        icon: newPlannerFormatIcon.trim() || null,
+        position: plannerFormats.data?.length ?? 0,
+      });
+      setNewPlannerFormatName("");
+      setNewPlannerFormatIcon("");
+      await invalidatePlannerCalendar();
+      pushToast("Planner format created.", "success");
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Could not create format", "error");
+    } finally {
+      setAutoPlannerBusy(false);
+    }
+  };
+
+  const createPlannerSlot = async (formatId: string) => {
+    const draft = plannerSlotDraftsByFormatId[formatId];
+    const timePost = channelTimePosts.find((slot) => slot.id === draft?.timePostId);
+    if (!timePost || autoPlannerBusy) return;
+    setAutoPlannerBusy(true);
+    try {
+      await telegramChannelsApi.createPostPlannerSlot(channelId, {
+        formatId,
+        postGroupIds: draft?.groupIds || [],
+        weekday: 1,
+        time: timePost.time,
+        position: plannerSlotsByFormatId.get(formatId)?.length ?? 0,
+      });
+      setPlannerSlotDraftsByFormatId((current) => ({
+        ...current,
+        [formatId]: { timePostId: "", groupIds: [] },
+      }));
+      await invalidatePlannerCalendar();
+      pushToast("Planner slot created.", "success");
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Could not create slot", "error");
+    } finally {
+      setAutoPlannerBusy(false);
+    }
+  };
+
+  const updatePlannerFormatIcon = async (
+    format: TelegramPostPlannerFormat,
+    nextIcon: string | null,
+  ) => {
+    await runPlannerMutation(
+      () =>
+        telegramChannelsApi.updatePostPlannerFormat(channelId, format.id, {
+          icon: nextIcon,
+        }),
+      "Planner format updated.",
+    );
+  };
+
+  const applyPlannerRange = async () => {
+    if (autoPlannerBusy) return;
+    const from = autoPlannerFrom;
+    const to =
+      autoPlannerDays > 0
+        ? toLocalDateKey(addDays(new Date(`${from}T00:00:00`), autoPlannerDays - 1))
+        : autoPlannerTo;
+    setAutoPlannerBusy(true);
+    try {
+      const formatWeights = Object.fromEntries(
+        plannerFormatsWithWeights.map(({ format, weight }) => [
+          format.id,
+          weight,
+        ]),
+      );
+      const result = await telegramChannelsApi.applyPostPlanner(channelId, {
+        from,
+        to,
+        formatIds: (
+          autoPlannerFormatIds.length
+            ? autoPlannerFormatIds
+            : plannerFormatsWithWeights
+                .filter((item) => item.weight > 0)
+                .map((item) => item.format.id)
+        ).filter(
+          (formatId) =>
+            (plannerFormatWeights[formatId] ?? 100) > 0,
+        ),
+        formatWeights,
+        postGroupIds: autoPlannerGroupIds,
+        limit: 50,
+      });
+      setAutoPlannerResult(result);
+      await invalidatePlannerCalendar();
+      pushToast(
+        `Auto planned ${result.schedule.successCount} posts; ${result.preview.summary.unfilledSlots} slots left open.`,
+        result.schedule.failedCount ? "info" : "success",
+      );
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : "Could not auto plan calendar", "error");
+    } finally {
+      setAutoPlannerBusy(false);
+    }
+  };
+
   const toggleCalendarBatchPostSelection = (postId: string) => {
     setCalendarBatchSelectedPostIds((current) => {
       if (current.includes(postId)) {
@@ -1481,31 +1849,100 @@ function TelegramPostWorkspace({
     });
   };
 
-  const selectCalendarBatchFit = () => {
-    const selectedIds = calendarSchedulablePosts
-      .filter((post) =>
-        calendarFilteredSchedulablePosts.some(
-          (visible) => visible.id === post.id,
-        ),
-      )
-      .slice(0, availableCalendarScheduleSlots.length)
-      .map((post) => post.id);
-    setCalendarBatchSelectedPostIds(selectedIds);
-    setCalendarBatchTimeChoiceByPostId(
-      Object.fromEntries(
-        selectedIds.map((postId, index) => [
-          postId,
-          `slot:${availableCalendarScheduleSlots[index]?.time || ""}`,
-        ]),
-      ),
+  const selectCalendarBatchFit = (
+    formatId: string | null = null,
+    rerollOffset = 0,
+  ) => {
+    const visiblePostIds = new Set(
+      calendarFilteredSchedulablePosts.map((post) => post.id),
     );
-    setCalendarBatchCustomTimeByPostId({});
+    const weightedFormatSlots = () => {
+      const enabledFormats = plannerFormatsWithWeights.filter(
+        (item) => item.weight > 0 && item.slots.length,
+      );
+      if (!enabledFormats.length) return [];
+      const weightedQueue = enabledFormats.flatMap((item) =>
+        Array.from(
+          { length: Math.max(1, Math.round(item.weight / 10)) },
+          () => item,
+        ),
+      );
+      const usedSlotIds = new Set<string>();
+      const sequence: TelegramPostPlannerSlot[] = [];
+      let guard = 0;
+      while (
+        usedSlotIds.size <
+          enabledFormats.reduce((total, item) => total + item.slots.length, 0) &&
+        guard < 500
+      ) {
+        const item = weightedQueue[guard % weightedQueue.length];
+        const slot = item.slots.find((candidate) => !usedSlotIds.has(candidate.id));
+        if (slot) {
+          usedSlotIds.add(slot.id);
+          sequence.push(slot);
+        }
+        guard += 1;
+      }
+      return sequence;
+    };
+    const sourceSlots = formatId
+      ? plannerSlotsByFormatId.get(formatId) || []
+      : weightedFormatSlots();
+    const fitSlots = sourceSlots.length
+      ? sourceSlots.map((slot) => ({
+          id: slot.id,
+          time: slot.time,
+          postGroupIds: slot.postGroupIds,
+        }))
+      : availableCalendarScheduleSlots.map((slot) => ({
+          id: slot.id,
+          time: slot.time,
+          postGroupIds: [] as string[],
+        }));
+    const remainingPosts = calendarSchedulablePosts.filter((post) =>
+      visiblePostIds.has(post.id),
+    );
+    if (rerollOffset > 0 && remainingPosts.length) {
+      const offset = rerollOffset % remainingPosts.length;
+      remainingPosts.push(...remainingPosts.splice(0, offset));
+    }
+    const selectedIds: string[] = [];
+    const timeChoices: Record<string, string> = {};
+    const customTimes: Record<string, string> = {};
+    const availableTimes = new Set(
+      availableCalendarScheduleSlots.map((slot) => slot.time),
+    );
+    for (const slot of fitSlots) {
+      const postIndex = remainingPosts.findIndex((post) => {
+        const groupId = effectivePostGroupId(post);
+        return (
+          !slot.postGroupIds.length ||
+          (groupId != null && slot.postGroupIds.includes(groupId))
+        );
+      });
+      if (postIndex < 0) continue;
+      const [post] = remainingPosts.splice(postIndex, 1);
+      selectedIds.push(post.id);
+      if (availableTimes.has(slot.time)) {
+        timeChoices[post.id] = `slot:${slot.time}`;
+      } else {
+        timeChoices[post.id] = "custom";
+        customTimes[post.id] = slot.time;
+      }
+    }
+    setCalendarBatchSelectedPostIds(selectedIds);
+    setCalendarBatchTimeChoiceByPostId(timeChoices);
+    setCalendarBatchCustomTimeByPostId(customTimes);
+    setCalendarPlannerFitFormatId(formatId);
+    setCalendarPlannerFitRerollOffset(rerollOffset);
   };
 
   const clearCalendarBatchSelection = () => {
     setCalendarBatchSelectedPostIds([]);
     setCalendarBatchTimeChoiceByPostId({});
     setCalendarBatchCustomTimeByPostId({});
+    setCalendarPlannerFitFormatId(null);
+    setCalendarPlannerFitRerollOffset(0);
   };
 
   const scheduleCalendarBatch = async () => {
@@ -1690,6 +2127,29 @@ function TelegramPostWorkspace({
         });
     }, 700);
   };
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(
+        plannerFormatWeightsPreferenceKey(channelId),
+      );
+      // Channel-local planner weight preferences hydrate the sliders.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPlannerFormatWeights(
+        raw ? (JSON.parse(raw) as Record<string, number>) : {},
+      );
+    } catch {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPlannerFormatWeights({});
+    }
+  }, [channelId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      plannerFormatWeightsPreferenceKey(channelId),
+      JSON.stringify(plannerFormatWeights),
+    );
+  }, [channelId, plannerFormatWeights]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(
@@ -2323,7 +2783,13 @@ function TelegramPostWorkspace({
             true,
           );
         }
-        const savedIcon = post.iconData ?? null;
+        const savedIcon = post.iconPresentation ?? null;
+        const toastIcon = savedIcon
+          ? {
+              emoji: savedIcon.type === "unicode" ? savedIcon.value : null,
+              imageUrl: savedIcon.type === "image" ? savedIcon.url : null,
+            }
+          : undefined;
         pushToast(
           shouldRepublishPublished
             ? `"${saveTitle}" published again with a fresh Telegram link.`
@@ -2336,7 +2802,7 @@ function TelegramPostWorkspace({
                   : `"${saveTitle}" saved.`,
           "success",
           3500,
-          savedIcon ?? undefined,
+          toastIcon,
         );
       } catch (runError) {
         pushToast(
@@ -2544,6 +3010,382 @@ function TelegramPostWorkspace({
           />
         </div>
       </div>
+      <Modal
+        open={autoPlannerOpen}
+        onClose={() => setAutoPlannerOpen(false)}
+        title="Auto calendar planner"
+        size="xl"
+      >
+        <div className="grid gap-4">
+          <div className="space-y-4">
+            <Card className="p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <FormField label="Start date">
+                  <DateInput
+                    value={autoPlannerFrom}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setAutoPlannerFrom(next);
+                      if (autoPlannerDays > 0) {
+                        setAutoPlannerTo(
+                          toLocalDateKey(
+                            addDays(
+                              new Date(`${next}T00:00:00`),
+                              autoPlannerDays - 1,
+                            ),
+                          ),
+                        );
+                      }
+                    }}
+                  />
+                </FormField>
+                <FormField label="Range">
+                  <CustomSelect
+                    value={String(autoPlannerDays)}
+                    onChange={(value) => {
+                      const days = Number(value);
+                      setAutoPlannerDays(days);
+                      if (days > 0) {
+                        setAutoPlannerTo(
+                          toLocalDateKey(
+                            addDays(
+                              new Date(`${autoPlannerFrom}T00:00:00`),
+                              days - 1,
+                            ),
+                          ),
+                        );
+                      }
+                    }}
+                    options={[
+                      { value: "7", label: "7 days" },
+                      { value: "10", label: "10 days" },
+                      { value: "14", label: "14 days" },
+                      { value: "20", label: "20 days" },
+                      { value: "30", label: "30 days" },
+                      { value: "0", label: "Custom" },
+                    ]}
+                  />
+                </FormField>
+                {autoPlannerDays === 0 ? (
+                  <FormField label="End date">
+                    <DateInput
+                      value={autoPlannerTo}
+                      onChange={(event) => setAutoPlannerTo(event.target.value)}
+                    />
+                  </FormField>
+                ) : null}
+                <Button
+                  onClick={applyPlannerRange}
+                  disabled={autoPlannerBusy || !canUsePlannerFormatSlots}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {autoPlannerBusy ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <Rocket size={15} />
+                    )}
+                    Fill
+                  </span>
+                </Button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <FormField label="Formats">
+                  <MultiSelect
+                    value={autoPlannerFormatIds}
+                    onChange={setAutoPlannerFormatIds}
+                    options={plannerFormatOptions}
+                    placeholder="All active formats"
+                    allSelectedLabel="All formats"
+                  />
+                </FormField>
+                <FormField label="Groups">
+                  <MultiSelect
+                    value={autoPlannerGroupIds}
+                    onChange={setAutoPlannerGroupIds}
+                    options={plannerGroupOptions}
+                    placeholder="All groups"
+                    allSelectedLabel="All groups"
+                  />
+                </FormField>
+              </div>
+              {plannerFormatsWithWeights.length ? (
+                <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-white">
+                      Format frequency
+                    </h4>
+                    <span className="text-xs text-neutral-500">
+                      Saved for this channel
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {plannerFormatsWithWeights.map(({ format, weight }) => (
+                      <div
+                        key={format.id}
+                        className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.5fr)_56px] md:items-center"
+                      >
+                        <div className="flex min-w-0 items-center gap-2 text-sm text-neutral-200">
+                          <span className="shrink-0">{format.icon || "◌"}</span>
+                          <span className="truncate">{format.name}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={weight}
+                          onChange={(event) =>
+                            setPlannerFormatWeights((current) => ({
+                              ...current,
+                              [format.id]: Number(event.target.value),
+                            }))
+                          }
+                          className="h-2 w-full accent-blue-500"
+                          aria-label={`${format.name} frequency`}
+                        />
+                        <div className="text-right text-xs tabular-nums text-neutral-400">
+                          {weight}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {autoPlannerResult ? (
+                <div className="mt-4 grid gap-2 text-sm md:grid-cols-4">
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="text-neutral-500">Scheduled</div>
+                    <div className="mt-1 text-xl font-semibold text-white">
+                      {autoPlannerResult.schedule.successCount}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="text-neutral-500">Slots</div>
+                    <div className="mt-1 text-xl font-semibold text-white">
+                      {autoPlannerResult.preview.summary.availableSlots}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="text-neutral-500">Shortage</div>
+                    <div className="mt-1 text-xl font-semibold text-amber-200">
+                      {autoPlannerResult.preview.summary.unfilledSlots}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="text-neutral-500">Failed</div>
+                    <div className="mt-1 text-xl font-semibold text-red-200">
+                      {autoPlannerResult.schedule.failedCount}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </Card>
+
+            <Card className="p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-white">Formats</h3>
+                {plannerFormats.isLoading ? (
+                  <LoaderCircle size={15} className="animate-spin text-neutral-500" />
+                ) : null}
+              </div>
+              <div className="flex gap-2">
+                <PlannerFormatEmojiPicker
+                  value={newPlannerFormatIcon}
+                  disabled={autoPlannerBusy}
+                  onChange={(nextIcon) => setNewPlannerFormatIcon(nextIcon ?? "")}
+                  onError={(error) =>
+                    pushToast(
+                      error instanceof Error ? error.message : "Could not select emoji",
+                      "error",
+                    )
+                  }
+                />
+                <Input
+                  value={newPlannerFormatName}
+                  onChange={(event) =>
+                    setNewPlannerFormatName(event.target.value)
+                  }
+                  placeholder="Format name"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={createPlannerFormat}
+                  disabled={autoPlannerBusy || !newPlannerFormatName.trim()}
+                >
+                  <Plus size={15} />
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {(plannerFormats.data || []).map((format) => {
+                  const slots = plannerSlotsByFormatId.get(format.id) || [];
+                  const draft = plannerSlotDraftsByFormatId[format.id] || {
+                    timePostId: "",
+                    groupIds: [],
+                  };
+                  return (
+                    <div
+                      key={format.id}
+                      className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <PlannerFormatEmojiPicker
+                          value={format.icon}
+                          disabled={autoPlannerBusy}
+                          onChange={(nextIcon) =>
+                            updatePlannerFormatIcon(format, nextIcon)
+                          }
+                          onError={(error) =>
+                            pushToast(
+                              error instanceof Error
+                                ? error.message
+                                : "Could not update format emoji",
+                              "error",
+                            )
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">
+                          {format.name}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={autoPlannerBusy}
+                          onClick={() => setDeletingPlannerFormat(format)}
+                          className="rounded-md border border-red-800/70 p-1.5 text-red-300 hover:bg-red-950/40 disabled:opacity-50"
+                          aria-label={`Delete ${format.name}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {slots.map((slot) => (
+                          <div
+                            key={slot.id}
+                            className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-sm text-neutral-200">
+                              {slot.time} ·{" "}
+                              {slot.postGroupIds.length
+                                ? `${slot.postGroupIds.length} groups`
+                                : "Any group"}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={autoPlannerBusy}
+                              onClick={() => setDeletingPlannerSlot(slot)}
+                              className="rounded-md border border-red-800/70 p-1.5 text-red-300 hover:bg-red-950/40 disabled:opacity-50"
+                              aria-label="Delete slot"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        {!slots.length ? (
+                          <div className="rounded-lg border border-dashed border-neutral-800 px-3 py-3 text-sm text-neutral-500">
+                            No slots in this format yet.
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                        <FormField label="Groups">
+                          <MultiSelect
+                            value={draft.groupIds}
+                            onChange={(groupIds) =>
+                              setPlannerSlotDraftsByFormatId((current) => ({
+                                ...current,
+                                [format.id]: {
+                                  timePostId: draft.timePostId,
+                                  groupIds,
+                                },
+                              }))
+                            }
+                            options={plannerGroupOptions}
+                            placeholder="Any group"
+                            allSelectedLabel="All groups"
+                          />
+                        </FormField>
+                        <FormField label="Publishing time">
+                          <CustomSelect
+                            value={draft.timePostId}
+                            onChange={(timePostId) =>
+                              setPlannerSlotDraftsByFormatId((current) => ({
+                                ...current,
+                                [format.id]: {
+                                  timePostId,
+                                  groupIds: draft.groupIds,
+                                },
+                              }))
+                            }
+                            options={plannerTimePostOptions}
+                            placeholder="Select time"
+                          />
+                        </FormField>
+                        <div className="flex items-end">
+                          <Button
+                            variant="secondary"
+                            onClick={() => createPlannerSlot(format.id)}
+                            disabled={autoPlannerBusy || !draft.timePostId}
+                            className="shrink-0 whitespace-nowrap"
+                          >
+                            <Plus size={15} />
+                            Add slot
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!plannerFormats.isLoading && !plannerFormats.data?.length ? (
+                  <div className="rounded-lg border border-dashed border-neutral-800 px-3 py-4 text-sm text-neutral-500">
+                    No formats yet.
+                  </div>
+                ) : null}
+              </div>
+            </Card>
+          </div>
+        </div>
+      </Modal>
+      <ConfirmDeleteModal
+        open={Boolean(deletingPlannerFormat)}
+        onClose={() => setDeletingPlannerFormat(null)}
+        entityName={deletingPlannerFormat?.name || ""}
+        label="Delete format"
+        description="This deletes the format and its planner slots. Already scheduled posts are not changed."
+        onConfirm={async () => {
+          if (!deletingPlannerFormat) return;
+          await runPlannerMutation(
+            () =>
+              telegramChannelsApi.deletePostPlannerFormat(
+                channelId,
+                deletingPlannerFormat.id,
+              ),
+            "Format deleted.",
+          );
+          setDeletingPlannerFormat(null);
+        }}
+      />
+      <ConfirmDeleteModal
+        open={Boolean(deletingPlannerSlot)}
+        onClose={() => setDeletingPlannerSlot(null)}
+        entityName={
+          deletingPlannerSlot
+            ? `${deletingPlannerSlot.time} slot`
+            : ""
+        }
+        label="Delete slot"
+        description="This removes the slot from the format. Already scheduled posts are not changed."
+        onConfirm={async () => {
+          if (!deletingPlannerSlot) return;
+          await runPlannerMutation(
+            () =>
+              telegramChannelsApi.deletePostPlannerSlot(
+                channelId,
+                deletingPlannerSlot.id,
+              ),
+            "Slot deleted.",
+          );
+          setDeletingPlannerSlot(null);
+        }}
+      />
       {workspaceView === "groups" ? (
         <PostGroupsWorkspace
           channelId={channelId}
@@ -2617,6 +3459,14 @@ function TelegramPostWorkspace({
                 >
                   <RefreshCw size={15} />
                   Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAutoPlannerOpen(true)}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-blue-700 bg-blue-950/40 px-4 text-sm font-medium text-blue-100 transition hover:border-blue-500 hover:bg-blue-900/50"
+                >
+                  <Rocket size={15} />
+                  Auto plan
                 </button>
                 <button
                   type="button"
@@ -2732,13 +3582,15 @@ function TelegramPostWorkspace({
             </div>
           </Card>
           <Card className="min-w-0 p-4">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-white">
-                {selectedCalendarDateLabel}
-              </h3>
-              <p className="mt-1 text-sm text-neutral-400">
-                {Intl.DateTimeFormat().resolvedOptions().timeZone}
-              </p>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-white">
+                  {selectedCalendarDateLabel}
+                </h3>
+                <p className="mt-1 text-sm text-neutral-400">
+                  {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                </p>
+              </div>
             </div>
             <div className="space-y-3">
               {selectedCalendarItems.length ? (
@@ -2787,7 +3639,7 @@ function TelegramPostWorkspace({
                               {linkedPost?.icon ? (
                                 <PostIcon
                                   iconId={linkedPost.icon}
-                                  icon={linkedPost.iconData}
+                                  icon={linkedPost.iconPresentation}
                                   label={item.title}
                                   bare
                                 />
@@ -2814,13 +3666,26 @@ function TelegramPostWorkspace({
                             {matchedSlot ? (
                               <div className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-700/40 bg-emerald-950/30 px-2 py-1 text-[11px] text-emerald-200">
                                 <span className="shrink-0">
-                                  {channelTimePosts.find(
-                                    (slot) => slot.id === matchedSlot.id,
-                                  )?.icon?.emoji || "⚡"}
+                                  {(() => {
+                                    const presentation = channelTimePosts.find(
+                                      (slot) => slot.id === matchedSlot.id,
+                                    )?.iconPresentation;
+                                    return presentation?.type === "unicode"
+                                      ? presentation.value
+                                      : "⚡";
+                                  })()}
                                 </span>
                                 <span className="truncate">
                                   Slot match: {matchedSlot.time}{" "}
                                   {matchedSlot.title}
+                                </span>
+                              </div>
+                            ) : null}
+                            {item.isAutoPlanned ? (
+                              <div className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-blue-700/40 bg-blue-950/30 px-2 py-1 text-[11px] text-blue-200">
+                                <Rocket size={12} />
+                                <span className="truncate">
+                                  Auto planned
                                 </span>
                               </div>
                             ) : null}
@@ -2901,15 +3766,54 @@ function TelegramPostWorkspace({
               ) : (
                 <>
                   <div className="mt-4 flex flex-wrap gap-2">
+                    {(plannerFormats.data || []).map((format) => (
+                      <Button
+                        key={format.id}
+                        variant={
+                          calendarPlannerFitFormatId === format.id
+                            ? "primary"
+                            : "secondary"
+                        }
+                        onClick={() => selectCalendarBatchFit(format.id, 0)}
+                        disabled={
+                          calendarBatchBusy ||
+                          !(plannerSlotsByFormatId.get(format.id)?.length)
+                        }
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          <span>{format.icon || "◌"}</span>
+                          {format.name}
+                        </span>
+                      </Button>
+                    ))}
                     <Button
                       variant="secondary"
-                      onClick={selectCalendarBatchFit}
+                      onClick={() => selectCalendarBatchFit(null, 0)}
                       disabled={
                         calendarBatchBusy ||
-                        !availableCalendarScheduleSlots.length
+                        !availableCalendarScheduleSlots.length ||
+                        !canUsePlannerFormatSlots
                       }
                     >
                       Select fit
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        selectCalendarBatchFit(
+                          calendarPlannerFitFormatId,
+                          calendarPlannerFitRerollOffset + 1,
+                        )
+                      }
+                      disabled={
+                        calendarBatchBusy ||
+                        !canUsePlannerFormatSlots ||
+                        (!calendarPlannerFitFormatId &&
+                          !calendarBatchSelectedPostIds.length)
+                      }
+                    >
+                      <RotateCcw size={15} />
+                      Reroll
                     </Button>
                     <Button
                       variant="secondary"
@@ -2953,10 +3857,7 @@ function TelegramPostWorkspace({
                               <div className="flex items-center gap-2 px-1">
                                 <PostIcon
                                   iconId={section.group.icon}
-                                  icon={
-                                    section.group.iconPresentation ??
-                                    section.group.iconData
-                                  }
+                                  icon={section.group.iconPresentation}
                                   label={section.group.title}
                                   bare
                                 />
@@ -3019,7 +3920,7 @@ function TelegramPostWorkspace({
                                         {post.icon ? (
                                           <PostIcon
                                             iconId={post.icon}
-                                            icon={post.iconData}
+                                            icon={post.iconPresentation}
                                             label={post.title}
                                             bare
                                           />
@@ -3125,7 +4026,7 @@ function TelegramPostWorkspace({
                                     {post.icon ? (
                                       <PostIcon
                                         iconId={post.icon}
-                                        icon={post.iconData}
+                                        icon={post.iconPresentation}
                                         label={post.title}
                                         bare
                                       />
@@ -3415,7 +4316,7 @@ function TelegramPostWorkspace({
                         value: group.id,
                         label: group.title,
                         ...selectIconProps(
-                          group.iconPresentation ?? group.iconData,
+                          group.iconPresentation,
                         ),
                         iconFallback: group.title,
                       };
@@ -3505,7 +4406,7 @@ function TelegramPostWorkspace({
                                 {target.post?.icon ? (
                                   <PostIcon
                                     iconId={target.post.icon}
-                                    icon={target.post.iconData}
+                                    icon={target.post.iconPresentation}
                                     label={target.post.title}
                                     bare
                                     size="xs"
@@ -3570,7 +4471,7 @@ function TelegramPostWorkspace({
                                 {target.target?.icon ? (
                                   <PostIcon
                                     iconId={target.target.icon}
-                                    icon={target.target.iconData}
+                                    icon={target.target.iconPresentation}
                                     label={target.target.title}
                                     bare
                                     size="xs"
@@ -3699,7 +4600,7 @@ function TelegramPostWorkspace({
                           }`}
                         >
                           <IconAvatar
-                            icon={timePost.icon}
+                            icon={timePost.iconPresentation}
                             label={timePost.title}
                             size="xs"
                             bordered
@@ -3993,10 +4894,7 @@ function TelegramPostWorkspace({
                               )}
                               <PostIcon
                                 iconId={section.group.icon}
-                                icon={
-                                  section.group.iconPresentation ??
-                                  section.group.iconData
-                                }
+                                icon={section.group.iconPresentation}
                                 label={section.group.title}
                                 bare
                               />
@@ -4121,7 +5019,7 @@ function TelegramPostWorkspace({
                                       <span className="flex min-w-0 items-center gap-1.5 text-sm">
                                         <PostIcon
                                           iconId={post.icon}
-                                          icon={post.iconData}
+                                          icon={post.iconPresentation}
                                           label={post.title}
                                           bare
                                         />
@@ -4672,9 +5570,9 @@ function PromptNotesButton({
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-950/70 text-blue-200">
                         <Check size={14} />
                       </span>
-                    ) : note.icon ? (
+                    ) : note.iconPresentation ? (
                       <IconAvatar
-                        icon={note.icon}
+                        icon={note.iconPresentation}
                         label={displayTitle || "Prompt"}
                         size="xs"
                         className="!h-7 !w-7"
@@ -4995,7 +5893,7 @@ function PostIcon({
   bare = false,
 }: {
   iconId?: string | null;
-  icon?: Icon | ResolvedEmoji | null;
+  icon?: ResolvedEmoji | null;
   label: string;
   size?: "xs" | "sm" | "md";
   bare?: boolean;
@@ -5265,9 +6163,7 @@ function PostGroupsWorkspace({
     window.setTimeout(() => clearProgress(progressId), delayMs);
   };
   const progressMetaForGroup = (group: PostGroup) => {
-    const icon = iconToResolvedEmoji(
-      group.iconPresentation ?? group.iconData,
-    );
+    const icon = group.iconPresentation;
     return {
       id: `move-group:${group.id}`,
       title: `Move ${group.title}`,
@@ -5525,7 +6421,7 @@ function PostGroupsWorkspace({
               <div className="flex items-start gap-3">
                 <PostIcon
                   iconId={group.icon}
-                  icon={group.iconPresentation ?? group.iconData}
+                  icon={group.iconPresentation}
                   label={group.title}
                   size="md"
                 />
@@ -5618,7 +6514,7 @@ function PostGroupsWorkspace({
                           {post.icon ? (
                             <PostIcon
                               iconId={post.icon}
-                              icon={post.iconData}
+                              icon={post.iconPresentation}
                               label={post.title}
                               bare
                             />
@@ -5891,7 +6787,7 @@ function PostGroupsWorkspace({
                     >
                       <PostIcon
                         iconId={group.icon}
-                        icon={group.iconPresentation ?? group.iconData}
+                        icon={group.iconPresentation}
                         label={group.title}
                         size="sm"
                       />
@@ -6229,9 +7125,14 @@ function CalendarPostTimePicker({
               .map((slot) => ({
                 value: `slot:${slot.time}`,
                 label: `${slot.time}  ${slot.title}`.trim(),
-                iconEmoji:
-                  channelTimePosts.find((item) => item.id === slot.id)?.icon
-                    ?.emoji || "•",
+                iconEmoji: (() => {
+                  const presentation = channelTimePosts.find(
+                    (item) => item.id === slot.id,
+                  )?.iconPresentation;
+                  return presentation?.type === "unicode"
+                    ? presentation.value
+                    : "•";
+                })(),
                 tone: "success" as const,
               })),
             {
@@ -6341,7 +7242,7 @@ function GroupFormModal({
                     />
                     <PostIcon
                       iconId={post.icon}
-                      icon={post.iconData}
+                      icon={post.iconPresentation}
                       label={post.title}
                     />
                     <span className="min-w-0 flex-1">
@@ -6442,7 +7343,7 @@ function AddPostsModal({
               />
               <PostIcon
                 iconId={post.icon}
-                icon={post.iconData}
+                icon={post.iconPresentation}
                 label={post.title}
               />
               <span className="min-w-0 flex-1 truncate text-sm">
@@ -6601,7 +7502,7 @@ function PostUsageModal({
             {post.icon ? (
               <PostIcon
                 iconId={post.icon}
-                icon={post.iconData}
+                icon={post.iconPresentation}
                 label={post.title}
               />
             ) : null}
@@ -6635,7 +7536,7 @@ function PostUsageModal({
                 {usagePost.icon ? (
                   <PostIcon
                     iconId={usagePost.icon}
-                    icon={usagePost.iconData}
+                    icon={usagePost.iconPresentation}
                     label={usagePost.title}
                   />
                 ) : (

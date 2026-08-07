@@ -34,7 +34,7 @@ describe("InviteLinksTable", () => {
           id: "member-1",
           role: "admin",
           telegramUsername: "owner_admin",
-          avatarIcon: null,
+          avatarPresentation: null,
           user: { id: "user-1", name: "Owner Admin" },
         },
       },

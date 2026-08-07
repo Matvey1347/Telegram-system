@@ -8,7 +8,25 @@ type TelegramPostsUrlInput = {
   groupId?: string | null;
   noteId?: string | null;
   postView?: TelegramPostsRouteView | null;
+  extraParams?: URLSearchParams | string | null;
 };
+
+const ownedTelegramPostsParams = [
+  "channelId",
+  "postId",
+  "groupId",
+  "noteId",
+  "postView",
+];
+
+function trimValue(value?: string | null) {
+  return value?.trim() || "";
+}
+
+function appendQuery(pathname: string, params: URLSearchParams) {
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
 
 export function buildTelegramPostsUrl({
   channelId,
@@ -16,15 +34,54 @@ export function buildTelegramPostsUrl({
   groupId,
   noteId,
   postView,
+  extraParams,
 }: TelegramPostsUrlInput) {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams(extraParams?.toString() ?? "");
+  for (const key of ownedTelegramPostsParams) {
+    params.delete(key);
+  }
 
-  if (channelId?.trim()) params.set("channelId", channelId.trim());
-  if (postId?.trim()) params.set("postId", postId.trim());
-  if (groupId?.trim()) params.set("groupId", groupId.trim());
-  if (noteId?.trim()) params.set("noteId", noteId.trim());
+  const normalizedChannelId = trimValue(channelId);
+  const normalizedPostId = trimValue(postId);
+  const normalizedGroupId = trimValue(groupId);
+  const normalizedNoteId = trimValue(noteId);
+
+  if (normalizedPostId) params.set("postId", normalizedPostId);
+  if (normalizedNoteId) params.set("noteId", normalizedNoteId);
+
+  if (normalizedChannelId && normalizedGroupId) {
+    params.set("channelId", normalizedChannelId);
+    params.set("groupId", normalizedGroupId);
+    return appendQuery("/telegram-posts", params);
+  }
+
+  if (normalizedChannelId && postView) {
+    return appendQuery(
+      `/telegram-posts/${encodeURIComponent(normalizedChannelId)}/${postView}`,
+      params,
+    );
+  }
+
+  if (normalizedChannelId) params.set("channelId", normalizedChannelId);
   if (postView) params.set("postView", postView);
+  return appendQuery("/telegram-posts", params);
+}
 
-  const query = params.toString();
-  return query ? `/telegram-posts?${query}` : "/telegram-posts";
+export function buildTelegramPostsLegacyRedirectUrl(
+  searchParams: URLSearchParams | Pick<URLSearchParams, "get" | "toString">,
+) {
+  const channelId = trimValue(searchParams.get("channelId"));
+  const groupId = trimValue(searchParams.get("groupId"));
+  const postView = searchParams.get("postView");
+  if (!channelId || groupId || (postView !== "editor" && postView !== "calendar")) {
+    return null;
+  }
+
+  return buildTelegramPostsUrl({
+    channelId,
+    postId: searchParams.get("postId"),
+    noteId: searchParams.get("noteId"),
+    postView,
+    extraParams: searchParams.toString(),
+  });
 }

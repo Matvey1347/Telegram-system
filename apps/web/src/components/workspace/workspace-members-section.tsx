@@ -197,7 +197,7 @@ export function WorkspaceMembersSection({ embedded = false }: { embedded?: boole
                 <IconPicker
                   compact
                   iconId={member.avatarIconId ?? null}
-                  icon={member.avatarIcon}
+                  icon={member.avatarPresentation}
                   onChange={(avatarIconId) => updateMutation.mutate({ id: member.id, payload: { avatarIconId } })}
                   buttonLabel="Upload avatar"
                   className={`!h-16 !w-16 !overflow-hidden !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner ${!member.avatarIconId ? '[&>svg]:hidden' : ''}`}
@@ -387,7 +387,7 @@ function MemberModal({
   return <Modal open={open} onClose={onClose} title={mode === 'create' ? 'Add Member' : `Edit ${member?.user.name ?? 'member'}`}>
     <form className="space-y-4" onSubmit={handleSubmit((values) => onSubmit(values))}>
       <FormField label="Avatar image">
-        <IconPicker iconId={watch('avatarIconId') ?? null} icon={member?.avatarIcon} onChange={(avatarIconId) => setValue('avatarIconId', avatarIconId, { shouldDirty: true })} buttonLabel="Upload avatar" />
+        <IconPicker iconId={watch('avatarIconId') ?? null} icon={member?.avatarPresentation} onChange={(avatarIconId) => setValue('avatarIconId', avatarIconId, { shouldDirty: true })} buttonLabel="Upload avatar" />
       </FormField>
 
       <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-4">

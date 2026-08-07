@@ -1,4 +1,4 @@
-import type { User, WorkspaceMember } from "./core";
+import type { MemberSummary } from "./core";
 import type { AdCampaign } from "./ad-campaigns";
 
 export type TelegramInviteLink = {
@@ -24,13 +24,8 @@ export type TelegramInviteLink = {
     | "MEMBER_USERNAME"
     | "UNRESOLVED"
     | null;
-  creatorMember?: Pick<
-    WorkspaceMember,
-    "id" | "role" | "telegramUsername" | "avatarIcon"
-  > & {
-    user: Pick<User, "id" | "name">;
-  } | null;
-  adCampaign?: AdCampaign;
+  creatorMember?: MemberSummary | null;
+  adCampaign?: Pick<AdCampaign, "id" | "title">;
   history?: TelegramInviteLinkHistory | null;
 };
 export type InviteLinkHistoryPoint = {

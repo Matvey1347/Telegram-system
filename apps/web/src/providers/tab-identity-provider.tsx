@@ -83,7 +83,11 @@ function markFaviconFailure(url: string) {
 }
 
 function shouldCacheRouteIdentity(pathname: string) {
-  return pathname === "/telegram-posts" || pathname.startsWith("/telegram/channels/");
+  return (
+    pathname === "/telegram-posts" ||
+    pathname.startsWith("/telegram-posts/") ||
+    pathname.startsWith("/telegram/channels/")
+  );
 }
 
 function readCachedRouteIdentity(key: string): CachedTabIdentity | null {

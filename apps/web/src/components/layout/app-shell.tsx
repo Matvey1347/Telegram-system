@@ -187,6 +187,14 @@ export function AppShell({ children }: PropsWithChildren) {
 
   const handleGlobalRefresh = async () => {
     setRefreshing(true);
+    const shouldRefreshQuery = (queryKey: readonly unknown[]) => {
+      const [root] = queryKey;
+      return (
+        root === 'auth' ||
+        root === 'workspaces' ||
+        isWorkspaceScopedQuery(queryKey)
+      );
+    };
     try {
       await withFreshApiReads(async () =>
         runProgressSequence({
@@ -200,41 +208,38 @@ export function AppShell({ children }: PropsWithChildren) {
                 clearPersistedQueryCache();
                 qc.removeQueries({
                   predicate: (query) =>
-                    isWorkspaceScopedQuery(query.queryKey) &&
+                    shouldRefreshQuery(query.queryKey) &&
                     query.getObserversCount() === 0,
                 });
               },
             },
             {
-              message: 'Refreshing current user',
+              message: 'Marking visible workspace data stale',
               run: async () => {
-                await qc.invalidateQueries({ queryKey: ['auth', 'me'] });
-              },
-            },
-            {
-              message: 'Refreshing current account',
-              run: async () => {
-                await qc.invalidateQueries({ queryKey: ['account-me'] });
-              },
-            },
-            {
-              message: 'Refreshing workspace list',
-              run: async () => {
-                await qc.invalidateQueries({ queryKey: ['workspaces'] });
-              },
-            },
-            {
-              message: 'Refreshing workspace resources',
-              run: async () => {
-                await qc.invalidateQueries({
-                  predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
-                });
+                await qc.invalidateQueries(
+                  {
+                    predicate: (query) => shouldRefreshQuery(query.queryKey),
+                    refetchType: 'none',
+                  },
+                );
               },
             },
             {
               message: 'Refetching visible page data',
               run: async () => {
-                await qc.refetchQueries({ type: 'active' });
+                await qc.refetchQueries(
+                  {
+                    predicate: (query) => shouldRefreshQuery(query.queryKey),
+                    type: 'active',
+                  },
+                  { throwOnError: true },
+                );
+              },
+            },
+            {
+              message: 'Finalizing refreshed data',
+              run: async () => {
+                await Promise.resolve();
               },
             },
           ],
@@ -320,8 +325,9 @@ export function AppShell({ children }: PropsWithChildren) {
         <button
           type="button"
           onClick={() => void handleGlobalRefresh()}
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-800 text-neutral-200 hover:bg-neutral-900"
+          className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-800 text-neutral-200 transition hover:bg-neutral-900 hover:text-white"
           aria-label="Refresh data"
+          title="Refresh data"
         >
           <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
         </button>
@@ -354,9 +360,9 @@ export function AppShell({ children }: PropsWithChildren) {
             <button
               type="button"
               onClick={() => void handleGlobalRefresh()}
-              className="hidden h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 hover:bg-neutral-900 hover:text-white lg:flex"
+              className={`${mobileMenuOpen ? 'hidden' : 'flex'} h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 transition hover:bg-neutral-900 hover:text-white`}
               aria-label="Refresh data"
-              title="Refresh data from server"
+              title="Refresh data"
             >
               <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
             </button>
@@ -385,8 +391,8 @@ export function AppShell({ children }: PropsWithChildren) {
             options={(workspaces ?? []).map((workspace) => ({
               value: workspace.id,
               label: `${workspace.name} (${workspace.role})`,
-              iconUrl: workspace.avatarIcon?.imageUrl ?? undefined,
-              iconEmoji: workspace.avatarIcon?.emoji ?? undefined,
+              iconUrl: workspace.avatarPresentation?.type === 'image' ? workspace.avatarPresentation.url : undefined,
+              iconEmoji: workspace.avatarPresentation?.type === 'unicode' ? workspace.avatarPresentation.value : undefined,
             }))}
           />
           {creatingWorkspace ? (
@@ -405,14 +411,6 @@ export function AppShell({ children }: PropsWithChildren) {
               <button type="submit" className="rounded-md border border-neutral-700 px-2 text-sm text-neutral-200 hover:bg-neutral-800">Add</button>
             </form>
           ) : null}
-          <button
-            type="button"
-            onClick={() => void handleGlobalRefresh()}
-            className="flex w-full items-center justify-center gap-2 rounded-md border border-neutral-800 px-3 py-2 text-sm text-neutral-300 transition hover:bg-neutral-900 hover:text-white lg:hidden"
-          >
-            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
-            Refresh data
-          </button>
         </div>
 
         <nav className="app-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
@@ -499,7 +497,7 @@ export function AppShell({ children }: PropsWithChildren) {
             }`}
           >
             <IconAvatar
-              icon={currentAccount?.avatarIcon}
+              icon={currentAccount?.avatarPresentation}
               label={currentAccount?.name || currentAccount?.email || 'User'}
               size="md"
               className="!rounded-full"

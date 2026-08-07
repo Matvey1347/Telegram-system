@@ -22,11 +22,28 @@ function isEmojiGrapheme(value: string) {
 }
 
 function stripLineFormatting(value: string) {
-  return value
+  let normalized = value
     .trim()
-    .replace(/^[-*]\s+/, "")
-    .replace(/^>\s+/, "")
-    .replace(/^([*_~`+]+)(.*)\1$/u, "$2")
+    .replace(/^```+\w*\s*/u, "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/gu, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1")
+    .trim();
+
+  let previous = "";
+  while (normalized && normalized !== previous) {
+    previous = normalized;
+    normalized = normalized
+      .replace(/^#{1,6}\s+/u, "")
+      .replace(/^>\s*/, "")
+      .replace(/^[-*+]\s+/, "")
+      .replace(/^(\*\*|__|~~|`)([\s\S]*)\1$/u, "$2")
+      .replace(/^(\*\*|__|~~|`)+/u, "")
+      .replace(/(\*\*|__|~~|`)+$/u, "")
+      .trim();
+  }
+
+  return normalized
+    .replace(/(\*\*|__|~~|`)/gu, "")
     .trim();
 }
 

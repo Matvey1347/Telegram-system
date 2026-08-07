@@ -22,7 +22,7 @@ import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
 import { accountDisplayName } from '@/lib/account-display';
 import { Button, Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
-import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, type Icon, transactionCategoriesApi } from '@/lib/api';
+import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, type ResolvedEmoji, transactionCategoriesApi } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
 const COLORS = ['#2563eb', '#10b981', '#f97316', '#f43f5e', '#8b5cf6', '#14b8a6', '#eab308', '#94a3b8'];
@@ -308,7 +308,7 @@ export default function DashboardPage() {
                               bare
                               compact
                               iconId={account.iconId ?? null}
-                              icon={account.icon}
+                              icon={account.iconPresentation}
                               onChange={(iconId) => updateAccountIconMutation.mutate({ id: account.id, iconId })}
                               className="h-6 w-6 shrink-0 rounded-none border-0 bg-transparent hover:bg-transparent"
                               iconClassName="!h-6 !w-6 !rounded-none !border-0 !bg-transparent !text-xl"
@@ -436,7 +436,7 @@ function BreakdownCard({
   onIconChange,
 }: {
   title: string;
-  rows: Array<{ id?: string | null; name: string; amount: number; count: number; iconId?: string | null; icon?: Icon | null }>;
+  rows: Array<{ id?: string | null; name: string; amount: number; count: number; iconId?: string | null; iconPresentation?: ResolvedEmoji | null }>;
   money: (value: number) => string;
   onIconChange: (id: string, iconId: string | null) => void;
 }) {
@@ -456,7 +456,7 @@ function BreakdownCard({
                       bare
                       compact
                       iconId={row.iconId ?? null}
-                      icon={row.icon}
+                      icon={row.iconPresentation}
                       onChange={(iconId) => onIconChange(row.id as string, iconId)}
                       className="h-6 w-6 shrink-0 rounded-none border-0 bg-transparent hover:bg-transparent"
                       iconClassName="!h-6 !w-6 !rounded-none !border-0 !bg-transparent !text-xl"

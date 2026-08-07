@@ -655,8 +655,8 @@ export function AdSaleModal({
                   .map((account) => ({
                     value: account.id,
                     label: `${accountDisplayName(account)} (${account.currency})`,
-                    iconUrl: account.icon?.imageUrl ?? undefined,
-                    iconEmoji: account.icon?.emoji ?? undefined,
+                    iconUrl: account.iconPresentation?.type === 'image' ? account.iconPresentation.url : undefined,
+                    iconEmoji: account.iconPresentation?.type === 'unicode' ? account.iconPresentation.value : undefined,
                     iconFallback: account.name,
                   }))}
               />

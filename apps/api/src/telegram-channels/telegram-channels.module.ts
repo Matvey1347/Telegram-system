@@ -4,6 +4,7 @@ import { TelegramChannelsService } from './telegram-channels.service';
 import { TelegramMtprotoClient } from '../telegram/shared/telegram-mtproto.client';
 import { TelegramSourceAccessService } from '../telegram/shared/telegram-source-access.service';
 import { TelegramChannelAnalyticsService } from './telegram-channel-analytics.service';
+import { TelegramPostCalendarPlannerService } from './telegram-post-calendar-planner.service';
 import { AdCampaignsModule } from '../ad-campaigns/ad-campaigns.module';
 
 @Module({
@@ -12,12 +13,14 @@ import { AdCampaignsModule } from '../ad-campaigns/ad-campaigns.module';
   providers: [
     TelegramChannelsService,
     TelegramChannelAnalyticsService,
+    TelegramPostCalendarPlannerService,
     TelegramMtprotoClient,
     TelegramSourceAccessService,
   ],
   exports: [
     TelegramChannelsService,
     TelegramChannelAnalyticsService,
+    TelegramPostCalendarPlannerService,
     TelegramMtprotoClient,
     TelegramSourceAccessService,
   ],

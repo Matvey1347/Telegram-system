@@ -317,6 +317,65 @@ export class ManagedPostsCalendarQueryDto {
   to!: string;
 }
 
+export class CreatePostPlannerFormatDto {
+  @IsString() name!: string;
+  @IsOptional() @IsString() description?: string | null;
+  @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) position?: number;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class UpdatePostPlannerFormatDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() description?: string | null;
+  @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) position?: number;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class CreatePostPlannerSlotDto {
+  @IsOptional() @IsString() formatId?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) postGroupIds?: string[];
+  @Type(() => Number) @IsInt() @Min(0) @Max(6) weekday!: number;
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time!: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) position?: number;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class UpdatePostPlannerSlotDto {
+  @IsOptional() @IsString() formatId?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) postGroupIds?: string[];
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(6) weekday?: number;
+  @IsOptional() @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time?: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) position?: number;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class PostPlannerPreviewDto {
+  @IsDateString() from!: string;
+  @IsDateString() to!: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) postGroupIds?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) formatIds?: string[];
+  @IsOptional() @Allow() formatWeights?: Record<string, number>;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) rerollOffset?: number;
+}
+
+export class PostPlannerApplyDto extends PostPlannerPreviewDto {}
+
+export class PostPlannerRerollDayDto {
+  @IsDateString() date!: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) postGroupIds?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) formatIds?: string[];
+  @IsOptional() @Allow() formatWeights?: Record<string, number>;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) rerollOffset?: number;
+}
+
 export class ScheduleManagedPostsBatchItemDto implements ScheduleManagedPostsBatchItem {
   @IsString()
   postId!: string;
