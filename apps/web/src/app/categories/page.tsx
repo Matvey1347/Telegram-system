@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
 import { AppShell } from '@/components/layout/app-shell';
 import { InlineIconPicker } from '@/components/icons/inline-icon-picker';
-import { currenciesApi, transactionCategoriesApi, transactionsApi, type TransactionCategory, type TransactionType } from '@/lib/api';
+import { currenciesApi, transactionCategoriesApi, transactionsApi, type Icon, type TransactionCategory, type TransactionType } from '@/lib/api';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, ConfirmDeleteModal, EmptyState, EntityCard, FormField, IconButton, Input, LoadingState, MasonryGrid, Modal, PageHeader, Select } from '@/components/ui/primitives';
 import { IconPicker } from '@/components/icons/icon-picker';
@@ -152,7 +152,7 @@ export default function CategoriesPage() {
         return (
           <EntityCard
             key={c.id}
-            title={<div className="flex items-center gap-2"><InlineIconPicker iconId={c.iconId ?? null} onChange={(iconId) => updateIconMutation.mutate({ id: c.id, iconId })} /><span>{c.name}</span></div>}
+            title={<div className="flex items-center gap-2"><InlineIconPicker iconId={c.iconId ?? null} icon={c.icon} onChange={(iconId) => updateIconMutation.mutate({ id: c.id, iconId })} /><span>{c.name}</span></div>}
             actions={<div className="flex gap-2"><IconButton onClick={() => setEditing(c)} />{!c.isSystem ? <IconButton kind="delete" onClick={() => setDeleting(c)} /> : null}</div>}
           >
             <div className="space-y-3">
@@ -186,6 +186,7 @@ export default function CategoriesPage() {
       onClose={() => setEditing(null)}
       onSubmit={(v) => { if (!editing) return; setEditing(null); updateMutation.mutate({ id: editing.id, payload: { name: v.name, iconId: v.iconId ?? null } }); }}
       initial={editing ? { name: editing.name, type: editing.type, iconId: editing.iconId ?? null } : undefined}
+      initialIcon={editing?.icon}
       disableType
       readOnlyName={Boolean(editing?.isSystem)}
     />
@@ -207,6 +208,7 @@ function CategoryModal({
   onSubmit,
   title,
   initial,
+  initialIcon,
   disableType,
   readOnlyName,
 }: {
@@ -215,6 +217,7 @@ function CategoryModal({
   onSubmit: (v: CategoryFormValues) => void;
   title: string;
   initial?: CategoryFormValues;
+  initialIcon?: Icon | null;
   disableType?: boolean;
   readOnlyName?: boolean;
 }) {
@@ -230,7 +233,7 @@ function CategoryModal({
   }, [open, initial, reset]);
 
   return <Modal open={open} onClose={onClose} title={title}><form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
-    <IconPicker iconId={iconId ?? null} onChange={(nextIconId) => setValue('iconId', nextIconId, { shouldDirty: true, shouldValidate: true })} />
+    <IconPicker iconId={iconId ?? null} icon={initialIcon} onChange={(nextIconId) => setValue('iconId', nextIconId, { shouldDirty: true, shouldValidate: true })} />
     {!readOnlyName ? (
       <>
         <FormField label="Name" required error={errors.name ? 'Required field' : undefined}>

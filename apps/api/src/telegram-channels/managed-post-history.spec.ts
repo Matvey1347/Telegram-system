@@ -29,6 +29,7 @@ describe('TelegramChannelsService managed post history', () => {
       icon: 'icon-1',
       groupId: 'group-1',
       groupPosition: 2,
+      statusPosition: 1,
       sidebarPosition: 4,
     };
     const revision = {
@@ -36,7 +37,7 @@ describe('TelegramChannelsService managed post history', () => {
       telegramManagedPostId: 'post-1',
       workspaceId: 'workspace-1',
       telegramChannelId: 'channel-1',
-      title: 'Old title',
+      title: '2) Old title',
       text: 'Old text',
       imageUrls: ['https://example.com/old.png'],
       status: TelegramManagedPostStatus.SCHEDULED,
@@ -55,6 +56,7 @@ describe('TelegramChannelsService managed post history', () => {
       icon: 'icon-2',
       groupId: 'group-2',
       groupPosition: 1,
+      statusPosition: 0,
       sidebarPosition: 3,
       reason: 'before_update',
       createdAt: new Date('2026-07-10T10:00:00.000Z'),
@@ -63,7 +65,7 @@ describe('TelegramChannelsService managed post history', () => {
     const deleteOldRevisions = jest.fn().mockResolvedValue({ count: 0 });
     const update = jest.fn().mockResolvedValue({
       ...currentPost,
-      title: revision.title,
+      title: 'Old title',
       text: revision.text,
       imageUrls: revision.imageUrls,
       assignedMemberId: revision.assignedMemberId,
@@ -91,6 +93,22 @@ describe('TelegramChannelsService managed post history', () => {
           .fn()
           .mockResolvedValueOnce(currentPost)
           .mockResolvedValueOnce(currentPost),
+        findMany: jest
+          .fn()
+          .mockImplementation(async ({ where }) =>
+            where.groupId === 'group-1'
+              ? [{ id: 'other-1', status: TelegramManagedPostStatus.DRAFT }]
+              : [{ id: 'post-1', status: TelegramManagedPostStatus.DRAFT }],
+          ),
+        findUnique: jest.fn().mockResolvedValue({
+          ...currentPost,
+          title: revision.title,
+          groupId: revision.groupId,
+          groupPosition: 0,
+          statusPosition: 0,
+          status: TelegramManagedPostStatus.DRAFT,
+          telegramRemoteStatus: TelegramManagedPostRemoteStatus.NONE,
+        }),
         update,
       },
       telegramManagedPostRevision: {
@@ -101,7 +119,9 @@ describe('TelegramChannelsService managed post history', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
-      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (callback) => callback(prisma)),
     };
     const service = new TelegramChannelsService(
       prisma as never,

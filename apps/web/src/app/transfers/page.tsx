@@ -215,10 +215,10 @@ function transferDefaults(initial?: Transfer): Values {
     : { fromAccountId: '', toAccountId: '', fromAmount: 0, toAmount: 0, date: formatLocalDate(new Date()), description: '' };
 }
 
-function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
+function TransferAccountCell({ account, fallback, onIconChange }: { account?: Pick<Account, 'name' | 'iconId' | 'icon'> | null; fallback: string; onIconChange: (iconId: string | null) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <InlineIconPicker iconId={account?.iconId ?? null} onChange={onIconChange} className="shrink-0" />
+      <InlineIconPicker iconId={account?.iconId ?? null} icon={account?.icon} onChange={onIconChange} className="shrink-0" />
       <span className="min-w-0 truncate">{account?.name ?? fallback}</span>
     </div>
   );

@@ -4,10 +4,12 @@ import {
   bulkActionCounts,
   movedPostDatabaseState,
   movedPostState,
+  normalizePostGroupNumbering,
   postGroupStatusSummary,
   publishGroupPostSkipReason,
   scheduleGroupPostSkipReason,
   scheduleSequenceDates,
+  stripLegacyGroupedPostTitlePrefix,
   validateCompletePostOrder,
 } from './post-groups.helpers';
 
@@ -77,7 +79,84 @@ describe('post group helpers', () => {
       sourceId: null,
       groupId: null,
       groupPosition: null,
+      statusPosition: null,
     });
+  });
+
+  it('normalizes group and status positions in group order', async () => {
+    const posts = [
+      {
+        id: 'a',
+        status: TelegramManagedPostStatus.DRAFT,
+        groupPosition: 4,
+        createdAt: new Date('2026-08-01T10:00:00.000Z'),
+      },
+      {
+        id: 'b',
+        status: TelegramManagedPostStatus.SCHEDULED,
+        groupPosition: 1,
+        createdAt: new Date('2026-08-01T10:01:00.000Z'),
+      },
+      {
+        id: 'c',
+        status: TelegramManagedPostStatus.FAILED,
+        groupPosition: 3,
+        createdAt: new Date('2026-08-01T10:02:00.000Z'),
+      },
+      {
+        id: 'd',
+        status: TelegramManagedPostStatus.PUBLISHING,
+        groupPosition: 3,
+        createdAt: new Date('2026-08-01T10:03:00.000Z'),
+      },
+      {
+        id: 'e',
+        status: TelegramManagedPostStatus.PUBLISHED,
+        groupPosition: 9,
+        createdAt: new Date('2026-08-01T10:04:00.000Z'),
+      },
+    ];
+    const tx = {
+      telegramManagedPost: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            posts[1],
+            posts[2],
+            posts[3],
+            posts[0],
+            posts[4],
+          ]),
+      },
+      $executeRaw: jest.fn(),
+    };
+
+    await normalizePostGroupNumbering(tx as never, 'group-1');
+
+    expect(tx.telegramManagedPost.findMany).toHaveBeenCalledWith({
+      where: { groupId: 'group-1' },
+      orderBy: [{ groupPosition: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, status: true },
+    });
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['1) Test post', 'Test post'],
+    ['125) Test post', 'Test post'],
+    ['12) 🧠 Title', '🧠 Title'],
+    ['10 способов увеличить продажи', '10 способов увеличить продажи'],
+    ['2026: итоги', '2026: итоги'],
+    ['Chapter 10) Something', 'Chapter 10) Something'],
+    ['1)', '1)'],
+  ])('safely strips one legacy title prefix from %j', (title, expected) => {
+    expect(stripLegacyGroupedPostTitlePrefix(title)).toBe(expected);
+  });
+
+  it('keeps a numbered title when the prefix is not the post display number', () => {
+    expect(stripLegacyGroupedPostTitlePrefix('10) Reasons to buy', 3)).toBe(
+      '10) Reasons to buy',
+    );
   });
 
   it('calculates sequence dates in group order with a two-day interval', () => {

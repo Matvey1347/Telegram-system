@@ -30,6 +30,7 @@ describe('TelegramChannelsService updateManagedPost', () => {
       icon: null,
       groupId: null,
       groupPosition: null,
+      statusPosition: null,
       sidebarPosition: null,
       updatedAt: new Date('2026-07-18T10:00:00Z'),
       createdAt: new Date('2026-07-10T10:00:00Z'),
@@ -58,7 +59,9 @@ describe('TelegramChannelsService updateManagedPost', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
-      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (callback) => callback(prisma)),
     };
     const mtprotoClient = {
       editPostText: jest.fn().mockResolvedValue({
@@ -183,7 +186,9 @@ describe('TelegramChannelsService updateManagedPost', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
-      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (callback) => callback(prisma)),
     };
     const mtprotoClient = {
       editPostText: jest.fn().mockResolvedValue({
@@ -309,6 +314,11 @@ describe('TelegramChannelsService updateManagedPost', () => {
             inviteLink: null,
           })
           .mockResolvedValueOnce(currentPost),
+        findUnique: jest.fn().mockResolvedValue({
+          ...currentPost,
+          status: TelegramManagedPostStatus.DRAFT,
+          statusPosition: null,
+        }),
         update,
       },
       telegramChannel: {
@@ -327,7 +337,9 @@ describe('TelegramChannelsService updateManagedPost', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
-      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (callback) => callback(prisma)),
     };
     const service = new TelegramChannelsService(
       prisma as never,

@@ -18,6 +18,7 @@
 - Keep exported types backwards-compatible unless the API change is intentional and coordinated.
 - Update backend DTO/controller/service and frontend API client together for cross-stack changes.
 - Prefer explicit serializable shapes over leaking internal ORM structures.
+- Use `ResolvedEmoji` for cross-stack emoji/icon display contracts; do not encode display icons as endpoint-specific unions of raw unicode strings, ids and URLs.
 - Add tests when shared parsing/formatting behavior becomes non-trivial.
 - Split shared contract files by domain when they approach 400-500 lines; no shared type file should remain above the 800-line architecture hard policy.
 - Keep index/barrel files type-only and below 250 lines.

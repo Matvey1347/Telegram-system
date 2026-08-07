@@ -358,35 +358,35 @@ enum ApplicationLogKind {
 }
 
 model User {
-  id                             String                           @id @default(cuid())
-  email                          String                           @unique
-  seedKey                        String?                          @unique
-  passwordHash                   String
-  name                           String
-  memberships                    WorkspaceMember[]
-  icons                          Icon[]
-  createdAccounts                Account[]                        @relation("AccountCreatedBy")
-  createdTransactions            Transaction[]                    @relation("TransactionCreatedBy")
-  createdTransfers               Transfer[]                       @relation("TransferCreatedBy")
-  createdInvestments             Investment[]                     @relation("InvestmentCreatedBy")
-  createdTelegramChannels        TelegramChannel[]                @relation("TelegramChannelCreatedBy")
-  createdTelegramBots            TelegramBotIntegration[]         @relation("TelegramBotCreatedBy")
-  createdTelegramUserAccounts    TelegramUserAccountIntegration[] @relation("TelegramUserAccountCreatedBy")
-  createdPromos                  Promo[]                          @relation("PromoCreatedBy")
-  createdAdvertisingSources      AdvertisingSource[]              @relation("AdvertisingSourceCreatedBy")
-  createdAdCampaigns             AdCampaign[]                     @relation("AdCampaignCreatedBy")
-  createdAdHypotheses            AdHypothesis[]                   @relation("AdHypothesisCreatedBy")
-  createdTelegramChannelNetworks TelegramChannelNetwork[]         @relation("TelegramChannelNetworkCreatedBy")
-  createdTelegramAdSales         TelegramAdSale[]                 @relation("TelegramAdSaleCreatedBy")
-  createdTelegramAdSalePayments  TelegramAdSalePayment[]          @relation("TelegramAdSalePaymentCreatedBy")
-  createdTelegramAdvertisers     TelegramAdvertiser[]             @relation("TelegramAdvertiserCreatedBy")
-  assignedTelegramAdvertiserTags TelegramAdvertiserTagAssignment[]
-  telegramAdvertiserActivities   TelegramAdvertiserActivity[]     @relation("TelegramAdvertiserActivityActorUser")
-  createdTelegramAdvertiserTasks TelegramAdvertiserTask[]         @relation("TelegramAdvertiserTaskCreatedBy")
+  id                                        String                                @id @default(cuid())
+  email                                     String                                @unique
+  seedKey                                   String?                               @unique
+  passwordHash                              String
+  name                                      String
+  memberships                               WorkspaceMember[]
+  icons                                     Icon[]
+  createdAccounts                           Account[]                             @relation("AccountCreatedBy")
+  createdTransactions                       Transaction[]                         @relation("TransactionCreatedBy")
+  createdTransfers                          Transfer[]                            @relation("TransferCreatedBy")
+  createdInvestments                        Investment[]                          @relation("InvestmentCreatedBy")
+  createdTelegramChannels                   TelegramChannel[]                     @relation("TelegramChannelCreatedBy")
+  createdTelegramBots                       TelegramBotIntegration[]              @relation("TelegramBotCreatedBy")
+  createdTelegramUserAccounts               TelegramUserAccountIntegration[]      @relation("TelegramUserAccountCreatedBy")
+  createdPromos                             Promo[]                               @relation("PromoCreatedBy")
+  createdAdvertisingSources                 AdvertisingSource[]                   @relation("AdvertisingSourceCreatedBy")
+  createdAdCampaigns                        AdCampaign[]                          @relation("AdCampaignCreatedBy")
+  createdAdHypotheses                       AdHypothesis[]                        @relation("AdHypothesisCreatedBy")
+  createdTelegramChannelNetworks            TelegramChannelNetwork[]              @relation("TelegramChannelNetworkCreatedBy")
+  createdTelegramAdSales                    TelegramAdSale[]                      @relation("TelegramAdSaleCreatedBy")
+  createdTelegramAdSalePayments             TelegramAdSalePayment[]               @relation("TelegramAdSalePaymentCreatedBy")
+  createdTelegramAdvertisers                TelegramAdvertiser[]                  @relation("TelegramAdvertiserCreatedBy")
+  assignedTelegramAdvertiserTags            TelegramAdvertiserTagAssignment[]
+  telegramAdvertiserActivities              TelegramAdvertiserActivity[]          @relation("TelegramAdvertiserActivityActorUser")
+  createdTelegramAdvertiserTasks            TelegramAdvertiserTask[]              @relation("TelegramAdvertiserTaskCreatedBy")
   createdTelegramPlacementAdvertiserResults TelegramAdPlacementAdvertiserResult[] @relation("TelegramAdPlacementAdvertiserResultCreatedBy")
-  applicationLogs                ApplicationLog[]
-  createdAt                      DateTime                         @default(now())
-  updatedAt                      DateTime                         @updatedAt
+  applicationLogs                           ApplicationLog[]
+  createdAt                                 DateTime                              @default(now())
+  updatedAt                                 DateTime                              @updatedAt
 }
 
 model Workspace {
@@ -398,63 +398,63 @@ model Workspace {
   currencyDisplayMode CurrencyDisplayMode @default(code)
   avatarIconId        String?
 
-  members                           WorkspaceMember[]
-  accounts                          Account[]
-  transactions                      Transaction[]
-  transfers                         Transfer[]
-  telegramChannels                  TelegramChannel[]
-  telegramBotIntegrations           TelegramBotIntegration[]
-  telegramUserAccountIntegrations   TelegramUserAccountIntegration[]
-  telegramChannelAdminLinks         TelegramChannelAdminLink[]
-  telegramChannelSourceAccesses     TelegramChannelSourceAccess[]
-  telegramChannelDataSources        TelegramChannelDataSource[]
-  telegramChannelStatsSnapshots     TelegramChannelStatsSnapshot[]
-  telegramChannelAudienceSnapshots  TelegramChannelAudienceSnapshot[]
-  adCampaignAdmissionBatches         AdCampaignAdmissionBatch[]
-  adCampaignAdmissionBackfillStates  AdCampaignAdmissionBackfillState[]
-  telegramChannelNetworks           TelegramChannelNetwork[]
-  telegramChannelNetworkMembers     TelegramChannelNetworkMember[]
-  telegramChannelStatsPoints        TelegramChannelStatsPoint[]
-  telegramChannelAdAnalyses         TelegramChannelAdAnalysis[]
-  telegramInviteLinkSnapshots       TelegramInviteLinkSnapshot[]
-  telegramPosts                     TelegramPost[]
-  telegramManagedPosts              TelegramManagedPost[]
-  telegramManagedPostRevisions      TelegramManagedPostRevision[]
-  telegramAdProducts                TelegramAdProduct[]
-  telegramAdSchedulePolicies        TelegramAdSchedulePolicy[]
-  telegramAdSalesWorkspaceSettings  TelegramAdSalesWorkspaceSettings?
-  telegramAdSalesMemberPreferences  TelegramAdSalesMemberPreferences[]
-  telegramAdPriceSnapshots          TelegramAdPriceSnapshot[]
-  telegramAdInventoryDailySnapshots TelegramAdInventoryDailySnapshot[]
-  telegramAdSales                   TelegramAdSale[]
-  telegramAdSalePlacements          TelegramAdSalePlacement[]
-  telegramAdSalePayments            TelegramAdSalePayment[]
-  telegramAdSalePaymentAllocations  TelegramAdSalePaymentAllocation[]
-  telegramAdvertisers               TelegramAdvertiser[]
-  telegramAdvertiserContacts        TelegramAdvertiserContact[]
-  telegramAdvertiserTags            TelegramAdvertiserTag[]
-  telegramAdvertiserTagAssignments  TelegramAdvertiserTagAssignment[]
-  telegramAdvertiserActivities      TelegramAdvertiserActivity[]
-  telegramAdvertiserTasks           TelegramAdvertiserTask[]
-  telegramAdCrmMemberSettings       TelegramAdCrmMemberSettings[]
-  telegramAdCrmWorkspaceSettings    TelegramAdCrmWorkspaceSettings?
-  telegramAdvertiserAutomationRules TelegramAdvertiserAutomationRule[]
+  members                                WorkspaceMember[]
+  accounts                               Account[]
+  transactions                           Transaction[]
+  transfers                              Transfer[]
+  telegramChannels                       TelegramChannel[]
+  telegramBotIntegrations                TelegramBotIntegration[]
+  telegramUserAccountIntegrations        TelegramUserAccountIntegration[]
+  telegramChannelAdminLinks              TelegramChannelAdminLink[]
+  telegramChannelSourceAccesses          TelegramChannelSourceAccess[]
+  telegramChannelDataSources             TelegramChannelDataSource[]
+  telegramChannelStatsSnapshots          TelegramChannelStatsSnapshot[]
+  telegramChannelAudienceSnapshots       TelegramChannelAudienceSnapshot[]
+  adCampaignAdmissionBatches             AdCampaignAdmissionBatch[]
+  adCampaignAdmissionBackfillStates      AdCampaignAdmissionBackfillState[]
+  telegramChannelNetworks                TelegramChannelNetwork[]
+  telegramChannelNetworkMembers          TelegramChannelNetworkMember[]
+  telegramChannelStatsPoints             TelegramChannelStatsPoint[]
+  telegramChannelAdAnalyses              TelegramChannelAdAnalysis[]
+  telegramInviteLinkSnapshots            TelegramInviteLinkSnapshot[]
+  telegramPosts                          TelegramPost[]
+  telegramManagedPosts                   TelegramManagedPost[]
+  telegramManagedPostRevisions           TelegramManagedPostRevision[]
+  telegramAdProducts                     TelegramAdProduct[]
+  telegramAdSchedulePolicies             TelegramAdSchedulePolicy[]
+  telegramAdSalesWorkspaceSettings       TelegramAdSalesWorkspaceSettings?
+  telegramAdSalesMemberPreferences       TelegramAdSalesMemberPreferences[]
+  telegramAdPriceSnapshots               TelegramAdPriceSnapshot[]
+  telegramAdInventoryDailySnapshots      TelegramAdInventoryDailySnapshot[]
+  telegramAdSales                        TelegramAdSale[]
+  telegramAdSalePlacements               TelegramAdSalePlacement[]
+  telegramAdSalePayments                 TelegramAdSalePayment[]
+  telegramAdSalePaymentAllocations       TelegramAdSalePaymentAllocation[]
+  telegramAdvertisers                    TelegramAdvertiser[]
+  telegramAdvertiserContacts             TelegramAdvertiserContact[]
+  telegramAdvertiserTags                 TelegramAdvertiserTag[]
+  telegramAdvertiserTagAssignments       TelegramAdvertiserTagAssignment[]
+  telegramAdvertiserActivities           TelegramAdvertiserActivity[]
+  telegramAdvertiserTasks                TelegramAdvertiserTask[]
+  telegramAdCrmMemberSettings            TelegramAdCrmMemberSettings[]
+  telegramAdCrmWorkspaceSettings         TelegramAdCrmWorkspaceSettings?
+  telegramAdvertiserAutomationRules      TelegramAdvertiserAutomationRule[]
   telegramAdvertiserAutomationExecutions TelegramAdvertiserAutomationExecution[]
   telegramAdPlacementAdvertiserResults   TelegramAdPlacementAdvertiserResult[]
-  postGroups                        PostGroup[]
-  promos                            Promo[]
-  advertisingSources                AdvertisingSource[]
-  adCampaigns                       AdCampaign[]
-  adHypotheses                      AdHypothesis[]
-  adHypothesisCampaigns             AdHypothesisCampaign[]
-  dailyAnalyticsSyncRuns            DailyAnalyticsSyncRun[]
-  exchangeRates                     ExchangeRate[]
-  investments                       Investment[]
-  transactionCategories             TransactionCategory[]
-  icons                             Icon[]
-  promptNotes                       PromptNote[]
-  applicationLogs                   ApplicationLog[]
-  avatarIcon                        Icon?                              @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
+  postGroups                             PostGroup[]
+  promos                                 Promo[]
+  advertisingSources                     AdvertisingSource[]
+  adCampaigns                            AdCampaign[]
+  adHypotheses                           AdHypothesis[]
+  adHypothesisCampaigns                  AdHypothesisCampaign[]
+  dailyAnalyticsSyncRuns                 DailyAnalyticsSyncRun[]
+  exchangeRates                          ExchangeRate[]
+  investments                            Investment[]
+  transactionCategories                  TransactionCategory[]
+  icons                                  Icon[]
+  promptNotes                            PromptNote[]
+  applicationLogs                        ApplicationLog[]
+  avatarIcon                             Icon?                                   @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -615,36 +615,36 @@ model WorkspaceMember {
   avatarIconId     String?
   telegramUsername String?
 
-  workspace                            Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user                                 User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  avatarIcon                           Icon?                            @relation(fields: [avatarIconId], references: [id], onDelete: SetNull)
-  investments                          Investment[]
-  investmentTransactions               Transaction[]                    @relation("MemberInvestmentTransactions")
-  assignedAccounts                     Account[]                        @relation("AccountAssignedMember")
-  assignedTransactions                 Transaction[]                    @relation("TransactionAssignedMember")
-  assignedTransfers                    Transfer[]                       @relation("TransferAssignedMember")
-  assignedInvestments                  Investment[]                     @relation("InvestmentAssignedMember")
-  assignedTelegramChannels             TelegramChannel[]                @relation("TelegramChannelAssignedMember")
-  assignedTelegramBots                 TelegramBotIntegration[]         @relation("TelegramBotAssignedMember")
-  assignedTelegramUserAccounts         TelegramUserAccountIntegration[] @relation("TelegramUserAccountAssignedMember")
-  assignedPromos                       Promo[]                          @relation("PromoAssignedMember")
-  assignedAdvertisingSources           AdvertisingSource[]              @relation("AdvertisingSourceAssignedMember")
-  assignedAdCampaigns                  AdCampaign[]                     @relation("AdCampaignAssignedMember")
-  assignedAdHypotheses                 AdHypothesis[]                   @relation("AdHypothesisAssignedMember")
-  assignedTelegramChannelNetworks      TelegramChannelNetwork[]         @relation("TelegramChannelNetworkAssignedMember")
-  assignedTelegramChannelAdAnalyses    TelegramChannelAdAnalysis[]      @relation("TelegramChannelAdAnalysisAssignedMember")
-  assignedTelegramManagedPosts         TelegramManagedPost[]            @relation("TelegramManagedPostAssignedMember")
-  assignedTelegramManagedPostRevisions TelegramManagedPostRevision[]    @relation("TelegramManagedPostRevisionAssignedMember")
-  assignedTelegramAdSales              TelegramAdSale[]                 @relation("TelegramAdSaleAssignedMember")
-  ownedTelegramAdvertisers             TelegramAdvertiser[]             @relation("TelegramAdvertiserOwner")
-  telegramAdvertiserActivities         TelegramAdvertiserActivity[]     @relation("TelegramAdvertiserActivityActorMember")
-  assignedTelegramAdvertiserTasks      TelegramAdvertiserTask[]         @relation("TelegramAdvertiserTaskAssignedMember")
-  telegramAdCrmSettings                TelegramAdCrmMemberSettings?
-  telegramAdSalesPreferences           TelegramAdSalesMemberPreferences?
+  workspace                                 Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user                                      User                               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatarIcon                                Icon?                              @relation(fields: [avatarIconId], references: [id], onDelete: SetNull)
+  investments                               Investment[]
+  investmentTransactions                    Transaction[]                      @relation("MemberInvestmentTransactions")
+  assignedAccounts                          Account[]                          @relation("AccountAssignedMember")
+  assignedTransactions                      Transaction[]                      @relation("TransactionAssignedMember")
+  assignedTransfers                         Transfer[]                         @relation("TransferAssignedMember")
+  assignedInvestments                       Investment[]                       @relation("InvestmentAssignedMember")
+  assignedTelegramChannels                  TelegramChannel[]                  @relation("TelegramChannelAssignedMember")
+  assignedTelegramBots                      TelegramBotIntegration[]           @relation("TelegramBotAssignedMember")
+  assignedTelegramUserAccounts              TelegramUserAccountIntegration[]   @relation("TelegramUserAccountAssignedMember")
+  assignedPromos                            Promo[]                            @relation("PromoAssignedMember")
+  assignedAdvertisingSources                AdvertisingSource[]                @relation("AdvertisingSourceAssignedMember")
+  assignedAdCampaigns                       AdCampaign[]                       @relation("AdCampaignAssignedMember")
+  assignedAdHypotheses                      AdHypothesis[]                     @relation("AdHypothesisAssignedMember")
+  assignedTelegramChannelNetworks           TelegramChannelNetwork[]           @relation("TelegramChannelNetworkAssignedMember")
+  assignedTelegramChannelAdAnalyses         TelegramChannelAdAnalysis[]        @relation("TelegramChannelAdAnalysisAssignedMember")
+  assignedTelegramManagedPosts              TelegramManagedPost[]              @relation("TelegramManagedPostAssignedMember")
+  assignedTelegramManagedPostRevisions      TelegramManagedPostRevision[]      @relation("TelegramManagedPostRevisionAssignedMember")
+  assignedTelegramAdSales                   TelegramAdSale[]                   @relation("TelegramAdSaleAssignedMember")
+  ownedTelegramAdvertisers                  TelegramAdvertiser[]               @relation("TelegramAdvertiserOwner")
+  telegramAdvertiserActivities              TelegramAdvertiserActivity[]       @relation("TelegramAdvertiserActivityActorMember")
+  assignedTelegramAdvertiserTasks           TelegramAdvertiserTask[]           @relation("TelegramAdvertiserTaskAssignedMember")
+  telegramAdCrmSettings                     TelegramAdCrmMemberSettings?
+  telegramAdSalesPreferences                TelegramAdSalesMemberPreferences?
   specificTelegramAdvertiserAutomationRules TelegramAdvertiserAutomationRule[] @relation("TelegramAdvertiserAutomationSpecificMember")
-  createdPostGroups                    PostGroup[]                      @relation("PostGroupCreatedByMember")
-  createdTelegramInviteLinks           TelegramInviteLink[]             @relation("TelegramInviteLinkCreatorMember")
-  promptNotes                          PromptNote[]                     @relation("PromptNoteAssignedMember")
+  createdPostGroups                         PostGroup[]                        @relation("PostGroupCreatedByMember")
+  createdTelegramInviteLinks                TelegramInviteLink[]               @relation("TelegramInviteLinkCreatorMember")
+  promptNotes                               PromptNote[]                       @relation("PromptNoteAssignedMember")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1109,10 +1109,10 @@ model TelegramAdProduct {
   priceSnapshots  TelegramAdPriceSnapshot[]
   placements      TelegramAdSalePlacement[]
 
+  @@unique([workspaceId, telegramChannelId, name])
   @@index([workspaceId])
   @@index([telegramChannelId, isActive, position])
   @@index([workspaceId, telegramChannelId])
-  @@unique([workspaceId, telegramChannelId, name])
 }
 
 model TelegramAdSchedulePolicy {
@@ -1141,24 +1141,24 @@ model TelegramAdSchedulePolicy {
 }
 
 model TelegramAdSalesWorkspaceSettings {
-  workspaceId                    String   @id
-  defaultOrganicPostsPerAdSlot   Int      @default(3)
-  createdAt                      DateTime @default(now())
-  updatedAt                      DateTime @updatedAt
+  workspaceId                  String   @id
+  defaultOrganicPostsPerAdSlot Int      @default(3)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model TelegramAdSalesMemberPreferences {
-  id                  String   @id @default(cuid())
-  workspaceId          String
-  workspaceMemberId    String   @unique
-  selectedChannelIds   String[] @default([])
-  selectedNetworkId    String?
-  calendarView         String   @default("week")
-  initialized          Boolean  @default(false)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  workspaceMemberId  String   @unique
+  selectedChannelIds String[] @default([])
+  selectedNetworkId  String?
+  calendarView       String   @default("week")
+  initialized        Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceMember WorkspaceMember @relation(fields: [workspaceMemberId], references: [id], onDelete: Cascade)
@@ -1239,42 +1239,42 @@ model TelegramAdInventoryDailySnapshot {
 }
 
 model TelegramAdSale {
-  id                 String               @id @default(cuid())
-  workspaceId        String
-  advertiserId       String?
-  advertiserName     String
-  advertiserTelegram String?
-  advertiserContact  String?
-  advertiserNameSnapshot String?
+  id                         String                 @id @default(cuid())
+  workspaceId                String
+  advertiserId               String?
+  advertiserName             String
+  advertiserTelegram         String?
+  advertiserContact          String?
+  advertiserNameSnapshot     String?
   advertiserTelegramSnapshot String?
-  advertiserCompanySnapshot String?
-  title              String?
-  notes              String?
-  status             TelegramAdSaleStatus @default(DRAFT)
-  crmDealStage       TelegramAdCrmDealStage @default(NEW_LEAD)
-  expectedCloseAt    DateTime?
-  lostReason         String?
-  nextActionAt       DateTime?
-  settlementCurrency String               @db.VarChar(3)
-  reservedUntil      DateTime?
-  sourceTaskId       String?
+  advertiserCompanySnapshot  String?
+  title                      String?
+  notes                      String?
+  status                     TelegramAdSaleStatus   @default(DRAFT)
+  crmDealStage               TelegramAdCrmDealStage @default(NEW_LEAD)
+  expectedCloseAt            DateTime?
+  lostReason                 String?
+  nextActionAt               DateTime?
+  settlementCurrency         String                 @db.VarChar(3)
+  reservedUntil              DateTime?
+  sourceTaskId               String?
   sourceAdvertiserActivityId String?
-  createdByUserId    String?
-  assignedMemberId   String?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  createdByUserId            String?
+  assignedMemberId           String?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
 
-  workspace      Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  advertiser     TelegramAdvertiser?       @relation(fields: [advertiserId], references: [id], onDelete: SetNull)
-  createdByUser  User?                     @relation("TelegramAdSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  assignedMember WorkspaceMember?          @relation("TelegramAdSaleAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
-  sourceTask     TelegramAdvertiserTask?   @relation("TelegramAdSaleSourceTask", fields: [sourceTaskId], references: [id], onDelete: SetNull)
-  sourceAdvertiserActivity TelegramAdvertiserActivity? @relation("TelegramAdSaleSourceActivity", fields: [sourceAdvertiserActivityId], references: [id], onDelete: SetNull)
-  placements     TelegramAdSalePlacement[]
-  payments       TelegramAdSalePayment[]
-  activities     TelegramAdvertiserActivity[]
-  tasks          TelegramAdvertiserTask[]
-  automationExecutions TelegramAdvertiserAutomationExecution[]
+  workspace                Workspace                               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  advertiser               TelegramAdvertiser?                     @relation(fields: [advertiserId], references: [id], onDelete: SetNull)
+  createdByUser            User?                                   @relation("TelegramAdSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  assignedMember           WorkspaceMember?                        @relation("TelegramAdSaleAssignedMember", fields: [assignedMemberId], references: [id], onDelete: SetNull)
+  sourceTask               TelegramAdvertiserTask?                 @relation("TelegramAdSaleSourceTask", fields: [sourceTaskId], references: [id], onDelete: SetNull)
+  sourceAdvertiserActivity TelegramAdvertiserActivity?             @relation("TelegramAdSaleSourceActivity", fields: [sourceAdvertiserActivityId], references: [id], onDelete: SetNull)
+  placements               TelegramAdSalePlacement[]
+  payments                 TelegramAdSalePayment[]
+  activities               TelegramAdvertiserActivity[]
+  tasks                    TelegramAdvertiserTask[]
+  automationExecutions     TelegramAdvertiserAutomationExecution[]
 
   @@index([workspaceId])
   @@index([workspaceId, status, createdAt])
@@ -1324,20 +1324,21 @@ model TelegramAdSalePlacement {
   createdAt                  DateTime                  @default(now())
   updatedAt                  DateTime                  @updatedAt
 
-  workspace          Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  sale               TelegramAdSale                    @relation(fields: [telegramAdSaleId], references: [id], onDelete: Cascade)
-  telegramChannel    TelegramChannel                   @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
-  network            TelegramChannelNetwork?           @relation(fields: [telegramChannelNetworkId], references: [id], onDelete: SetNull)
-  product            TelegramAdProduct?                @relation(fields: [telegramAdProductId], references: [id], onDelete: SetNull)
-  pricingSnapshot    TelegramAdPriceSnapshot?          @relation("TelegramAdPlacementPricingSnapshot", fields: [pricingSnapshotId], references: [id], onDelete: SetNull)
-  managedPost        TelegramManagedPost?              @relation("TelegramAdPlacementManagedPost", fields: [managedPostId], references: [id], onDelete: SetNull)
-  telegramPost       TelegramPost?                     @relation("TelegramAdPlacementTelegramPost", fields: [telegramPostId], references: [id], onDelete: SetNull)
-  paymentAllocations TelegramAdSalePaymentAllocation[]
+  workspace            Workspace                               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sale                 TelegramAdSale                          @relation(fields: [telegramAdSaleId], references: [id], onDelete: Cascade)
+  telegramChannel      TelegramChannel                         @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
+  network              TelegramChannelNetwork?                 @relation(fields: [telegramChannelNetworkId], references: [id], onDelete: SetNull)
+  product              TelegramAdProduct?                      @relation(fields: [telegramAdProductId], references: [id], onDelete: SetNull)
+  pricingSnapshot      TelegramAdPriceSnapshot?                @relation("TelegramAdPlacementPricingSnapshot", fields: [pricingSnapshotId], references: [id], onDelete: SetNull)
+  managedPost          TelegramManagedPost?                    @relation("TelegramAdPlacementManagedPost", fields: [managedPostId], references: [id], onDelete: SetNull)
+  telegramPost         TelegramPost?                           @relation("TelegramAdPlacementTelegramPost", fields: [telegramPostId], references: [id], onDelete: SetNull)
+  paymentAllocations   TelegramAdSalePaymentAllocation[]
   advertiserActivities TelegramAdvertiserActivity[]
   tasks                TelegramAdvertiserTask[]
   advertiserResult     TelegramAdPlacementAdvertiserResult?
   automationExecutions TelegramAdvertiserAutomationExecution[]
 
+  @@unique([workspaceId, telegramChannelId, inventoryOpportunityKey])
   @@index([workspaceId])
   @@index([telegramChannelId, scheduledAt])
   @@index([telegramAdSaleId])
@@ -1348,45 +1349,44 @@ model TelegramAdSalePlacement {
   @@index([pricingSnapshotId])
   @@index([workspaceId, publishedAt])
   @@index([workspaceId, plannedDeleteAt, deletedAt])
-  @@unique([workspaceId, telegramChannelId, inventoryOpportunityKey])
 }
 
 model TelegramAdvertiser {
-  id                               String                           @id @default(cuid())
-  workspaceId                      String
-  displayName                      String
-  companyName                      String?
-  telegramUsername                 String?
-  telegramUserId                   String?
-  phone                            String?
-  email                            String?
-  website                          String?
-  description                      String?
-  source                           String?
-  status                           TelegramAdvertiserStatus         @default(LEAD)
-  lifecycleStage                   TelegramAdvertiserLifecycleStage @default(NEW)
-  ownerMemberId                    String?
-  createdByUserId                  String?
-  lastContactAt                    DateTime?
-  lastPurchaseAt                   DateTime?
-  nextContactAt                    DateTime?
-  defaultFollowUpDays              Int?
-  preferredCurrency                String?                          @db.VarChar(3)
-  preferredContactMethod           TelegramAdvertiserContactType?
-  totalSalesCount                  Int                              @default(0)
-  completedSalesCount              Int                              @default(0)
-  totalPlacementsCount             Int                              @default(0)
-  totalRevenueInPrimaryCurrency    Decimal                          @default(0)
-  averageOrderValueInPrimaryCurrency Decimal                        @default(0)
-  firstPurchaseAt                  DateTime?
-  repeatCustomerAt                 DateTime?
-  archivedAt                       DateTime?
-  createdAt                        DateTime                         @default(now())
-  updatedAt                        DateTime                         @updatedAt
+  id                                 String                           @id @default(cuid())
+  workspaceId                        String
+  displayName                        String
+  companyName                        String?
+  telegramUsername                   String?
+  telegramUserId                     String?
+  phone                              String?
+  email                              String?
+  website                            String?
+  description                        String?
+  source                             String?
+  status                             TelegramAdvertiserStatus         @default(LEAD)
+  lifecycleStage                     TelegramAdvertiserLifecycleStage @default(NEW)
+  ownerMemberId                      String?
+  createdByUserId                    String?
+  lastContactAt                      DateTime?
+  lastPurchaseAt                     DateTime?
+  nextContactAt                      DateTime?
+  defaultFollowUpDays                Int?
+  preferredCurrency                  String?                          @db.VarChar(3)
+  preferredContactMethod             TelegramAdvertiserContactType?
+  totalSalesCount                    Int                              @default(0)
+  completedSalesCount                Int                              @default(0)
+  totalPlacementsCount               Int                              @default(0)
+  totalRevenueInPrimaryCurrency      Decimal                          @default(0)
+  averageOrderValueInPrimaryCurrency Decimal                          @default(0)
+  firstPurchaseAt                    DateTime?
+  repeatCustomerAt                   DateTime?
+  archivedAt                         DateTime?
+  createdAt                          DateTime                         @default(now())
+  updatedAt                          DateTime                         @updatedAt
 
-  workspace            Workspace                              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  ownerMember          WorkspaceMember?                       @relation("TelegramAdvertiserOwner", fields: [ownerMemberId], references: [id], onDelete: SetNull)
-  createdByUser        User?                                  @relation("TelegramAdvertiserCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workspace            Workspace                               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ownerMember          WorkspaceMember?                        @relation("TelegramAdvertiserOwner", fields: [ownerMemberId], references: [id], onDelete: SetNull)
+  createdByUser        User?                                   @relation("TelegramAdvertiserCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   contacts             TelegramAdvertiserContact[]
   sales                TelegramAdSale[]
   tags                 TelegramAdvertiserTagAssignment[]
@@ -1415,23 +1415,23 @@ model TelegramAdvertiserContact {
   createdAt       DateTime                      @default(now())
   updatedAt       DateTime                      @updatedAt
 
-  workspace   Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  advertiser  TelegramAdvertiser @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  advertiser TelegramAdvertiser @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
 
-  @@index([workspaceId, advertiserId, type])
   @@unique([workspaceId, type, normalizedValue])
+  @@index([workspaceId, advertiserId, type])
 }
 
 model TelegramAdvertiserTag {
-  id         String   @id @default(cuid())
+  id          String   @id @default(cuid())
   workspaceId String
-  name       String
-  color      String?
-  position   Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  name        String
+  color       String?
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  workspace   Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   advertisers TelegramAdvertiserTagAssignment[]
 
   @@unique([workspaceId, name])
@@ -1439,16 +1439,16 @@ model TelegramAdvertiserTag {
 }
 
 model TelegramAdvertiserTagAssignment {
-  advertiserId      String
-  tagId             String
-  workspaceId       String
-  assignedByUserId  String?
-  createdAt         DateTime @default(now())
+  advertiserId     String
+  tagId            String
+  workspaceId      String
+  assignedByUserId String?
+  createdAt        DateTime @default(now())
 
-  advertiser      TelegramAdvertiser    @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
-  tag             TelegramAdvertiserTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  assignedByUser  User?                 @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  advertiser     TelegramAdvertiser    @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  tag            TelegramAdvertiserTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignedByUser User?                 @relation(fields: [assignedByUserId], references: [id], onDelete: SetNull)
 
   @@id([advertiserId, tagId])
   @@index([workspaceId, tagId])
@@ -1456,66 +1456,66 @@ model TelegramAdvertiserTagAssignment {
 
 model TelegramAdvertiserActivity {
   id            String                         @id @default(cuid())
-  workspaceId    String
-  advertiserId   String
-  saleId         String?
-  placementId    String?
-  taskId         String?
-  actorUserId    String?
-  actorMemberId  String?
-  type           TelegramAdvertiserActivityType
-  title          String
-  description    String?
-  metadata       Json?
-  occurredAt     DateTime
-  createdAt      DateTime                       @default(now())
+  workspaceId   String
+  advertiserId  String
+  saleId        String?
+  placementId   String?
+  taskId        String?
+  actorUserId   String?
+  actorMemberId String?
+  type          TelegramAdvertiserActivityType
+  title         String
+  description   String?
+  metadata      Json?
+  occurredAt    DateTime
+  createdAt     DateTime                       @default(now())
 
-  workspace      Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  advertiser     TelegramAdvertiser             @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
-  sale           TelegramAdSale?                @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  placement      TelegramAdSalePlacement?       @relation(fields: [placementId], references: [id], onDelete: SetNull)
-  task           TelegramAdvertiserTask?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  actorUser      User?                          @relation("TelegramAdvertiserActivityActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
-  actorMember    WorkspaceMember?               @relation("TelegramAdvertiserActivityActorMember", fields: [actorMemberId], references: [id], onDelete: SetNull)
-  sourcedSales   TelegramAdSale[]               @relation("TelegramAdSaleSourceActivity")
+  workspace    Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  advertiser   TelegramAdvertiser       @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  sale         TelegramAdSale?          @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  placement    TelegramAdSalePlacement? @relation(fields: [placementId], references: [id], onDelete: SetNull)
+  task         TelegramAdvertiserTask?  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  actorUser    User?                    @relation("TelegramAdvertiserActivityActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorMember  WorkspaceMember?         @relation("TelegramAdvertiserActivityActorMember", fields: [actorMemberId], references: [id], onDelete: SetNull)
+  sourcedSales TelegramAdSale[]         @relation("TelegramAdSaleSourceActivity")
 
   @@index([workspaceId, advertiserId, occurredAt])
   @@index([workspaceId, type, occurredAt])
 }
 
 model TelegramAdvertiserTask {
-  id                String                         @id @default(cuid())
-  workspaceId       String
-  advertiserId      String
-  saleId            String?
-  placementId       String?
-  assignedMemberId  String
-  createdByUserId   String?
-  type              TelegramAdvertiserTaskType
-  status            TelegramAdvertiserTaskStatus  @default(OPEN)
-  priority          TelegramAdvertiserTaskPriority @default(NORMAL)
-  title             String
-  description       String?
-  dueAt             DateTime
-  remindAt          DateTime?
-  completedAt       DateTime?
-  skippedAt         DateTime?
-  snoozedUntil      DateTime?
-  completionNote    String?
-  automationRuleId  String?
-  metadata          Json?
-  createdAt         DateTime                       @default(now())
-  updatedAt         DateTime                       @updatedAt
+  id               String                         @id @default(cuid())
+  workspaceId      String
+  advertiserId     String
+  saleId           String?
+  placementId      String?
+  assignedMemberId String
+  createdByUserId  String?
+  type             TelegramAdvertiserTaskType
+  status           TelegramAdvertiserTaskStatus   @default(OPEN)
+  priority         TelegramAdvertiserTaskPriority @default(NORMAL)
+  title            String
+  description      String?
+  dueAt            DateTime
+  remindAt         DateTime?
+  completedAt      DateTime?
+  skippedAt        DateTime?
+  snoozedUntil     DateTime?
+  completionNote   String?
+  automationRuleId String?
+  metadata         Json?
+  createdAt        DateTime                       @default(now())
+  updatedAt        DateTime                       @updatedAt
 
-  workspace        Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  advertiser       TelegramAdvertiser                @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
-  sale             TelegramAdSale?                   @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  placement        TelegramAdSalePlacement?          @relation(fields: [placementId], references: [id], onDelete: SetNull)
-  assignedMember   WorkspaceMember                   @relation("TelegramAdvertiserTaskAssignedMember", fields: [assignedMemberId], references: [id], onDelete: Restrict)
-  createdByUser    User?                             @relation("TelegramAdvertiserTaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  automationRule   TelegramAdvertiserAutomationRule? @relation(fields: [automationRuleId], references: [id], onDelete: SetNull)
-  activities       TelegramAdvertiserActivity[]
-  sourcedSales     TelegramAdSale[]                  @relation("TelegramAdSaleSourceTask")
+  workspace            Workspace                               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  advertiser           TelegramAdvertiser                      @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  sale                 TelegramAdSale?                         @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  placement            TelegramAdSalePlacement?                @relation(fields: [placementId], references: [id], onDelete: SetNull)
+  assignedMember       WorkspaceMember                         @relation("TelegramAdvertiserTaskAssignedMember", fields: [assignedMemberId], references: [id], onDelete: Restrict)
+  createdByUser        User?                                   @relation("TelegramAdvertiserTaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  automationRule       TelegramAdvertiserAutomationRule?       @relation(fields: [automationRuleId], references: [id], onDelete: SetNull)
+  activities           TelegramAdvertiserActivity[]
+  sourcedSales         TelegramAdSale[]                        @relation("TelegramAdSaleSourceTask")
   automationExecutions TelegramAdvertiserAutomationExecution[]
 
   @@index([workspaceId, assignedMemberId, status, dueAt])
@@ -1524,23 +1524,23 @@ model TelegramAdvertiserTask {
 }
 
 model TelegramAdCrmMemberSettings {
-  id                              String                        @id @default(cuid())
-  workspaceId                     String
-  workspaceMemberId               String                        @unique
-  defaultFollowUpDays             Int                           @default(30)
-  defaultReactivationDays         Int                           @default(60)
-  autoCreateFollowUpAfterPlacement Boolean                      @default(true)
-  autoCreateFeedbackTask          Boolean                       @default(false)
-  autoCreatePaymentFollowUp       Boolean                       @default(true)
-  dailyDigestEnabled              Boolean                       @default(false)
-  overdueDigestEnabled            Boolean                       @default(true)
-  reminderNotificationsEnabled    Boolean                       @default(true)
-  preferredReminderTime           String?
-  timezone                        String                        @default("UTC")
-  defaultTaskPriority             TelegramAdvertiserTaskPriority @default(NORMAL)
-  defaultAdvertiserOwnerMode      TelegramAdCrmOwnerMode        @default(SALE_ASSIGNEE)
-  createdAt                       DateTime                      @default(now())
-  updatedAt                       DateTime                      @updatedAt
+  id                               String                         @id @default(cuid())
+  workspaceId                      String
+  workspaceMemberId                String                         @unique
+  defaultFollowUpDays              Int                            @default(30)
+  defaultReactivationDays          Int                            @default(60)
+  autoCreateFollowUpAfterPlacement Boolean                        @default(true)
+  autoCreateFeedbackTask           Boolean                        @default(false)
+  autoCreatePaymentFollowUp        Boolean                        @default(true)
+  dailyDigestEnabled               Boolean                        @default(false)
+  overdueDigestEnabled             Boolean                        @default(true)
+  reminderNotificationsEnabled     Boolean                        @default(true)
+  preferredReminderTime            String?
+  timezone                         String                         @default("UTC")
+  defaultTaskPriority              TelegramAdvertiserTaskPriority @default(NORMAL)
+  defaultAdvertiserOwnerMode       TelegramAdCrmOwnerMode         @default(SALE_ASSIGNEE)
+  createdAt                        DateTime                       @default(now())
+  updatedAt                        DateTime                       @updatedAt
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   workspaceMember WorkspaceMember @relation(fields: [workspaceMemberId], references: [id], onDelete: Cascade)
@@ -1549,91 +1549,91 @@ model TelegramAdCrmMemberSettings {
 }
 
 model TelegramAdCrmWorkspaceSettings {
-  workspaceId                   String   @id
-  defaultFollowUpDays           Int      @default(30)
-  defaultReactivationDays       Int      @default(60)
-  defaultSaleOwnerAssignment    TelegramAdCrmOwnerMode @default(SALE_ASSIGNEE)
-  autoCreateAdvertiserFromSale  Boolean  @default(true)
-  requireAdvertiserForConfirmedSale Boolean @default(false)
-  duplicateDetectionEnabled     Boolean  @default(true)
-  inactivityThresholdDays       Int      @default(60)
-  highValueCustomerThreshold    Decimal  @default(0)
-  createdAt                     DateTime @default(now())
-  updatedAt                     DateTime @updatedAt
+  workspaceId                       String                 @id
+  defaultFollowUpDays               Int                    @default(30)
+  defaultReactivationDays           Int                    @default(60)
+  defaultSaleOwnerAssignment        TelegramAdCrmOwnerMode @default(SALE_ASSIGNEE)
+  autoCreateAdvertiserFromSale      Boolean                @default(true)
+  requireAdvertiserForConfirmedSale Boolean                @default(false)
+  duplicateDetectionEnabled         Boolean                @default(true)
+  inactivityThresholdDays           Int                    @default(60)
+  highValueCustomerThreshold        Decimal                @default(0)
+  createdAt                         DateTime               @default(now())
+  updatedAt                         DateTime               @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model TelegramAdvertiserAutomationRule {
-  id                 String                               @id @default(cuid())
+  id                 String                                 @id @default(cuid())
   workspaceId        String
   name               String
   eventType          TelegramAdvertiserAutomationEventType
   actionType         TelegramAdvertiserAutomationActionType
-  delayDays          Int                                  @default(0)
-  delayHours         Int                                  @default(0)
-  assignedMemberMode TelegramAdCrmOwnerMode               @default(SALE_ASSIGNEE)
+  delayDays          Int                                    @default(0)
+  delayHours         Int                                    @default(0)
+  assignedMemberMode TelegramAdCrmOwnerMode                 @default(SALE_ASSIGNEE)
   specificMemberId   String?
   conditions         Json?
-  isActive           Boolean                              @default(true)
-  priority           TelegramAdvertiserTaskPriority       @default(NORMAL)
-  createdAt          DateTime                             @default(now())
-  updatedAt          DateTime                             @updatedAt
+  isActive           Boolean                                @default(true)
+  priority           TelegramAdvertiserTaskPriority         @default(NORMAL)
+  createdAt          DateTime                               @default(now())
+  updatedAt          DateTime                               @updatedAt
 
-  workspace          Workspace                             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  specificMember     WorkspaceMember?                      @relation("TelegramAdvertiserAutomationSpecificMember", fields: [specificMemberId], references: [id], onDelete: SetNull)
-  tasks              TelegramAdvertiserTask[]
-  executions         TelegramAdvertiserAutomationExecution[]
+  workspace      Workspace                               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  specificMember WorkspaceMember?                        @relation("TelegramAdvertiserAutomationSpecificMember", fields: [specificMemberId], references: [id], onDelete: SetNull)
+  tasks          TelegramAdvertiserTask[]
+  executions     TelegramAdvertiserAutomationExecution[]
 
   @@index([workspaceId, eventType, isActive])
 }
 
 model TelegramAdvertiserAutomationExecution {
-  id                String                                    @id @default(cuid())
-  workspaceId       String
-  automationRuleId  String
-  advertiserId      String
-  saleId            String?
-  placementId       String?
-  taskId            String?
-  eventKey          String
-  status            TelegramAdvertiserAutomationExecutionStatus
-  executedAt        DateTime
-  createdTaskId     String?
-  error             String?
-  createdAt         DateTime                                  @default(now())
+  id               String                                      @id @default(cuid())
+  workspaceId      String
+  automationRuleId String
+  advertiserId     String
+  saleId           String?
+  placementId      String?
+  taskId           String?
+  eventKey         String
+  status           TelegramAdvertiserAutomationExecutionStatus
+  executedAt       DateTime
+  createdTaskId    String?
+  error            String?
+  createdAt        DateTime                                    @default(now())
 
-  workspace         Workspace                                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  automationRule    TelegramAdvertiserAutomationRule          @relation(fields: [automationRuleId], references: [id], onDelete: Cascade)
-  advertiser        TelegramAdvertiser                        @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
-  sale              TelegramAdSale?                           @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  placement         TelegramAdSalePlacement?                  @relation(fields: [placementId], references: [id], onDelete: SetNull)
-  task              TelegramAdvertiserTask?                   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  workspace      Workspace                        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automationRule TelegramAdvertiserAutomationRule @relation(fields: [automationRuleId], references: [id], onDelete: Cascade)
+  advertiser     TelegramAdvertiser               @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  sale           TelegramAdSale?                  @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  placement      TelegramAdSalePlacement?         @relation(fields: [placementId], references: [id], onDelete: SetNull)
+  task           TelegramAdvertiserTask?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@unique([automationRuleId, eventKey])
   @@index([workspaceId, executedAt])
 }
 
 model TelegramAdPlacementAdvertiserResult {
-  id             String                                   @id @default(cuid())
+  id              String                                    @id @default(cuid())
   workspaceId     String
-  placementId     String                                   @unique
+  placementId     String                                    @unique
   leadsCount      Int?
   salesCount      Int?
   revenue         Decimal?
-  currency        String?                                  @db.VarChar(3)
+  currency        String?                                   @db.VarChar(3)
   conversionRate  Decimal?
   roi             Decimal?
   source          TelegramAdPlacementAdvertiserResultSource
   notes           String?
   reportedAt      DateTime?
   createdByUserId String?
-  createdAt       DateTime                                 @default(now())
-  updatedAt       DateTime                                 @updatedAt
+  createdAt       DateTime                                  @default(now())
+  updatedAt       DateTime                                  @updatedAt
 
-  workspace      Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  placement      TelegramAdSalePlacement @relation(fields: [placementId], references: [id], onDelete: Cascade)
-  createdByUser  User?                   @relation("TelegramAdPlacementAdvertiserResultCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  workspace     Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  placement     TelegramAdSalePlacement @relation(fields: [placementId], references: [id], onDelete: Cascade)
+  createdByUser User?                   @relation("TelegramAdPlacementAdvertiserResultCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, reportedAt])
 }
@@ -1865,11 +1865,11 @@ model AdCampaign {
 }
 
 model AdCampaignAdmissionBatch {
-  id                       String                                  @id @default(cuid())
+  id                       String                                @id @default(cuid())
   workspaceId              String
   adCampaignId             String
   telegramChannelId        String
-  status                   AdCampaignAdmissionBatchStatus          @default(ACTIVE)
+  status                   AdCampaignAdmissionBatchStatus        @default(ACTIVE)
   detectionMode            AdCampaignAdmissionDetectionMode
   analysisStartedAt        DateTime
   firstObservedAt          DateTime
@@ -1877,22 +1877,22 @@ model AdCampaignAdmissionBatch {
   endedAt                  DateTime?
   timeBoundarySource       AdCampaignAdmissionTimeBoundarySource
   releasedSubscribersCount Int
-  joinedBefore             Int                                     @default(0)
-  joinedAfter              Int                                     @default(0)
-  requestedBefore          Int                                     @default(0)
-  requestedAfter           Int                                     @default(0)
+  joinedBefore             Int                                   @default(0)
+  joinedAfter              Int                                   @default(0)
+  requestedBefore          Int                                   @default(0)
+  requestedAfter           Int                                   @default(0)
   sourceLinks              Json
   baselineSnapshotAt       DateTime?
-  baselineMethod           AdCampaignAdmissionBaselineMethod       @default(UNAVAILABLE)
+  baselineMethod           AdCampaignAdmissionBaselineMethod     @default(UNAVAILABLE)
   trackedPosts             Json
-  trackedPostsCount        Int                                     @default(0)
+  trackedPostsCount        Int                                   @default(0)
   baselineAvgViews         Float?
   baselineAvgReactions     Float?
-  dataQuality              AdCampaignAdmissionDataQuality          @default(GOOD)
+  dataQuality              AdCampaignAdmissionDataQuality        @default(GOOD)
   dataQualityReason        String?
-  batchFingerprint         String                                  @unique
-  createdAt                DateTime                                @default(now())
-  updatedAt                DateTime                                @updatedAt
+  batchFingerprint         String                                @unique
+  createdAt                DateTime                              @default(now())
+  updatedAt                DateTime                              @updatedAt
 
   workspace       Workspace                         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adCampaign      AdCampaign                        @relation(fields: [adCampaignId], references: [id], onDelete: Cascade)
@@ -1933,14 +1933,14 @@ model AdCampaignAdmissionViewSnapshot {
 }
 
 model AdCampaignAdmissionBackfillState {
-  id                            String   @id @default(cuid())
+  id                            String    @id @default(cuid())
   workspaceId                   String
   telegramChannelId             String
   completedAt                   DateTime
   lastProcessedInviteSnapshotAt DateTime?
-  version                       Int      @default(1)
-  createdAt                     DateTime @default(now())
-  updatedAt                     DateTime @updatedAt
+  version                       Int       @default(1)
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
 
   workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel TelegramChannel @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)
@@ -2231,6 +2231,7 @@ model TelegramManagedPost {
   icon                 String?
   groupId              String?
   groupPosition        Int?
+  statusPosition       Int?
   sidebarPosition      Int?
 
   workspace        Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -2248,6 +2249,7 @@ model TelegramManagedPost {
   @@index([workspaceId, assignedMemberId])
   @@index([groupId])
   @@index([groupId, groupPosition])
+  @@index([groupId, status, statusPosition])
   @@index([telegramChannelId, sidebarPosition])
   @@index([status, scheduledAt])
   @@index([workspaceId, telegramChannelId, origin, status, scheduledAt])
@@ -2282,6 +2284,7 @@ model TelegramManagedPostRevision {
   icon                  String?
   groupId               String?
   groupPosition         Int?
+  statusPosition        Int?
   sidebarPosition       Int?
   reason                String
 
@@ -2296,19 +2299,21 @@ model TelegramManagedPostRevision {
   @@index([telegramManagedPostId, createdAt])
   @@index([workspaceId, createdAt])
   @@index([telegramChannelId, createdAt])
+  @@index([groupId, status, statusPosition])
 }
 
 model PostGroup {
-  id                String  @id @default(cuid())
-  workspaceId       String
-  telegramChannelId String
-  title             String
-  description       String?
-  icon              String?
-  isSystem          Boolean @default(false)
-  systemKey         String?
-  createdByMemberId String
-  sidebarPosition   Int?
+  id                     String  @id @default(cuid())
+  workspaceId            String
+  telegramChannelId      String
+  title                  String
+  description            String?
+  icon                   String?
+  isSystem               Boolean @default(false)
+  systemKey              String?
+  statusNumberingEnabled Boolean @default(false)
+  createdByMemberId      String
+  sidebarPosition        Int?
 
   workspace            Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   telegramChannel      TelegramChannel               @relation(fields: [telegramChannelId], references: [id], onDelete: Cascade)

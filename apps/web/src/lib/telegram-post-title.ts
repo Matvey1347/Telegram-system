@@ -1,17 +1,3 @@
-import type { TelegramManagedPost } from "@/lib/api";
-
-type NextGroupedPostNumberOptions = {
-  groupId: string | null;
-  posts: TelegramManagedPost[];
-  pendingGroupPostCount?: number;
-};
-
-export function buildAutoGroupedPostTitle(
-  nextNumber: number | null,
-): string {
-  return nextNumber && nextNumber > 0 ? `${nextNumber}) ` : "";
-}
-
 export type AutoPrefilledPostTitle = {
   emoji: string | null;
   title: string;
@@ -25,7 +11,10 @@ const titleSegmenter =
 function splitGraphemes(value: string) {
   if (!value) return [];
   if (!titleSegmenter) return Array.from(value);
-  return Array.from(titleSegmenter.segment(value), (segment) => segment.segment);
+  return Array.from(
+    titleSegmenter.segment(value),
+    (segment) => segment.segment,
+  );
 }
 
 function isEmojiGrapheme(value: string) {
@@ -63,11 +52,13 @@ export function extractAutoPrefilledPostTitle(
   if (start < end && isEmojiGrapheme(graphemes[start])) {
     emoji = graphemes[start];
     start += 1;
-    while (start < end && /[\s\-–—:|]/u.test(graphemes[start] || "")) start += 1;
+    while (start < end && /[\s\-–—:|]/u.test(graphemes[start] || ""))
+      start += 1;
   } else if (end > start && isEmojiGrapheme(graphemes[end - 1])) {
     emoji = graphemes[end - 1];
     end -= 1;
-    while (end > start && /[\s\-–—:|]/u.test(graphemes[end - 1] || "")) end -= 1;
+    while (end > start && /[\s\-–—:|]/u.test(graphemes[end - 1] || ""))
+      end -= 1;
   }
 
   const title = graphemes.slice(start, end).join("").trim();
@@ -77,14 +68,4 @@ export function extractAutoPrefilledPostTitle(
     emoji,
     title,
   };
-}
-
-export function getNextGroupedPostNumber({
-  groupId,
-  posts,
-  pendingGroupPostCount = 0,
-}: NextGroupedPostNumberOptions): number | null {
-  if (!groupId) return null;
-  const existingCount = posts.filter((post) => post.groupId === groupId).length;
-  return existingCount + pendingGroupPostCount + 1;
 }

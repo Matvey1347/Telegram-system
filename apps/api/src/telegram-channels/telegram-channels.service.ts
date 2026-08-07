@@ -52,6 +52,7 @@ import {
   createPaginatedResponse,
   normalizePagination,
 } from '../common/pagination/pagination.utils';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { WorkspaceService } from '../common/workspace.service';
 import { TokenEncryptionService } from '../common/security/token-encryption.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -127,11 +128,13 @@ import {
 import {
   bulkActionCounts,
   movedPostDatabaseState,
+  normalizePostGroupNumbering as normalizePostGroupNumberingRecords,
   movedPostState,
   postGroupStatusSummary,
   publishGroupPostSkipReason,
   scheduleGroupPostSkipReason,
   scheduleSequenceDates,
+  stripLegacyGroupedPostTitlePrefix,
   validateCompletePostOrder,
 } from './post-groups.helpers';
 
@@ -237,6 +240,7 @@ type ManagedPostRevisionSource = {
   icon: string | null;
   groupId: string | null;
   groupPosition: number | null;
+  statusPosition: number | null;
   sidebarPosition: number | null;
 };
 
@@ -273,20 +277,25 @@ export class TelegramChannelsService {
   private readonly defaultPostSyncLimit = 50;
   private readonly initialPostBackfillLimit = 50;
   private readonly olderPostBackfillMaxPages = 5;
-  private readonly managedPostRevisionRetentionMs =
-    7 * 24 * 60 * 60 * 1000;
-  private managedPostRevisionStorageState:
-    | 'unknown'
-    | 'available'
-    | 'missing' = 'unknown';
+  private readonly managedPostRevisionRetentionMs = 7 * 24 * 60 * 60 * 1000;
+  private managedPostRevisionStorageState: 'unknown' | 'available' | 'missing' =
+    'unknown';
   private telegramManagedPostOriginColumnsAvailable: boolean | null = null;
   private ensureTelegramManagedPostOriginColumnsPromise: Promise<void> | null =
     null;
   private readonly managedPostInclude = {
     assignedMember: WorkspaceService.assignedMemberInclude,
     group: {
-      include: {
-        createdByMember: WorkspaceService.assignedMemberInclude,
+      select: {
+        id: true,
+        workspaceId: true,
+        telegramChannelId: true,
+        title: true,
+        icon: true,
+        isSystem: true,
+        systemKey: true,
+        statusNumberingEnabled: true,
+        sidebarPosition: true,
       },
     },
   } as const;
@@ -346,19 +355,16 @@ export class TelegramChannelsService {
     | 'unknown'
     | 'available'
     | 'missing' = 'unknown';
-  private ensureTelegramInviteLinkSnapshotStoragePromise:
-    | Promise<boolean>
-    | null = null;
-  private ensureTelegramInviteLinkRequestedCountColumnPromise:
-    | Promise<boolean>
-    | null = null;
+  private ensureTelegramInviteLinkSnapshotStoragePromise: Promise<boolean> | null =
+    null;
+  private ensureTelegramInviteLinkRequestedCountColumnPromise: Promise<boolean> | null =
+    null;
   private telegramChannelSyncScopeColumnsAvailable: boolean | null = null;
   private ensureTelegramChannelSyncScopeColumnsPromise: Promise<void> | null =
     null;
   private telegramChannelImportPolicyColumnsAvailable: boolean | null = null;
-  private ensureTelegramChannelImportPolicyColumnsPromise:
-    | Promise<void>
-    | null = null;
+  private ensureTelegramChannelImportPolicyColumnsPromise: Promise<void> | null =
+    null;
   private postGroupSystemColumnsAvailable: boolean | null = null;
   private ensurePostGroupSystemColumnsPromise: Promise<void> | null = null;
 
@@ -370,10 +376,10 @@ export class TelegramChannelsService {
     private mtprotoClient: TelegramMtprotoClient,
     private sourceAccessService: TelegramSourceAccessService,
     private analyticsService: TelegramChannelAnalyticsService,
-    private readonly applicationLogger: ApplicationLoggerService = ({
+    private readonly applicationLogger: ApplicationLoggerService = {
       info: () => undefined,
       writeStructured: () => undefined,
-    } as unknown) as ApplicationLoggerService,
+    } as unknown as ApplicationLoggerService,
     private readonly admissionAnalyticsService?: AdCampaignAdmissionAnalyticsService,
     private readonly admissionBackfillService?: AdCampaignAdmissionBackfillService,
   ) {}
@@ -465,7 +471,10 @@ export class TelegramChannelsService {
 
     const candidates = campaigns.filter((campaign: any) => {
       const date =
-        campaign.placementDate ?? campaign.startedAt ?? campaign.createdAt ?? null;
+        campaign.placementDate ??
+        campaign.startedAt ??
+        campaign.createdAt ??
+        null;
       const campaignDateLabel = date
         ? this.formatInviteLinkDateLabel(new Date(date))
         : null;
@@ -1026,10 +1035,18 @@ export class TelegramChannelsService {
     defaultNow?: Date;
   }) {
     await this.ensureTelegramChannelImportPolicyColumnsAvailable();
-    const { workspaceId, channelId = null, input, existing, defaultNow } = params;
+    const {
+      workspaceId,
+      channelId = null,
+      input,
+      existing,
+      defaultNow,
+    } = params;
     const now = defaultNow ?? new Date();
     const postsSyncFromInput = this.toOptionalDate(input?.postsSyncFrom);
-    const inviteLinksSyncFromInput = this.toOptionalDate(input?.inviteLinksSyncFrom);
+    const inviteLinksSyncFromInput = this.toOptionalDate(
+      input?.inviteLinksSyncFrom,
+    );
     const acquisitionType =
       input?.acquisitionType === undefined
         ? (existing?.acquisitionType ?? 'CREATED')
@@ -1214,7 +1231,9 @@ export class TelegramChannelsService {
       return url ? [url] : [];
     });
     const primaryId = this.primaryTelegramMessageId({ messageIds, imageCount });
-    const primaryUrl = primaryId ? this.telegramMessageUrl(channel, primaryId) : null;
+    const primaryUrl = primaryId
+      ? this.telegramMessageUrl(channel, primaryId)
+      : null;
     if (!primaryUrl) return urls;
     return [primaryUrl, ...urls.filter((url) => url !== primaryUrl)];
   }
@@ -1288,7 +1307,7 @@ export class TelegramChannelsService {
     const matched =
       !textLooksConsistent && byTitle
         ? byTitle
-        : byExactText ?? byTitle ?? null;
+        : (byExactText ?? byTitle ?? null);
     if (!matched) return null;
 
     const messageIds =
@@ -1368,7 +1387,12 @@ export class TelegramChannelsService {
     steps: readonly string[],
     index: number,
   ) {
-    await this.notifyTaskProgress(onProgress, index + 1, steps.length, steps[index]);
+    await this.notifyTaskProgress(
+      onProgress,
+      index + 1,
+      steps.length,
+      steps[index],
+    );
   }
 
   private ensureImportableChannelEntity(
@@ -1512,19 +1536,17 @@ export class TelegramChannelsService {
     };
   }
 
-  private async refreshMtprotoAccountCapabilities(
-    account: {
-      id: string;
-      label: string;
-      apiId: string;
-      apiHashEncrypted: string;
-      apiHashIv: string;
-      apiHashAuthTag: string;
-      sessionEncrypted: string | null;
-      sessionIv: string | null;
-      sessionAuthTag: string | null;
-    },
-  ) {
+  private async refreshMtprotoAccountCapabilities(account: {
+    id: string;
+    label: string;
+    apiId: string;
+    apiHashEncrypted: string;
+    apiHashIv: string;
+    apiHashAuthTag: string;
+    sessionEncrypted: string | null;
+    sessionIv: string | null;
+    sessionAuthTag: string | null;
+  }) {
     const profile = await this.mtprotoClient.getAccountProfile(
       this.accountCredentials(account),
     );
@@ -1565,7 +1587,11 @@ export class TelegramChannelsService {
       }),
       this.prisma.telegramUserAccountIntegration.findMany({
         where: { workspaceId },
-        select: { telegramUserId: true, username: true, assignedMemberId: true },
+        select: {
+          telegramUserId: true,
+          username: true,
+          assignedMemberId: true,
+        },
       }),
     ]);
     return buildInviteLinkAttributionMaps({ members, integrations });
@@ -1575,7 +1601,9 @@ export class TelegramChannelsService {
     workspaceId: string;
     channelId: string;
     link: TelegramInviteLinksResult['links'][number];
-    maps: Awaited<ReturnType<TelegramChannelsService['buildInviteAttributionMaps']>>;
+    maps: Awaited<
+      ReturnType<TelegramChannelsService['buildInviteAttributionMaps']>
+    >;
     processedCount: number;
     totalLinks: number;
     warnings: string[];
@@ -1740,8 +1768,10 @@ export class TelegramChannelsService {
         expectedTotalLinks: params.remote.expectedTotalLinks,
         fetchedTotalLinks,
         missingTotalLinks,
-        activeLinksCount: params.remote.links.filter((link) => !link.revoked).length,
-        revokedLinksCount: params.remote.links.filter((link) => link.revoked).length,
+        activeLinksCount: params.remote.links.filter((link) => !link.revoked)
+          .length,
+        revokedLinksCount: params.remote.links.filter((link) => link.revoked)
+          .length,
         importedCount: params.importedCount,
         updatedCount: params.updatedCount,
         matchedMembersCount: params.matchedMembersCount,
@@ -1761,9 +1791,14 @@ export class TelegramChannelsService {
     };
   }
 
-  private inviteLinkHistoryPoints<T extends { syncedAt: Date; joinedCount: number; requestedCount: number; isRevoked?: boolean | null }>(
-    rows: T[],
-  ) {
+  private inviteLinkHistoryPoints<
+    T extends {
+      syncedAt: Date;
+      joinedCount: number;
+      requestedCount: number;
+      isRevoked?: boolean | null;
+    },
+  >(rows: T[]) {
     let peakJoinedCount = 0;
     let peakTotalAttributed = 0;
     return rows.map((row) => {
@@ -1772,7 +1807,10 @@ export class TelegramChannelsService {
       const totalAttributed = joinedCount + requestedCount;
       peakJoinedCount = Math.max(peakJoinedCount, joinedCount);
       peakTotalAttributed = Math.max(peakTotalAttributed, totalAttributed);
-      const drawdownFromPeak = Math.max(0, peakTotalAttributed - totalAttributed);
+      const drawdownFromPeak = Math.max(
+        0,
+        peakTotalAttributed - totalAttributed,
+      );
       const drawdownPercent =
         peakTotalAttributed > 0
           ? (drawdownFromPeak / peakTotalAttributed) * 100
@@ -1817,7 +1855,8 @@ export class TelegramChannelsService {
       currentJoinedCount: Number(current?.joinedCount || 0),
       currentRequestedCount: Number(current?.requestedCount || 0),
       currentTotalAttributed:
-        Number(current?.joinedCount || 0) + Number(current?.requestedCount || 0),
+        Number(current?.joinedCount || 0) +
+        Number(current?.requestedCount || 0),
       peakJoinedCount,
       peakRequestedCount,
       peakTotalAttributed,
@@ -1849,7 +1888,9 @@ export class TelegramChannelsService {
       rowsAsc.slice(-maxPoints),
       {
         syncedAt:
-          inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
+          inviteLink.lastSyncedAt ??
+          inviteLink.updatedAt ??
+          inviteLink.createdAt,
         joinedCount: inviteLink.joinedCount,
         requestedCount: inviteLink.requestedCount,
         isRevoked: inviteLink.isRevoked,
@@ -1861,7 +1902,9 @@ export class TelegramChannelsService {
         : [
             this.inviteLinkSyntheticHistoryPoint({
               syncedAt:
-                inviteLink.lastSyncedAt ?? inviteLink.updatedAt ?? inviteLink.createdAt,
+                inviteLink.lastSyncedAt ??
+                inviteLink.updatedAt ??
+                inviteLink.createdAt,
               joinedCount: inviteLink.joinedCount,
               requestedCount: inviteLink.requestedCount,
               isRevoked: inviteLink.isRevoked,
@@ -1969,7 +2012,8 @@ export class TelegramChannelsService {
       const linkRows = this.appendCurrentInviteLinkHistoryRowIfChanged(
         (perLinkRows.get(link.id) ?? []).slice(-maxPoints),
         {
-          syncedAt: link.lastSyncedAt ?? link.updatedAt ?? link.createdAt ?? null,
+          syncedAt:
+            link.lastSyncedAt ?? link.updatedAt ?? link.createdAt ?? null,
           joinedCount: link.joinedCount,
           requestedCount: link.requestedCount,
           isRevoked: link.isRevoked,
@@ -2029,7 +2073,9 @@ export class TelegramChannelsService {
     if (!rows.length) {
       return new Map<
         string,
-        ReturnType<TelegramChannelsService["buildCampaignInviteLinkHistoryPayload"]>
+        ReturnType<
+          TelegramChannelsService['buildCampaignInviteLinkHistoryPayload']
+        >
       >();
     }
     const campaignIds = rows.map((row) => row.id);
@@ -2083,7 +2129,9 @@ export class TelegramChannelsService {
 
     const historyByCampaignId = new Map<
       string,
-      ReturnType<TelegramChannelsService["buildCampaignInviteLinkHistoryPayload"]>
+      ReturnType<
+        TelegramChannelsService['buildCampaignInviteLinkHistoryPayload']
+      >
     >();
     for (const row of rows) {
       historyByCampaignId.set(
@@ -2118,12 +2166,7 @@ export class TelegramChannelsService {
       updatedAt?: Date | null;
       createdAt?: Date | null;
     } & Record<string, unknown>,
-  >(
-    workspaceId: string,
-    channelId: string,
-    links: T[],
-    limit = 120,
-  ) {
+  >(workspaceId: string, channelId: string, links: T[], limit = 120) {
     const normalizedLinks = this.normalizeInviteLinksRequestedCount(links);
     if (!normalizedLinks.length) return normalizedLinks;
     const rows = await this.readInviteLinkSnapshotsOrEmpty({
@@ -2758,8 +2801,9 @@ export class TelegramChannelsService {
         ...params.update,
         updatedAt: timestamp,
       };
-      const assignments = Object.entries(updateData).map(([column, value]) =>
-        Prisma.sql`${Prisma.raw(`"${column}"`)} = ${this.inviteLinkLegacyColumnValue(column, value)}`,
+      const assignments = Object.entries(updateData).map(
+        ([column, value]) =>
+          Prisma.sql`${Prisma.raw(`"${column}"`)} = ${this.inviteLinkLegacyColumnValue(column, value)}`,
       );
 
       await db.$executeRaw(Prisma.sql`
@@ -2774,7 +2818,9 @@ export class TelegramChannelsService {
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      const columns = Object.keys(insertData).map((column) => Prisma.raw(`"${column}"`));
+      const columns = Object.keys(insertData).map((column) =>
+        Prisma.raw(`"${column}"`),
+      );
       const values = Object.entries(insertData).map(([column, value]) =>
         this.inviteLinkLegacyColumnValue(column, value),
       );
@@ -3049,7 +3095,12 @@ export class TelegramChannelsService {
       telegramManagedPostId: post.id,
       workspaceId: post.workspaceId,
       telegramChannelId: post.telegramChannelId,
-      title: post.title,
+      title: post.groupId
+        ? stripLegacyGroupedPostTitlePrefix(
+            post.title,
+            post.groupPosition == null ? null : post.groupPosition + 1,
+          )
+        : post.title,
       text: post.text,
       imageUrls: [...post.imageUrls],
       origin: post.origin,
@@ -3065,22 +3116,30 @@ export class TelegramChannelsService {
       sourceType: post.sourceType,
       sourceId: post.sourceId,
       sourceWasPremium:
-        (post as ManagedPostRevisionSource & { sourceWasPremium?: boolean | null })
-          .sourceWasPremium ?? null,
+        (
+          post as ManagedPostRevisionSource & {
+            sourceWasPremium?: boolean | null;
+          }
+        ).sourceWasPremium ?? null,
       captionLengthMaxUsed:
-        (post as ManagedPostRevisionSource & {
-          captionLengthMaxUsed?: number | null;
-        }).captionLengthMaxUsed ?? null,
+        (
+          post as ManagedPostRevisionSource & {
+            captionLengthMaxUsed?: number | null;
+          }
+        ).captionLengthMaxUsed ?? null,
       messageLengthMaxUsed:
-        (post as ManagedPostRevisionSource & {
-          messageLengthMaxUsed?: number | null;
-        }).messageLengthMaxUsed ?? null,
+        (
+          post as ManagedPostRevisionSource & {
+            messageLengthMaxUsed?: number | null;
+          }
+        ).messageLengthMaxUsed ?? null,
       publishMode: post.publishMode,
       lastError: post.lastError,
       assignedMemberId: post.assignedMemberId,
       icon: post.icon,
       groupId: post.groupId,
       groupPosition: post.groupPosition,
+      statusPosition: post.statusPosition ?? null,
       sidebarPosition: post.sidebarPosition,
       reason,
     };
@@ -3089,22 +3148,34 @@ export class TelegramChannelsService {
   private managedPostRevisionDelegate(
     client: Prisma.TransactionClient | PrismaService,
   ) {
-    return (client as PrismaService & {
-      telegramManagedPostRevision: {
-        create: (args: { data: ReturnType<typeof this.managedPostRevisionData> }) => Promise<unknown>;
-        deleteMany: (args: { where: Record<string, unknown> }) => Promise<unknown>;
-        findMany: (args: Record<string, unknown>) => Promise<unknown>;
-        findFirst: (args: Record<string, unknown>) => Promise<unknown>;
-      };
-    }).telegramManagedPostRevision;
+    return (
+      client as PrismaService & {
+        telegramManagedPostRevision: {
+          create: (args: {
+            data: ReturnType<typeof this.managedPostRevisionData>;
+          }) => Promise<unknown>;
+          deleteMany: (args: {
+            where: Record<string, unknown>;
+          }) => Promise<unknown>;
+          findMany: (args: Record<string, unknown>) => Promise<unknown>;
+          findFirst: (args: Record<string, unknown>) => Promise<unknown>;
+        };
+      }
+    ).telegramManagedPostRevision;
   }
 
   private managedPostRevisionQueryClient(
     client: Prisma.TransactionClient | PrismaService,
   ) {
     return client as Prisma.TransactionClient & {
-      $queryRaw<T = unknown>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<T>;
-      $executeRaw(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<number>;
+      $queryRaw<T = unknown>(
+        query: TemplateStringsArray | Prisma.Sql,
+        ...values: unknown[]
+      ): Promise<T>;
+      $executeRaw(
+        query: TemplateStringsArray | Prisma.Sql,
+        ...values: unknown[]
+      ): Promise<number>;
     };
   }
 
@@ -3129,7 +3200,9 @@ export class TelegramChannelsService {
     if (this.managedPostRevisionStorageState === 'available') return true;
     if (this.managedPostRevisionStorageState === 'missing') return false;
     try {
-      const rows = await this.prisma.$queryRaw<Array<{ exists: string | null }>>(
+      const rows = await this.prisma.$queryRaw<
+        Array<{ exists: string | null }>
+      >(
         Prisma.sql`
           SELECT to_regclass('"TelegramManagedPostRevision"')::text AS "exists"
         `,
@@ -3180,6 +3253,7 @@ export class TelegramChannelsService {
           "icon",
           "groupId",
           "groupPosition",
+          "statusPosition",
           "sidebarPosition",
           "reason"
         ) VALUES (
@@ -3208,6 +3282,7 @@ export class TelegramChannelsService {
           ${data.icon},
           ${data.groupId},
           ${data.groupPosition},
+          ${data.statusPosition},
           ${data.sidebarPosition},
           ${data.reason}
         )
@@ -3466,10 +3541,12 @@ export class TelegramChannelsService {
       resolvedText,
       post.imageUrls,
       {
-        captionLengthMax: (post as { captionLengthMaxUsed?: number | null })
-          .captionLengthMaxUsed ?? TELEGRAM_CAPTION_LIMIT,
-        messageLengthMax: (post as { messageLengthMaxUsed?: number | null })
-          .messageLengthMaxUsed ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
+        captionLengthMax:
+          (post as { captionLengthMaxUsed?: number | null })
+            .captionLengthMaxUsed ?? TELEGRAM_CAPTION_LIMIT,
+        messageLengthMax:
+          (post as { messageLengthMaxUsed?: number | null })
+            .messageLengthMaxUsed ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
       },
       post.publishMode === 'CAPTION_THEN_TEXT'
         ? 'CAPTION_THEN_TEXT'
@@ -3568,10 +3645,16 @@ export class TelegramChannelsService {
         caption: caption.text,
         caption_entities: caption.entities,
       });
-      for (let index = 0; index < rendered.followupHtmlParts.length; index += 1) {
+      for (
+        let index = 0;
+        index < rendered.followupHtmlParts.length;
+        index += 1
+      ) {
         const message = toBotFormattedText(rendered.followupHtmlParts[index]);
         await call('editMessageText', {
-          message_id: Number(effectiveMessageIds[post.imageUrls.length + index]),
+          message_id: Number(
+            effectiveMessageIds[post.imageUrls.length + index],
+          ),
           text: message.text,
           entities: message.entities,
         });
@@ -3638,18 +3721,20 @@ export class TelegramChannelsService {
         "purchaseTransactionId"
       FROM "TelegramChannel"
     `;
-    const rows = (params.workspaceId
-      ? await this.prisma.$queryRaw(Prisma.sql`
+    const rows = (
+      params.workspaceId
+        ? await this.prisma.$queryRaw(Prisma.sql`
           ${baseSelect}
           WHERE "id" = ${params.channelId}
             AND "workspaceId" = ${params.workspaceId}
           LIMIT 1
         `)
-      : await this.prisma.$queryRaw(Prisma.sql`
+        : await this.prisma.$queryRaw(Prisma.sql`
           ${baseSelect}
           WHERE "id" = ${params.channelId}
           LIMIT 1
-        `)) as Array<{
+        `)
+    ) as Array<{
       id: string;
       acquisitionType: 'CREATED' | 'PURCHASED' | null;
       postsSyncFrom: Date | null;
@@ -3992,7 +4077,10 @@ export class TelegramChannelsService {
     }
 
     const purchaseCostByChannelId = new Map(
-      purchaseRows.map((row) => [row.channelId, Number(row.acquisitionCost || 0)]),
+      purchaseRows.map((row) => [
+        row.channelId,
+        Number(row.acquisitionCost || 0),
+      ]),
     );
 
     const summaries = new Map<string, Record<string, unknown>>();
@@ -4019,7 +4107,8 @@ export class TelegramChannelsService {
         0,
       );
       const totalAttributedSubscribers = normalizedCampaigns.reduce(
-        (sum, campaign) => sum + effectiveCampaignAttributedSubscribers(campaign),
+        (sum, campaign) =>
+          sum + effectiveCampaignAttributedSubscribers(campaign),
         0,
       );
       const avgCpa =
@@ -4082,8 +4171,7 @@ export class TelegramChannelsService {
         dataQuality: audience?.dataQuality ?? null,
         dataQualityReason: audience?.dataQualityReason ?? null,
         dataQualityWarning: null,
-        hasExternalTrafficAnomaly:
-          audience?.hasExternalTrafficAnomaly ?? false,
+        hasExternalTrafficAnomaly: audience?.hasExternalTrafficAnomaly ?? false,
         hasSubscriberBasePollution:
           audience?.hasSubscriberBasePollution ?? false,
         kpiStatus,
@@ -4184,28 +4272,27 @@ export class TelegramChannelsService {
           snapshot?.hasSubscriberBasePollution ?? false,
         postsWindow: snapshot?.postsWindow ?? channel.activeSubscribersWindow,
       };
-      const financialSummary =
-        financialSummaryByChannel.get(channel.id) ?? {
-          acquisitionCost: 0,
-          totalSpend: 0,
-          totalAdSpend: 0,
-          campaignsCount: 0,
-          totalJoinedSubscribers: 0,
-          avgCpa: null,
-          activeSubscribersEstimate: audience.activeSubscribersEstimate,
-          paidActiveSubscribersEstimate:
-            audience.paidActiveSubscribersEstimate ?? 0,
-          activeCpa: null,
-          avgActiveRate: null,
-          avgRetention7d: null,
-          dataQuality: audience.dataQuality,
-          dataQualityReason: audience.dataQualityReason,
-          dataQualityWarning: null,
-          hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
-          hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
-          kpiStatus: 'unknown' as const,
-          kpiLabel: '-',
-        };
+      const financialSummary = financialSummaryByChannel.get(channel.id) ?? {
+        acquisitionCost: 0,
+        totalSpend: 0,
+        totalAdSpend: 0,
+        campaignsCount: 0,
+        totalJoinedSubscribers: 0,
+        avgCpa: null,
+        activeSubscribersEstimate: audience.activeSubscribersEstimate,
+        paidActiveSubscribersEstimate:
+          audience.paidActiveSubscribersEstimate ?? 0,
+        activeCpa: null,
+        avgActiveRate: null,
+        avgRetention7d: null,
+        dataQuality: audience.dataQuality,
+        dataQualityReason: audience.dataQualityReason,
+        dataQualityWarning: null,
+        hasExternalTrafficAnomaly: audience.hasExternalTrafficAnomaly,
+        hasSubscriberBasePollution: audience.hasSubscriberBasePollution,
+        kpiStatus: 'unknown' as const,
+        kpiLabel: '-',
+      };
 
       return {
         ...channelData,
@@ -4268,16 +4355,17 @@ export class TelegramChannelsService {
 
     return channels
       .map((channel) => {
-        const publishingCapabilities =
-          publishingCapabilitiesByChannel.get(channel.id) ?? {
-            source: null,
-            captionLengthMax: 1024,
-            messageLengthMax: 4096,
-            maxUploadFileSizeMb: null,
-            supportsCustomEmoji: false,
-            checkedAt: null,
-            isFallback: true,
-          };
+        const publishingCapabilities = publishingCapabilitiesByChannel.get(
+          channel.id,
+        ) ?? {
+          source: null,
+          captionLengthMax: 1024,
+          messageLengthMax: 4096,
+          maxUploadFileSizeMb: null,
+          supportsCustomEmoji: false,
+          checkedAt: null,
+          isFallback: true,
+        };
 
         return {
           ...channel,
@@ -4323,20 +4411,18 @@ export class TelegramChannelsService {
       channelId: channel.id,
       workspaceId,
     });
-    let purchaseTransaction:
-      | {
-          id: string;
-          amount: Prisma.Decimal;
-          currency: string;
-          amountInPrimaryCurrency: Prisma.Decimal;
-          date: Date;
-          description: string | null;
-          account: {
-            id: string;
-            name: string;
-          } | null;
-        }
-      | null = null;
+    let purchaseTransaction: {
+      id: string;
+      amount: Prisma.Decimal;
+      currency: string;
+      amountInPrimaryCurrency: Prisma.Decimal;
+      date: Date;
+      description: string | null;
+      account: {
+        id: string;
+        name: string;
+      } | null;
+    } | null = null;
     const purchaseTransactionId = importPolicy?.purchaseTransactionId ?? null;
     if (purchaseTransactionId) {
       purchaseTransaction = await this.prisma.transaction.findFirst({
@@ -4449,7 +4535,9 @@ export class TelegramChannelsService {
           select: { id: true },
         });
         if (icons.length !== new Set(iconIds).size) {
-          throw new BadRequestException('One or more time post icons are invalid');
+          throw new BadRequestException(
+            'One or more time post icons are invalid',
+          );
         }
       }
     }
@@ -4491,7 +4579,8 @@ export class TelegramChannelsService {
                 "createdAt",
                 "updatedAt"
               ) VALUES ${Prisma.join(
-                normalizedTimePosts.map((item) => Prisma.sql`(
+                normalizedTimePosts.map(
+                  (item) => Prisma.sql`(
                   ${item.id},
                   ${id},
                   ${item.iconId},
@@ -4500,7 +4589,8 @@ export class TelegramChannelsService {
                   ${item.position},
                   NOW(),
                   NOW()
-                )`),
+                )`,
+                ),
               )}
             `);
           }
@@ -4564,43 +4654,105 @@ export class TelegramChannelsService {
     telegramChannel: true,
   } as const;
 
-  private async loadIconsByIds(iconIds: Array<string | null | undefined>) {
+  private async loadIconsByIds(
+    workspaceId: string,
+    iconIds: Array<string | null | undefined>,
+  ) {
     const ids = [...new Set(iconIds.filter((id): id is string => Boolean(id)))];
-    if (!ids.length) return new Map<string, { id: string; type: "emoji" | "image"; name: string; emoji: string | null; imageUrl: string | null }>();
+    if (!ids.length)
+      return new Map<
+        string,
+        {
+          id: string;
+          type: 'emoji' | 'image';
+          name: string;
+          emoji: string | null;
+          imageUrl: string | null;
+        }
+      >();
     const icons = await this.prisma.icon.findMany({
-      where: { id: { in: ids } },
+      where: {
+        id: { in: ids },
+        OR: [{ workspaceId }, { workspaceId: null }],
+      },
       select: this.iconSelect,
     });
     return new Map(icons.map((icon) => [icon.id, icon]));
   }
 
   private async attachManagedPostIcons<
-    T extends { icon?: string | null },
-  >(posts: T[]) {
-    const iconsById = await this.loadIconsByIds(posts.map((post) => post.icon));
+    T extends {
+      workspaceId: string;
+      icon?: string | null;
+      group?: Record<string, unknown> | null;
+    },
+  >(
+    posts: T[],
+  ) {
+    const workspaceId = posts[0]?.workspaceId;
+    const iconsById = workspaceId
+      ? await this.loadIconsByIds(
+          workspaceId,
+          [
+            ...posts.map((post) => post.icon),
+            ...posts.map((post) =>
+              typeof post.group?.icon === 'string' ? post.group.icon : null,
+            ),
+          ],
+        )
+      : new Map();
     return posts.map((post) => ({
       ...post,
-      iconData: post.icon ? iconsById.get(post.icon) ?? null : null,
+      iconData: post.icon ? (iconsById.get(post.icon) ?? null) : null,
+      iconPresentation: post.icon
+        ? iconToResolvedEmoji(iconsById.get(post.icon))
+        : null,
+      group: post.group
+        ? {
+            ...post.group,
+            iconData:
+              typeof post.group.icon === 'string'
+                ? (iconsById.get(post.group.icon) ?? null)
+                : null,
+            iconPresentation:
+              typeof post.group.icon === 'string'
+                ? iconToResolvedEmoji(iconsById.get(post.group.icon))
+                : null,
+          }
+        : post.group,
     }));
   }
 
   private async attachPostGroupIcons<
-    T extends { icon?: string | null; posts?: Array<{ icon?: string | null }> },
+    T extends {
+      workspaceId: string;
+      icon?: string | null;
+      posts?: Array<{ icon?: string | null }>;
+    },
   >(groups: T[]) {
+    const workspaceId = groups[0]?.workspaceId;
     const nestedPostIcons = groups.flatMap((group) =>
       (group.posts ?? []).map((post) => post.icon),
     );
-    const iconsById = await this.loadIconsByIds([
-      ...groups.map((group) => group.icon),
-      ...nestedPostIcons,
-    ]);
+    const iconsById = workspaceId
+      ? await this.loadIconsByIds(workspaceId, [
+          ...groups.map((group) => group.icon),
+          ...nestedPostIcons,
+        ])
+      : new Map();
     return groups.map((group) => ({
       ...group,
-      iconData: group.icon ? iconsById.get(group.icon) ?? null : null,
+      iconData: group.icon ? (iconsById.get(group.icon) ?? null) : null,
+      iconPresentation: group.icon
+        ? iconToResolvedEmoji(iconsById.get(group.icon))
+        : null,
       posts: group.posts
         ? group.posts.map((post) => ({
             ...post,
-            iconData: post.icon ? iconsById.get(post.icon) ?? null : null,
+            iconData: post.icon ? (iconsById.get(post.icon) ?? null) : null,
+            iconPresentation: post.icon
+              ? iconToResolvedEmoji(iconsById.get(post.icon))
+              : null,
           }))
         : group.posts,
     }));
@@ -4631,7 +4783,9 @@ export class TelegramChannelsService {
       preferredMemberId,
     );
     if (!createdByMemberId) {
-      throw new BadRequestException('Assigned member is required to create system post groups');
+      throw new BadRequestException(
+        'Assigned member is required to create system post groups',
+      );
     }
     const existing = await this.prisma.postGroup.findFirst({
       where: {
@@ -4692,23 +4846,35 @@ export class TelegramChannelsService {
     return hydratedGroup;
   }
 
-  private async normalizePostGroupPositions(
+  private async normalizePostGroupNumbering(
     tx: Prisma.TransactionClient,
     groupId: string,
   ) {
-    const posts = await tx.telegramManagedPost.findMany({
-      where: { groupId },
-      orderBy: [{ groupPosition: 'asc' }, { createdAt: 'asc' }],
-      select: { id: true },
+    await normalizePostGroupNumberingRecords(tx, groupId);
+  }
+
+  private async normalizeChannelPostGroupNumberingOnRead(
+    workspaceId: string,
+    channelId: string,
+  ) {
+    const groupedPosts = await this.prisma.telegramManagedPost.findMany({
+      where: {
+        workspaceId,
+        telegramChannelId: channelId,
+        groupId: { not: null },
+      },
+      select: { groupId: true },
+      distinct: ['groupId'],
     });
-    await Promise.all(
-      posts.map((post, groupPosition) =>
-        tx.telegramManagedPost.update({
-          where: { id: post.id },
-          data: { groupPosition },
-        }),
-      ),
-    );
+    const groupIds = groupedPosts
+      .map((post) => post.groupId)
+      .filter((groupId): groupId is string => Boolean(groupId));
+    if (!groupIds.length) return;
+    await this.prisma.$transaction(async (tx) => {
+      for (const groupId of groupIds) {
+        await this.normalizePostGroupNumbering(tx, groupId);
+      }
+    });
   }
 
   async postGroups(userId: string, query: PostGroupsQueryDto) {
@@ -4720,6 +4886,10 @@ export class TelegramChannelsService {
         workspaceId,
         query.telegramChannelId,
         channel.assignedMemberId ?? null,
+      );
+      await this.normalizeChannelPostGroupNumberingOnRead(
+        workspaceId,
+        query.telegramChannelId,
       );
     }
     const where = {
@@ -4757,6 +4927,14 @@ export class TelegramChannelsService {
 
   async postGroup(userId: string, groupId: string) {
     const workspaceId = await this.workspace(userId);
+    const group = await this.prisma.postGroup.findFirst({
+      where: { id: groupId, workspaceId },
+      select: { id: true },
+    });
+    if (!group) throw new NotFoundException('Post group not found');
+    await this.prisma.$transaction(async (tx) => {
+      await this.normalizePostGroupNumbering(tx, groupId);
+    });
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
 
@@ -4802,6 +4980,7 @@ export class TelegramChannelsService {
           title,
           description: dto.description?.trim() || null,
           icon: dto.icon?.trim() || null,
+          statusNumberingEnabled: dto.statusNumberingEnabled ?? false,
           createdByMemberId: membership.id,
         },
       });
@@ -4821,8 +5000,9 @@ export class TelegramChannelsService {
         ),
       ];
       for (const oldGroupId of oldGroupIds) {
-        await this.normalizePostGroupPositions(tx, oldGroupId);
+        await this.normalizePostGroupNumbering(tx, oldGroupId);
       }
+      await this.normalizePostGroupNumbering(tx, group.id);
       return { groupId: group.id, oldGroupIds };
     });
     return this.postGroupForWorkspace(
@@ -4853,6 +5033,7 @@ export class TelegramChannelsService {
             ? undefined
             : dto.description?.trim() || null,
         icon: dto.icon === undefined ? undefined : dto.icon?.trim() || null,
+        statusNumberingEnabled: dto.statusNumberingEnabled,
       },
     });
     return this.postGroupForWorkspace(workspaceId, groupId);
@@ -4864,10 +5045,10 @@ export class TelegramChannelsService {
     if (group.isSystem) {
       throw new BadRequestException('System post groups cannot be deleted');
     }
-    return this.prisma.$transaction(async (tx) => {
+    const restoredPost = await this.prisma.$transaction(async (tx) => {
       await tx.telegramManagedPost.updateMany({
         where: { groupId, workspaceId },
-        data: { groupId: null, groupPosition: null },
+        data: { groupId: null, groupPosition: null, statusPosition: null },
       });
       return tx.postGroup.delete({ where: { id: groupId } });
     });
@@ -4921,8 +5102,9 @@ export class TelegramChannelsService {
         ),
       ];
       for (const oldGroupId of oldGroupIds) {
-        await this.normalizePostGroupPositions(tx, oldGroupId);
+        await this.normalizePostGroupNumbering(tx, oldGroupId);
       }
+      await this.normalizePostGroupNumbering(tx, groupId);
     });
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
@@ -4937,9 +5119,9 @@ export class TelegramChannelsService {
     await this.prisma.$transaction(async (tx) => {
       await tx.telegramManagedPost.update({
         where: { id: postId },
-        data: { groupId: null, groupPosition: null },
+        data: { groupId: null, groupPosition: null, statusPosition: null },
       });
-      await this.normalizePostGroupPositions(tx, groupId);
+      await this.normalizePostGroupNumbering(tx, groupId);
     });
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
@@ -4964,21 +5146,21 @@ export class TelegramChannelsService {
       posts.map((post) => post.id),
       dto.orderedPostIds,
     );
-    await this.prisma.$transaction(
-      dto.orderedPostIds.map((postId, groupPosition) =>
-        this.prisma.telegramManagedPost.update({
-          where: { id: postId },
-          data: { groupPosition },
-        }),
-      ),
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await Promise.all(
+        dto.orderedPostIds.map((postId, groupPosition) =>
+          tx.telegramManagedPost.update({
+            where: { id: postId },
+            data: { groupPosition },
+          }),
+        ),
+      );
+      await this.normalizePostGroupNumbering(tx, groupId);
+    });
     return this.postGroupForWorkspace(workspaceId, groupId);
   }
 
-  async managedPosts(
-    userId: string,
-    channelId: string,
-  ) {
+  async managedPosts(userId: string, channelId: string) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     try {
@@ -4988,6 +5170,10 @@ export class TelegramChannelsService {
         channelId,
         channel,
       });
+      await this.normalizeChannelPostGroupNumberingOnRead(
+        workspaceId,
+        channelId,
+      );
       return this.attachManagedPostIcons(
         await this.prisma.telegramManagedPost.findMany({
           where: { workspaceId, telegramChannelId: channelId },
@@ -5004,6 +5190,10 @@ export class TelegramChannelsService {
         channelId,
         channel,
       });
+      await this.normalizeChannelPostGroupNumberingOnRead(
+        workspaceId,
+        channelId,
+      );
       return this.attachManagedPostIcons(
         await this.prisma.telegramManagedPost.findMany({
           where: { workspaceId, telegramChannelId: channelId },
@@ -5157,6 +5347,7 @@ export class TelegramChannelsService {
         },
         select: {
           id: true,
+          groupId: true,
           scheduledAt: true,
           publishedAt: true,
           telegramMessageIds: true,
@@ -5177,8 +5368,15 @@ export class TelegramChannelsService {
     }
     if (!duePosts.length) return;
     const now = new Date();
-    await Promise.all(
-      duePosts.map((post) => {
+    const touchedGroupIds = [
+      ...new Set(
+        duePosts
+          .map((post) => post.groupId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    await this.prisma.$transaction(async (tx) => {
+      for (const post of duePosts) {
         const urls =
           post.telegramMessageUrls.length > 0
             ? post.telegramMessageUrls
@@ -5188,7 +5386,7 @@ export class TelegramChannelsService {
                 post.imageUrls.length,
               );
         const isLinked = urls.length > 0;
-        return this.prisma.telegramManagedPost.update({
+        await tx.telegramManagedPost.update({
           where: { id: post.id },
           data: {
             status: TelegramManagedPostStatus.PUBLISHED,
@@ -5204,8 +5402,11 @@ export class TelegramChannelsService {
               'Scheduled time passed. Marked as published locally.',
           },
         });
-      }),
-    );
+      }
+      for (const groupId of touchedGroupIds) {
+        await this.normalizePostGroupNumbering(tx, groupId as string);
+      }
+    });
   }
 
   async scheduleManagedPostsBatch(
@@ -5271,7 +5472,9 @@ export class TelegramChannelsService {
         .filter((value): value is string => Boolean(value)),
     );
     if (requestedDates.some((date) => occupiedTimes.has(date.toISOString()))) {
-      throw new BadRequestException('One or more schedule times are already occupied');
+      throw new BadRequestException(
+        'One or more schedule times are already occupied',
+      );
     }
 
     const results: BulkActionResultItem[] = [];
@@ -5282,7 +5485,12 @@ export class TelegramChannelsService {
       if (post.status === TelegramManagedPostStatus.PUBLISHED) {
         await this.appendBulkResult(
           results,
-          this.skippedBulkItem(post, index + 1, total, 'published posts cannot be scheduled'),
+          this.skippedBulkItem(
+            post,
+            index + 1,
+            total,
+            'published posts cannot be scheduled',
+          ),
           onProgress,
         );
         continue;
@@ -5290,7 +5498,12 @@ export class TelegramChannelsService {
       if (post.origin === 'TELEGRAM') {
         await this.appendBulkResult(
           results,
-          this.skippedBulkItem(post, index + 1, total, 'imported Telegram posts cannot be rescheduled'),
+          this.skippedBulkItem(
+            post,
+            index + 1,
+            total,
+            'imported Telegram posts cannot be rescheduled',
+          ),
           onProgress,
         );
         continue;
@@ -5449,21 +5662,19 @@ export class TelegramChannelsService {
       remote.published.map((message) => [message.id, message]),
     );
     const scheduledById = new Map(
-      [...scheduledSync.remoteScheduledHistory, ...remote.scheduled].map((message) => [
-        message.id,
-        message,
-      ]),
+      [...scheduledSync.remoteScheduledHistory, ...remote.scheduled].map(
+        (message) => [message.id, message],
+      ),
     );
-    const validLinkTargets =
-      await this.prisma.telegramManagedPost.findMany({
-        where: {
-          workspaceId,
-          status: TelegramManagedPostStatus.PUBLISHED,
-          telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
-          telegramMessageUrls: { isEmpty: false },
-        },
-        select: { id: true, telegramMessageUrls: true },
-      });
+    const validLinkTargets = await this.prisma.telegramManagedPost.findMany({
+      where: {
+        workspaceId,
+        status: TelegramManagedPostStatus.PUBLISHED,
+        telegramRemoteStatus: TelegramManagedPostRemoteStatus.PUBLISHED,
+        telegramMessageUrls: { isEmpty: false },
+      },
+      select: { id: true, telegramMessageUrls: true },
+    });
     const internalIdByUrl = new Map(
       validLinkTargets.flatMap((post) =>
         post.telegramMessageUrls.map((url) => [url, post.id] as const),
@@ -5529,8 +5740,7 @@ export class TelegramChannelsService {
         : false;
       const shouldReconcilePublishedMessage =
         post.status === TelegramManagedPostStatus.PUBLISHED &&
-        (!publishedMessages.length ||
-          !exactCurrentTextMatch);
+        (!publishedMessages.length || !exactCurrentTextMatch);
       if (shouldReconcilePublishedMessage) {
         const reconciled = this.findMatchingRecentPublishedMessage(
           {
@@ -5623,7 +5833,11 @@ export class TelegramChannelsService {
             result.movedToDraft += 1;
           }
           await this.prisma.$transaction(async (tx) => {
-            await this.createManagedPostRevision(tx, post, 'before_sync_missing');
+            await this.createManagedPostRevision(
+              tx,
+              post,
+              'before_sync_missing',
+            );
             await tx.telegramManagedPost.update({
               where: { id: post.id },
               data: {
@@ -5647,9 +5861,12 @@ export class TelegramChannelsService {
                     : 'Scheduled Telegram message was not found during sync. Post was moved back to draft.',
               },
             });
+            if (post.groupId) {
+              await this.normalizePostGroupNumbering(tx, post.groupId);
+            }
           });
           await onProgress?.(
-            ({
+            {
               id: post.id,
               postId: post.id,
               index: current,
@@ -5658,7 +5875,7 @@ export class TelegramChannelsService {
               success: true,
               status: 'success',
               message: `${post.title}: scheduled message not found, moved back to draft`,
-            } as unknown) as BulkActionResultItem,
+            } as unknown as BulkActionResultItem,
             current,
             posts.length,
           );
@@ -5666,7 +5883,11 @@ export class TelegramChannelsService {
           result.updated += 1;
           result.broken += 1;
           await this.prisma.$transaction(async (tx) => {
-            await this.createManagedPostRevision(tx, post, 'before_sync_broken');
+            await this.createManagedPostRevision(
+              tx,
+              post,
+              'before_sync_broken',
+            );
             await tx.telegramManagedPost.update({
               where: { id: post.id },
               data: {
@@ -5678,9 +5899,12 @@ export class TelegramChannelsService {
                   'Published Telegram post was not found during sync. Post was kept published and marked as broken.',
               },
             });
+            if (post.groupId) {
+              await this.normalizePostGroupNumbering(tx, post.groupId);
+            }
           });
           await onProgress?.(
-            ({
+            {
               id: post.id,
               postId: post.id,
               index: current,
@@ -5689,7 +5913,7 @@ export class TelegramChannelsService {
               success: false,
               status: 'error',
               message: `${post.title}: Telegram link check failed, post kept published`,
-            } as unknown) as BulkActionResultItem,
+            } as unknown as BulkActionResultItem,
             current,
             posts.length,
           );
@@ -5700,10 +5924,9 @@ export class TelegramChannelsService {
         post.status !== TelegramManagedPostStatus.PUBLISHED &&
         !effectiveScheduledMessages.length &&
         publishedMessages.length > 0;
-      const actualMessageIds =
-        publishedMessages.length
-          ? publishedMessages.map((message) => message.id)
-          : postIds;
+      const actualMessageIds = publishedMessages.length
+        ? publishedMessages.map((message) => message.id)
+        : postIds;
       const isScheduledRemote = effectiveScheduledMessages.length > 0;
       const remoteUrls = isScheduledRemote
         ? []
@@ -5731,14 +5954,21 @@ export class TelegramChannelsService {
               ) {
                 return post.scheduledAt;
               }
-              return remotePublishedAt ?? post.publishedAt ?? post.scheduledAt ?? null;
+              return (
+                remotePublishedAt ??
+                post.publishedAt ??
+                post.scheduledAt ??
+                null
+              );
             })()
           : post.publishedAt;
       await this.prisma.$transaction(async (tx) => {
         await this.createManagedPostRevision(
           tx,
           post,
-          becamePublished ? 'before_sync_publish_transition' : 'before_sync_update',
+          becamePublished
+            ? 'before_sync_publish_transition'
+            : 'before_sync_update',
         );
         await tx.telegramManagedPost.update({
           where: { id: post.id },
@@ -5760,11 +5990,14 @@ export class TelegramChannelsService {
               : mediaNote,
           },
         });
+        if (post.groupId) {
+          await this.normalizePostGroupNumbering(tx, post.groupId);
+        }
       });
       result.updated += 1;
       if (becamePublished) result.publishedEarly += 1;
       await onProgress?.(
-        ({
+        {
           id: post.id,
           postId: post.id,
           index: current,
@@ -5775,7 +6008,7 @@ export class TelegramChannelsService {
           message: becamePublished
             ? `${post.title}: published earlier in Telegram`
             : `${post.title}: synced from Telegram`,
-        } as unknown) as BulkActionResultItem,
+        } as unknown as BulkActionResultItem,
         current,
         posts.length,
       );
@@ -5852,7 +6085,9 @@ export class TelegramChannelsService {
         (await this.connectedAccount(params.workspaceId, params.channelId));
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'unknown Telegram account error';
+        error instanceof Error
+          ? error.message
+          : 'unknown Telegram account error';
       this.logger.warn(
         `Managed posts auto-repair skipped for channel ${params.channelId}: ${message}`,
       );
@@ -5895,7 +6130,7 @@ export class TelegramChannelsService {
 
     for (const post of candidates) {
       const postIds = [
-          ...new Set([
+        ...new Set([
           ...(post.telegramMessageIds ?? []),
           ...(post.telegramMessageUrls ?? []).flatMap((url) => {
             const parsed = parseTelegramPostUrl(url);
@@ -5968,7 +6203,8 @@ export class TelegramChannelsService {
       );
       const changed =
         post.status !== TelegramManagedPostStatus.PUBLISHED ||
-        post.telegramRemoteStatus !== TelegramManagedPostRemoteStatus.PUBLISHED ||
+        post.telegramRemoteStatus !==
+          TelegramManagedPostRemoteStatus.PUBLISHED ||
         post.scheduledAt !== null ||
         post.lastError !== null ||
         post.telegramMessageUrls.length !== remoteUrls.length ||
@@ -6002,6 +6238,9 @@ export class TelegramChannelsService {
               'Published Telegram post was repaired automatically while loading posts.',
           },
         });
+        if (post.groupId) {
+          await this.normalizePostGroupNumbering(tx, post.groupId);
+        }
       });
     }
   }
@@ -6019,12 +6258,15 @@ export class TelegramChannelsService {
       throw new BadRequestException('Channel has no Telegram reference');
     }
 
-    const remoteScheduledHistory = await this.mtprotoClient.getScheduledHistory({
-      ...this.accountCredentials(params.account),
-      channel: channelReference,
-    });
-    const groupedRemoteScheduled =
-      this.groupRemoteScheduledMessages(remoteScheduledHistory);
+    const remoteScheduledHistory = await this.mtprotoClient.getScheduledHistory(
+      {
+        ...this.accountCredentials(params.account),
+        channel: channelReference,
+      },
+    );
+    const groupedRemoteScheduled = this.groupRemoteScheduledMessages(
+      remoteScheduledHistory,
+    );
 
     this.applicationLogger.info({
       event: 'telegram.managed_posts.remote_scheduled.loaded',
@@ -6066,9 +6308,11 @@ export class TelegramChannelsService {
       params.channelId,
       fallbackAssignedMemberId,
     );
-    let nextImportedGroupPosition = await this.prisma.telegramManagedPost.count({
-      where: { groupId: importedSystemGroup.id },
-    });
+    let nextImportedGroupPosition = await this.prisma.telegramManagedPost.count(
+      {
+        where: { groupId: importedSystemGroup.id },
+      },
+    );
 
     const existingPosts = await this.prisma.telegramManagedPost.findMany({
       where: {
@@ -6098,6 +6342,7 @@ export class TelegramChannelsService {
 
     let importedScheduled = 0;
     let revivedScheduled = 0;
+    let importedSystemGroupTouched = false;
 
     for (const item of groupedRemoteScheduled) {
       const importedImageUrls = item.hasMedia
@@ -6111,7 +6356,9 @@ export class TelegramChannelsService {
         item.remoteImportKey,
       );
       if (existingImported) {
-        const nextScheduledAt = item.scheduledAt ? new Date(item.scheduledAt) : null;
+        const nextScheduledAt = item.scheduledAt
+          ? new Date(item.scheduledAt)
+          : null;
         const nextTitle = this.importedManagedPostTitle(item.text);
         const nextText = item.text || null;
         const nextAssignedMemberId =
@@ -6129,9 +6376,13 @@ export class TelegramChannelsService {
             (existingImported.text || null) !== nextText ||
             (existingImported.scheduledAt?.toISOString() ?? null) !==
               (nextScheduledAt?.toISOString() ?? null) ||
-            !this.sameImageUrls(existingImported.imageUrls, importedImageUrls) ||
+            !this.sameImageUrls(
+              existingImported.imageUrls,
+              importedImageUrls,
+            ) ||
             existingImported.assignedMemberId !== nextAssignedMemberId ||
-            existingImported.telegramMessageIds.length !== item.messageIds.length ||
+            existingImported.telegramMessageIds.length !==
+              item.messageIds.length ||
             existingImported.telegramMessageIds.some(
               (messageId, index) => messageId !== item.messageIds[index],
             ));
@@ -6163,18 +6414,19 @@ export class TelegramChannelsService {
                 lastTelegramSyncNote: 'Synced from Telegram scheduled history.',
               },
             });
-            if (
-              previousGroupId &&
-              previousGroupId !== importedSystemGroup.id
-            ) {
-              await this.normalizePostGroupPositions(tx, previousGroupId);
+            if (previousGroupId && previousGroupId !== importedSystemGroup.id) {
+              await this.normalizePostGroupNumbering(tx, previousGroupId);
             }
             return updated;
           });
           if (previousGroupId !== importedSystemGroup.id) {
             nextImportedGroupPosition += 1;
           }
-          existingImportedPostsByRemoteImportKey.set(item.remoteImportKey, revived);
+          importedSystemGroupTouched = true;
+          existingImportedPostsByRemoteImportKey.set(
+            item.remoteImportKey,
+            revived,
+          );
           revivedScheduled += 1;
         } else if (shouldAttachImportedGroup) {
           const previousGroupId = existingImported.groupId;
@@ -6186,11 +6438,8 @@ export class TelegramChannelsService {
                 groupPosition: nextImportedGroupPosition,
               },
             });
-            if (
-              previousGroupId &&
-              previousGroupId !== importedSystemGroup.id
-            ) {
-              await this.normalizePostGroupPositions(tx, previousGroupId);
+            if (previousGroupId && previousGroupId !== importedSystemGroup.id) {
+              await this.normalizePostGroupNumbering(tx, previousGroupId);
             }
             return updated;
           });
@@ -6199,6 +6448,7 @@ export class TelegramChannelsService {
             repaired,
           );
           nextImportedGroupPosition += 1;
+          importedSystemGroupTouched = true;
         }
         item.messageIds.forEach((messageId) =>
           existingScheduledMessageIds.add(messageId),
@@ -6234,12 +6484,22 @@ export class TelegramChannelsService {
           lastTelegramSyncNote: 'Imported from Telegram scheduled history.',
         },
       });
-      existingImportedPostsByRemoteImportKey.set(item.remoteImportKey, imported);
+      existingImportedPostsByRemoteImportKey.set(
+        item.remoteImportKey,
+        imported,
+      );
       item.messageIds.forEach((messageId) =>
         existingScheduledMessageIds.add(messageId),
       );
       importedScheduled += 1;
       nextImportedGroupPosition += 1;
+      importedSystemGroupTouched = true;
+    }
+
+    if (importedSystemGroupTouched) {
+      await this.prisma.$transaction((tx) =>
+        this.normalizePostGroupNumbering(tx, importedSystemGroup.id),
+      );
     }
 
     return {
@@ -6285,12 +6545,13 @@ export class TelegramChannelsService {
       current.mediaKind ||= message.mediaKind;
       if (!current.text && message.text) current.text = message.text;
       if (!current.html && message.html) current.html = message.html;
-      if (!current.scheduledAt && message.date) current.scheduledAt = message.date;
+      if (!current.scheduledAt && message.date)
+        current.scheduledAt = message.date;
     }
     return [...groups.values()].map((item) => ({
       ...item,
-      messageIds: [...new Set(item.messageIds)].sort((left, right) =>
-        Number(left) - Number(right),
+      messageIds: [...new Set(item.messageIds)].sort(
+        (left, right) => Number(left) - Number(right),
       ),
     }));
   }
@@ -6341,24 +6602,28 @@ export class TelegramChannelsService {
     const workspaceId = await this.workspace(userId);
     const [post, channel] = await Promise.all([
       this.prisma.telegramManagedPost.findFirst({
-      where: { id: postId, workspaceId, telegramChannelId: channelId },
-      select: { id: true },
+        where: { id: postId, workspaceId, telegramChannelId: channelId },
+        select: { id: true },
       }),
       this.prisma.telegramChannel.findFirst({
         where: { id: channelId, workspaceId },
       }),
     ]);
-    if (!post || !channel) throw new NotFoundException('Managed post not found');
+    if (!post || !channel)
+      throw new NotFoundException('Managed post not found');
     const normalizedInput = telegramUrl.trim();
     const currentPost = await this.prisma.telegramManagedPost.findFirst({
       where: { id: postId, workspaceId, telegramChannelId: channelId },
     });
-    if (!currentPost)
-      throw new NotFoundException('Managed post not found');
+    if (!currentPost) throw new NotFoundException('Managed post not found');
     if (!normalizedInput) {
-      return this.prisma.$transaction(async (tx) => {
-        await this.createManagedPostRevision(tx, currentPost, 'before_manual_link');
-        return tx.telegramManagedPost.update({
+      const publishedPost = await this.prisma.$transaction(async (tx) => {
+        await this.createManagedPostRevision(
+          tx,
+          currentPost,
+          'before_manual_link',
+        );
+        const updated = await tx.telegramManagedPost.update({
           where: { id: postId },
           data: {
             status: TelegramManagedPostStatus.DRAFT,
@@ -6377,7 +6642,18 @@ export class TelegramChannelsService {
           },
           include: this.managedPostInclude,
         });
+        if (currentPost.groupId) {
+          await this.normalizePostGroupNumbering(tx, currentPost.groupId);
+        }
+        const canonical = await tx.telegramManagedPost.findUnique({
+          where: { id: updated.id },
+          include: this.managedPostInclude,
+        });
+        if (!canonical) throw new NotFoundException('Managed post not found');
+        return canonical;
       });
+      const [hydrated] = await this.attachManagedPostIcons([publishedPost]);
+      return hydrated;
     }
     const parsed = parseTelegramPostUrl(normalizedInput);
     if (!parsed) {
@@ -6400,9 +6676,13 @@ export class TelegramChannelsService {
         'Channel has no stable Telegram channel ID. Sync or re-import the channel first.',
       );
     }
-    return this.prisma.$transaction(async (tx) => {
-      await this.createManagedPostRevision(tx, currentPost, 'before_manual_link');
-      return tx.telegramManagedPost.update({
+    const linkedPost = await this.prisma.$transaction(async (tx) => {
+      await this.createManagedPostRevision(
+        tx,
+        currentPost,
+        'before_manual_link',
+      );
+      const updated = await tx.telegramManagedPost.update({
         where: { id: postId },
         data: {
           status: TelegramManagedPostStatus.PUBLISHED,
@@ -6419,7 +6699,18 @@ export class TelegramChannelsService {
         },
         include: this.managedPostInclude,
       });
+      if (currentPost.groupId) {
+        await this.normalizePostGroupNumbering(tx, currentPost.groupId);
+      }
+      const canonical = await tx.telegramManagedPost.findUnique({
+        where: { id: updated.id },
+        include: this.managedPostInclude,
+      });
+      if (!canonical) throw new NotFoundException('Managed post not found');
+      return canonical;
     });
+    const [hydrated] = await this.attachManagedPostIcons([linkedPost]);
+    return hydrated;
   }
 
   async managedPostLinkTargets(
@@ -6472,6 +6763,7 @@ export class TelegramChannelsService {
       },
       select: {
         id: true,
+        workspaceId: true,
         title: true,
         icon: true,
         status: true,
@@ -6558,11 +6850,15 @@ export class TelegramChannelsService {
         imageCount: targetImageCount,
       });
       const generatedStablePrimaryUrl = generatedPrimaryMessageId
-        ? this.telegramMessageUrl(target.telegramChannel, generatedPrimaryMessageId)
+        ? this.telegramMessageUrl(
+            target.telegramChannel,
+            generatedPrimaryMessageId,
+          )
         : null;
       const isScheduledRemoteTarget =
         target.status === TelegramManagedPostStatus.SCHEDULED &&
-        target.telegramRemoteStatus === TelegramManagedPostRemoteStatus.SCHEDULED &&
+        target.telegramRemoteStatus ===
+          TelegramManagedPostRemoteStatus.SCHEDULED &&
         !target.lastError;
       const treatedAsPublished =
         target.status === TelegramManagedPostStatus.PUBLISHED ||
@@ -6570,10 +6866,7 @@ export class TelegramChannelsService {
           !currentScheduleAt &&
           Boolean(target.scheduledAt) &&
           target.scheduledAt!.getTime() < Date.now());
-      if (
-        currentScheduleAt &&
-        isScheduledRemoteTarget
-      ) {
+      if (currentScheduleAt && isScheduledRemoteTarget) {
         if (
           !target.scheduledAt ||
           target.scheduledAt.getTime() >= currentScheduleAt.getTime()
@@ -6582,10 +6875,7 @@ export class TelegramChannelsService {
             `"${target.title}" (${target.id}) must be scheduled before the post that links to it`,
           ];
         }
-        if (
-          !generatedPrimaryMessageId ||
-          !generatedStablePrimaryUrl
-        ) {
+        if (!generatedPrimaryMessageId || !generatedStablePrimaryUrl) {
           return [
             `Target channel has no stable Telegram channel ID. Sync or re-import the channel.`,
           ];
@@ -6685,13 +6975,10 @@ export class TelegramChannelsService {
 
   private imageUrlsFromImportRow(row: ImportTelegramManagedPostRowDto) {
     const values: unknown[] = [];
-    if (row.imageUrl !== undefined && row.imageUrl !== null) {
-      values.push(row.imageUrl);
-    }
-    if (Array.isArray(row.imageUrls)) {
-      values.push(...row.imageUrls);
-    } else if (row.imageUrls !== undefined && row.imageUrls !== null) {
-      values.push(row.imageUrls);
+    if (Array.isArray(row.urls)) {
+      values.push(...row.urls);
+    } else if (row.urls !== undefined && row.urls !== null) {
+      values.push(row.urls);
     }
     const urls: string[] = [];
     for (const value of values) {
@@ -6724,9 +7011,10 @@ export class TelegramChannelsService {
     return { groupPosition: value };
   }
 
-  private normalizeManagedPostImportRow(
-    row: ImportTelegramManagedPostRowDto,
-  ): { value?: NormalizedManagedPostImportRow; error?: string } {
+  private normalizeManagedPostImportRow(row: ImportTelegramManagedPostRowDto): {
+    value?: NormalizedManagedPostImportRow;
+    error?: string;
+  } {
     const title = this.stringFromImportCell(row.title);
     if (!title) return { error: 'Title is required' };
     const text = this.stringFromImportCell(row.text) || null;
@@ -6800,7 +7088,7 @@ export class TelegramChannelsService {
     await this.findOne(userId, channelId);
     const title = dto.title.trim();
     if (!title) throw new BadRequestException('Title is required');
-    return this.createManagedPostRecord(this.prisma, {
+    const post = await this.createManagedPostRecord(this.prisma, {
       workspaceId,
       channelId,
       title,
@@ -6809,6 +7097,8 @@ export class TelegramChannelsService {
       assignedMemberId,
       icon: dto.icon?.trim() || null,
     });
+    const [hydrated] = await this.attachManagedPostIcons([post]);
+    return hydrated;
   }
 
   async importManagedPosts(
@@ -6862,7 +7152,10 @@ export class TelegramChannelsService {
             where: { groupId: group.id },
           })
         : 0;
-      const created: Array<{ index: number; post: { id: string } }> = [];
+      const created: Array<{
+        index: number;
+        post: { id: string; workspaceId: string; icon?: string | null };
+      }> = [];
       for (const [sequence, row] of validRows.entries()) {
         const post = await this.createManagedPostRecord(tx, {
           workspaceId,
@@ -6881,7 +7174,7 @@ export class TelegramChannelsService {
         created.push({ index: row.index, post });
       }
       if (created.length && group) {
-        await this.normalizePostGroupPositions(tx, group.id);
+        await this.normalizePostGroupNumbering(tx, group.id);
       }
       const posts = created.length
         ? await tx.telegramManagedPost.findMany({
@@ -6896,11 +7189,18 @@ export class TelegramChannelsService {
       }));
     });
 
+    const hydratedCreatedPosts = await this.attachManagedPostIcons(
+      createdRows.map((row) => row.post),
+    );
+    const hydratedCreatedPostById = new Map(
+      hydratedCreatedPosts.map((post) => [post.id, post]),
+    );
+
     rows.push(
       ...createdRows.map((row) => ({
         index: row.index,
         status: 'created' as const,
-        post: row.post,
+        post: hydratedCreatedPostById.get(row.post.id) ?? row.post,
       })),
     );
     rows.sort((left, right) => left.index - right.index);
@@ -6919,10 +7219,12 @@ export class TelegramChannelsService {
       select: { id: true },
     });
     if (!post) throw new NotFoundException('Managed post not found');
-    return this.listManagedPostRevisions(this.prisma, {
+    return this.attachManagedPostIcons(
+      await this.listManagedPostRevisions(this.prisma, {
       telegramManagedPostId: postId,
       workspaceId,
-    });
+      }),
+    );
   }
 
   async restoreManagedPostRevision(
@@ -6948,16 +7250,24 @@ export class TelegramChannelsService {
     if (!revision) throw new NotFoundException('Post revision not found');
     return this.prisma.$transaction(async (tx) => {
       await this.createManagedPostRevision(tx, post, 'before_restore');
-      return tx.telegramManagedPost.update({
+      const restored = await tx.telegramManagedPost.update({
         where: { id: postId },
         data: {
-          title: revision.title,
+          title: revision.groupId
+            ? stripLegacyGroupedPostTitlePrefix(
+                revision.title,
+                revision.groupPosition == null
+                  ? null
+                  : revision.groupPosition + 1,
+              )
+            : revision.title,
           text: revision.text,
           imageUrls: revision.imageUrls,
           assignedMemberId: revision.assignedMemberId,
           icon: revision.icon,
           groupId: revision.groupId,
           groupPosition: revision.groupPosition,
+          statusPosition: revision.groupId ? revision.statusPosition : null,
           sidebarPosition: revision.sidebarPosition,
           origin: revision.origin,
           remoteImportKey: revision.remoteImportKey,
@@ -6976,6 +7286,20 @@ export class TelegramChannelsService {
         },
         include: this.managedPostInclude,
       });
+      const affectedGroupIds = [
+        ...new Set(
+          [post.groupId, revision.groupId].filter(Boolean) as string[],
+        ),
+      ];
+      for (const affectedGroupId of affectedGroupIds) {
+        await this.normalizePostGroupNumbering(tx, affectedGroupId);
+      }
+      const canonical = await tx.telegramManagedPost.findUnique({
+        where: { id: restored.id },
+        include: this.managedPostInclude,
+      });
+      if (!canonical) throw new NotFoundException('Managed post not found');
+      return canonical;
     });
   }
 
@@ -7043,9 +7367,7 @@ export class TelegramChannelsService {
           })
         : null;
     const telegramEdit =
-      dto.text !== undefined &&
-      canEditPublishedTelegramText &&
-      channel
+      dto.text !== undefined && canEditPublishedTelegramText && channel
         ? await this.editManagedPostTextInTelegram({
             workspaceId,
             channelId,
@@ -7054,7 +7376,7 @@ export class TelegramChannelsService {
             nextText,
           })
         : null;
-    return this.prisma.$transaction(async (tx) => {
+    const updatedPost = await this.prisma.$transaction(async (tx) => {
       await this.createManagedPostRevision(tx, post, 'before_update');
       return tx.telegramManagedPost.update({
         where: { id: postId },
@@ -7075,6 +7397,8 @@ export class TelegramChannelsService {
         include: this.managedPostInclude,
       });
     });
+    const [hydrated] = await this.attachManagedPostIcons([updatedPost]);
+    return hydrated;
   }
 
   private async publishManagedPost(
@@ -7161,22 +7485,28 @@ export class TelegramChannelsService {
         if (this.isCapabilityStale(account.premiumCheckedAt)) {
           const refreshedAccount =
             await this.refreshMtprotoAccountCapabilities(account);
-          (source as {
-            isPremium?: boolean;
-            captionLengthMax?: number;
-            messageLengthMax?: number;
-            premiumCheckedAt?: Date | null;
-          }).isPremium = refreshedAccount.isPremium;
-          (source as {
-            captionLengthMax?: number;
-            messageLengthMax?: number;
-            premiumCheckedAt?: Date | null;
-          }).captionLengthMax = refreshedAccount.captionLengthMax;
-          (source as {
-            captionLengthMax?: number;
-            messageLengthMax?: number;
-            premiumCheckedAt?: Date | null;
-          }).messageLengthMax = refreshedAccount.messageLengthMax;
+          (
+            source as {
+              isPremium?: boolean;
+              captionLengthMax?: number;
+              messageLengthMax?: number;
+              premiumCheckedAt?: Date | null;
+            }
+          ).isPremium = refreshedAccount.isPremium;
+          (
+            source as {
+              captionLengthMax?: number;
+              messageLengthMax?: number;
+              premiumCheckedAt?: Date | null;
+            }
+          ).captionLengthMax = refreshedAccount.captionLengthMax;
+          (
+            source as {
+              captionLengthMax?: number;
+              messageLengthMax?: number;
+              premiumCheckedAt?: Date | null;
+            }
+          ).messageLengthMax = refreshedAccount.messageLengthMax;
           (source as { premiumCheckedAt?: Date | null }).premiumCheckedAt =
             refreshedAccount.premiumCheckedAt;
         }
@@ -7184,10 +7514,12 @@ export class TelegramChannelsService {
       const renderLimits =
         source.sourceType === TelegramSourceType.MTPROTO
           ? {
-              captionLengthMax: (source as { captionLengthMax?: number | null })
-                .captionLengthMax ?? TELEGRAM_CAPTION_LIMIT,
-              messageLengthMax: (source as { messageLengthMax?: number | null })
-                .messageLengthMax ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
+              captionLengthMax:
+                (source as { captionLengthMax?: number | null })
+                  .captionLengthMax ?? TELEGRAM_CAPTION_LIMIT,
+              messageLengthMax:
+                (source as { messageLengthMax?: number | null })
+                  .messageLengthMax ?? TELEGRAM_TEXT_MESSAGE_LIMIT,
             }
           : {
               captionLengthMax: TELEGRAM_CAPTION_LIMIT,
@@ -7336,31 +7668,42 @@ export class TelegramChannelsService {
         ids,
         post.imageUrls.length,
       );
-      return this.prisma.telegramManagedPost.update({
-        where: { id: post.id },
-        data: {
-          status: scheduleAt ? 'SCHEDULED' : 'PUBLISHED',
-          telegramRemoteStatus: scheduleAt
-            ? TelegramManagedPostRemoteStatus.SCHEDULED
-            : TelegramManagedPostRemoteStatus.PUBLISHED,
-          scheduledAt: scheduleAt ?? null,
-          publishedAt: scheduleAt ? null : new Date(),
-          telegramMessageIds: ids,
-          telegramMessageUrls: publishedUrls,
-          sourceType: source.sourceType,
-          sourceId: source.sourceId,
-          sourceWasPremium:
-            source.sourceType === TelegramSourceType.MTPROTO
-              ? Boolean((source as { isPremium?: boolean | null }).isPremium)
-              : false,
-          captionLengthMaxUsed: renderLimits.captionLengthMax,
-          messageLengthMaxUsed: renderLimits.messageLengthMax,
-          publishMode,
-          lastError: null,
-          lastTelegramSyncedAt: new Date(),
-          lastTelegramSyncNote: null,
-        },
-        include: this.managedPostInclude,
+      return this.prisma.$transaction(async (tx) => {
+        const updated = await tx.telegramManagedPost.update({
+          where: { id: post.id },
+          data: {
+            status: scheduleAt ? 'SCHEDULED' : 'PUBLISHED',
+            telegramRemoteStatus: scheduleAt
+              ? TelegramManagedPostRemoteStatus.SCHEDULED
+              : TelegramManagedPostRemoteStatus.PUBLISHED,
+            scheduledAt: scheduleAt ?? null,
+            publishedAt: scheduleAt ? null : new Date(),
+            telegramMessageIds: ids,
+            telegramMessageUrls: publishedUrls,
+            sourceType: source.sourceType,
+            sourceId: source.sourceId,
+            sourceWasPremium:
+              source.sourceType === TelegramSourceType.MTPROTO
+                ? Boolean((source as { isPremium?: boolean | null }).isPremium)
+                : false,
+            captionLengthMaxUsed: renderLimits.captionLengthMax,
+            messageLengthMaxUsed: renderLimits.messageLengthMax,
+            publishMode,
+            lastError: null,
+            lastTelegramSyncedAt: new Date(),
+            lastTelegramSyncNote: null,
+          },
+          include: this.managedPostInclude,
+        });
+        if (post.groupId) {
+          await this.normalizePostGroupNumbering(tx, post.groupId);
+        }
+        const canonical = await tx.telegramManagedPost.findUnique({
+          where: { id: updated.id },
+          include: this.managedPostInclude,
+        });
+        if (!canonical) throw new NotFoundException('Managed post not found');
+        return canonical;
       });
     } catch (error) {
       const rawMessage =
@@ -7370,23 +7713,28 @@ export class TelegramChannelsService {
         : /AUTH_KEY|SESSION|AUTH_KEY_UNREGISTERED/i.test(rawMessage)
           ? 'The connected Telegram account session is no longer valid. Reconnect the account and retry.'
           : rawMessage;
-      await this.prisma.telegramManagedPost.update({
-        where: { id: post.id },
-        data: {
-          status: 'FAILED',
-          telegramRemoteStatus: previousScheduledMessageCancelled
-            ? TelegramManagedPostRemoteStatus.MISSING
-            : TelegramManagedPostRemoteStatus.UNKNOWN,
-          lastError: publicMessage,
-          telegramMessageIds: previousScheduledMessageCancelled
-            ? []
-            : undefined,
-          telegramMessageUrls: previousScheduledMessageCancelled
-            ? []
-            : undefined,
-          sourceType: previousScheduledMessageCancelled ? null : undefined,
-          sourceId: previousScheduledMessageCancelled ? null : undefined,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.telegramManagedPost.update({
+          where: { id: post.id },
+          data: {
+            status: 'FAILED',
+            telegramRemoteStatus: previousScheduledMessageCancelled
+              ? TelegramManagedPostRemoteStatus.MISSING
+              : TelegramManagedPostRemoteStatus.UNKNOWN,
+            lastError: publicMessage,
+            telegramMessageIds: previousScheduledMessageCancelled
+              ? []
+              : undefined,
+            telegramMessageUrls: previousScheduledMessageCancelled
+              ? []
+              : undefined,
+            sourceType: previousScheduledMessageCancelled ? null : undefined,
+            sourceId: previousScheduledMessageCancelled ? null : undefined,
+          },
+        });
+        if (post.groupId) {
+          await this.normalizePostGroupNumbering(tx, post.groupId);
+        }
       });
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException(publicMessage);
@@ -7452,9 +7800,9 @@ export class TelegramChannelsService {
       );
     }
     await this.cancelScheduledManagedPost(workspaceId, post);
-    return this.prisma.$transaction(async (tx) => {
+    const draftPost = await this.prisma.$transaction(async (tx) => {
       await this.createManagedPostRevision(tx, post, 'before_return_to_draft');
-      return tx.telegramManagedPost.update({
+      const updated = await tx.telegramManagedPost.update({
         where: { id: postId },
         data: {
           status: TelegramManagedPostStatus.DRAFT,
@@ -7473,7 +7821,18 @@ export class TelegramChannelsService {
         },
         include: this.managedPostInclude,
       });
+      if (post.groupId) {
+        await this.normalizePostGroupNumbering(tx, post.groupId);
+      }
+      const canonical = await tx.telegramManagedPost.findUnique({
+        where: { id: updated.id },
+        include: this.managedPostInclude,
+      });
+      if (!canonical) throw new NotFoundException('Managed post not found');
+      return canonical;
     });
+    const [hydrated] = await this.attachManagedPostIcons([draftPost]);
+    return hydrated;
   }
 
   private async cancelScheduledManagedPost(
@@ -7660,6 +8019,9 @@ export class TelegramChannelsService {
         );
       }
     }
+    await this.prisma.$transaction((tx) =>
+      this.normalizePostGroupNumbering(tx, groupId),
+    );
     return {
       groupId,
       action: 'PUBLISH_ALL',
@@ -7757,6 +8119,9 @@ export class TelegramChannelsService {
         );
       }
     }
+    await this.prisma.$transaction((tx) =>
+      this.normalizePostGroupNumbering(tx, groupId),
+    );
     return {
       groupId,
       action: 'RESET_GROUP_TO_DRAFT',
@@ -7876,6 +8241,9 @@ export class TelegramChannelsService {
         );
       }
     }
+    await this.prisma.$transaction((tx) =>
+      this.normalizePostGroupNumbering(tx, groupId),
+    );
     return {
       groupId,
       action: 'SCHEDULE_SEQUENCE',
@@ -7926,8 +8294,8 @@ export class TelegramChannelsService {
           ),
         },
       });
-      if (!keepGroup && post.groupId) {
-        await this.normalizePostGroupPositions(tx, post.groupId);
+      if (post.groupId) {
+        await this.normalizePostGroupNumbering(tx, post.groupId);
       }
     });
 
@@ -8360,7 +8728,9 @@ export class TelegramChannelsService {
         channelId,
         post.sourceId,
       );
-      const channelReference = this.mtprotoChannelReference(post.telegramChannel);
+      const channelReference = this.mtprotoChannelReference(
+        post.telegramChannel,
+      );
       if (!channelReference.telegramChatId && !channelReference.username)
         throw new BadRequestException('Channel has no Telegram reference');
       await this.mtprotoClient.deleteScheduledPost({
@@ -8371,7 +8741,13 @@ export class TelegramChannelsService {
     }
     return this.prisma.$transaction(async (tx) => {
       await this.createManagedPostRevision(tx, post, 'before_delete');
-      return tx.telegramManagedPost.delete({ where: { id: postId } });
+      const deleted = await tx.telegramManagedPost.delete({
+        where: { id: postId },
+      });
+      if (post.groupId) {
+        await this.normalizePostGroupNumbering(tx, post.groupId);
+      }
+      return deleted;
     });
   }
 
@@ -8638,14 +9014,18 @@ export class TelegramChannelsService {
       input: dto,
       existing: existing
         ? {
-            acquisitionType: (existing as { acquisitionType?: 'CREATED' | 'PURCHASED' | null }).acquisitionType ?? null,
-            postsSyncFrom: (existing as { postsSyncFrom?: Date | null }).postsSyncFrom ?? null,
+            acquisitionType:
+              (existing as { acquisitionType?: 'CREATED' | 'PURCHASED' | null })
+                .acquisitionType ?? null,
+            postsSyncFrom:
+              (existing as { postsSyncFrom?: Date | null }).postsSyncFrom ??
+              null,
             inviteLinksSyncFrom:
-              (existing as { inviteLinksSyncFrom?: Date | null }).inviteLinksSyncFrom ??
-              null,
+              (existing as { inviteLinksSyncFrom?: Date | null })
+                .inviteLinksSyncFrom ?? null,
             purchaseTransactionId:
-              (existing as { purchaseTransactionId?: string | null }).purchaseTransactionId ??
-              null,
+              (existing as { purchaseTransactionId?: string | null })
+                .purchaseTransactionId ?? null,
           }
         : null,
       defaultNow: defaultCutoff,
@@ -8806,7 +9186,8 @@ export class TelegramChannelsService {
       progressStep += 1;
       return progressStep;
     };
-    const postLimit = dto.postLimit || (await this.postSyncLimitForChannel(channelId));
+    const postLimit =
+      dto.postLimit || (await this.postSyncLimitForChannel(channelId));
     let publicInfo: any = null;
     let historical: any = null;
     let postsMetricsSync: any = null;
@@ -8882,7 +9263,8 @@ export class TelegramChannelsService {
           updatedInviteLinks: historical?.updated ?? 0,
           postsUpdated: historical?.postsUpdated ?? 0,
           inviteLinksScope: historical?.inviteLinksScope ?? null,
-          inviteLinksExpectedTotal: historical?.inviteLinksExpectedTotal ?? null,
+          inviteLinksExpectedTotal:
+            historical?.inviteLinksExpectedTotal ?? null,
           inviteLinksFetchedTotal: historical?.inviteLinksFetchedTotal ?? 0,
           inviteLinksMissingTotal: historical?.inviteLinksMissingTotal ?? 0,
           inviteLinkWarnings: historical?.inviteLinkWarnings ?? [],
@@ -8972,18 +9354,17 @@ export class TelegramChannelsService {
         'Backfilling older post metrics',
       );
       const olderPostsStartedAt = Date.now();
-      olderPostsBackfill =
-        await this.syncOlderPostsMetricsBackfillForWorkspace(
-          workspaceId,
-          channelId,
-          {
-            telegramUserAccountId: account.id,
-            maxPages:
-              postLimit === this.initialPostBackfillLimit
-                ? this.olderPostBackfillMaxPages
-                : 1,
-          },
-        );
+      olderPostsBackfill = await this.syncOlderPostsMetricsBackfillForWorkspace(
+        workspaceId,
+        channelId,
+        {
+          telegramUserAccountId: account.id,
+          maxPages:
+            postLimit === this.initialPostBackfillLimit
+              ? this.olderPostBackfillMaxPages
+              : 1,
+        },
+      );
       steps.push(
         olderPostsBackfill?.syncedPosts
           ? this.syncStepSuccess(
@@ -9018,7 +9399,8 @@ export class TelegramChannelsService {
         const statsStatus =
           channelStatsSync?.success === true
             ? 'success'
-            : channelStatsSync?.snapshot?.normalizedStats?.status === 'available'
+            : channelStatsSync?.snapshot?.normalizedStats?.status ===
+                'available'
               ? 'success'
               : 'skipped';
         steps.push(
@@ -9091,7 +9473,10 @@ export class TelegramChannelsService {
         'Saving audience snapshot',
       );
       const audienceStartedAt = Date.now();
-      audienceSnapshot = await this.createAudienceSnapshotSafely(channelId, 'sync');
+      audienceSnapshot = await this.createAudienceSnapshotSafely(
+        channelId,
+        'sync',
+      );
       steps.push(
         audienceSnapshot
           ? this.syncStepSuccess(
@@ -9161,9 +9546,7 @@ export class TelegramChannelsService {
         createdBatches: 0,
         createdPoints: 0,
         reason:
-          error instanceof Error
-            ? error.message
-            : 'Admission analytics failed',
+          error instanceof Error ? error.message : 'Admission analytics failed',
       };
       steps.push(
         this.syncStepFailure(
@@ -9190,9 +9573,15 @@ export class TelegramChannelsService {
       requiredStepNames.add('historical_posts');
     }
     if (selection.syncIncludePostMetrics) requiredStepNames.add('post_metrics');
-    const requiredSteps = steps.filter((step) => requiredStepNames.has(step.step));
-    const hasRequiredFailure = requiredSteps.some((step) => step.status === 'failed');
-    const hasRequiredPartial = requiredSteps.some((step) => step.status === 'partial');
+    const requiredSteps = steps.filter((step) =>
+      requiredStepNames.has(step.step),
+    );
+    const hasRequiredFailure = requiredSteps.some(
+      (step) => step.status === 'failed',
+    );
+    const hasRequiredPartial = requiredSteps.some(
+      (step) => step.status === 'partial',
+    );
     const hasOptionalFailure = steps.some((step) => step.status === 'failed');
     const hasOptionalPartial = steps.some((step) => step.status === 'partial');
     const overallStatus = hasRequiredFailure
@@ -9433,7 +9822,8 @@ export class TelegramChannelsService {
               onProgress,
               progressStep,
             });
-            if (persisted.matchedMember) liveInviteLinkSync.matchedMembersCount += 1;
+            if (persisted.matchedMember)
+              liveInviteLinkSync.matchedMembersCount += 1;
             if (persisted.unresolved) {
               liveInviteLinkSync.unresolvedCreatorsCount += 1;
             }
@@ -9478,9 +9868,9 @@ export class TelegramChannelsService {
     }
     let imported = 0;
     let updated = 0;
-    let inviteResult:
-      | Awaited<ReturnType<TelegramChannelsService['syncChannelInviteLinks']>>
-      | null = null;
+    let inviteResult: Awaited<
+      ReturnType<TelegramChannelsService['syncChannelInviteLinks']>
+    > | null = null;
     if (dto.syncInviteLinks) {
       await this.notifyDetailedTaskProgress(
         onProgress,
@@ -9514,7 +9904,8 @@ export class TelegramChannelsService {
             onProgress,
             progressStep,
           });
-          if (persisted.matchedMember) liveInviteLinkSync.matchedMembersCount += 1;
+          if (persisted.matchedMember)
+            liveInviteLinkSync.matchedMembersCount += 1;
           if (persisted.unresolved) {
             liveInviteLinkSync.unresolvedCreatorsCount += 1;
           }
@@ -9626,7 +10017,8 @@ export class TelegramChannelsService {
       imported,
       updated,
       postsUpdated,
-      inviteLinksScope: inviteResult?.scope ?? historical?.inviteLinksScope ?? null,
+      inviteLinksScope:
+        inviteResult?.scope ?? historical?.inviteLinksScope ?? null,
       inviteLinksExpectedTotal:
         inviteResult?.expectedTotalLinks ??
         historical?.inviteLinksExpectedTotal ??
@@ -9685,7 +10077,10 @@ export class TelegramChannelsService {
       telegramChatId: string | null;
     } | null;
     if (!channel) throw new NotFoundException('Telegram channel not found');
-    const importPolicy = await this.getChannelSyncCutoffs(workspaceId, channelId);
+    const importPolicy = await this.getChannelSyncCutoffs(
+      workspaceId,
+      channelId,
+    );
     const account = await this.connectedAccount(
       workspaceId,
       channelId,
@@ -9763,7 +10158,9 @@ export class TelegramChannelsService {
         source: TelegramChannelsService.name,
         event: 'telegram.post_metrics_sync.failed',
         message:
-          error instanceof Error ? error.message : 'Failed to sync channel post metrics',
+          error instanceof Error
+            ? error.message
+            : 'Failed to sync channel post metrics',
         workspaceId,
         durationMs: Date.now() - startedAt,
         errorName: error instanceof Error ? error.name : 'Error',
@@ -9784,7 +10181,9 @@ export class TelegramChannelsService {
     progressStep = { current: 3, total: 8 },
   ) {
     const affectedDays = new Set<string>();
-    const incomingMessageIds = metrics.map((post) => String(post.telegramMessageId));
+    const incomingMessageIds = metrics.map((post) =>
+      String(post.telegramMessageId),
+    );
     const stalePosts = await this.prisma.telegramPost.findMany({
       where: incomingMessageIds.length
         ? {
@@ -9874,11 +10273,7 @@ export class TelegramChannelsService {
     return { affectedDays: affectedDays.size };
   }
 
-  async telegramPostMedia(
-    userId: string,
-    channelId: string,
-    postId: string,
-  ) {
+  async telegramPostMedia(userId: string, channelId: string, postId: string) {
     const workspaceId = await this.workspace(userId);
     const [channel, post] = await Promise.all([
       this.prisma.telegramChannel.findFirst({
@@ -9889,7 +10284,8 @@ export class TelegramChannelsService {
         select: { telegramMessageId: true, hasMedia: true },
       }),
     ]);
-    if (!channel || !post) throw new NotFoundException('Telegram post not found');
+    if (!channel || !post)
+      throw new NotFoundException('Telegram post not found');
     if (!post.hasMedia) throw new NotFoundException('Post has no media');
     const account = await this.connectedAccount(workspaceId, channelId);
     const channelReference = this.mtprotoChannelReference(channel);
@@ -10742,7 +11138,9 @@ export class TelegramChannelsService {
       status: statsDataSourceStatus,
       sourceDisplayName: this.sourceDisplayName(account),
       errorMessage:
-        stats.normalized.status === 'available' ? null : statsUnavailableMessage,
+        stats.normalized.status === 'available'
+          ? null
+          : statsUnavailableMessage,
       metadata: {
         availableFields: stats.availableFields,
         warnings: stats.warnings,
@@ -11003,14 +11401,21 @@ export class TelegramChannelsService {
     });
   }
 
-  async posts(userId: string, channelId: string, query: TelegramChannelPostsQueryDto = {}) {
+  async posts(
+    userId: string,
+    channelId: string,
+    query: TelegramChannelPostsQueryDto = {},
+  ) {
     const workspaceId = await this.workspace(userId);
     const channel = await this.findOne(userId, channelId);
     const pagination = normalizePagination(query);
     const search = query.search?.trim();
     const fromDate = query.from ? new Date(query.from) : null;
     const toDate = query.to ? new Date(query.to) : null;
-    if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+    if (
+      (fromDate && Number.isNaN(fromDate.getTime())) ||
+      (toDate && Number.isNaN(toDate.getTime()))
+    ) {
       throw new BadRequestException('Post date range is invalid');
     }
     if (fromDate && toDate && fromDate > toDate) {
@@ -11019,7 +11424,7 @@ export class TelegramChannelsService {
     const where: any = {
       workspaceId,
       telegramChannelId: channelId,
-      ...((fromDate || toDate)
+      ...(fromDate || toDate
         ? {
             postDate: {
               ...(fromDate ? { gte: fromDate } : {}),
@@ -11181,7 +11586,9 @@ export class TelegramChannelsService {
       channel,
       summary: {
         subscribersCurrent: channel.currentSubscribersCount ?? null,
-        joinedHistoricalByLinks: Number(inviteLinksAggregate._sum.joinedCount || 0),
+        joinedHistoricalByLinks: Number(
+          inviteLinksAggregate._sum.joinedCount || 0,
+        ),
         joinedToday: null,
         leftToday: null,
         netGrowthToday: null,

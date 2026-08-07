@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  Prisma,
   TelegramManagedPostRemoteStatus,
   TelegramManagedPostStatus,
 } from '@prisma/client';
@@ -121,7 +122,65 @@ export function movedPostDatabaseState(
     lastError: cancellationError,
     groupId: keepGroup ? undefined : null,
     groupPosition: keepGroup ? undefined : null,
+    statusPosition: keepGroup ? undefined : null,
   };
+}
+
+type ManagedPostNumberingBucket = 'DRAFT' | 'SCHEDULED' | 'PUBLISHED';
+
+export function managedPostNumberingBucket(
+  status: TelegramManagedPostStatus,
+): ManagedPostNumberingBucket {
+  if (status === TelegramManagedPostStatus.SCHEDULED) return 'SCHEDULED';
+  if (status === TelegramManagedPostStatus.PUBLISHED) return 'PUBLISHED';
+  return 'DRAFT';
+}
+
+export function stripLegacyGroupedPostTitlePrefix(
+  title: string,
+  expectedDisplayNumber?: number | null,
+) {
+  const match = /^\s*(\d+)\)\s+/.exec(title);
+  if (!match) return title;
+  if (
+    expectedDisplayNumber != null &&
+    Number(match[1]) !== expectedDisplayNumber
+  ) {
+    return title;
+  }
+  const next = title.slice(match[0].length);
+  return next.trim() ? next : title;
+}
+
+export async function normalizePostGroupNumbering(
+  tx: Prisma.TransactionClient,
+  groupId: string,
+) {
+  const posts = await tx.telegramManagedPost.findMany({
+    where: { groupId },
+    orderBy: [{ groupPosition: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, status: true },
+  });
+  const counters: Record<ManagedPostNumberingBucket, number> = {
+    DRAFT: 0,
+    SCHEDULED: 0,
+    PUBLISHED: 0,
+  };
+  const rows = posts.map((post, groupPosition) => {
+    const bucket = managedPostNumberingBucket(post.status);
+    const statusPosition = counters[bucket];
+    counters[bucket] += 1;
+    return Prisma.sql`(${post.id}, ${groupPosition}, ${statusPosition})`;
+  });
+  if (!rows.length) return;
+  await tx.$executeRaw`
+    UPDATE "TelegramManagedPost" AS post
+    SET
+      "groupPosition" = data."groupPosition"::integer,
+      "statusPosition" = data."statusPosition"::integer
+    FROM (VALUES ${Prisma.join(rows)}) AS data("id", "groupPosition", "statusPosition")
+    WHERE post."id" = data."id"
+  `;
 }
 
 function zonedParts(date: Date, timezone: string) {

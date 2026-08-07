@@ -6,6 +6,7 @@ import type {
   StructuredApiError,
   SyncOperationResult,
   TelegramChannelAccessMode,
+  ResolvedEmoji,
 } from "@telegram-system/shared";
 
 export type {
@@ -16,6 +17,7 @@ export type {
   StructuredApiError,
   SyncOperationResult,
   TelegramChannelAccessMode,
+  ResolvedEmoji,
 };
 
 export type WorkspaceRole = "owner" | "admin" | "MEDIA_BUYER" | "member";
@@ -45,6 +47,7 @@ export type WorkspaceInfo = {
   secondaryCurrency?: Currency;
   currencyDisplayMode?: CurrencyDisplayMode;
   avatarIcon?: Icon | null;
+  avatarPresentation?: ResolvedEmoji | null;
 };
 export type User = {
   id: string;
@@ -74,6 +77,7 @@ export type AccountMe = {
   createdAt: string;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
+  avatarPresentation?: ResolvedEmoji | null;
   telegramUsername?: string | null;
   assignedTelegramUserAccounts?: Array<{
     id: string;
@@ -101,6 +105,7 @@ export type WorkspaceMemberSelectOption = {
   role: WorkspaceRole;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
+  avatarPresentation?: ResolvedEmoji | null;
   user: User;
   isCurrentUser: boolean;
 };
@@ -112,6 +117,7 @@ export type WorkspaceMember = {
   isHidden?: boolean;
   avatarIconId?: string | null;
   avatarIcon?: Icon | null;
+  avatarPresentation?: ResolvedEmoji | null;
   telegramUsername?: string | null;
   createdAt: string;
   user: User;

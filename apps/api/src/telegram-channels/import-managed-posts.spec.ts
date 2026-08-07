@@ -65,6 +65,29 @@ describe('TelegramChannelsService importManagedPosts', () => {
       Object.assign(post, data);
       return post;
     });
+    const executeRaw = jest.fn().mockImplementation(async () => {
+      const grouped = posts
+        .filter((post) => post.groupId === 'group-1')
+        .sort((left, right) => {
+          const leftPosition = left.groupPosition as number | null;
+          const rightPosition = right.groupPosition as number | null;
+          if (leftPosition !== rightPosition) {
+            return (
+              (leftPosition ?? Number.MAX_SAFE_INTEGER) -
+              (rightPosition ?? Number.MAX_SAFE_INTEGER)
+            );
+          }
+          return (
+            (left.createdAt as Date).getTime() -
+            (right.createdAt as Date).getTime()
+          );
+        });
+      grouped.forEach((post, index) => {
+        post.groupPosition = index;
+        post.statusPosition = index;
+      });
+      return grouped.length;
+    });
     const count = jest
       .fn()
       .mockImplementation(
@@ -87,6 +110,10 @@ describe('TelegramChannelsService importManagedPosts', () => {
               : { id: 'group-1', workspaceId: 'workspace' },
           ),
       },
+      icon: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      $executeRaw: executeRaw,
       $transaction: jest
         .fn()
         .mockImplementation(async (callback) => callback(prisma)),
@@ -123,13 +150,13 @@ describe('TelegramChannelsService importManagedPosts', () => {
           title: 'First',
           text: 'First body',
           emoji: '🔥',
-          imageUrl: 'https://example.com/one.png',
+          urls: ['https://example.com/one.png'],
           groupPosition: 1,
         },
         {
           title: 'Second',
           text: 'Second body',
-          imageUrls: ['https://example.com/two.png'],
+          urls: ['https://example.com/two.png'],
         },
       ],
     });
@@ -156,10 +183,12 @@ describe('TelegramChannelsService importManagedPosts', () => {
         }),
       }),
     );
-    expect(posts.map((post) => [post.id, post.groupPosition])).toEqual([
-      ['existing', 0],
-      ['post-1', 1],
-      ['post-2', 2],
+    expect(
+      posts.map((post) => [post.id, post.groupPosition, post.statusPosition]),
+    ).toEqual([
+      ['existing', 0, 0],
+      ['post-1', 1, 1],
+      ['post-2', 2, 2],
     ]);
   });
 
@@ -170,10 +199,10 @@ describe('TelegramChannelsService importManagedPosts', () => {
       postGroupId: 'group-1',
       rows: [
         { title: '   ', text: 'No title' },
-        { title: 'Bad image', imageUrl: 42 },
+        { title: 'Bad image', urls: 42 },
         {
           title: 'Good',
-          imageUrls: 'https://example.com/one.png, https://example.com/two.png',
+          urls: 'https://example.com/one.png, https://example.com/two.png',
         },
       ],
     });
@@ -201,6 +230,38 @@ describe('TelegramChannelsService importManagedPosts', () => {
         }),
       }),
     );
+  });
+
+  it('uses standard group positions when groupPosition is blank', async () => {
+    const { service, create, posts } = setup();
+
+    await service.importManagedPosts('user', 'channel', {
+      postGroupId: 'group-1',
+      rows: [
+        { title: 'First blank', text: 'Body', groupPosition: '' },
+        { title: 'Second blank', text: 'Body' },
+      ],
+    });
+
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({ groupPosition: 1 }),
+      }),
+    );
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({ groupPosition: 2 }),
+      }),
+    );
+    expect(
+      posts.map((post) => [post.id, post.groupPosition, post.statusPosition]),
+    ).toEqual([
+      ['existing', 0, 0],
+      ['post-1', 1, 1],
+      ['post-2', 2, 2],
+    ]);
   });
 
   it('requires the selected group to belong to the current workspace and channel', async () => {

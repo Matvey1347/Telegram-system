@@ -9,6 +9,7 @@ import {
   effectiveCampaignPendingSubscribers,
 } from '../common/analytics/channel-financial-summary';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { WorkspaceService } from '../common/workspace.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAdHypothesisDto } from './dto/create-ad-hypothesis.dto';
@@ -673,6 +674,7 @@ export class AdHypothesesService {
       conclusion: hypothesis.conclusion,
       iconId: hypothesis.iconId,
       icon: hypothesis.icon ?? null,
+      iconPresentation: iconToResolvedEmoji(hypothesis.icon),
       telegramChannelId: hypothesis.telegramChannelId ?? null,
       telegramChannel: hypothesis.telegramChannel ?? null,
       createdAt: hypothesis.createdAt,

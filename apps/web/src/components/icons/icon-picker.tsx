@@ -20,7 +20,8 @@ import {
   Upload,
   Utensils,
 } from "lucide-react";
-import { iconsApi, type Icon } from "@/lib/api";
+import { iconsApi, type Icon, type ResolvedEmoji } from "@/lib/api";
+import { iconToResolvedEmoji } from "@/lib/resolved-emoji";
 import {
   emojiCategoryLabels,
   emojiIcons,
@@ -32,6 +33,7 @@ import { IconAvatar } from "./icon-avatar";
 
 type IconPickerProps = {
   iconId?: string | null;
+  icon?: Icon | ResolvedEmoji | null;
   onChange: (iconId: string | null) => void;
   buttonLabel?: string;
   className?: string;
@@ -129,6 +131,7 @@ function matchesRecentSaved(item: RecentSavedIcon, search: string) {
 
 export function IconPicker({
   iconId,
+  icon,
   onChange,
   buttonLabel = "Add icon",
   className = "",
@@ -171,7 +174,7 @@ export function IconPicker({
   const { data: selectedIcon } = useQuery({
     queryKey: ["icon", iconId],
     queryFn: () => iconsApi.get(iconId as string),
-    enabled: Boolean(iconId),
+    enabled: open && Boolean(iconId) && !icon && !optimisticIcon,
   });
 
   const iconsQuery = useQuery({
@@ -325,7 +328,10 @@ export function IconPicker({
     return grouped;
   }, [search]);
 
-  const currentIcon = optimisticIcon ?? (iconId ? selectedIcon : null);
+  const currentIcon =
+    optimisticIcon ??
+    iconToResolvedEmoji(icon) ??
+    (iconId ? iconToResolvedEmoji(selectedIcon) : null);
 
   useEffect(() => {
     if (previousIconIdRef.current !== iconId) {
@@ -559,9 +565,9 @@ export function IconPicker({
         }
       >
         {currentIcon ? (
-          <IconAvatar
-            icon={currentIcon}
-            label={currentIcon.name}
+            <IconAvatar
+              icon={currentIcon}
+            label={currentIcon.name ?? undefined}
             size={compact ? "sm" : "xs"}
             bordered={!(compact || bare)}
             className={`${bare ? "!h-5 !w-5 !bg-transparent !border-0 !rounded-none !text-base" : ""} ${iconClassName}`}

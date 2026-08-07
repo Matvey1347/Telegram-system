@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ClipboardList, FileUp, LoaderCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  FileUp,
+  LoaderCircle,
+} from "lucide-react";
 import {
   Button,
   CustomSelect,
@@ -90,8 +95,7 @@ function parseDelimitedRows(content: string, delimiter: string) {
       "icon",
       "emoji",
       "icontext",
-      "imageurl",
-      "imageurls",
+      "urls",
       "groupposition",
       "order",
     ].includes(cell.replace(/\s+/g, "")),
@@ -99,7 +103,7 @@ function parseDelimitedRows(content: string, delimiter: string) {
 
   const headers = hasHeader
     ? headerCells
-    : ["title", "text", "imageurls", "icon", "groupposition"];
+    : ["title", "text", "urls", "icon", "groupposition"];
   const startIndex = hasHeader ? 1 : 0;
 
   return lines.slice(startIndex).map((line) => {
@@ -123,19 +127,17 @@ function parsePlainTextRows(content: string) {
         .map((line) => line.trim())
         .filter(Boolean);
       const [title = "", ...rest] = lines;
-      const imageLines = rest.filter((line) =>
-        /^images?:/i.test(line),
-      );
-      const bodyLines = rest.filter((line) => !/^images?:/i.test(line));
-      const imageUrls = imageLines
-        .flatMap((line) => line.replace(/^images?:/i, "").split(/[,\s]+/))
+      const urlLines = rest.filter((line) => /^urls?:/i.test(line));
+      const bodyLines = rest.filter((line) => !/^urls?:/i.test(line));
+      const urls = urlLines
+        .flatMap((line) => line.replace(/^urls?:/i, "").split(/[,\s]+/))
         .map((value) => value.trim())
         .filter(Boolean);
 
       return {
         title,
         text: bodyLines.join("\n"),
-        imageUrls,
+        urls,
       };
     });
 }
@@ -159,8 +161,7 @@ function normalizeImportRows(
     icon: row.icon,
     emoji: row.emoji,
     iconText: row.icontext ?? row.iconText,
-    imageUrl: row.imageurl ?? row.imageUrl,
-    imageUrls: row.imageurls ?? row.imageUrls,
+    urls: row.urls,
     groupPosition: row.groupposition ?? row.groupPosition,
     order: row.order,
   }));
@@ -192,24 +193,36 @@ export function ManagedPostsImportModal({
   const [content, setContent] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [localError, setLocalError] = useState("");
-  const [result, setResult] =
-    useState<TelegramManagedPostsImportResult | null>(null);
+  const [result, setResult] = useState<TelegramManagedPostsImportResult | null>(
+    null,
+  );
 
   const postGroups = useQuery({
     queryKey: telegramPostKeys.postGroups(channelId),
-    queryFn: () => telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
+    queryFn: () =>
+      telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
     enabled: open && Boolean(channelId),
   });
 
   const groupOptions = useMemo(
     () => [
       { value: noGroupValue, label: "No group" },
-      ...(postGroups.data ?? []).map((group) => ({
-        value: group.id,
-        label: group.title,
-        iconEmoji: group.icon ?? undefined,
-        iconFallback: group.title,
-      })),
+      ...(postGroups.data ?? []).map((group) => {
+        const presentation = group.iconPresentation;
+        return {
+          value: group.id,
+          label: group.title,
+          iconEmoji:
+            presentation?.type === "unicode"
+              ? presentation.value
+              : (group.iconData?.emoji ?? undefined),
+          iconUrl:
+            presentation?.type === "image"
+              ? presentation.url
+              : (group.iconData?.imageUrl ?? undefined),
+          iconFallback: group.title,
+        };
+      }),
     ],
     [postGroups.data],
   );
@@ -220,7 +233,8 @@ export function ManagedPostsImportModal({
   );
   const canImport = Boolean(channelId) && parsedRows.length > 0;
   const resultSummary = summarizeResult(result);
-  const skippedRows = result?.rows.filter((row) => row.status === "skipped") ?? [];
+  const skippedRows =
+    result?.rows.filter((row) => row.status === "skipped") ?? [];
 
   const importMutation = useMutation({
     mutationFn: () =>
@@ -292,11 +306,13 @@ export function ManagedPostsImportModal({
             Ask GPT to return only CSV or TSV rows with these columns:
           </p>
           <pre className="mt-2 overflow-auto rounded-md bg-neutral-950 p-2 text-xs text-neutral-200">
-            {`title,text,icon,imageUrl,imageUrls,groupPosition
-Post title,"Telegram-ready post text","🔥",https://example.com/cover.png,"https://example.com/1.png, https://example.com/2.png",1`}
+            {`title,text,icon,urls,groupPosition
+Post title,"Telegram-ready post text","🔥","https://example.com/1.png, https://example.com/2.png",`}
           </pre>
           <p className="mt-2 text-xs text-blue-100/80">
-            `imageUrl` is for one image, `imageUrls` is for multiple. Both can be empty.
+            Required: `title`. Optional: `text`, `icon`, `urls`, `groupPosition`.
+            `urls` is an array/list of image links and can be empty.
+            Leave `groupPosition` empty to use the standard group ordering.
           </p>
         </div>
 
@@ -306,11 +322,14 @@ Post title,"Telegram-ready post text","🔥",https://example.com/cover.png,"http
             onChange={setPostGroupId}
             options={groupOptions}
             disabled={postGroups.isLoading || importMutation.isPending}
-            placeholder={postGroups.isLoading ? "Loading groups..." : "Select group"}
+            placeholder={
+              postGroups.isLoading ? "Loading groups..." : "Select group"
+            }
           />
           {postGroups.error ? (
             <p className="mt-1 text-xs text-amber-300">
-              Could not load post groups. Import can still create ungrouped posts.
+              Could not load post groups. Import can still create ungrouped
+              posts.
             </p>
           ) : null}
         </FormField>
@@ -351,9 +370,21 @@ Post title,"Telegram-ready post text","🔥",https://example.com/cover.png,"http
 
         <div className="grid gap-2 sm:grid-cols-4">
           <ImportStat label="Parsed rows" value={parsedRows.length} />
-          <ImportStat label="Created" value={resultSummary.created} tone="success" />
-          <ImportStat label="Skipped" value={resultSummary.skipped} tone="warning" />
-          <ImportStat label="Errors" value={resultSummary.errors} tone="danger" />
+          <ImportStat
+            label="Created"
+            value={resultSummary.created}
+            tone="success"
+          />
+          <ImportStat
+            label="Skipped"
+            value={resultSummary.skipped}
+            tone="warning"
+          />
+          <ImportStat
+            label="Errors"
+            value={resultSummary.errors}
+            tone="danger"
+          />
         </div>
 
         {skippedRows.length ? (
@@ -387,7 +418,11 @@ Post title,"Telegram-ready post text","🔥",https://example.com/cover.png,"http
           >
             Close
           </Button>
-          <Button type="button" onClick={submit} disabled={!canImport || importMutation.isPending}>
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={!canImport || importMutation.isPending}
+          >
             <span className="inline-flex items-center gap-2">
               {importMutation.isPending ? (
                 <LoaderCircle size={15} className="animate-spin" />

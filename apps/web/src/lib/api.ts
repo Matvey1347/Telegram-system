@@ -142,7 +142,9 @@ function successMessage(method?: string) {
   return "Saved successfully.";
 }
 
-function extractStructuredApiError(error: unknown): StructuredApiErrorPayload | null {
+function extractStructuredApiError(
+  error: unknown,
+): StructuredApiErrorPayload | null {
   if (!axios.isAxiosError(error) || !error.response?.data) {
     return null;
   }
@@ -195,7 +197,8 @@ function errorFeedback(error: unknown, fallback?: string) {
     structured?.message?.trim() || fallback || defaultErrorMessage(error);
   const details =
     typeof structured?.details === "string" ? structured.details : undefined;
-  const code = typeof structured?.code === "string" ? structured.code : undefined;
+  const code =
+    typeof structured?.code === "string" ? structured.code : undefined;
   const correlationId =
     typeof structured?.correlationId === "string"
       ? structured.correlationId
@@ -311,7 +314,10 @@ async function streamBulkAction(
   );
 }
 
-export async function streamProgressAction<TResult, TItem = { message?: string }>(
+export async function streamProgressAction<
+  TResult,
+  TItem = { message?: string },
+>(
   path: string,
   payload: unknown,
   onProgress: StreamProgressHandler<TItem>,
@@ -357,7 +363,8 @@ api.interceptors.request.use((config) => {
       return config;
     }
     const requestId =
-      feedback?.operationId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      feedback?.operationId ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     (
       config as typeof config & {
         mutationRequestId?: string;
@@ -398,7 +405,8 @@ api.interceptors.response.use(
         id: requestId,
         phase: "success",
         title: feedback?.title,
-        message: feedback?.successMessage || successMessage(response.config.method),
+        message:
+          feedback?.successMessage || successMessage(response.config.method),
         icon: feedback?.icon,
         mode: feedback?.mode || "automatic",
       });
@@ -491,6 +499,7 @@ import type {
   TelegramInviteLink,
   TelegramInviteLinkHistory,
   TelegramManagedPost,
+  TelegramManagedPostGroupSummary,
   TelegramManagedPostLinkTarget,
   TelegramManagedPostsImportRow,
   TelegramManagedPostsImportPayload,
@@ -533,7 +542,8 @@ export type {
   AdCampaignKpiStatus,
   AdCampaignPerformanceSummary,
   AdHypothesis,
-  AdHypothesisCampaign, AdHypothesisCampaignSummary,
+  AdHypothesisCampaign,
+  AdHypothesisCampaignSummary,
   AdHypothesisDetail,
   AdHypothesisInviteLinkHistory,
   AdHypothesisKpiStatus,
@@ -567,6 +577,7 @@ export type {
   PostGroupStatusSummary,
   Promo,
   PromptNote,
+  ResolvedEmoji,
   TelegramAccountChannelImportItem,
   TelegramAnalyticsSources,
   TelegramBot,
@@ -597,6 +608,7 @@ export type {
   TelegramInviteLink,
   TelegramInviteLinkHistory,
   TelegramManagedPost,
+  TelegramManagedPostGroupSummary,
   TelegramManagedPostLinkTarget,
   TelegramManagedPostRemoteStatus,
   TelegramManagedPostsImportRow,
@@ -711,23 +723,26 @@ export const iconsApi = {
     ).data;
   },
   createCustom: async (payload: { name: string; imageUrl: string }) =>
-    (
-      await api.post<Icon>("/icons/custom", payload, silentFeedbackConfig)
-    ).data,
+    (await api.post<Icon>("/icons/custom", payload, silentFeedbackConfig)).data,
   createTemporaryImage: async (payload: {
     imageUrl: string;
     fileName?: string;
   }) =>
     (
-      await api.post<Icon>("/icons/temporary-image", payload, silentFeedbackConfig)
+      await api.post<Icon>(
+        "/icons/temporary-image",
+        payload,
+        silentFeedbackConfig,
+      )
     ).data,
   createEmoji: async (payload: { name: string; emoji: string }) =>
-    (
-      await api.post<Icon>("/icons/emoji", payload, silentFeedbackConfig)
-    ).data,
+    (await api.post<Icon>("/icons/emoji", payload, silentFeedbackConfig)).data,
   remove: async (id: string) =>
     (
-      await api.delete<{ success: boolean }>(`/icons/${id}`, silentFeedbackConfig)
+      await api.delete<{ success: boolean }>(
+        `/icons/${id}`,
+        silentFeedbackConfig,
+      )
     ).data,
 };
 
@@ -803,17 +818,20 @@ export const workspaceMembersApi = {
 };
 
 export const promptNotesApi = {
-  listPage: async (params?: PaginationParams & {
-    search?: string;
-    telegramChannelId?: string;
-    postGroupId?: string;
-  }) =>
-    getPaginated<PromptNote>("/prompt-notes", params),
-  list: async (params?: PaginationParams & {
-    search?: string;
-    telegramChannelId?: string;
-    postGroupId?: string;
-  }) =>
+  listPage: async (
+    params?: PaginationParams & {
+      search?: string;
+      telegramChannelId?: string;
+      postGroupId?: string;
+    },
+  ) => getPaginated<PromptNote>("/prompt-notes", params),
+  list: async (
+    params?: PaginationParams & {
+      search?: string;
+      telegramChannelId?: string;
+      postGroupId?: string;
+    },
+  ) =>
     hasExplicitPagination(params)
       ? (await getPaginated<PromptNote>("/prompt-notes", params)).items
       : getAllPaginatedItems<PromptNote>("/prompt-notes", params),
@@ -826,8 +844,7 @@ export const promptNotesApi = {
     telegramChannelId?: string | null;
     telegramChannelIds?: string[];
     postGroupId?: string | null;
-  }) =>
-    (await api.post<PromptNote>("/prompt-notes", payload)).data,
+  }) => (await api.post<PromptNote>("/prompt-notes", payload)).data,
   update: async (
     id: string,
     payload: {
@@ -1143,9 +1160,7 @@ export const telegramChannelsApi = {
       await api.post<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts`,
         payload,
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   importManagedPosts: async (
@@ -1174,9 +1189,7 @@ export const telegramChannelsApi = {
       await api.patch<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts/${postId}`,
         payload,
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   moveManagedPost: async (
@@ -1190,19 +1203,25 @@ export const telegramChannelsApi = {
         { targetTelegramChannelId },
       )
     ).data,
-  postGroupsPage: async (params?: PaginationParams & {
-    telegramChannelId?: string;
-    search?: string;
-  }) =>
-    getPaginated<PostGroup>("/telegram-channels/post-groups", params),
-  postGroups: async (params?: PaginationParams & {
-    telegramChannelId?: string;
-    search?: string;
-  }) =>
+  postGroupsPage: async (
+    params?: PaginationParams & {
+      telegramChannelId?: string;
+      search?: string;
+    },
+  ) => getPaginated<PostGroup>("/telegram-channels/post-groups", params),
+  postGroups: async (
+    params?: PaginationParams & {
+      telegramChannelId?: string;
+      search?: string;
+    },
+  ) =>
     hasExplicitPagination(params)
       ? (
-      await getPaginated<PostGroup>("/telegram-channels/post-groups", params)
-    ).items
+          await getPaginated<PostGroup>(
+            "/telegram-channels/post-groups",
+            params,
+          )
+        ).items
       : getAllPaginatedItems<PostGroup>(
           "/telegram-channels/post-groups",
           params,
@@ -1215,6 +1234,7 @@ export const telegramChannelsApi = {
     title: string;
     description?: string | null;
     icon?: string | null;
+    statusNumberingEnabled?: boolean;
     postIds?: string[];
   }) =>
     (await api.post<PostGroup>("/telegram-channels/post-groups", payload)).data,
@@ -1224,6 +1244,7 @@ export const telegramChannelsApi = {
       title?: string;
       description?: string | null;
       icon?: string | null;
+      statusNumberingEnabled?: boolean;
     },
   ) =>
     (
@@ -1244,9 +1265,7 @@ export const telegramChannelsApi = {
       await api.post<PostGroup>(
         `/telegram-channels/post-groups/${groupId}/posts`,
         { postIds },
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   removePostFromGroup: async (
@@ -1257,9 +1276,7 @@ export const telegramChannelsApi = {
     (
       await api.delete<PostGroup>(
         `/telegram-channels/post-groups/${groupId}/posts/${postId}`,
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   reorderPostGroup: async (
@@ -1271,9 +1288,7 @@ export const telegramChannelsApi = {
       await api.post<PostGroup>(
         `/telegram-channels/post-groups/${groupId}/reorder`,
         { orderedPostIds },
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   movePostGroup: async (
@@ -1333,9 +1348,7 @@ export const telegramChannelsApi = {
           await api.post<BulkActionResult>(
             `/telegram-channels/post-groups/${groupId}/reset-drafts`,
             {},
-            background
-              ? silentFeedbackConfig
-              : undefined,
+            background ? silentFeedbackConfig : undefined,
           )
         ).data,
   schedulePostGroupSequence: async (
@@ -1375,9 +1388,7 @@ export const telegramChannelsApi = {
       await api.post<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts/${postId}/publish`,
         { longTextMode },
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   scheduleManagedPost: async (
@@ -1391,9 +1402,7 @@ export const telegramChannelsApi = {
       await api.post<TelegramManagedPost>(
         `/telegram-channels/${channelId}/managed-posts/${postId}/schedule`,
         { scheduledAt, longTextMode },
-        background
-          ? silentFeedbackConfig
-          : undefined,
+        background ? silentFeedbackConfig : undefined,
       )
     ).data,
   returnManagedPostToDraft: async (channelId: string, postId: string) =>
@@ -1563,7 +1572,11 @@ export const telegramUserAccountsApi = {
     streamProgressAction<
       TelegramUserAccountSyncDialogsResponse,
       { message?: string }
-    >(`/telegram-user-accounts/${id}/channels/import-stream`, { channels }, onProgress),
+    >(
+      `/telegram-user-accounts/${id}/channels/import-stream`,
+      { channels },
+      onProgress,
+    ),
   channels: async (id: string) =>
     (
       await api.get<TelegramSourceChannelAccess[]>(
@@ -1584,8 +1597,9 @@ export const telegramBotsApi = {
 };
 export const promosApi = {
   ...quietCrud<Promo>("/promos"),
-  listPage: async (params?: PaginationParams & { telegramChannelId?: string }) =>
-    getPaginated<Promo>("/promos", params),
+  listPage: async (
+    params?: PaginationParams & { telegramChannelId?: string },
+  ) => getPaginated<Promo>("/promos", params),
   list: async (params?: PaginationParams & { telegramChannelId?: string }) =>
     hasExplicitPagination(params)
       ? (await getPaginated<Promo>("/promos", params)).items
@@ -1727,7 +1741,8 @@ export async function syncTelegramChannelNow(
   channelId: string,
   payload: TelegramChannelSyncNowPayload = {},
 ) {
-  return (await api.post(`/telegram-channels/${channelId}/sync-now`, payload)).data;
+  return (await api.post(`/telegram-channels/${channelId}/sync-now`, payload))
+    .data;
 }
 
 export async function syncTelegramChannelNowWithProgress(
@@ -1738,11 +1753,7 @@ export async function syncTelegramChannelNowWithProgress(
   return streamProgressAction<
     SyncOperationResult & Record<string, unknown>,
     TelegramChannelSyncProgressItem
-  >(
-    `/telegram-channels/${channelId}/sync-now-stream`,
-    payload,
-    onProgress,
-  );
+  >(`/telegram-channels/${channelId}/sync-now-stream`, payload, onProgress);
 }
 
 export async function syncTelegramChannelHistorical(
@@ -1898,61 +1909,171 @@ export const telegramAdSalesApi = {
       ownerMemberId?: string;
       archived?: boolean;
     },
-  ) => getPaginated<TelegramAdvertiser>("/telegram-ad-sales/advertisers", params),
+  ) =>
+    getPaginated<TelegramAdvertiser>("/telegram-ad-sales/advertisers", params),
   searchAdvertisers: async (params: { q: string; limit?: number }) =>
-    (await api.get<TelegramAdvertiser[]>("/telegram-ad-sales/advertisers/search", { params })).data,
+    (
+      await api.get<TelegramAdvertiser[]>(
+        "/telegram-ad-sales/advertisers/search",
+        { params },
+      )
+    ).data,
   getAdvertiser: async (id: string) =>
-    (await api.get<TelegramAdvertiser>(`/telegram-ad-sales/advertisers/${id}`)).data,
+    (await api.get<TelegramAdvertiser>(`/telegram-ad-sales/advertisers/${id}`))
+      .data,
   createAdvertiser: async (payload: Record<string, unknown>) =>
-    (await api.post<TelegramAdvertiser>("/telegram-ad-sales/advertisers", payload)).data,
+    (
+      await api.post<TelegramAdvertiser>(
+        "/telegram-ad-sales/advertisers",
+        payload,
+      )
+    ).data,
   updateAdvertiser: async (id: string, payload: Record<string, unknown>) =>
-    (await api.patch<TelegramAdvertiser>(`/telegram-ad-sales/advertisers/${id}`, payload)).data,
+    (
+      await api.patch<TelegramAdvertiser>(
+        `/telegram-ad-sales/advertisers/${id}`,
+        payload,
+      )
+    ).data,
   archiveAdvertiser: async (id: string) =>
-    (await api.post<TelegramAdvertiser>(`/telegram-ad-sales/advertisers/${id}/archive`)).data,
+    (
+      await api.post<TelegramAdvertiser>(
+        `/telegram-ad-sales/advertisers/${id}/archive`,
+      )
+    ).data,
   restoreAdvertiser: async (id: string) =>
-    (await api.post<TelegramAdvertiser>(`/telegram-ad-sales/advertisers/${id}/restore`)).data,
+    (
+      await api.post<TelegramAdvertiser>(
+        `/telegram-ad-sales/advertisers/${id}/restore`,
+      )
+    ).data,
   addAdvertiserContact: async (id: string, payload: Record<string, unknown>) =>
-    (await api.post<TelegramAdvertiserContact>(`/telegram-ad-sales/advertisers/${id}/contacts`, payload)).data,
+    (
+      await api.post<TelegramAdvertiserContact>(
+        `/telegram-ad-sales/advertisers/${id}/contacts`,
+        payload,
+      )
+    ).data,
   listAdvertiserActivities: async (id: string, params?: PaginationParams) =>
-    getPaginated<TelegramAdvertiserActivity>(`/telegram-ad-sales/advertisers/${id}/activities`, params),
-  createAdvertiserActivity: async (id: string, payload: Record<string, unknown>) =>
-    (await api.post<TelegramAdvertiserActivity>(`/telegram-ad-sales/advertisers/${id}/activities`, payload)).data,
+    getPaginated<TelegramAdvertiserActivity>(
+      `/telegram-ad-sales/advertisers/${id}/activities`,
+      params,
+    ),
+  createAdvertiserActivity: async (
+    id: string,
+    payload: Record<string, unknown>,
+  ) =>
+    (
+      await api.post<TelegramAdvertiserActivity>(
+        `/telegram-ad-sales/advertisers/${id}/activities`,
+        payload,
+      )
+    ).data,
   listCrmTasks: async (
-    params?: PaginationParams & { advertiserId?: string; assignedMemberId?: string; status?: string; type?: string },
-  ) => getPaginated<TelegramAdvertiserTask>("/telegram-ad-sales/crm/tasks", params),
+    params?: PaginationParams & {
+      advertiserId?: string;
+      assignedMemberId?: string;
+      status?: string;
+      type?: string;
+    },
+  ) =>
+    getPaginated<TelegramAdvertiserTask>(
+      "/telegram-ad-sales/crm/tasks",
+      params,
+    ),
   createAdvertiserTask: async (id: string, payload: Record<string, unknown>) =>
-    (await api.post<TelegramAdvertiserTask>(`/telegram-ad-sales/advertisers/${id}/tasks`, payload)).data,
+    (
+      await api.post<TelegramAdvertiserTask>(
+        `/telegram-ad-sales/advertisers/${id}/tasks`,
+        payload,
+      )
+    ).data,
   updateCrmTask: async (taskId: string, payload: Record<string, unknown>) =>
-    (await api.patch<TelegramAdvertiserTask>(`/telegram-ad-sales/crm/tasks/${taskId}`, payload)).data,
+    (
+      await api.patch<TelegramAdvertiserTask>(
+        `/telegram-ad-sales/crm/tasks/${taskId}`,
+        payload,
+      )
+    ).data,
   completeCrmTask: async (taskId: string, payload?: Record<string, unknown>) =>
-    (await api.post<TelegramAdvertiserTask>(`/telegram-ad-sales/crm/tasks/${taskId}/complete`, payload ?? {})).data,
+    (
+      await api.post<TelegramAdvertiserTask>(
+        `/telegram-ad-sales/crm/tasks/${taskId}/complete`,
+        payload ?? {},
+      )
+    ).data,
   getCrmWorkspaceSettings: async () =>
-    (await api.get<TelegramAdCrmWorkspaceSettings>("/telegram-ad-sales/crm/settings/workspace")).data,
+    (
+      await api.get<TelegramAdCrmWorkspaceSettings>(
+        "/telegram-ad-sales/crm/settings/workspace",
+      )
+    ).data,
   updateCrmWorkspaceSettings: async (payload: Record<string, unknown>) =>
-    (await api.put<TelegramAdCrmWorkspaceSettings>("/telegram-ad-sales/crm/settings/workspace", payload)).data,
+    (
+      await api.put<TelegramAdCrmWorkspaceSettings>(
+        "/telegram-ad-sales/crm/settings/workspace",
+        payload,
+      )
+    ).data,
   getCrmMemberSettings: async () =>
-    (await api.get<TelegramAdCrmMemberSettings>("/telegram-ad-sales/crm/settings/member")).data,
+    (
+      await api.get<TelegramAdCrmMemberSettings>(
+        "/telegram-ad-sales/crm/settings/member",
+      )
+    ).data,
   updateCrmMemberSettings: async (payload: Record<string, unknown>) =>
-    (await api.put<TelegramAdCrmMemberSettings>("/telegram-ad-sales/crm/settings/member", payload)).data,
+    (
+      await api.put<TelegramAdCrmMemberSettings>(
+        "/telegram-ad-sales/crm/settings/member",
+        payload,
+      )
+    ).data,
   getWorkspaceSettings: async () =>
-    (await api.get<TelegramAdSalesWorkspaceSettings>("/telegram-ad-sales/settings/workspace")).data,
+    (
+      await api.get<TelegramAdSalesWorkspaceSettings>(
+        "/telegram-ad-sales/settings/workspace",
+      )
+    ).data,
   updateWorkspaceSettings: async (payload: Record<string, unknown>) =>
-    (await api.put<TelegramAdSalesWorkspaceSettings>("/telegram-ad-sales/settings/workspace", payload)).data,
+    (
+      await api.put<TelegramAdSalesWorkspaceSettings>(
+        "/telegram-ad-sales/settings/workspace",
+        payload,
+      )
+    ).data,
   getPreferences: async () =>
-    (await api.get<TelegramAdSalesMemberPreferences>("/telegram-ad-sales/preferences")).data,
+    (
+      await api.get<TelegramAdSalesMemberPreferences>(
+        "/telegram-ad-sales/preferences",
+      )
+    ).data,
   updatePreferences: async (payload: Record<string, unknown>) =>
-    (await api.put<TelegramAdSalesMemberPreferences>("/telegram-ad-sales/preferences", payload, silentFeedbackConfig)).data,
-  listSalesPage: async (
-    params?: PaginationParams & { status?: string },
-  ) => getPaginated<TelegramAdSale>("/telegram-ad-sales", params),
+    (
+      await api.put<TelegramAdSalesMemberPreferences>(
+        "/telegram-ad-sales/preferences",
+        payload,
+        silentFeedbackConfig,
+      )
+    ).data,
+  listSalesPage: async (params?: PaginationParams & { status?: string }) =>
+    getPaginated<TelegramAdSale>("/telegram-ad-sales", params),
   getSale: async (id: string) =>
     (await api.get<TelegramAdSale>(`/telegram-ad-sales/${id}`)).data,
   createSale: async (payload: Record<string, unknown>, silent = false) =>
-    (await api.post<TelegramAdSale>("/telegram-ad-sales", payload, silent ? silentFeedbackConfig : undefined)).data,
+    (
+      await api.post<TelegramAdSale>(
+        "/telegram-ad-sales",
+        payload,
+        silent ? silentFeedbackConfig : undefined,
+      )
+    ).data,
   updateSale: async (id: string, payload: Record<string, unknown>) =>
     (await api.patch<TelegramAdSale>(`/telegram-ad-sales/${id}`, payload)).data,
   listProductsPage: async (
-    params?: PaginationParams & { telegramChannelId?: string; isActive?: boolean },
+    params?: PaginationParams & {
+      telegramChannelId?: string;
+      isActive?: boolean;
+    },
   ) => getPaginated<TelegramAdProduct>("/telegram-ad-sales/products", params),
   listChannelProducts: async (channelId: string) =>
     (
@@ -1988,7 +2109,10 @@ export const telegramAdSalesApi = {
         `/telegram-ad-sales/channels/${channelId}/baseline`,
       )
     ).data,
-  updateChannelPricing: async (channelId: string, payload: Record<string, unknown>) =>
+  updateChannelPricing: async (
+    channelId: string,
+    payload: Record<string, unknown>,
+  ) =>
     (
       await api.put<TelegramAdChannelPricingSettings>(
         `/telegram-ad-sales/channels/${channelId}/pricing`,
@@ -2002,7 +2126,10 @@ export const telegramAdSalesApi = {
         payload,
       )
     ).data,
-  recommendPolicy: async (channelId: string, payload?: Record<string, unknown>) =>
+  recommendPolicy: async (
+    channelId: string,
+    payload?: Record<string, unknown>,
+  ) =>
     (
       await api.post(
         `/telegram-ad-sales/channels/${channelId}/policy/recommend`,
@@ -2017,7 +2144,10 @@ export const telegramAdSalesApi = {
         silent ? silentFeedbackConfig : undefined,
       )
     ).data,
-  priceHistory: async (channelId: string, params?: { telegramAdProductId?: string; limit?: number }) =>
+  priceHistory: async (
+    channelId: string,
+    params?: { telegramAdProductId?: string; limit?: number },
+  ) =>
     (
       await api.get<TelegramAdPriceSnapshot[]>(
         `/telegram-ad-sales/channels/${channelId}/price-history`,
@@ -2039,14 +2169,20 @@ export const telegramAdSalesApi = {
         { params },
       )
     ).data,
-  channelAnalytics: async (channelId: string, params?: Record<string, unknown>) =>
+  channelAnalytics: async (
+    channelId: string,
+    params?: Record<string, unknown>,
+  ) =>
     (
       await api.get<TelegramAdChannelAnalyticsResponse>(
         `/telegram-ad-sales/analytics/channels/${channelId}`,
         { params },
       )
     ).data,
-  networkAnalytics: async (networkId: string, params?: Record<string, unknown>) =>
+  networkAnalytics: async (
+    networkId: string,
+    params?: Record<string, unknown>,
+  ) =>
     (
       await api.get<TelegramAdNetworkAnalyticsResponse>(
         `/telegram-ad-sales/analytics/networks/${networkId}`,
@@ -2081,7 +2217,11 @@ export const telegramAdSalesApi = {
         { params },
       )
     ).data,
-  addPlacement: async (saleId: string, payload: Record<string, unknown>, silent = false) =>
+  addPlacement: async (
+    saleId: string,
+    payload: Record<string, unknown>,
+    silent = false,
+  ) =>
     (
       await api.post<TelegramAdSale["placements"][number]>(
         `/telegram-ad-sales/${saleId}/placements`,
@@ -2100,13 +2240,29 @@ export const telegramAdSalesApi = {
         payload,
       )
     ).data,
-  reserveSale: async (saleId: string, payload: Record<string, unknown>, silent = false) =>
-    (await api.post<TelegramAdSale>(`/telegram-ad-sales/${saleId}/reserve`, payload, silent ? silentFeedbackConfig : undefined)).data,
+  reserveSale: async (
+    saleId: string,
+    payload: Record<string, unknown>,
+    silent = false,
+  ) =>
+    (
+      await api.post<TelegramAdSale>(
+        `/telegram-ad-sales/${saleId}/reserve`,
+        payload,
+        silent ? silentFeedbackConfig : undefined,
+      )
+    ).data,
   confirmSale: async (saleId: string) =>
-    (await api.post<TelegramAdSale>(`/telegram-ad-sales/${saleId}/confirm`)).data,
+    (await api.post<TelegramAdSale>(`/telegram-ad-sales/${saleId}/confirm`))
+      .data,
   cancelSale: async (saleId: string) =>
-    (await api.post<TelegramAdSale>(`/telegram-ad-sales/${saleId}/cancel`)).data,
-  createPayment: async (saleId: string, payload: Record<string, unknown>, silent = false) =>
+    (await api.post<TelegramAdSale>(`/telegram-ad-sales/${saleId}/cancel`))
+      .data,
+  createPayment: async (
+    saleId: string,
+    payload: Record<string, unknown>,
+    silent = false,
+  ) =>
     (
       await api.post<TelegramAdSalePayment[] | TelegramAdSalePayment>(
         `/telegram-ad-sales/${saleId}/payments`,

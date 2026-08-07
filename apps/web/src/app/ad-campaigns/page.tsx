@@ -1390,12 +1390,7 @@ function PromoIcon({
   icon?: Promo['icon'];
   title: string;
 }) {
-  const iconQuery = useQuery({
-    queryKey: ['icon', iconId],
-    queryFn: () => iconsApi.get(iconId as string),
-    enabled: Boolean(iconId) && !icon,
-  });
-  const resolvedIcon = icon || iconQuery.data;
+  const resolvedIcon = icon;
   if (!resolvedIcon) return null;
   return (
     <IconAvatar

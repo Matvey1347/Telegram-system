@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -59,12 +66,14 @@ import {
   type Icon,
   type PostGroup,
   type PromptNote,
+  type ResolvedEmoji,
   type TelegramChannelSelectOption as TelegramChannel,
   type TelegramManagedPost,
   type TelegramManagedPostRevision,
   type TelegramChannelTimePost,
   type WorkspaceMemberSelectOption as WorkspaceMember,
 } from "@/lib/api";
+import { iconToResolvedEmoji } from "@/lib/resolved-emoji";
 import {
   buildCalendarDayScheduleSlots,
   getCalendarSchedulablePosts,
@@ -75,10 +84,10 @@ import {
   type TelegramPostsRouteView,
 } from "@/lib/telegram-posts-url";
 import {
-  buildAutoGroupedPostTitle,
-  extractAutoPrefilledPostTitle,
-  getNextGroupedPostNumber,
-} from "@/lib/telegram-post-title";
+  getManagedPostDisplayNumber,
+  normalizeManagedPostNumbering,
+} from "@/lib/telegram-post-numbering";
+import { extractAutoPrefilledPostTitle } from "@/lib/telegram-post-title";
 import { memberKeys, telegramChannelKeys } from "@/lib/query-keys";
 import type {
   ScheduleManagedPostsBatchItem,
@@ -98,6 +107,7 @@ import {
   PageHeader,
   Textarea,
   TimeInput,
+  ToggleRow,
   TooltipBubble,
   isValidTimeInputValue,
 } from "@/components/ui/primitives";
@@ -115,12 +125,20 @@ type PendingPostSave = {
   groupId?: string | null;
   mode: PublishingMode;
 };
+
+function selectIconProps(icon?: Icon | ResolvedEmoji | null) {
+  const resolved = iconToResolvedEmoji(icon);
+  if (!resolved) return {};
+  if (resolved.type === "image") return { iconUrl: resolved.url };
+  return { iconEmoji: resolved.value };
+}
 type PostSidebarSection = {
   key: string;
-  group: PostGroup | null;
+  group: EffectivePostGroup | null;
   posts: TelegramManagedPost[];
   pendingPosts: PendingPostSave[];
 };
+type EffectivePostGroup = PostGroup | NonNullable<TelegramManagedPost["group"]>;
 const TELEGRAM_TEXT_MESSAGE_LIMIT = 4096;
 const POST_OPEN_CLICK_DELAY_MS = 180;
 const lastSelectedTelegramPostsChannelKey =
@@ -154,9 +172,7 @@ function localDateTimeParts(value: string | Date) {
   };
 }
 
-function wantsNewTab(
-  event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
-) {
+function wantsNewTab(event: Pick<MouseEvent, "metaKey" | "ctrlKey">) {
   return event.metaKey || event.ctrlKey;
 }
 
@@ -241,7 +257,15 @@ function startOfMonth(value: Date) {
 }
 
 function endOfMonth(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
+  return new Date(
+    value.getFullYear(),
+    value.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
 }
 
 function startOfDay(value: Date) {
@@ -405,7 +429,14 @@ export default function TelegramPostsPage() {
       params.set("postView", currentRoutePostView);
     }
     router.replace(`${pathname}?${params.toString()}`);
-  }, [availableChannels, channelId, currentRoutePostView, pathname, router, searchParams]);
+  }, [
+    availableChannels,
+    channelId,
+    currentRoutePostView,
+    pathname,
+    router,
+    searchParams,
+  ]);
 
   useEffect(() => {
     if (!channelId || groupId || initialPostView) return;
@@ -567,20 +598,21 @@ function TelegramPostWorkspace({
   const restoredPostIdRef = useRef("");
   const queryClient = useQueryClient();
   const { pushToast, setProgress, clearProgress } = useAppToast();
-  const [workspaceView, setWorkspaceView] = useState<"posts" | "groups">(
-    () => {
-      if (typeof window === "undefined") return "posts";
-      if (initialGroupId) return "groups";
-      return window.localStorage.getItem(workspaceViewPreferenceKey(channelId)) ===
-        "groups"
-        ? "groups"
-        : "posts";
-    },
-  );
+  const [workspaceView, setWorkspaceView] = useState<"posts" | "groups">(() => {
+    if (typeof window === "undefined") return "posts";
+    if (initialGroupId) return "groups";
+    return window.localStorage.getItem(
+      workspaceViewPreferenceKey(channelId),
+    ) === "groups"
+      ? "groups"
+      : "posts";
+  });
   const [postView, setPostView] = useState<PostViewMode>(() => {
     return initialPostView || "editor";
   });
-  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
+  const [calendarMonth, setCalendarMonth] = useState(() =>
+    startOfMonth(new Date()),
+  );
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() =>
     toLocalDateKey(new Date()),
   );
@@ -759,13 +791,7 @@ function TelegramPostWorkspace({
         queryKey: ["post-groups", channelId],
       }),
     ]);
-  }, [
-    calendarData.data,
-    channelId,
-    postView,
-    queryClient,
-    workspaceView,
-  ]);
+  }, [calendarData.data, channelId, postView, queryClient, workspaceView]);
 
   useEffect(
     () => () => {
@@ -788,7 +814,8 @@ function TelegramPostWorkspace({
     }
   };
 
-  const currentMemberId = members.data?.find((member) => member.isCurrentUser)?.id ?? null;
+  const currentMemberId =
+    members.data?.find((member) => member.isCurrentUser)?.id ?? null;
   const telegramImportedSystemGroup = useMemo(
     () =>
       (postGroups.data || []).find(
@@ -796,8 +823,12 @@ function TelegramPostWorkspace({
       ) || null,
     [postGroups.data],
   );
+  const postGroupsById = useMemo(
+    () => new Map((postGroups.data || []).map((group) => [group.id, group])),
+    [postGroups.data],
+  );
   const effectivePostGroup = (post: TelegramManagedPost) =>
-    post.group ??
+    (post.groupId ? (postGroupsById.get(post.groupId) ?? post.group) : null) ??
     (post.origin === "TELEGRAM" && !post.groupId
       ? telegramImportedSystemGroup
       : null);
@@ -807,29 +838,6 @@ function TelegramPostWorkspace({
     post.assignedMember ?? null;
   const effectivePostMemberId = (post: TelegramManagedPost) =>
     effectivePostMember(post)?.id ?? post.assignedMemberId ?? null;
-  const pendingGroupedPostCount = useMemo(() => {
-    const grouped = new Map<string, number>();
-    for (const pending of pendingPostSaves) {
-      if (!pending.groupId) continue;
-      grouped.set(pending.groupId, (grouped.get(pending.groupId) || 0) + 1);
-    }
-    return grouped;
-  }, [pendingPostSaves]);
-  const nextGroupedPostNumber = useMemo(
-    () =>
-      getNextGroupedPostNumber({
-        groupId: postGroupId,
-        posts: posts.data || [],
-        pendingGroupPostCount: postGroupId
-          ? (pendingGroupedPostCount.get(postGroupId) ?? 0)
-          : 0,
-      }),
-    [pendingGroupedPostCount, postGroupId, posts.data],
-  );
-  const autoGroupedPostTitle = useMemo(
-    () => buildAutoGroupedPostTitle(nextGroupedPostNumber),
-    [nextGroupedPostNumber],
-  );
   const autoPrefilledTitle = useMemo(
     () => extractAutoPrefilledPostTitle(text),
     [text],
@@ -843,7 +851,10 @@ function TelegramPostWorkspace({
   const hasLockedTelegramMedia =
     editingMeta?.status === "PUBLISHED" || editingMeta?.status === "SCHEDULED";
   const telegramPostUrl = (() => {
-    if (!editingMeta || !["PUBLISHED", "SCHEDULED"].includes(editingMeta.status)) {
+    if (
+      !editingMeta ||
+      !["PUBLISHED", "SCHEDULED"].includes(editingMeta.status)
+    ) {
       return null;
     }
     const primaryMessageIndex =
@@ -867,16 +878,16 @@ function TelegramPostWorkspace({
   );
   const canManageTelegramLink = Boolean(
     editingMeta &&
-      (editingMeta.status === "SCHEDULED" ||
-        editingMeta.status === "PUBLISHED" ||
-        editingMeta.status === "FAILED" ||
-        ["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
-        /link is broken|Telegram link manually/i.test(displayedError)),
+    (editingMeta.status === "SCHEDULED" ||
+      editingMeta.status === "PUBLISHED" ||
+      editingMeta.status === "FAILED" ||
+      ["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
+      /link is broken|Telegram link manually/i.test(displayedError)),
   );
   const telegramLinkBroken = Boolean(
     editingMeta &&
-      (["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
-        /link is broken/i.test(displayedError)),
+    (["BROKEN", "MISSING"].includes(editingMeta.telegramRemoteStatus) ||
+      /link is broken/i.test(displayedError)),
   );
   const storedTelegramMessageId = (() => {
     if (!editingMeta) return null;
@@ -889,7 +900,8 @@ function TelegramPostWorkspace({
         : 0;
     return editingMeta.telegramMessageIds[primaryMessageIndex] || null;
   })();
-  const enteredTelegramMessageId = parseTelegramMessageIdFromUrl(manualTelegramUrl);
+  const enteredTelegramMessageId =
+    parseTelegramMessageIdFromUrl(manualTelegramUrl);
   const telegramLinkIdMismatchHint =
     telegramLinkModalOpen &&
     storedTelegramMessageId &&
@@ -940,16 +952,18 @@ function TelegramPostWorkspace({
       if (post.id === editing.id) return false;
       const linkedIds = [
         ...new Set(
-          [...(post.text || "").matchAll(/\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g)].map(
-            (match) => match[1],
-          ),
+          [
+            ...(post.text || "").matchAll(
+              /\[[^\]\n]+\]\(tg-post:([a-zA-Z0-9_-]+)\)/g,
+            ),
+          ].map((match) => match[1]),
         ),
       ];
       return linkedIds.includes(editing.id);
     });
   }, [editing, posts.data]);
-  const unresolvedInternalLinkTargets = internalLinkTargetIds.map(
-    (targetId) => {
+  const unresolvedInternalLinkTargets = internalLinkTargetIds
+    .map((targetId) => {
       const target = posts.data?.find((post) => post.id === targetId);
       const ready =
         target?.status === "PUBLISHED" &&
@@ -958,24 +972,24 @@ function TelegramPostWorkspace({
         Boolean(channelTelegramChatId) &&
         !target.lastError;
       return ready ? null : { id: targetId, post: target };
-    },
-  ).filter(
-    (
-      target,
-    ): target is {
-      id: string;
-      post: TelegramManagedPost | undefined;
-    } => Boolean(target),
-  );
+    })
+    .filter(
+      (
+        target,
+      ): target is {
+        id: string;
+        post: TelegramManagedPost | undefined;
+      } => Boolean(target),
+    );
   const resolvedInternalLinkTargets = outgoingInternalLinks.filter((link) => {
     const target = link.target;
     return Boolean(
       target &&
-        target.status === "PUBLISHED" &&
-        target.telegramRemoteStatus === "PUBLISHED" &&
-        target.telegramMessageIds.length > 0 &&
-        channelTelegramChatId &&
-        !target.lastError,
+      target.status === "PUBLISHED" &&
+      target.telegramRemoteStatus === "PUBLISHED" &&
+      target.telegramMessageIds.length > 0 &&
+      channelTelegramChatId &&
+      !target.lastError,
     );
   });
   const dependencyPublishBlocked =
@@ -1044,7 +1058,7 @@ function TelegramPostWorkspace({
   const groupedVisiblePosts = useMemo(() => {
     const grouped = new Map<
       string,
-      { group: PostGroup; posts: TelegramManagedPost[] }
+      { group: EffectivePostGroup; posts: TelegramManagedPost[] }
     >();
     const ungrouped: TelegramManagedPost[] = [];
 
@@ -1077,8 +1091,11 @@ function TelegramPostWorkspace({
       })),
       ungrouped,
     };
-  }, [telegramImportedSystemGroup, visiblePosts]);
-  const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
+  }, [postGroupsById, telegramImportedSystemGroup, visiblePosts]);
+  const calendarDays = useMemo(
+    () => buildCalendarDays(calendarMonth),
+    [calendarMonth],
+  );
   const calendarItemsByDay = useMemo(() => {
     const grouped = new Map<
       string,
@@ -1112,13 +1129,12 @@ function TelegramPostWorkspace({
     }
     return grouped;
   }, [calendarData.data]);
-  const selectedCalendarItems = calendarItemsByDay.get(selectedCalendarDate) || [];
+  const selectedCalendarItems =
+    calendarItemsByDay.get(selectedCalendarDate) || [];
   const adCalendarItemsByDay = useMemo(() => {
     const grouped = new Map<
       string,
-      Array<
-        (NonNullable<typeof adCalendarOverlay.data>["slots"])[number]
-      >
+      Array<NonNullable<typeof adCalendarOverlay.data>["slots"][number]>
     >();
     for (const item of adCalendarOverlay.data?.slots || []) {
       if (item.state === "AVAILABLE") continue;
@@ -1128,12 +1144,15 @@ function TelegramPostWorkspace({
     for (const [key, items] of grouped) {
       grouped.set(
         key,
-        [...items].sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt)),
+        [...items].sort((left, right) =>
+          left.scheduledAt.localeCompare(right.scheduledAt),
+        ),
       );
     }
     return grouped;
   }, [adCalendarOverlay.data]);
-  const selectedAdCalendarItems = adCalendarItemsByDay.get(selectedCalendarDate) || [];
+  const selectedAdCalendarItems =
+    adCalendarItemsByDay.get(selectedCalendarDate) || [];
   const calendarPresetScheduleSlots = useMemo(
     () =>
       buildCalendarDayScheduleSlots({
@@ -1163,16 +1182,25 @@ function TelegramPostWorkspace({
     if (!search) return calendarSchedulablePosts;
     return calendarSchedulablePosts.filter((post) => {
       const title = post.title.toLocaleLowerCase();
-      const groupTitle = effectivePostGroup(post)?.title?.toLocaleLowerCase() || "";
+      const groupTitle =
+        effectivePostGroup(post)?.title?.toLocaleLowerCase() || "";
       return title.includes(search) || groupTitle.includes(search);
     });
-  }, [calendarPostSearch, calendarSchedulablePosts, telegramImportedSystemGroup]);
+  }, [
+    calendarPostSearch,
+    calendarSchedulablePosts,
+    postGroupsById,
+    telegramImportedSystemGroup,
+  ]);
   const calendarSchedulablePostsById = useMemo(
     () => new Map(calendarSchedulablePosts.map((post) => [post.id, post])),
     [calendarSchedulablePosts],
   );
   const calendarGroupedSchedulablePosts = useMemo(() => {
-    const grouped = new Map<string, { group: PostGroup; posts: TelegramManagedPost[] }>();
+    const grouped = new Map<
+      string,
+      { group: EffectivePostGroup; posts: TelegramManagedPost[] }
+    >();
     const ungrouped: TelegramManagedPost[] = [];
     for (const post of calendarFilteredSchedulablePosts) {
       const group = effectivePostGroup(post);
@@ -1189,7 +1217,11 @@ function TelegramPostWorkspace({
       }
     }
     return { groups: [...grouped.values()], ungrouped };
-  }, [calendarFilteredSchedulablePosts, telegramImportedSystemGroup]);
+  }, [
+    calendarFilteredSchedulablePosts,
+    postGroupsById,
+    telegramImportedSystemGroup,
+  ]);
   const calendarBatchSelectedPosts = useMemo(
     () =>
       calendarBatchSelectedPostIds
@@ -1228,7 +1260,10 @@ function TelegramPostWorkspace({
           continue;
         }
         const candidate = new Date(`${selectedCalendarDate}T${customTime}:00`);
-        if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= Date.now()) {
+        if (
+          Number.isNaN(candidate.getTime()) ||
+          candidate.getTime() <= Date.now()
+        ) {
           invalidPostIds.push(postId);
           continue;
         }
@@ -1249,7 +1284,9 @@ function TelegramPostWorkspace({
       usedTimes.set(resolvedTime, postId);
       assignments.push({
         postId,
-        scheduledAt: new Date(`${selectedCalendarDate}T${resolvedTime}:00`).toISOString(),
+        scheduledAt: new Date(
+          `${selectedCalendarDate}T${resolvedTime}:00`,
+        ).toISOString(),
       });
       assignedPostIds.push(postId);
     }
@@ -1326,7 +1363,7 @@ function TelegramPostWorkspace({
             left.fallback - right.fallback,
         )
         .map((item) => item.key),
-    [postGroups.data, posts.data, telegramImportedSystemGroup],
+    [postGroups.data, postGroupsById, posts.data, telegramImportedSystemGroup],
   );
   const sidebarSections = useMemo<PostSidebarSection[]>(() => {
     const groupsById = new Map(
@@ -1447,7 +1484,9 @@ function TelegramPostWorkspace({
   const selectCalendarBatchFit = () => {
     const selectedIds = calendarSchedulablePosts
       .filter((post) =>
-        calendarFilteredSchedulablePosts.some((visible) => visible.id === post.id),
+        calendarFilteredSchedulablePosts.some(
+          (visible) => visible.id === post.id,
+        ),
       )
       .slice(0, availableCalendarScheduleSlots.length)
       .map((post) => post.id);
@@ -1740,13 +1779,7 @@ function TelegramPostWorkspace({
     changeWorkspaceView("posts");
     restoredPostIdRef.current = "";
     setEditing(null);
-    setTitle(buildAutoGroupedPostTitle(getNextGroupedPostNumber({
-      groupId: nextGroupId,
-      posts: posts.data || [],
-      pendingGroupPostCount: nextGroupId
-        ? (pendingGroupedPostCount.get(nextGroupId) ?? 0)
-        : 0,
-    })));
+    setTitle("");
     setTitleManuallyEdited(false);
     setAssignedMemberId(null);
     setMemberSelectionTouched(false);
@@ -1857,7 +1890,10 @@ function TelegramPostWorkspace({
       selectPost(post);
       setRestorePreviewRevision(null);
       setRestoreConfirmationValue("");
-      pushToast(`"${post.title}" restored from backup and moved to draft.`, "success");
+      pushToast(
+        `"${post.title}" restored from backup and moved to draft.`,
+        "success",
+      );
     },
     onError: (mutationError) => {
       pushToast(
@@ -1871,15 +1907,18 @@ function TelegramPostWorkspace({
     () =>
       Boolean(
         editing &&
-          restorePreviewRevision &&
-          restoreConfirmationValue.trim() === editing.title,
+        restorePreviewRevision &&
+        restoreConfirmationValue.trim() === editing.title,
       ),
     [editing, restoreConfirmationValue, restorePreviewRevision],
   );
   const returnManagedPostToDraft = useMutation({
     mutationFn: async () => {
       if (!editing) throw new Error("No post selected");
-      return telegramChannelsApi.returnManagedPostToDraft(channelId, editing.id);
+      return telegramChannelsApi.returnManagedPostToDraft(
+        channelId,
+        editing.id,
+      );
     },
     onSuccess: async (post) => {
       changeStatusTab("DRAFT");
@@ -1954,7 +1993,9 @@ function TelegramPostWorkspace({
 
   const openTelegramLinkModal = () => {
     if (!editing || !canManageTelegramLink) return;
-    setManualTelegramUrl(editing.telegramMessageUrls[0] || telegramPostUrl || "");
+    setManualTelegramUrl(
+      editing.telegramMessageUrls[0] || telegramPostUrl || "",
+    );
     setTelegramLinkModalOpen(true);
   };
 
@@ -2016,7 +2057,9 @@ function TelegramPostWorkspace({
           post.text || "[Пост без текста]",
         ].join("\n"),
       )
-      .join("\n\n------------------------------------------------------------\n\n");
+      .join(
+        "\n\n------------------------------------------------------------\n\n",
+      );
     const content = `${instructions}\n\n${postsContent}\n`;
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -2072,7 +2115,9 @@ function TelegramPostWorkspace({
   };
 
   const applyChannelTimePost = (timePost: TelegramChannelTimePost) => {
-    setScheduleDate((current) => current || scheduleDateForPreset(timePost.time));
+    setScheduleDate(
+      (current) => current || scheduleDateForPreset(timePost.time),
+    );
     setScheduleTime(timePost.time);
   };
 
@@ -2123,7 +2168,11 @@ function TelegramPostWorkspace({
         "success",
       );
     } catch (error) {
-      pushToast(apiErrorMessage(error, "Could not delete posts"), "error", 7000);
+      pushToast(
+        apiErrorMessage(error, "Could not delete posts"),
+        "error",
+        7000,
+      );
     }
   };
 
@@ -2274,19 +2323,17 @@ function TelegramPostWorkspace({
             true,
           );
         }
-        const savedIcon = payload.icon
-          ? await iconsApi.get(payload.icon).catch(() => null)
-          : null;
+        const savedIcon = post.iconData ?? null;
         pushToast(
           shouldRepublishPublished
             ? `"${saveTitle}" published again with a fresh Telegram link.`
             : editingMeta?.status === "PUBLISHED"
-            ? `"${saveTitle}" updated in Telegram.`
-            : saveMode === "publish"
-            ? `"${saveTitle}" published.`
-            : saveMode === "schedule"
-              ? `"${saveTitle}" scheduled.`
-              : `"${saveTitle}" saved.`,
+              ? `"${saveTitle}" updated in Telegram.`
+              : saveMode === "publish"
+                ? `"${saveTitle}" published.`
+                : saveMode === "schedule"
+                  ? `"${saveTitle}" scheduled.`
+                  : `"${saveTitle}" saved.`,
           "success",
           3500,
           savedIcon ?? undefined,
@@ -2356,24 +2403,15 @@ function TelegramPostWorkspace({
 
   useEffect(() => {
     if (editing || titleManuallyEdited) return;
-    const nextAutoTitle = autoPrefilledTitle?.title
-      ? `${autoGroupedPostTitle}${autoPrefilledTitle.title}`
-      : autoGroupedPostTitle;
+    const nextAutoTitle = autoPrefilledTitle?.title ?? "";
     if (title === nextAutoTitle) return;
     setTitle(nextAutoTitle);
-  }, [
-    autoGroupedPostTitle,
-    autoPrefilledTitle?.title,
-    editing,
-    title,
-    titleManuallyEdited,
-  ]);
+  }, [autoPrefilledTitle?.title, editing, title, titleManuallyEdited]);
 
   useEffect(() => {
     if (editing) return;
     const nextEmoji = autoPrefilledTitle?.emoji ?? null;
-    const canAutofillIcon =
-      !iconRef.current || iconAutofillRef.current.active;
+    const canAutofillIcon = !iconRef.current || iconAutofillRef.current.active;
 
     if (!canAutofillIcon) return;
 
@@ -2541,7 +2579,9 @@ function TelegramPostWorkspace({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setCalendarMonth((current) => addMonths(current, -1))}
+                  onClick={() =>
+                    setCalendarMonth((current) => addMonths(current, -1))
+                  }
                   className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-800 bg-neutral-950 text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
                 >
                   <ChevronRight size={16} className="rotate-180" />
@@ -2559,7 +2599,9 @@ function TelegramPostWorkspace({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCalendarMonth((current) => addMonths(current, 1))}
+                  onClick={() =>
+                    setCalendarMonth((current) => addMonths(current, 1))
+                  }
                   className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-800 bg-neutral-950 text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-900 hover:text-white"
                 >
                   <ChevronRight size={16} />
@@ -2609,78 +2651,80 @@ function TelegramPostWorkspace({
                 ) : (
                   <div className="grid grid-cols-7">
                     {calendarDays.map((day) => {
-                    const dateKey = toLocalDateKey(day);
-                    const items = calendarItemsByDay.get(dateKey) || [];
-                    const scheduledCount = items.filter(
-                      (item) => item.status === "SCHEDULED",
-                    ).length;
-                    const publishedCount = items.filter(
-                      (item) => item.status === "PUBLISHED",
-                    ).length;
-                    const adItems = adCalendarItemsByDay.get(dateKey) || [];
-                    const adReservedCount = adItems.filter(
-                      (item) => item.existingPlacement?.status === "RESERVED",
-                    ).length;
-                    const adSoldCount = adItems.filter(
-                      (item) =>
-                        item.existingPlacement?.status === "SCHEDULED" ||
-                        item.existingPlacement?.status === "PUBLISHED" ||
-                        item.existingPlacement?.status === "COMPLETED",
-                    ).length;
-                    const isCurrentMonth = sameMonth(day, calendarMonth);
-                    const isToday = dateKey === toLocalDateKey(new Date());
-                    const isSelected = dateKey === selectedCalendarDate;
-                    return (
-                      <button
-                        key={dateKey}
-                        type="button"
-                        onClick={() => setSelectedCalendarDate(dateKey)}
-                        className={`min-h-[56px] border-b border-r border-neutral-800 px-2 py-1 text-left align-top transition sm:min-h-[72px] sm:px-2 sm:py-1.5 ${
-                          isSelected
-                            ? "bg-[#262626]"
-                            : "bg-[#1f1f1f] hover:bg-[#252525]"
-                        }`}
-                      >
-                        <div className="flex h-full flex-col">
-                          <div className="mb-1 flex items-start justify-between">
-                            <span
-                              className={`text-[1.3rem] font-semibold leading-none sm:text-[1.75rem] ${
-                                isCurrentMonth ? "text-white" : "text-neutral-600"
-                              }`}
-                            >
-                              {day.getDate()}
-                            </span>
-                            {isToday ? (
-                              <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-medium text-white sm:text-xs">
-                                Today
+                      const dateKey = toLocalDateKey(day);
+                      const items = calendarItemsByDay.get(dateKey) || [];
+                      const scheduledCount = items.filter(
+                        (item) => item.status === "SCHEDULED",
+                      ).length;
+                      const publishedCount = items.filter(
+                        (item) => item.status === "PUBLISHED",
+                      ).length;
+                      const adItems = adCalendarItemsByDay.get(dateKey) || [];
+                      const adReservedCount = adItems.filter(
+                        (item) => item.existingPlacement?.status === "RESERVED",
+                      ).length;
+                      const adSoldCount = adItems.filter(
+                        (item) =>
+                          item.existingPlacement?.status === "SCHEDULED" ||
+                          item.existingPlacement?.status === "PUBLISHED" ||
+                          item.existingPlacement?.status === "COMPLETED",
+                      ).length;
+                      const isCurrentMonth = sameMonth(day, calendarMonth);
+                      const isToday = dateKey === toLocalDateKey(new Date());
+                      const isSelected = dateKey === selectedCalendarDate;
+                      return (
+                        <button
+                          key={dateKey}
+                          type="button"
+                          onClick={() => setSelectedCalendarDate(dateKey)}
+                          className={`min-h-[56px] border-b border-r border-neutral-800 px-2 py-1 text-left align-top transition sm:min-h-[72px] sm:px-2 sm:py-1.5 ${
+                            isSelected
+                              ? "bg-[#262626]"
+                              : "bg-[#1f1f1f] hover:bg-[#252525]"
+                          }`}
+                        >
+                          <div className="flex h-full flex-col">
+                            <div className="mb-1 flex items-start justify-between">
+                              <span
+                                className={`text-[1.3rem] font-semibold leading-none sm:text-[1.75rem] ${
+                                  isCurrentMonth
+                                    ? "text-white"
+                                    : "text-neutral-600"
+                                }`}
+                              >
+                                {day.getDate()}
                               </span>
-                            ) : null}
+                              {isToday ? (
+                                <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-medium text-white sm:text-xs">
+                                  Today
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-0.5 space-y-1 sm:space-y-1.5">
+                              {scheduledCount ? (
+                                <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
+                                  Scheduled {scheduledCount}
+                                </div>
+                              ) : null}
+                              {publishedCount ? (
+                                <div className="text-[10px] font-medium text-emerald-300 sm:text-[11px]">
+                                  Published {publishedCount}
+                                </div>
+                              ) : null}
+                              {showAdSalesOverlay && adReservedCount ? (
+                                <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
+                                  Ad reserved {adReservedCount}
+                                </div>
+                              ) : null}
+                              {showAdSalesOverlay && adSoldCount ? (
+                                <div className="text-[10px] font-medium text-sky-300 sm:text-[11px]">
+                                  Ad sold {adSoldCount}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                          <div className="mt-0.5 space-y-1 sm:space-y-1.5">
-                            {scheduledCount ? (
-                              <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
-                                Scheduled {scheduledCount}
-                              </div>
-                            ) : null}
-                            {publishedCount ? (
-                              <div className="text-[10px] font-medium text-emerald-300 sm:text-[11px]">
-                                Published {publishedCount}
-                              </div>
-                            ) : null}
-                            {showAdSalesOverlay && adReservedCount ? (
-                              <div className="text-[10px] font-medium text-amber-300 sm:text-[11px]">
-                                Ad reserved {adReservedCount}
-                              </div>
-                            ) : null}
-                            {showAdSalesOverlay && adSoldCount ? (
-                              <div className="text-[10px] font-medium text-sky-300 sm:text-[11px]">
-                                Ad sold {adSoldCount}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </button>
-                    );
+                        </button>
+                      );
                     })}
                   </div>
                 )}
@@ -2716,7 +2760,9 @@ function TelegramPostWorkspace({
                         return;
                       }
                       changePostView("editor");
-                      const post = posts.data?.find((entry) => entry.id === item.id);
+                      const post = posts.data?.find(
+                        (entry) => entry.id === item.id,
+                      );
                       if (post) {
                         selectPost(post);
                         onPostSelect(post.id);
@@ -2725,57 +2771,66 @@ function TelegramPostWorkspace({
                     className="w-full rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 text-left transition hover:border-blue-700"
                   >
                     {(() => {
-                      const linkedPost = posts.data?.find((entry) => entry.id === item.id);
+                      const linkedPost = posts.data?.find(
+                        (entry) => entry.id === item.id,
+                      );
                       const matchedSlot =
                         item.status === "SCHEDULED" && item.scheduledAt
-                          ? calendarPresetSlotByTime.get(localTimeKey(item.scheduledAt))
+                          ? calendarPresetSlotByTime.get(
+                              localTimeKey(item.scheduledAt),
+                            )
                           : undefined;
                       return (
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          {linkedPost?.icon ? (
-                            <PostIcon
-                              iconId={linkedPost.icon}
-                              label={item.title}
-                              bare
-                            />
-                          ) : (
-                            <span className="text-base leading-none">
-                              {calendarStatusIcon(item.status)}
-                            </span>
-                          )}
-                          <div className="truncate text-sm font-medium text-white">
-                            {item.title}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              {linkedPost?.icon ? (
+                                <PostIcon
+                                  iconId={linkedPost.icon}
+                                  icon={linkedPost.iconData}
+                                  label={item.title}
+                                  bare
+                                />
+                              ) : (
+                                <span className="text-base leading-none">
+                                  {calendarStatusIcon(item.status)}
+                                </span>
+                              )}
+                              <div className="truncate text-sm font-medium text-white">
+                                {item.title}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-xs text-neutral-400">
+                              {item.status === "SCHEDULED"
+                                ? "Scheduled"
+                                : "Published"}{" "}
+                              ·{" "}
+                              {timeLabel(
+                                item.status === "SCHEDULED"
+                                  ? item.scheduledAt
+                                  : item.publishedAt,
+                              )}
+                            </div>
+                            {matchedSlot ? (
+                              <div className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-700/40 bg-emerald-950/30 px-2 py-1 text-[11px] text-emerald-200">
+                                <span className="shrink-0">
+                                  {channelTimePosts.find(
+                                    (slot) => slot.id === matchedSlot.id,
+                                  )?.icon?.emoji || "⚡"}
+                                </span>
+                                <span className="truncate">
+                                  Slot match: {matchedSlot.time}{" "}
+                                  {matchedSlot.title}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
-                        </div>
-                        <div className="mt-1 text-xs text-neutral-400">
-                          {item.status === "SCHEDULED" ? "Scheduled" : "Published"} ·{" "}
-                          {timeLabel(
-                            item.status === "SCHEDULED"
-                              ? item.scheduledAt
-                              : item.publishedAt,
-                          )}
-                        </div>
-                        {matchedSlot ? (
-                          <div className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-full border border-emerald-700/40 bg-emerald-950/30 px-2 py-1 text-[11px] text-emerald-200">
-                            <span className="shrink-0">
-                              {(channelTimePosts.find(
-                                (slot) => slot.id === matchedSlot.id,
-                              )?.icon?.emoji || "⚡")}
+                          {item.origin === "TELEGRAM" ? (
+                            <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-amber-200">
+                              Created in Telegram
                             </span>
-                            <span className="truncate">
-                              Slot match: {matchedSlot.time} {matchedSlot.title}
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                      {item.origin === "TELEGRAM" ? (
-                        <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-1 text-[11px] font-medium whitespace-nowrap text-amber-200">
-                          Created in Telegram
-                        </span>
-                      ) : null}
-                    </div>
+                          ) : null}
+                        </div>
                       );
                     })()}
                   </button>
@@ -2802,11 +2857,14 @@ function TelegramPostWorkspace({
                             {item.existingPlacement?.status || item.state}
                           </p>
                           <p className="mt-1 text-xs text-neutral-300">
-                            {timeLabel(item.scheduledAt)} · {item.expectedViews.toLocaleString()} views
+                            {timeLabel(item.scheduledAt)} ·{" "}
+                            {item.expectedViews.toLocaleString()} views
                           </p>
                         </div>
                         <div className="text-right text-xs text-neutral-300">
-                          <p>{item.recommendedPrice} {item.currency}</p>
+                          <p>
+                            {item.recommendedPrice} {item.currency}
+                          </p>
                           <p>{item.minimumPrice} min</p>
                         </div>
                       </div>
@@ -2832,8 +2890,8 @@ function TelegramPostWorkspace({
                   Schedule multiple posts
                 </h4>
                 <p className="mt-1 text-xs text-neutral-400">
-                  Uses this channel&apos;s configured publishing slots for the selected
-                  day.
+                  Uses this channel&apos;s configured publishing slots for the
+                  selected day.
                 </p>
               </div>
               {!calendarSchedulablePosts.length ? (
@@ -2856,7 +2914,10 @@ function TelegramPostWorkspace({
                     <Button
                       variant="secondary"
                       onClick={clearCalendarBatchSelection}
-                      disabled={calendarBatchBusy || !calendarBatchSelectedPostIds.length}
+                      disabled={
+                        calendarBatchBusy ||
+                        !calendarBatchSelectedPostIds.length
+                      }
                     >
                       Clear
                     </Button>
@@ -2872,7 +2933,9 @@ function TelegramPostWorkspace({
                     </div>
                     <Input
                       value={calendarPostSearch}
-                      onChange={(event) => setCalendarPostSearch(event.target.value)}
+                      onChange={(event) =>
+                        setCalendarPostSearch(event.target.value)
+                      }
                       placeholder="Search posts or groups..."
                     />
                     {!calendarFilteredSchedulablePosts.length ? (
@@ -2881,168 +2944,244 @@ function TelegramPostWorkspace({
                       </div>
                     ) : (
                       <div className="max-h-64 space-y-2 overflow-auto rounded-xl border border-neutral-800 p-2">
-                        {calendarGroupedSchedulablePosts.groups.map((section) => (
-                          <div
-                            key={section.group.id}
-                            className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-950/30 p-2"
-                          >
-                            <div className="flex items-center gap-2 px-1">
-                              <PostIcon
-                                iconId={section.group.icon}
-                                label={section.group.title}
-                                bare
-                              />
-                              <span className="truncate text-sm font-medium text-white">
-                                {section.group.title}
-                              </span>
-                              <span className="text-xs text-neutral-500">
-                                {section.posts.length}
-                              </span>
-                            </div>
-                            {section.posts.map((post) => {
-                              const selected = calendarBatchSelectedPostIds.includes(post.id);
-                              return (
-                                <div
-                                  key={post.id}
-                                  onClick={(event) => {
-                                    if (
-                                      !wantsNewTab(event) ||
-                                      shouldIgnoreModifiedPostOpen(event.target)
-                                    ) {
-                                      return;
-                                    }
-                                    event.preventDefault();
-                                    openPostInNewTab(post);
-                                  }}
-                                  className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
-                                    selected
-                                      ? "border-blue-700 bg-blue-950/20"
-                                      : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
-                                  }`}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleCalendarBatchPostSelection(post.id)}
-                                    aria-pressed={selected}
-                                    aria-label={
+                        {calendarGroupedSchedulablePosts.groups.map(
+                          (section) => (
+                            <div
+                              key={section.group.id}
+                              className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-950/30 p-2"
+                            >
+                              <div className="flex items-center gap-2 px-1">
+                                <PostIcon
+                                  iconId={section.group.icon}
+                                  icon={
+                                    section.group.iconPresentation ??
+                                    section.group.iconData
+                                  }
+                                  label={section.group.title}
+                                  bare
+                                />
+                                <span className="truncate text-sm font-medium text-white">
+                                  {section.group.title}
+                                </span>
+                                <span className="text-xs text-neutral-500">
+                                  {section.posts.length}
+                                </span>
+                              </div>
+                              {section.posts.map((post) => {
+                                const selected =
+                                  calendarBatchSelectedPostIds.includes(
+                                    post.id,
+                                  );
+                                return (
+                                  <div
+                                    key={post.id}
+                                    onClick={(event) => {
+                                      if (
+                                        !wantsNewTab(event) ||
+                                        shouldIgnoreModifiedPostOpen(
+                                          event.target,
+                                        )
+                                      ) {
+                                        return;
+                                      }
+                                      event.preventDefault();
+                                      openPostInNewTab(post);
+                                    }}
+                                    className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
                                       selected
-                                        ? `Unselect ${post.title}`
-                                        : `Select ${post.title}`
-                                    }
-                                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
-                                      selected
-                                        ? "border-blue-500 bg-blue-500 text-white"
-                                        : "border-neutral-700 text-neutral-500"
+                                        ? "border-blue-700 bg-blue-950/20"
+                                        : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
                                     }`}
                                   >
-                                    {selected ? "✓" : ""}
-                                  </button>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      {post.icon ? (
-                                        <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} bare />
-                                      ) : (
-                                        <span className="text-sm leading-none">📝</span>
-                                      )}
-                                      <span className="truncate text-sm font-medium text-white">
-                                        {post.title}
-                                      </span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        toggleCalendarBatchPostSelection(
+                                          post.id,
+                                        )
+                                      }
+                                      aria-pressed={selected}
+                                      aria-label={
+                                        selected
+                                          ? `Unselect ${post.title}`
+                                          : `Select ${post.title}`
+                                      }
+                                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                                        selected
+                                          ? "border-blue-500 bg-blue-500 text-white"
+                                          : "border-neutral-700 text-neutral-500"
+                                      }`}
+                                    >
+                                      {selected ? "✓" : ""}
+                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        {post.icon ? (
+                                          <PostIcon
+                                            iconId={post.icon}
+                                            icon={post.iconData}
+                                            label={post.title}
+                                            bare
+                                          />
+                                        ) : (
+                                          <span className="text-sm leading-none">
+                                            📝
+                                          </span>
+                                        )}
+                                        <span className="truncate text-sm font-medium text-white">
+                                          {post.title}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 text-xs text-neutral-500">
+                                        {post.status === "FAILED"
+                                          ? "Failed"
+                                          : "Draft"}{" "}
+                                        · created{" "}
+                                        {new Date(
+                                          post.createdAt,
+                                        ).toLocaleDateString()}
+                                      </div>
+                                      {selected ? (
+                                        <CalendarPostTimePicker
+                                          post={post}
+                                          selectedCalendarDate={
+                                            selectedCalendarDate
+                                          }
+                                          availableCalendarScheduleSlots={
+                                            availableCalendarScheduleSlots
+                                          }
+                                          calendarScheduleSlots={
+                                            calendarScheduleSlots
+                                          }
+                                          channelTimePosts={channelTimePosts}
+                                          selectedPostIds={
+                                            calendarBatchSelectedPostIds
+                                          }
+                                          timeChoiceByPostId={
+                                            calendarBatchTimeChoiceByPostId
+                                          }
+                                          customTimeByPostId={
+                                            calendarBatchCustomTimeByPostId
+                                          }
+                                          onTimeChoiceChange={
+                                            setCalendarBatchTimeChoiceByPostId
+                                          }
+                                          onCustomTimeChange={
+                                            setCalendarBatchCustomTimeByPostId
+                                          }
+                                        />
+                                      ) : null}
                                     </div>
-                                    <div className="mt-1 text-xs text-neutral-500">
-                                      {post.status === "FAILED" ? "Failed" : "Draft"} · created{" "}
-                                      {new Date(post.createdAt).toLocaleDateString()}
-                                    </div>
-                                    {selected ? (
-                                      <CalendarPostTimePicker
-                                        post={post}
-                                        selectedCalendarDate={selectedCalendarDate}
-                                        availableCalendarScheduleSlots={availableCalendarScheduleSlots}
-                                        calendarScheduleSlots={calendarScheduleSlots}
-                                        channelTimePosts={channelTimePosts}
-                                        selectedPostIds={calendarBatchSelectedPostIds}
-                                        timeChoiceByPostId={calendarBatchTimeChoiceByPostId}
-                                        customTimeByPostId={calendarBatchCustomTimeByPostId}
-                                        onTimeChoiceChange={setCalendarBatchTimeChoiceByPostId}
-                                        onCustomTimeChange={setCalendarBatchCustomTimeByPostId}
-                                      />
-                                    ) : null}
                                   </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ))}
-                        {calendarGroupedSchedulablePosts.ungrouped.map((post) => {
-                          const selected = calendarBatchSelectedPostIds.includes(post.id);
-                          return (
-                            <div
-                              key={post.id}
-                              onClick={(event) => {
-                                if (
-                                  !wantsNewTab(event) ||
-                                  shouldIgnoreModifiedPostOpen(event.target)
-                                ) {
-                                  return;
-                                }
-                                event.preventDefault();
-                                openPostInNewTab(post);
-                              }}
-                              className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
-                                selected
-                                  ? "border-blue-700 bg-blue-950/20"
-                                  : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => toggleCalendarBatchPostSelection(post.id)}
-                                aria-pressed={selected}
-                                aria-label={
+                                );
+                              })}
+                            </div>
+                          ),
+                        )}
+                        {calendarGroupedSchedulablePosts.ungrouped.map(
+                          (post) => {
+                            const selected =
+                              calendarBatchSelectedPostIds.includes(post.id);
+                            return (
+                              <div
+                                key={post.id}
+                                onClick={(event) => {
+                                  if (
+                                    !wantsNewTab(event) ||
+                                    shouldIgnoreModifiedPostOpen(event.target)
+                                  ) {
+                                    return;
+                                  }
+                                  event.preventDefault();
+                                  openPostInNewTab(post);
+                                }}
+                                className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
                                   selected
-                                    ? `Unselect ${post.title}`
-                                    : `Select ${post.title}`
-                                }
-                                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
-                                  selected
-                                    ? "border-blue-500 bg-blue-500 text-white"
-                                    : "border-neutral-700 text-neutral-500"
+                                    ? "border-blue-700 bg-blue-950/20"
+                                    : "border-neutral-800 bg-neutral-950/40 hover:border-neutral-700"
                                 }`}
                               >
-                                {selected ? "✓" : ""}
-                              </button>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2">
-                                  {post.icon ? (
-                                    <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} bare />
-                                  ) : (
-                                    <span className="text-sm leading-none">📝</span>
-                                  )}
-                                  <span className="truncate text-sm font-medium text-white">
-                                    {post.title}
-                                  </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleCalendarBatchPostSelection(post.id)
+                                  }
+                                  aria-pressed={selected}
+                                  aria-label={
+                                    selected
+                                      ? `Unselect ${post.title}`
+                                      : `Select ${post.title}`
+                                  }
+                                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                                    selected
+                                      ? "border-blue-500 bg-blue-500 text-white"
+                                      : "border-neutral-700 text-neutral-500"
+                                  }`}
+                                >
+                                  {selected ? "✓" : ""}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    {post.icon ? (
+                                      <PostIcon
+                                        iconId={post.icon}
+                                        icon={post.iconData}
+                                        label={post.title}
+                                        bare
+                                      />
+                                    ) : (
+                                      <span className="text-sm leading-none">
+                                        📝
+                                      </span>
+                                    )}
+                                    <span className="truncate text-sm font-medium text-white">
+                                      {post.title}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 text-xs text-neutral-500">
+                                    {post.status === "FAILED"
+                                      ? "Failed"
+                                      : "Draft"}{" "}
+                                    · created{" "}
+                                    {new Date(
+                                      post.createdAt,
+                                    ).toLocaleDateString()}
+                                  </div>
+                                  {selected ? (
+                                    <CalendarPostTimePicker
+                                      post={post}
+                                      selectedCalendarDate={
+                                        selectedCalendarDate
+                                      }
+                                      availableCalendarScheduleSlots={
+                                        availableCalendarScheduleSlots
+                                      }
+                                      calendarScheduleSlots={
+                                        calendarScheduleSlots
+                                      }
+                                      channelTimePosts={channelTimePosts}
+                                      selectedPostIds={
+                                        calendarBatchSelectedPostIds
+                                      }
+                                      timeChoiceByPostId={
+                                        calendarBatchTimeChoiceByPostId
+                                      }
+                                      customTimeByPostId={
+                                        calendarBatchCustomTimeByPostId
+                                      }
+                                      onTimeChoiceChange={
+                                        setCalendarBatchTimeChoiceByPostId
+                                      }
+                                      onCustomTimeChange={
+                                        setCalendarBatchCustomTimeByPostId
+                                      }
+                                    />
+                                  ) : null}
                                 </div>
-                                <div className="mt-1 text-xs text-neutral-500">
-                                  {post.status === "FAILED" ? "Failed" : "Draft"} ·{" "}
-                                  created {new Date(post.createdAt).toLocaleDateString()}
-                                </div>
-                                {selected ? (
-                                  <CalendarPostTimePicker
-                                    post={post}
-                                    selectedCalendarDate={selectedCalendarDate}
-                                    availableCalendarScheduleSlots={availableCalendarScheduleSlots}
-                                    calendarScheduleSlots={calendarScheduleSlots}
-                                    channelTimePosts={channelTimePosts}
-                                    selectedPostIds={calendarBatchSelectedPostIds}
-                                    timeChoiceByPostId={calendarBatchTimeChoiceByPostId}
-                                    customTimeByPostId={calendarBatchCustomTimeByPostId}
-                                    onTimeChoiceChange={setCalendarBatchTimeChoiceByPostId}
-                                    onCustomTimeChange={setCalendarBatchCustomTimeByPostId}
-                                  />
-                                ) : null}
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          },
+                        )}
                       </div>
                     )}
                   </div>
@@ -3059,9 +3198,12 @@ function TelegramPostWorkspace({
                     {calendarBatchPlan.assignments.length ? (
                       <div className="mt-3 space-y-2">
                         {calendarBatchPlan.assignments.map((assignment) => {
-                          const post = calendarSchedulablePostsById.get(assignment.postId);
+                          const post = calendarSchedulablePostsById.get(
+                            assignment.postId,
+                          );
                           const slot = calendarScheduleSlots.find(
-                            (item) => item.scheduledAt === assignment.scheduledAt,
+                            (item) =>
+                              item.scheduledAt === assignment.scheduledAt,
                           );
                           return (
                             <div
@@ -3072,9 +3214,14 @@ function TelegramPostWorkspace({
                                 {post?.title || assignment.postId}
                               </div>
                               <div className="shrink-0 text-right text-xs text-neutral-400">
-                                <div>{slot?.time || timeLabel(assignment.scheduledAt)}</div>
+                                <div>
+                                  {slot?.time ||
+                                    timeLabel(assignment.scheduledAt)}
+                                </div>
                                 <div className="mt-0.5 text-[10px] uppercase tracking-wide text-neutral-500">
-                                  {slot?.source === "custom" ? "Custom" : "Slot"}
+                                  {slot?.source === "custom"
+                                    ? "Custom"
+                                    : "Slot"}
                                 </div>
                               </div>
                             </div>
@@ -3083,28 +3230,36 @@ function TelegramPostWorkspace({
                       </div>
                     ) : (
                       <div className="mt-3 text-sm text-neutral-500">
-                        Select posts and assign a slot or custom time to each one.
+                        Select posts and assign a slot or custom time to each
+                        one.
                       </div>
                     )}
                     {calendarBatchPlan.invalidPostIds.length ? (
                       <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
                         {calendarBatchPlan.invalidPostIds.length} selected post
-                        {calendarBatchPlan.invalidPostIds.length === 1 ? "" : "s"}{" "}
+                        {calendarBatchPlan.invalidPostIds.length === 1
+                          ? ""
+                          : "s"}{" "}
                         still need a valid slot or custom time.
                       </div>
                     ) : null}
                     {calendarBatchPlan.duplicatePostIds.length ? (
                       <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
                         Duplicate times detected for{" "}
-                        {calendarBatchPlan.duplicatePostIds.length} selected post
-                        {calendarBatchPlan.duplicatePostIds.length === 1 ? "" : "s"}.
+                        {calendarBatchPlan.duplicatePostIds.length} selected
+                        post
+                        {calendarBatchPlan.duplicatePostIds.length === 1
+                          ? ""
+                          : "s"}
+                        .
                       </div>
                     ) : null}
                     <div className="mt-4 flex justify-end">
                       <Button
                         onClick={scheduleCalendarBatch}
                         disabled={
-                          calendarBatchBusy || !calendarBatchPlan.assignments.length
+                          calendarBatchBusy ||
+                          !calendarBatchPlan.assignments.length
                         }
                       >
                         {calendarBatchBusy
@@ -3218,8 +3373,12 @@ function TelegramPostWorkspace({
                       type="button"
                       variant="secondary"
                       className="inline-flex h-8 items-center gap-1.5 px-2.5 text-xs"
-                      disabled={editorIsSaving || returnManagedPostToDraft.isPending}
-                      onClick={() => void returnManagedPostToDraft.mutateAsync()}
+                      disabled={
+                        editorIsSaving || returnManagedPostToDraft.isPending
+                      }
+                      onClick={() =>
+                        void returnManagedPostToDraft.mutateAsync()
+                      }
                     >
                       <RotateCcw size={13} />
                       {returnManagedPostToDraft.isPending
@@ -3252,12 +3411,12 @@ function TelegramPostWorkspace({
                   options={[
                     { value: "", label: "No group", iconEmoji: "📂" },
                     ...(postGroups.data || []).map((group) => {
-                      const groupIcon = group.iconData ?? null;
                       return {
                         value: group.id,
                         label: group.title,
-                        iconEmoji: groupIcon?.emoji || undefined,
-                        iconUrl: groupIcon?.imageUrl || undefined,
+                        ...selectIconProps(
+                          group.iconPresentation ?? group.iconData,
+                        ),
                         iconFallback: group.title,
                       };
                     }),
@@ -3327,10 +3486,15 @@ function TelegramPostWorkspace({
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {unresolvedInternalLinkTargets.map((target) => (
-                            <span key={target.id} className="relative inline-flex group">
+                            <span
+                              key={target.id}
+                              className="relative inline-flex group"
+                            >
                               <button
                                 type="button"
-                                onClick={() => highlightInternalLinkTarget(target.id)}
+                                onClick={() =>
+                                  highlightInternalLinkTarget(target.id)
+                                }
                                 onDoubleClick={(event) => {
                                   if (target.post) {
                                     openPostWithModifier(target.post, event);
@@ -3341,6 +3505,7 @@ function TelegramPostWorkspace({
                                 {target.post?.icon ? (
                                   <PostIcon
                                     iconId={target.post.icon}
+                                    icon={target.post.iconData}
                                     label={target.post.title}
                                     bare
                                     size="xs"
@@ -3349,13 +3514,16 @@ function TelegramPostWorkspace({
                                   <span aria-hidden="true">📝</span>
                                 )}
                                 <span>
-                                  {target.post?.title || `Missing post ${target.id}`}
+                                  {target.post?.title ||
+                                    `Missing post ${target.id}`}
                                 </span>
                                 {target.post ? (
                                   <span className="text-amber-400/70">
                                     {target.post.status === "PUBLISHED" &&
-                                    (target.post.telegramRemoteStatus === "BROKEN" ||
-                                      target.post.telegramRemoteStatus === "MISSING" ||
+                                    (target.post.telegramRemoteStatus ===
+                                      "BROKEN" ||
+                                      target.post.telegramRemoteStatus ===
+                                        "MISSING" ||
                                       target.post.lastError)
                                       ? "link broken"
                                       : target.post.status.toLowerCase()}
@@ -3367,7 +3535,9 @@ function TelegramPostWorkspace({
                                 align="center"
                                 className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
                               >
-                                Click to jump to this link in the text. Double-click to open the linked post. Cmd/Ctrl-click opens it in a new tab.
+                                Click to jump to this link in the text.
+                                Double-click to open the linked post.
+                                Cmd/Ctrl-click opens it in a new tab.
                               </TooltipBubble>
                             </span>
                           ))}
@@ -3400,6 +3570,7 @@ function TelegramPostWorkspace({
                                 {target.target?.icon ? (
                                   <PostIcon
                                     iconId={target.target.icon}
+                                    icon={target.target.iconData}
                                     label={target.target.title}
                                     bare
                                     size="xs"
@@ -3419,7 +3590,9 @@ function TelegramPostWorkspace({
                                 align="center"
                                 className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
                               >
-                                Click to jump to this link in the text. Double-click to open the linked post. Cmd/Ctrl-click opens it in a new tab.
+                                Click to jump to this link in the text.
+                                Double-click to open the linked post.
+                                Cmd/Ctrl-click opens it in a new tab.
                               </TooltipBubble>
                             </span>
                           ))}
@@ -3467,8 +3640,8 @@ function TelegramPostWorkspace({
                   Telegram text messages are limited to 4096 characters after
                   formatting. Current length: {text.length}. This post will be
                   published as{" "}
-                  {Math.ceil(text.length / effectiveMessageLengthMax)}{" "}
-                  separate messages.
+                  {Math.ceil(text.length / effectiveMessageLengthMax)} separate
+                  messages.
                 </p>
               </div>
             ) : null}
@@ -3554,7 +3727,8 @@ function TelegramPostWorkspace({
                   <div>
                     <p className="text-sm font-medium text-white">History</p>
                     <p className="text-xs text-neutral-400">
-                      Automatic backups are kept for 7 days before risky changes.
+                      Automatic backups are kept for 7 days before risky
+                      changes.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -3635,14 +3809,14 @@ function TelegramPostWorkspace({
                 {publishedPostNeedsRepublish
                   ? "Publish"
                   : isPublished
-                  ? "Update Telegram text"
-                  : mode === "draft"
-                    ? "Save draft"
-                    : mode === "publish"
-                      ? "Publish now"
-                      : editing?.status === "SCHEDULED"
-                        ? "Update scheduled post"
-                        : "Schedule post"}
+                    ? "Update Telegram text"
+                    : mode === "draft"
+                      ? "Save draft"
+                      : mode === "publish"
+                        ? "Publish now"
+                        : editing?.status === "SCHEDULED"
+                          ? "Update scheduled post"
+                          : "Schedule post"}
               </Button>
             </div>
             {publishDisabledReason ? (
@@ -3685,9 +3859,11 @@ function TelegramPostWorkspace({
                     value: "DRAFT",
                     label: "Drafts",
                     icon: FileText,
-                    count: (posts.data || []).filter((post) =>
-                      ["DRAFT", "FAILED", "PUBLISHING"].includes(post.status) ||
-                      isBrokenPublishedPost(post),
+                    count: (posts.data || []).filter(
+                      (post) =>
+                        ["DRAFT", "FAILED", "PUBLISHING"].includes(
+                          post.status,
+                        ) || isBrokenPublishedPost(post),
                     ).length,
                   },
                   {
@@ -3742,6 +3918,9 @@ function TelegramPostWorkspace({
                     const collapsed =
                       section.group &&
                       collapsedGroupIds.includes(section.group.id);
+                    const statusNumberingEnabled = Boolean(
+                      section.group?.statusNumberingEnabled,
+                    );
                     const sectionPostIds = section.posts.map((post) => post.id);
                     const allSectionSelected = sectionPostIds.every((id) =>
                       selectedPostIds.includes(id),
@@ -3814,6 +3993,10 @@ function TelegramPostWorkspace({
                               )}
                               <PostIcon
                                 iconId={section.group.icon}
+                                icon={
+                                  section.group.iconPresentation ??
+                                  section.group.iconData
+                                }
                                 label={section.group.title}
                                 bare
                               />
@@ -3859,6 +4042,12 @@ function TelegramPostWorkspace({
                                 post.id,
                               );
                               const isOpen = editing?.id === post.id;
+                              const displayNumber = section.group
+                                ? getManagedPostDisplayNumber(
+                                    post,
+                                    statusNumberingEnabled,
+                                  )
+                                : null;
                               return (
                                 <div
                                   key={post.id}
@@ -3912,10 +4101,27 @@ function TelegramPostWorkspace({
                                     ) : !post.icon ? (
                                       <PostStatusIcon status={post.status} />
                                     ) : null}
+                                    {displayNumber != null ? (
+                                      <span className="shrink-0">
+                                        <span className="sr-only">
+                                          {statusNumberingEnabled
+                                            ? "Status"
+                                            : "Group"}{" "}
+                                          number {displayNumber}
+                                        </span>
+                                        <span
+                                          aria-hidden="true"
+                                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-1.5 text-[11px] font-medium tabular-nums text-neutral-300"
+                                        >
+                                          {displayNumber}
+                                        </span>
+                                      </span>
+                                    ) : null}
                                     <span className="min-w-0 flex-1">
                                       <span className="flex min-w-0 items-center gap-1.5 text-sm">
                                         <PostIcon
                                           iconId={post.icon}
+                                          icon={post.iconData}
                                           label={post.title}
                                           bare
                                         />
@@ -4095,7 +4301,9 @@ function TelegramPostWorkspace({
       >
         <div className="space-y-3">
           <p className="text-sm text-neutral-300">
-            Paste the Telegram post URL. Saving it attaches or replaces the local Telegram link for this managed post. Clear the field to remove the link and return the post to draft.
+            Paste the Telegram post URL. Saving it attaches or replaces the
+            local Telegram link for this managed post. Clear the field to remove
+            the link and return the post to draft.
           </p>
           <Input
             type="url"
@@ -4117,10 +4325,7 @@ function TelegramPostWorkspace({
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              onClick={saveManualTelegramUrl}
-            >
+            <Button type="button" onClick={saveManualTelegramUrl}>
               {savingTelegramUrl
                 ? "Saving…"
                 : manualTelegramUrl.trim()
@@ -4170,9 +4375,7 @@ function TelegramPostWorkspace({
                 </p>
                 <p className="mt-1 text-xs text-neutral-400">
                   Backup created{" "}
-                  {new Date(
-                    restorePreviewRevision.createdAt,
-                  ).toLocaleString()}
+                  {new Date(restorePreviewRevision.createdAt).toLocaleString()}
                 </p>
               </div>
               <div className="space-y-2 rounded-lg border border-amber-800/70 bg-amber-950/20 p-4 text-sm text-amber-100">
@@ -4578,7 +4781,10 @@ function PromptNoteEditorModal({
           }),
     onSuccess: async () => {
       await onSaved();
-      pushToast(note ? "Prompt note updated." : "Prompt note created.", "success");
+      pushToast(
+        note ? "Prompt note updated." : "Prompt note created.",
+        "success",
+      );
     },
   });
 
@@ -4789,20 +4995,15 @@ function PostIcon({
   bare = false,
 }: {
   iconId?: string | null;
-  icon?: Icon | null;
+  icon?: Icon | ResolvedEmoji | null;
   label: string;
   size?: "xs" | "sm" | "md";
   bare?: boolean;
 }) {
-  const iconQuery = useQuery({
-    queryKey: ["icon", iconId],
-    queryFn: () => iconsApi.get(iconId as string),
-    enabled: Boolean(iconId) && !icon,
-  });
-  if (!iconId) return null;
+  if (!iconId && !icon) return null;
   return (
     <IconAvatar
-      icon={icon ?? iconQuery.data}
+      icon={icon}
       label={label}
       size={size}
       bordered={!bare}
@@ -4932,7 +5133,9 @@ function PostGroupsWorkspace({
   const [groupForm, setGroupForm] = useState<PostGroup | "new" | null>(null);
   const [addPostsOpen, setAddPostsOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
-  const [movingListGroup, setMovingListGroup] = useState<PostGroup | null>(null);
+  const [movingListGroup, setMovingListGroup] = useState<PostGroup | null>(
+    null,
+  );
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [movingGroupPost, setMovingGroupPost] =
     useState<TelegramManagedPost | null>(null);
@@ -4993,7 +5196,8 @@ function PostGroupsWorkspace({
     [allGroupIds, selectedGroupIds],
   );
   const allGroupsSelected =
-    groupsList.length > 0 && visibleSelectedGroupIds.length === groupsList.length;
+    groupsList.length > 0 &&
+    visibleSelectedGroupIds.length === groupsList.length;
   const selectedGroups = groupsList.filter((group) =>
     visibleSelectedGroupIds.includes(group.id),
   );
@@ -5061,12 +5265,14 @@ function PostGroupsWorkspace({
     window.setTimeout(() => clearProgress(progressId), delayMs);
   };
   const progressMetaForGroup = (group: PostGroup) => {
-    const icon = group.iconData ?? undefined;
+    const icon = iconToResolvedEmoji(
+      group.iconPresentation ?? group.iconData,
+    );
     return {
       id: `move-group:${group.id}`,
       title: `Move ${group.title}`,
-      iconEmoji: icon?.emoji || undefined,
-      iconUrl: icon?.imageUrl || undefined,
+      iconEmoji: icon?.type === "unicode" ? icon.value : undefined,
+      iconUrl: icon?.type === "image" ? icon.url : undefined,
     };
   };
   const scheduleReorderSave = (
@@ -5098,32 +5304,33 @@ function PostGroupsWorkspace({
               current
                 ? {
                     ...current,
-                    posts: [...(current.posts ?? [])]
-                      .map((post) => ({
+                    posts: normalizeManagedPostNumbering(
+                      [...(current.posts ?? [])].map((post) => ({
                         ...post,
                         groupPosition:
                           orderIndex.get(post.id) ?? post.groupPosition,
-                      }))
-                      .sort(
-                        (left, right) =>
-                          (left.groupPosition ?? Number.MAX_SAFE_INTEGER) -
-                          (right.groupPosition ?? Number.MAX_SAFE_INTEGER),
-                      ),
+                      })),
+                    ),
                   }
                 : current,
           );
           queryClient.setQueryData<TelegramManagedPost[]>(
             ["telegram-managed-posts", channelId],
             (current) =>
-              current?.map((post) =>
-                orderIndex.has(post.id)
-                  ? {
-                      ...post,
-                      groupPosition:
-                        orderIndex.get(post.id) ?? post.groupPosition,
-                    }
-                  : post,
-              ),
+              current
+                ? [
+                    ...normalizeManagedPostNumbering(
+                      current
+                        .filter((post) => orderIndex.has(post.id))
+                        .map((post) => ({
+                          ...post,
+                          groupPosition:
+                            orderIndex.get(post.id) ?? post.groupPosition,
+                        })),
+                    ),
+                    ...current.filter((post) => !orderIndex.has(post.id)),
+                  ]
+                : current,
           );
           try {
             await telegramChannelsApi.reorderPostGroup(
@@ -5316,7 +5523,12 @@ function PostGroupsWorkspace({
           <div className="grid gap-4 xl:grid-cols-[minmax(280px,0.7fr)_minmax(0,1.3fr)]">
             <Card className="space-y-4">
               <div className="flex items-start gap-3">
-                <PostIcon iconId={group.icon} icon={group.iconData} label={group.title} size="md" />
+                <PostIcon
+                  iconId={group.icon}
+                  icon={group.iconPresentation ?? group.iconData}
+                  label={group.title}
+                  size="md"
+                />
                 <div className="min-w-0">
                   <h2 className="text-xl font-semibold text-white">
                     {group.title}
@@ -5406,6 +5618,7 @@ function PostGroupsWorkspace({
                           {post.icon ? (
                             <PostIcon
                               iconId={post.icon}
+                              icon={post.iconData}
                               label={post.title}
                               bare
                             />
@@ -5481,18 +5694,22 @@ function PostGroupsWorkspace({
             onClose={() => setMoveOpen(false)}
             onSubmit={async (targetId) => {
               setMoveOpen(false);
-              await runBulk("Moving group", async (onProgress) => {
-                const response = await telegramChannelsApi.movePostGroup(
-                  group!.id,
-                  targetId,
-                  true,
-                  onProgress,
-                );
-                return response;
-              }, {
-                ...progressMetaForGroup(group!),
-                initialMessage: "Loading…",
-              });
+              await runBulk(
+                "Moving group",
+                async (onProgress) => {
+                  const response = await telegramChannelsApi.movePostGroup(
+                    group!.id,
+                    targetId,
+                    true,
+                    onProgress,
+                  );
+                  return response;
+                },
+                {
+                  ...progressMetaForGroup(group!),
+                  initialMessage: "Loading…",
+                },
+              );
               setSelectedGroupId(null);
               await refresh([channelId, targetId]);
               await forceReloadGroupData([channelId, targetId]);
@@ -5641,83 +5858,90 @@ function PostGroupsWorkspace({
           {groupsList.map((group) => {
             const isSelected = visibleSelectedGroupIds.includes(group.id);
             return (
-            <div
-              key={group.id}
-              className={`rounded-xl border bg-neutral-900 p-4 text-left transition hover:bg-neutral-900/80 ${
-                isSelected
-                  ? "border-blue-600 shadow-[0_0_0_1px_rgba(37,99,235,0.45)]"
-                  : "border-neutral-800 hover:border-blue-700"
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <button
-                  type="button"
-                  aria-label={
-                    isSelected ? "Deselect group" : "Select group for bulk move"
-                  }
-                  onClick={() => toggleGroupSelected(group.id)}
-                  className={`mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                    isSelected
-                      ? "border-blue-500 bg-blue-600 text-white"
-                      : "border-neutral-600 bg-neutral-950 text-transparent"
-                  }`}
-                >
-                  <Check size={12} />
-                </button>
-                <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+              <div
+                key={group.id}
+                className={`rounded-xl border bg-neutral-900 p-4 text-left transition hover:bg-neutral-900/80 ${
+                  isSelected
+                    ? "border-blue-600 shadow-[0_0_0_1px_rgba(37,99,235,0.45)]"
+                    : "border-neutral-800 hover:border-blue-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
                   <button
                     type="button"
-                    onClick={() => setSelectedGroupId(group.id)}
-                    className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                    aria-label={
+                      isSelected
+                        ? "Deselect group"
+                        : "Select group for bulk move"
+                    }
+                    onClick={() => toggleGroupSelected(group.id)}
+                    className={`mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                      isSelected
+                        ? "border-blue-500 bg-blue-600 text-white"
+                        : "border-neutral-600 bg-neutral-950 text-transparent"
+                    }`}
                   >
-                    <PostIcon iconId={group.icon} icon={group.iconData} label={group.title} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate font-semibold text-white">
-                        {group.title}
-                      </h3>
-                      <div className="mt-1">
-                        {group.isSystem ? (
-                          <span className="inline-flex rounded-full border border-amber-600/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200">
-                            System group
-                          </span>
-                        ) : (
-                          <MemberBadge member={group.createdByMember} />
-                        )}
-                      </div>
-                    </div>
+                    <Check size={12} />
                   </button>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
                     <button
                       type="button"
-                      onClick={() => setMovingListGroup(group)}
-                      className={groupIconActionButtonClass}
-                      title="Move group"
-                      aria-label={`Move ${group.title}`}
+                      onClick={() => setSelectedGroupId(group.id)}
+                      className="flex min-w-0 flex-1 items-start gap-3 text-left"
                     >
-                      <MoveRight size={14} />
+                      <PostIcon
+                        iconId={group.icon}
+                        icon={group.iconPresentation ?? group.iconData}
+                        label={group.title}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-semibold text-white">
+                          {group.title}
+                        </h3>
+                        <div className="mt-1">
+                          {group.isSystem ? (
+                            <span className="inline-flex rounded-full border border-amber-600/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200">
+                              System group
+                            </span>
+                          ) : (
+                            <MemberBadge member={group.createdByMember} />
+                          )}
+                        </div>
+                      </div>
                     </button>
-                    {!group.isSystem ? (
+                    <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setDeletingGroup(group)}
-                        className={groupDangerActionButtonClass}
-                        title="Delete group"
-                        aria-label={`Delete ${group.title}`}
+                        onClick={() => setMovingListGroup(group)}
+                        className={groupIconActionButtonClass}
+                        title="Move group"
+                        aria-label={`Move ${group.title}`}
                       >
-                        <Trash2 size={14} />
+                        <MoveRight size={14} />
                       </button>
-                    ) : null}
+                      {!group.isSystem ? (
+                        <button
+                          type="button"
+                          onClick={() => setDeletingGroup(group)}
+                          className={groupDangerActionButtonClass}
+                          title="Delete group"
+                          aria-label={`Delete ${group.title}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(group.id)}
+                  className="mt-4 block w-full text-left"
+                >
+                  <GroupSummary summary={group.statusSummary} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedGroupId(group.id)}
-                className="mt-4 block w-full text-left"
-              >
-                <GroupSummary summary={group.statusSummary} />
-              </button>
-            </div>
             );
           })}
         </div>
@@ -6006,8 +6230,8 @@ function CalendarPostTimePicker({
                 value: `slot:${slot.time}`,
                 label: `${slot.time}  ${slot.title}`.trim(),
                 iconEmoji:
-                  channelTimePosts.find((item) => item.id === slot.id)?.icon?.emoji ||
-                  "•",
+                  channelTimePosts.find((item) => item.id === slot.id)?.icon
+                    ?.emoji || "•",
                 tone: "success" as const,
               })),
             {
@@ -6058,6 +6282,9 @@ function GroupFormModal({
   const [title, setTitle] = useState(editing?.title || "");
   const [description, setDescription] = useState(editing?.description || "");
   const [icon, setIcon] = useState<string | null>(editing?.icon || null);
+  const [statusNumberingEnabled, setStatusNumberingEnabled] = useState(
+    Boolean(editing?.statusNumberingEnabled),
+  );
   const [busy, setBusy] = useState(false);
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
   return (
@@ -6085,6 +6312,13 @@ function GroupFormModal({
             onChange={(event) => setDescription(event.target.value)}
           />
         </FormField>
+        <ToggleRow
+          checked={statusNumberingEnabled}
+          onChange={setStatusNumberingEnabled}
+          label="Number by status"
+          description="When enabled, draft, scheduled, and published posts each use their own counter."
+          activeTone="blue"
+        />
         {!editing ? (
           <FormField label="Posts">
             {posts?.length ? (
@@ -6105,7 +6339,11 @@ function GroupFormModal({
                         )
                       }
                     />
-                    <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} />
+                    <PostIcon
+                      iconId={post.icon}
+                      icon={post.iconData}
+                      label={post.title}
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-white">
                         {post.title}
@@ -6144,12 +6382,14 @@ function GroupFormModal({
                       title: title.trim(),
                       description: description.trim() || null,
                       icon,
+                      statusNumberingEnabled,
                     })
                   : await telegramChannelsApi.createPostGroup({
                       telegramChannelId: channelId,
                       title: title.trim(),
                       description: description.trim() || null,
                       icon,
+                      statusNumberingEnabled,
                       postIds: selectedPostIds,
                     });
                 await onSaved(group);
@@ -6200,7 +6440,11 @@ function AddPostsModal({
                   )
                 }
               />
-              <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} />
+              <PostIcon
+                iconId={post.icon}
+                icon={post.iconData}
+                label={post.title}
+              />
               <span className="min-w-0 flex-1 truncate text-sm">
                 {post.title}
               </span>
@@ -6324,7 +6568,10 @@ function BulkMoveGroupsModal({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!targetId || !groups.length} onClick={() => onSubmit(targetId)}>
+          <Button
+            disabled={!targetId || !groups.length}
+            onClick={() => onSubmit(targetId)}
+          >
             Move {groups.length} group{groups.length === 1 ? "" : "s"}
           </Button>
         </div>
@@ -6351,7 +6598,13 @@ function PostUsageModal({
       <div className="space-y-3">
         <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
           <div className="flex items-center gap-2">
-            {post.icon ? <PostIcon iconId={post.icon} icon={post.iconData} label={post.title} /> : null}
+            {post.icon ? (
+              <PostIcon
+                iconId={post.icon}
+                icon={post.iconData}
+                label={post.title}
+              />
+            ) : null}
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-white">
                 {post.title}
@@ -6380,7 +6633,11 @@ function PostUsageModal({
                 className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-left transition hover:border-blue-700 hover:bg-blue-950/20"
               >
                 {usagePost.icon ? (
-                  <PostIcon iconId={usagePost.icon} icon={usagePost.iconData} label={usagePost.title} />
+                  <PostIcon
+                    iconId={usagePost.icon}
+                    icon={usagePost.iconData}
+                    label={usagePost.title}
+                  />
                 ) : (
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900 text-sm">
                     📝

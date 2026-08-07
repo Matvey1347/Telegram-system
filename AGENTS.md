@@ -101,6 +101,12 @@ If behavior must work "across the site", do not patch multiple pages separately.
 4. Add contract/component tests.
 5. Run repo-wide search for the old pattern and clean it up.
 
+## Emoji and icon architecture
+
+- Display emoji/icons through the shared `ResolvedEmoji` contract and frontend `IconAvatar`.
+- Backend entity responses must include resolved display data (`iconPresentation` or `avatarPresentation`) whenever the frontend needs to render an icon/avatar.
+- Frontend lists, cards, tables and headers must not make `/icons/:id` requests only to render an existing entity. See `docs/emoji-architecture.md`.
+
 ## Tests required
 
 - Every new feature needs a happy path.

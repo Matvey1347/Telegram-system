@@ -23,6 +23,7 @@
 - Keep public API response shapes and HTTP status semantics stable.
 - Reuse DTOs and shared contracts when shapes cross to the frontend.
 - Preserve specific exceptions instead of replacing them with generic internal errors.
+- For icon/avatar display, resolve stored `Icon` data to `ResolvedEmoji` with `iconPresentation` or `avatarPresentation`; never require the frontend to call `/icons/:id` just to render an entity.
 
 ## Service Decomposition
 

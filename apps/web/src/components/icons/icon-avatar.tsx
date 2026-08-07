@@ -1,6 +1,7 @@
 'use client';
 
-import type { Icon } from '@/lib/api';
+import type { Icon, ResolvedEmoji } from '@/lib/api';
+import { iconToResolvedEmoji } from '@/lib/resolved-emoji';
 
 const sizes = {
   xs: 'h-5 w-5',
@@ -23,23 +24,24 @@ export function IconAvatar({
   className = '',
   bordered = true,
 }: {
-  icon?: Icon | null;
+  icon?: Icon | ResolvedEmoji | null;
   label?: string;
   size?: keyof typeof sizes;
   className?: string;
   bordered?: boolean;
 }) {
-  const hasEmoji = Boolean(icon?.emoji);
+  const resolved = iconToResolvedEmoji(icon);
+  const hasEmoji = resolved?.type === 'unicode';
   const base = `inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md ${
     bordered && !hasEmoji ? 'border border-neutral-700 bg-neutral-800' : 'bg-neutral-800'
   } text-white ${sizes[size]} ${className}`;
 
-  if (icon?.imageUrl) {
-    return <img src={icon.imageUrl} alt="" className={`${base} object-cover`} />;
+  if (resolved?.type === 'image') {
+    return <img src={resolved.url} alt="" className={`${base} object-cover`} />;
   }
 
-  if (icon?.emoji) {
-    return <span className={`${base} ${emojiSizes[size]}`}>{icon.emoji}</span>;
+  if (resolved?.type === 'unicode') {
+    return <span className={`${base} ${emojiSizes[size]}`}>{resolved.value}</span>;
   }
 
   const fallback = (label?.trim()?.[0] || '·').toUpperCase();

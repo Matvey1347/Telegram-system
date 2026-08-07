@@ -1,4 +1,4 @@
-import type { Currency, Icon } from "./core";
+import type { Currency, Icon, ResolvedEmoji } from "./core";
 import type { TransactionType } from "./finance";
 import type { AdCampaign } from "./ad-campaigns";
 
@@ -49,6 +49,7 @@ export type DashboardSummary = {
     count: number;
     iconId?: string | null;
     icon?: Icon | null;
+    iconPresentation?: ResolvedEmoji | null;
   }>;
   accountBalances: Array<{
     id: string;
@@ -56,6 +57,7 @@ export type DashboardSummary = {
     currency: Currency;
     iconId?: string | null;
     icon?: Icon | null;
+    iconPresentation?: ResolvedEmoji | null;
     balance: number;
     primary: number;
     secondary: number;

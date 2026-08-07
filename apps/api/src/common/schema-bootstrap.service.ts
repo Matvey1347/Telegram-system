@@ -127,6 +127,31 @@ ADD COLUMN IF NOT EXISTS "messageLengthMaxUsed" INTEGER;
 `);
 
     await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramManagedPost"
+ADD COLUMN IF NOT EXISTS "statusPosition" INTEGER;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "TelegramManagedPostRevision"
+ADD COLUMN IF NOT EXISTS "statusPosition" INTEGER;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+CREATE INDEX IF NOT EXISTS "TelegramManagedPost_groupId_status_statusPosition_idx"
+ON "TelegramManagedPost" ("groupId", "status", "statusPosition");
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+CREATE INDEX IF NOT EXISTS "TelegramManagedPostRevision_groupId_status_statusPosition_idx"
+ON "TelegramManagedPostRevision" ("groupId", "status", "statusPosition");
+`);
+
+    await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "PostGroup"
+ADD COLUMN IF NOT EXISTS "statusNumberingEnabled" BOOLEAN NOT NULL DEFAULT false;
+`);
+
+    await this.prisma.$executeRawUnsafe(`
 ALTER TABLE "Transaction"
 ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);

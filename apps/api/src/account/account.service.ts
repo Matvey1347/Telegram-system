@@ -11,6 +11,7 @@ import { WorkspaceRole } from '@prisma/client';
 import type { TelegramAccountCapabilities } from '@telegram-system/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { UpdateMeDto, UpdatePasswordDto, UpdateWorkspaceDto } from './dto';
 import { normalizeTelegramUsername } from '../telegram/shared/telegram-import.helpers';
 import { TelegramChannelsService } from '../telegram-channels/telegram-channels.service';
@@ -67,6 +68,7 @@ export class AccountService {
       ...user,
       avatarIconId: membership.avatarIconId,
       avatarIcon: membership.avatarIcon ?? null,
+      avatarPresentation: iconToResolvedEmoji(membership.avatarIcon),
       telegramUsername: (membership as { telegramUsername?: string | null })
         .telegramUsername ?? null,
       assignedTelegramUserAccounts: (
@@ -102,6 +104,7 @@ export class AccountService {
         timezone: membership.workspace.timezone,
         role: membership.role,
         avatarIcon: membership.workspace.avatarIcon ?? null,
+        avatarPresentation: iconToResolvedEmoji(membership.workspace.avatarIcon),
       },
     };
   }

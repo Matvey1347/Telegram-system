@@ -2,8 +2,7 @@ export type ManagedPostImportInputRow = {
   title?: string;
   emoji?: string | null;
   text?: string | null;
-  imageUrl?: string | null;
-  imageUrls?: string[];
+  urls?: string[];
   order?: number;
 };
 
@@ -28,10 +27,7 @@ function clean(value: string | null | undefined) {
 }
 
 function normalizeImageUrls(row: ManagedPostImportInputRow) {
-  const urls = [
-    ...(Array.isArray(row.imageUrls) ? row.imageUrls : []),
-    ...(row.imageUrl ? [row.imageUrl] : []),
-  ]
+  const urls = (Array.isArray(row.urls) ? row.urls : [])
     .flatMap((value) => String(value || '').split(/[,\n]/))
     .map((value) => value.trim())
     .filter(Boolean);

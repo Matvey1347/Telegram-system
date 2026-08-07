@@ -29,6 +29,7 @@
 - Add `"use client"` only where hooks/browser APIs are required.
 - Avoid importing feature-heavy modules into low-level UI primitives.
 - Keep browser-only APIs inside effects or guarded code.
+- Render entity icons/avatars with `IconAvatar` using hydrated `iconPresentation`, `avatarPresentation`, or legacy hydrated `Icon` objects. Do not add `/icons/:id` React Query calls for display-only icon rendering; `IconPicker` may load icons only for selection/editing.
 
 ## States And Accessibility
 

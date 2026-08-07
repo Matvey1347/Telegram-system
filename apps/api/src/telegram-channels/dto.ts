@@ -93,7 +93,9 @@ export class UpdateTelegramChannelDto {
   @IsOptional() @IsBoolean() syncIncludeChannelStats?: boolean;
   @IsOptional() @IsBoolean() syncIncludeManagedPosts?: boolean;
   @IsOptional() @IsBoolean() syncIncludeAudienceSnapshot?: boolean;
-  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?: 'CREATED' | 'PURCHASED';
+  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?:
+    | 'CREATED'
+    | 'PURCHASED';
   @IsOptional()
   @ValidateIf((_, value) => value !== undefined && value !== null)
   @IsDateString()
@@ -109,7 +111,9 @@ export class ImportTelegramChannelDto {
   @IsOptional() @IsString() input?: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() telegramAccountId?: string;
-  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?: 'CREATED' | 'PURCHASED';
+  @IsOptional() @IsIn(['CREATED', 'PURCHASED']) acquisitionType?:
+    | 'CREATED'
+    | 'PURCHASED';
   @IsOptional()
   @ValidateIf((_, value) => value !== undefined && value !== null)
   @IsDateString()
@@ -184,8 +188,7 @@ export class ImportTelegramManagedPostRowDto {
   @Allow() icon?: unknown;
   @Allow() emoji?: unknown;
   @Allow() iconText?: unknown;
-  @Allow() imageUrl?: unknown;
-  @Allow() imageUrls?: unknown;
+  @Allow() urls?: unknown;
   @Allow() groupPosition?: unknown;
   @Allow() order?: unknown;
 }
@@ -230,6 +233,7 @@ export class CreatePostGroupDto {
   @IsString() title!: string;
   @IsOptional() @IsString() description?: string | null;
   @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @IsBoolean() statusNumberingEnabled?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) postIds?: string[];
 }
 
@@ -237,6 +241,7 @@ export class UpdatePostGroupDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() description?: string | null;
   @IsOptional() @IsString() icon?: string | null;
+  @IsOptional() @IsBoolean() statusNumberingEnabled?: boolean;
 }
 
 export class PostGroupsQueryDto extends PaginationQueryDto {
@@ -312,9 +317,7 @@ export class ManagedPostsCalendarQueryDto {
   to!: string;
 }
 
-export class ScheduleManagedPostsBatchItemDto
-  implements ScheduleManagedPostsBatchItem
-{
+export class ScheduleManagedPostsBatchItemDto implements ScheduleManagedPostsBatchItem {
   @IsString()
   postId!: string;
 
@@ -326,9 +329,7 @@ export class ScheduleManagedPostsBatchItemDto
   longTextMode?: 'IMAGES_THEN_TEXT' | 'CAPTION_THEN_TEXT';
 }
 
-export class ScheduleManagedPostsBatchDto
-  implements ScheduleManagedPostsBatchPayload
-{
+export class ScheduleManagedPostsBatchDto implements ScheduleManagedPostsBatchPayload {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ScheduleManagedPostsBatchItemDto)

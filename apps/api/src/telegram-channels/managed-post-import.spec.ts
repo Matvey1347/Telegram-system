@@ -8,7 +8,7 @@ describe('normalizeManagedPostImportRows', () => {
         title: 'First',
         emoji: '🔥',
         text: 'Body 1',
-        imageUrl: 'https://example.com/a.png',
+        urls: ['https://example.com/a.png'],
         order: 1,
       },
     ]);
@@ -29,7 +29,7 @@ describe('normalizeManagedPostImportRows', () => {
     const result = normalizeManagedPostImportRows([
       { title: '', text: 'Body' },
       { title: 'No body', text: '' },
-      { title: 'Bad image', text: 'Body', imageUrl: 'ftp://example.com/a.png' },
+      { title: 'Bad image', text: 'Body', urls: ['ftp://example.com/a.png'] },
       { title: 'Good', text: 'Body' },
     ]);
 

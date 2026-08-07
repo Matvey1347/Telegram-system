@@ -139,6 +139,7 @@ export default function TransactionsPage() {
                     <div className="flex items-center gap-2">
                       <InlineIconPicker
                         iconId={t.iconId ?? null}
+                        icon={t.icon}
                         onChange={(iconId) => updateTransactionIconMutation.mutate({ id: t.id, iconId })}
                         className="shrink-0"
                       />
@@ -156,6 +157,7 @@ export default function TransactionsPage() {
                   <div className="flex items-center gap-2">
                     <InlineIconPicker
                       iconId={t.categoryRef?.iconId ?? null}
+                      icon={t.categoryRef?.icon}
                       onChange={(iconId) => t.categoryRef?.id && updateCategoryIconMutation.mutate({ id: t.categoryRef.id, iconId })}
                       className="shrink-0"
                     />
@@ -166,6 +168,7 @@ export default function TransactionsPage() {
                   <div className="flex items-center gap-2">
                     <InlineIconPicker
                       iconId={t.account?.iconId ?? null}
+                      icon={t.account?.icon}
                       onChange={(iconId) => t.account?.id && updateAccountIconMutation.mutate({ id: t.account.id, iconId })}
                       className="shrink-0"
                     />
@@ -373,7 +376,7 @@ function TransactionModal({ open, onClose, onSubmit, title, accounts, members, i
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <form className="space-y-3" onSubmit={handleSubmit(onSubmit)}>
-        <IconPicker iconId={watch('iconId') ?? null} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} />
+        <IconPicker iconId={watch('iconId') ?? null} icon={initial?.icon} onChange={(iconId) => setValue('iconId', iconId, { shouldDirty: true, shouldValidate: true })} />
         <FormField label="Type">
           <Select
             {...register('type')}

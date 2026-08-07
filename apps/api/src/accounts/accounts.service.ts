@@ -4,6 +4,7 @@ import { createPaginatedResponse, normalizePagination } from '../common/paginati
 import { CurrenciesService } from '../currencies/currencies.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { AccountQueryDto, CreateAccountDto, UpdateAccountDto } from './dto';
 
 const dec = (value: unknown) => Number(value ?? 0);
@@ -107,6 +108,7 @@ export class AccountsService {
 
         return {
           ...account,
+          iconPresentation: iconToResolvedEmoji(account.icon),
           initialBalance: dec(account.initialBalance),
           balance,
           calculatedBalance: balance,
@@ -223,7 +225,7 @@ export class AccountsService {
       },
     });
     await this.currenciesService.ensureRatesForWorkspace(workspaceId);
-    return account;
+    return { ...account, iconPresentation: iconToResolvedEmoji(account.icon) };
   }
 
   async update(userId: string, id: string, dto: UpdateAccountDto) {
@@ -275,7 +277,7 @@ export class AccountsService {
     if (dto.currency && dto.currency.toUpperCase() !== account.currency) {
       await this.currenciesService.ensureRatesForWorkspace(workspaceId);
     }
-    return updated;
+    return { ...updated, iconPresentation: iconToResolvedEmoji(updated.icon) };
   }
 
   async remove(userId: string, id: string) {

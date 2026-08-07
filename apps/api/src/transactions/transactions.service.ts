@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { createPaginatedResponse, normalizePagination } from '../common/pagination/pagination.utils';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { CurrencyConversionService } from '../common/currency-conversion.service';
 import {
   CreateTransactionDto,
@@ -27,6 +28,29 @@ export class TransactionsService {
     private currencyConversionService: CurrencyConversionService,
     private financeCategoriesService: FinanceCategoriesService,
   ) {}
+
+  private withIconPresentation<T extends {
+    icon?: Parameters<typeof iconToResolvedEmoji>[0];
+    account?: { icon?: Parameters<typeof iconToResolvedEmoji>[0] } | null;
+    categoryRef?: { icon?: Parameters<typeof iconToResolvedEmoji>[0] } | null;
+  }>(transaction: T) {
+    return {
+      ...transaction,
+      iconPresentation: iconToResolvedEmoji(transaction.icon),
+      account: transaction.account
+        ? {
+            ...transaction.account,
+            iconPresentation: iconToResolvedEmoji(transaction.account.icon),
+          }
+        : transaction.account,
+      categoryRef: transaction.categoryRef
+        ? {
+            ...transaction.categoryRef,
+            iconPresentation: iconToResolvedEmoji(transaction.categoryRef.icon),
+          }
+        : transaction.categoryRef,
+    };
+  }
 
   private async resolveRateToPrimary(
     workspaceId: string,
@@ -460,7 +484,11 @@ export class TransactionsService {
       workspaceId,
       items,
     );
-    return createPaginatedResponse(enrichedItems, totalItems, pagination);
+    return createPaginatedResponse(
+      enrichedItems.map((item) => this.withIconPresentation(item)),
+      totalItems,
+      pagination,
+    );
   }
 
   async findOne(userId: string, id: string) {
@@ -522,7 +550,7 @@ export class TransactionsService {
     const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
       row,
     ]);
-    return enriched;
+    return this.withIconPresentation(enriched);
   }
 
   async create(userId: string, dto: CreateTransactionDto) {
@@ -646,7 +674,7 @@ export class TransactionsService {
     const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
       created,
     ]);
-    return enriched;
+    return this.withIconPresentation(enriched);
   }
 
   async update(userId: string, id: string, dto: UpdateTransactionDto) {
@@ -799,7 +827,7 @@ export class TransactionsService {
     const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
       updated,
     ]);
-    return enriched;
+    return this.withIconPresentation(enriched);
   }
 
   async remove(userId: string, id: string) {

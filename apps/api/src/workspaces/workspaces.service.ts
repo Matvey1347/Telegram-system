@@ -7,6 +7,7 @@ import { Prisma, WorkspaceRole } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto';
 
 @Injectable()
@@ -45,6 +46,7 @@ export class WorkspacesService {
       secondaryCurrency: row.workspace.secondaryCurrency,
       currencyDisplayMode: row.workspace.currencyDisplayMode ?? 'code',
       avatarIcon: row.workspace.avatarIcon ?? null,
+      avatarPresentation: iconToResolvedEmoji(row.workspace.avatarIcon),
     };
   }
 

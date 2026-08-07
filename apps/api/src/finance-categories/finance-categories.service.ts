@@ -6,6 +6,7 @@ import {
 import { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { CreateFinanceCategoryDto, UpdateFinanceCategoryDto } from './dto';
 
 @Injectable()
@@ -238,7 +239,7 @@ export class FinanceCategoriesService {
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     await this.ensureSystemCategories(workspaceId);
 
-    return (this.prisma as any).transactionCategory.findMany({
+    const categories = await (this.prisma as any).transactionCategory.findMany({
       where: { workspaceId, type },
       include: {
         icon: {
@@ -253,13 +254,17 @@ export class FinanceCategoriesService {
       },
       orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
     });
+    return categories.map((category: { icon?: Parameters<typeof iconToResolvedEmoji>[0] }) => ({
+      ...category,
+      iconPresentation: iconToResolvedEmoji(category.icon),
+    }));
   }
 
   async create(userId: string, dto: CreateFinanceCategoryDto) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
     await this.ensureSystemCategories(workspaceId);
-    return (this.prisma as any).transactionCategory.create({
+    const category = await (this.prisma as any).transactionCategory.create({
       data: {
         workspaceId,
         type: dto.type,
@@ -278,6 +283,10 @@ export class FinanceCategoriesService {
         },
       },
     });
+    return {
+      ...category,
+      iconPresentation: iconToResolvedEmoji(category.icon),
+    };
   }
 
   async update(userId: string, id: string, dto: UpdateFinanceCategoryDto) {
@@ -303,7 +312,7 @@ export class FinanceCategoriesService {
       if (!icon) throw new NotFoundException('Icon not found');
     }
 
-    return (this.prisma as any).transactionCategory.update({
+    const updated = await (this.prisma as any).transactionCategory.update({
       where: { id },
       data: {
         name: dto.name?.trim(),
@@ -321,6 +330,10 @@ export class FinanceCategoriesService {
         },
       },
     });
+    return {
+      ...updated,
+      iconPresentation: iconToResolvedEmoji(updated.icon),
+    };
   }
 
   async remove(userId: string, id: string) {

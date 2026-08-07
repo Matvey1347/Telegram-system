@@ -58,6 +58,57 @@ export function Button({
   );
 }
 
+export function ToggleRow({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled = false,
+  className = "",
+  activeTone = "emerald",
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  description?: string;
+  disabled?: boolean;
+  className?: string;
+  activeTone?: "blue" | "emerald";
+}) {
+  const activeClass =
+    activeTone === "blue"
+      ? "border-blue-500/70 bg-blue-500/20"
+      : "border-emerald-500/70 bg-emerald-500/20";
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 ${className}`}
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-white">{label}</p>
+        {description ? (
+          <p className="mt-1 text-sm text-neutral-400">{description}</p>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full border transition disabled:opacity-50 ${
+          checked ? activeClass : "border-neutral-700 bg-neutral-900"
+        }`}
+        aria-pressed={checked}
+        aria-label={label}
+      >
+        <span
+          className={`absolute h-6 w-6 rounded-full bg-white transition ${
+            checked ? "left-7" : "left-1"
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
@@ -95,9 +146,7 @@ export function isValidTimeInputValue(value: string) {
   return canonicalizeTimeInputValue(value) !== null;
 }
 
-export function TimeInput(
-  props: React.InputHTMLAttributes<HTMLInputElement>,
-) {
+export function TimeInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const { className, onChange, placeholder, ...restProps } = props;
   return (
     <div className="relative">
@@ -236,8 +285,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       }
     };
     document.addEventListener("pointerdown", onDocPointerDown);
-    return () =>
-      document.removeEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
 
   const commit = (next: string) => {
@@ -353,7 +401,9 @@ export function CurrencySelect({
   currencies: string[];
   disabled?: boolean;
 }) {
-  const options = Array.from(new Set([value, ...currencies].filter(Boolean))).sort();
+  const options = Array.from(
+    new Set([value, ...currencies].filter(Boolean)),
+  ).sort();
 
   return (
     <Select
@@ -411,15 +461,19 @@ export function MultiSelect({
       }
     };
     document.addEventListener("pointerdown", onDocPointerDown);
-    return () =>
-      document.removeEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
 
   const selectedSet = useMemo(() => new Set(value), [value]);
-  const selectedOptions = options.filter((option) => selectedSet.has(option.value));
-  const isAllSelected = options.length > 0 && selectedOptions.length === options.length;
+  const selectedOptions = options.filter((option) =>
+    selectedSet.has(option.value),
+  );
+  const isAllSelected =
+    options.length > 0 && selectedOptions.length === options.length;
   const filteredOptions = options.filter((option) =>
-    option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+    option.label
+      .toLocaleLowerCase()
+      .includes(search.trim().toLocaleLowerCase()),
   );
 
   const toggleValue = (nextValue: string) => {
@@ -448,19 +502,21 @@ export function MultiSelect({
             isAllSelected && allSelectedLabel ? (
               <span className="text-neutral-100">{allSelectedLabel}</span>
             ) : (
-            selectedOptions.map((option) => (
-              <span
-                key={option.value}
-                className="inline-flex max-w-full items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
-              >
-                <OptionIcon
-                  iconUrl={option.iconUrl}
-                  iconEmoji={option.iconEmoji}
-                  fallback={option.iconFallback}
-                />
-                <span className="truncate">{option.selectedLabel ?? option.label}</span>
-              </span>
-            ))
+              selectedOptions.map((option) => (
+                <span
+                  key={option.value}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
+                >
+                  <OptionIcon
+                    iconUrl={option.iconUrl}
+                    iconEmoji={option.iconEmoji}
+                    fallback={option.iconFallback}
+                  />
+                  <span className="truncate">
+                    {option.selectedLabel ?? option.label}
+                  </span>
+                </span>
+              ))
             )
           ) : (
             <span className="text-neutral-400">{placeholder}</span>
@@ -503,7 +559,9 @@ export function MultiSelect({
                     />
                     <span className="truncate">{option.label}</span>
                   </span>
-                  {checked ? <Check size={14} className="text-blue-300" /> : null}
+                  {checked ? (
+                    <Check size={14} className="text-blue-300" />
+                  ) : null}
                 </button>
               );
             })}
@@ -1024,9 +1082,8 @@ export function CustomSelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties | null>(
-    null,
-  );
+  const [dropdownStyle, setDropdownStyle] =
+    useState<React.CSSProperties | null>(null);
   const selected = options.find((o) => o.value === value);
   const showSearch = searchable && options.length > 5;
   const filteredOptions = showSearch
@@ -1039,9 +1096,7 @@ export function CustomSelect({
 
   const pickFirstFilteredOption = () => {
     const normalizedSearch = search.trim();
-    const candidate = normalizedSearch
-      ? filteredOptions[0]
-      : options[0];
+    const candidate = normalizedSearch ? filteredOptions[0] : options[0];
     if (!candidate) return;
     onChange(candidate.value);
     setOpen(false);
@@ -1061,8 +1116,7 @@ export function CustomSelect({
       }
     };
     document.addEventListener("pointerdown", onDocPointerDown);
-    return () =>
-      document.removeEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
   }, []);
 
   useLayoutEffect(() => {
@@ -1243,12 +1297,14 @@ export function MasonryGrid({
   itemClassName = "",
 }: PropsWithChildren<{ className?: string; itemClassName?: string }>) {
   return (
-    <div
-      className={`columns-1 gap-4 md:columns-2 xl:columns-3 ${className}`}
-    >
+    <div className={`columns-1 gap-4 md:columns-2 xl:columns-3 ${className}`}>
       {Children.map(children, (child, index) => (
         <div
-          key={isValidElement(child) && child.key != null ? String(child.key) : index}
+          key={
+            isValidElement(child) && child.key != null
+              ? String(child.key)
+              : index
+          }
           className={`mb-4 break-inside-avoid ${itemClassName}`}
         >
           {child}
@@ -1305,27 +1361,35 @@ export function IconButton({
   );
 }
 
-export const TooltipBubble = forwardRef<HTMLSpanElement, {
-  children: React.ReactNode;
-  side?: "top" | "bottom";
-  align?: "left" | "center" | "right";
-  className?: string;
-  style?: React.CSSProperties;
-  floating?: boolean;
-}>(function TooltipBubble({
-  children,
-  side = "top",
-  align = "center",
-  className = "",
-  style,
-  floating = false,
-}, ref) {
-  const positionClass =
-    floating ? "" : side === "top"
+export const TooltipBubble = forwardRef<
+  HTMLSpanElement,
+  {
+    children: React.ReactNode;
+    side?: "top" | "bottom";
+    align?: "left" | "center" | "right";
+    className?: string;
+    style?: React.CSSProperties;
+    floating?: boolean;
+  }
+>(function TooltipBubble(
+  {
+    children,
+    side = "top",
+    align = "center",
+    className = "",
+    style,
+    floating = false,
+  },
+  ref,
+) {
+  const positionClass = floating
+    ? ""
+    : side === "top"
       ? "bottom-full mb-3"
       : "top-full mt-3";
-  const alignClass =
-    floating ? "" : align === "left"
+  const alignClass = floating
+    ? ""
+    : align === "left"
       ? "left-0"
       : align === "right"
         ? "right-0"
@@ -1444,9 +1508,7 @@ export function Tooltip({
                 left: position.left,
                 top: position.top,
                 transform:
-                  side === "top"
-                    ? `${transform} translateY(-100%)`
-                    : transform,
+                  side === "top" ? `${transform} translateY(-100%)` : transform,
               }}
             >
               {content}
@@ -1537,7 +1599,11 @@ export function ConfirmDeleteModal({
       {description ? (
         <p className="mb-3 text-sm text-amber-300">{description}</p>
       ) : null}
-      <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder={entityName} />
+      <Input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={entityName}
+      />
       <div className="mt-4 flex justify-end gap-2">
         <Button
           variant="secondary"
@@ -1682,7 +1748,9 @@ export function TableLoadingState({
           <div
             key={rowIndex}
             className="grid gap-3 bg-neutral-950 px-3 py-3"
-            style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+            style={{
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            }}
           >
             {Array.from({ length: columns }, (_, columnIndex) => (
               <Skeleton

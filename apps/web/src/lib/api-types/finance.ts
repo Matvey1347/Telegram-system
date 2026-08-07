@@ -1,4 +1,4 @@
-import type { EntityAssignment, Icon, WorkspaceMember, Currency } from "./core";
+import type { EntityAssignment, Icon, ResolvedEmoji, WorkspaceMember, Currency } from "./core";
 
 export type TransactionType = "income" | "expense";
 export type AccountTransactionStats = {
@@ -24,6 +24,7 @@ export type Account = EntityAssignment & {
   isActive: boolean;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
 };
 export type TransactionCategory = {
   id: string;
@@ -33,6 +34,7 @@ export type TransactionCategory = {
   key?: string | null;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
 };
 export type Transaction = EntityAssignment & {
   id: string;
@@ -49,6 +51,7 @@ export type Transaction = EntityAssignment & {
   date: string;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   account?: Account;
   categoryRef?: TransactionCategory;
   member?: WorkspaceMember;

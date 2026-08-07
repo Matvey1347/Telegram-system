@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   TelegramManagedPostRemoteStatus,
   TelegramManagedPostStatus,
@@ -35,6 +32,7 @@ describe('TelegramChannelsService returnManagedPostToDraft', () => {
       icon: null,
       groupId: null,
       groupPosition: null,
+      statusPosition: null,
       sidebarPosition: null,
       telegramChannel: {
         username: 'example',
@@ -60,6 +58,11 @@ describe('TelegramChannelsService returnManagedPostToDraft', () => {
     const prisma = {
       telegramManagedPost: {
         findFirst: jest.fn().mockResolvedValue(scheduledPost),
+        findUnique: jest.fn().mockResolvedValue({
+          ...scheduledPost,
+          status: TelegramManagedPostStatus.DRAFT,
+          statusPosition: null,
+        }),
         update,
       },
       telegramManagedPostRevision: {
@@ -69,7 +72,9 @@ describe('TelegramChannelsService returnManagedPostToDraft', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValue([{ exists: '"TelegramManagedPostRevision"' }]),
-      $transaction: jest.fn().mockImplementation(async (callback) => callback(prisma)),
+      $transaction: jest
+        .fn()
+        .mockImplementation(async (callback) => callback(prisma)),
     };
     const mtprotoClient = {
       deleteScheduledPost: jest.fn().mockResolvedValue(undefined),

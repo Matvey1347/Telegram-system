@@ -12,6 +12,7 @@ import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
+import { iconToResolvedEmoji } from '../common/icons/resolved-emoji';
 import { CreateWorkspaceMemberDto, UpdateWorkspaceMemberDto } from './dto';
 import {
   attributeInviteLinkCreator,
@@ -65,7 +66,12 @@ export class WorkspaceMembersService {
     row: T,
     currentUserId: string,
   ) {
-    return { ...row, isCurrentUser: row.userId === currentUserId };
+    const avatarIcon = (row as { avatarIcon?: Parameters<typeof iconToResolvedEmoji>[0] }).avatarIcon;
+    return {
+      ...row,
+      avatarPresentation: iconToResolvedEmoji(avatarIcon),
+      isCurrentUser: row.userId === currentUserId,
+    };
   }
 
   private normalizeMemberUsername(input: string | null | undefined) {

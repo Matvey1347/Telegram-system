@@ -87,7 +87,7 @@ export default function SettingsPage() {
           <h3 className="text-lg font-semibold">Workspace</h3>
           <div className="mt-4 space-y-3">
             <div className="flex items-center gap-3">
-              <InlineIconPicker iconId={workspaceIconId} onChange={setWorkspaceIconId} className="text-2xl" />
+              <InlineIconPicker iconId={workspaceIconId} icon={me.data?.workspace.avatarIcon} onChange={setWorkspaceIconId} className="text-2xl" />
               <div>
                 <p className="text-sm font-medium">{me.data?.workspace.name}</p>
                 <p className="text-xs text-neutral-400">Workspace avatar and name</p>

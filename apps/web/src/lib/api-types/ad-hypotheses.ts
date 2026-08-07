@@ -1,4 +1,4 @@
-import type { Currency, Icon, WorkspaceMember } from "./core";
+import type { Currency, Icon, ResolvedEmoji, WorkspaceMember } from "./core";
 import type { AdCampaign, AdCampaignKpiStatus } from "./ad-campaigns";
 import type { TelegramChannel } from "./telegram-channels";
 import type { InviteLinkHistoryPoint, InviteLinkHistorySummary, TelegramInviteLink } from "./telegram-invite-links";
@@ -69,6 +69,7 @@ export type AdHypothesis = {
   name: string;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   telegramChannelId?: string | null;
   telegramChannel?: TelegramChannel | null;
   description?: string | null;

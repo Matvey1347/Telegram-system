@@ -1,4 +1,4 @@
-import type { SyncOperationResult, StructuredApiError, TelegramChannelAccessMode, EntityAssignment, Icon, WorkspaceMember } from "./core";
+import type { SyncOperationResult, StructuredApiError, TelegramChannelAccessMode, EntityAssignment, Icon, ResolvedEmoji, WorkspaceMember } from "./core";
 import type { TelegramChannelAudience, TelegramChannelFinancialSummary } from "./telegram-channel-analytics";
 import type { TelegramPublishingCapabilities } from "@telegram-system/shared";
 
@@ -60,6 +60,7 @@ export type TelegramChannelTimePost = {
   position?: number;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
 };
 export type TelegramChannel = EntityAssignment & {
   id: string;

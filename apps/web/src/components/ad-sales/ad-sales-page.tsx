@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
@@ -48,11 +53,10 @@ import {
   Skeleton,
   TableLoadingState,
   Textarea,
+  ToggleRow,
   Tooltip,
 } from "@/components/ui/primitives";
-import {
-  CalendarSlotCard,
-} from "@/components/ad-sales/calendar-slot-card";
+import { CalendarSlotCard } from "@/components/ad-sales/calendar-slot-card";
 import {
   allowedSaleActions,
   SaleStatusActions,
@@ -155,7 +159,15 @@ function startOfMonth(value: Date) {
 }
 
 function endOfMonth(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
+  return new Date(
+    value.getFullYear(),
+    value.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
 }
 
 function monthGridDays(value: Date) {
@@ -182,23 +194,43 @@ function listDaysInRange(from: Date, to: Date) {
   start.setHours(0, 0, 0, 0);
   const end = new Date(to);
   end.setHours(0, 0, 0, 0);
-  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+  for (
+    let cursor = new Date(start);
+    cursor <= end;
+    cursor = addDays(cursor, 1)
+  ) {
     days.push(new Date(cursor));
   }
   return days;
 }
 
-const defaultPlacementFormatNames = new Set(["1/24", "2/48", "3/72", "1/permanent", "No auto-delete"]);
+const defaultPlacementFormatNames = new Set([
+  "1/24",
+  "2/48",
+  "3/72",
+  "1/permanent",
+  "No auto-delete",
+]);
 
 function isDefaultPlacementFormat(product: TelegramAdProduct) {
   return defaultPlacementFormatNames.has(product.name.trim());
 }
 
 function placementFormatCanonicalKey(
-  product: Pick<TelegramAdProduct, "name" | "isPermanent" | "topDurationMinutes" | "feedDurationHours" | "deleteAfterHours">,
+  product: Pick<
+    TelegramAdProduct,
+    | "name"
+    | "isPermanent"
+    | "topDurationMinutes"
+    | "feedDurationHours"
+    | "deleteAfterHours"
+  >,
 ) {
   const name = product.name.trim();
-  if (product.isPermanent && (name === "1/permanent" || name === "No auto-delete")) {
+  if (
+    product.isPermanent &&
+    (name === "1/permanent" || name === "No auto-delete")
+  ) {
     return "default:no-auto-delete";
   }
   if (name === "1/24") return "default:1/24";
@@ -207,19 +239,32 @@ function placementFormatCanonicalKey(
   return `custom:${name}:${product.topDurationMinutes ?? "na"}:${product.feedDurationHours ?? "na"}:${product.deleteAfterHours ?? "na"}`;
 }
 
-function placementFormatName(product: Pick<TelegramAdProduct, "name" | "isPermanent">) {
+function placementFormatName(
+  product: Pick<TelegramAdProduct, "name" | "isPermanent">,
+) {
   if (product.isPermanent && product.name.trim() === "1/permanent") {
     return "No auto-delete";
   }
   return product.name;
 }
 
-function placementDeliveryLabel(product: Pick<TelegramAdProduct, "topDurationMinutes" | "feedDurationHours" | "isPermanent" | "deleteAfterHours">) {
-  const topHours = product.topDurationMinutes ? Math.round(product.topDurationMinutes / 60) : 0;
+function placementDeliveryLabel(
+  product: Pick<
+    TelegramAdProduct,
+    | "topDurationMinutes"
+    | "feedDurationHours"
+    | "isPermanent"
+    | "deleteAfterHours"
+  >,
+) {
+  const topHours = product.topDurationMinutes
+    ? Math.round(product.topDurationMinutes / 60)
+    : 0;
   if (product.isPermanent) {
     return "No auto-delete";
   }
-  const feedHours = product.feedDurationHours ?? product.deleteAfterHours ?? null;
+  const feedHours =
+    product.feedDurationHours ?? product.deleteAfterHours ?? null;
   if (topHours > 0 && feedHours) {
     return `${topHours}h first • ${feedHours}h in feed`;
   }
@@ -261,7 +306,9 @@ function placementEstimatedPrice(
   const parsedCpm = Number(baseCpm.trim());
   if (expectedViews != null && Number.isFinite(parsedCpm) && parsedCpm > 0) {
     const value = (expectedViews / 1000) * parsedCpm;
-    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+    return Number.isInteger(value)
+      ? String(value)
+      : String(Number(value.toFixed(2)));
   }
   return product.estimatedPrice ?? "—";
 }
@@ -280,90 +327,60 @@ function tabButtonClass(active: boolean) {
 }
 
 function saleChannelCount(sale: TelegramAdSale) {
-  return new Set(sale.placements.map((placement) => placement.telegramChannelId)).size;
+  return new Set(
+    sale.placements.map((placement) => placement.telegramChannelId),
+  ).size;
 }
 
 function isSaleUnderpriced(sale: TelegramAdSale) {
-  return sale.placements.some((placement) =>
-    buildUnderpricingSummary({
-      agreedPrice: placement.agreedPrice,
-      recommendedPrice: placement.recommendedPrice,
-      minimumPrice: placement.minimumPrice,
-    }).isBelowMinimum,
+  return sale.placements.some(
+    (placement) =>
+      buildUnderpricingSummary({
+        agreedPrice: placement.agreedPrice,
+        recommendedPrice: placement.recommendedPrice,
+        minimumPrice: placement.minimumPrice,
+      }).isBelowMinimum,
   );
 }
 
 function saleStatusTone(status: TelegramAdSale["status"]) {
-  if (status === "COMPLETED") return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
+  if (status === "COMPLETED")
+    return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
   if (status === "CONFIRMED" || status === "IN_PROGRESS")
     return "bg-blue-900/40 text-blue-300 border-blue-700";
-  if (status === "RESERVED") return "bg-amber-900/40 text-amber-300 border-amber-700";
-  if (status === "CANCELLED") return "bg-red-900/40 text-red-300 border-red-700";
+  if (status === "RESERVED")
+    return "bg-amber-900/40 text-amber-300 border-amber-700";
+  if (status === "CANCELLED")
+    return "bg-red-900/40 text-red-300 border-red-700";
   return "bg-neutral-800 text-neutral-300 border-neutral-700";
 }
 
 function paymentStatusTone(status: string) {
-  if (status === "PAID") return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
-  if (status === "PARTIALLY_PAID") return "bg-amber-900/40 text-amber-300 border-amber-700";
-  if (status === "OVERPAID") return "bg-blue-900/40 text-blue-300 border-blue-700";
+  if (status === "PAID")
+    return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
+  if (status === "PARTIALLY_PAID")
+    return "bg-amber-900/40 text-amber-300 border-amber-700";
+  if (status === "OVERPAID")
+    return "bg-blue-900/40 text-blue-300 border-blue-700";
   return "bg-red-900/40 text-red-300 border-red-700";
 }
 
 function sameStringArray(left: string[], right: string[]) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 type SlotsLayoutView = "calendar" | "list";
 
-function EnumPill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: string;
-}) {
+function EnumPill({ label, tone }: { label: string; tone: string }) {
   return (
-    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}>
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}
+    >
       {label}
     </span>
-  );
-}
-
-function ToggleRow({
-  checked,
-  onChange,
-  label,
-  description,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  label: string;
-  description?: string;
-}) {
-  return (
-    <div className={adSalesTileClass + " flex items-center justify-between gap-3"}>
-      <div>
-        <p className="text-sm font-medium text-white">{label}</p>
-        {description ? <p className="mt-1 text-sm text-neutral-400">{description}</p> : null}
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full border transition ${
-          checked
-            ? "border-emerald-500/70 bg-emerald-500/20"
-            : "border-neutral-700 bg-neutral-900"
-        }`}
-        aria-pressed={checked}
-        aria-label={label}
-      >
-        <span
-          className={`absolute h-6 w-6 rounded-full bg-white transition ${
-            checked ? "left-7" : "left-1"
-          }`}
-        />
-      </button>
-    </div>
   );
 }
 
@@ -387,7 +404,9 @@ export function AdSalesPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { pushToast, startOperation } = useAppToast();
-  const [tab, setTab] = useState<TelegramAdSalesTab>(() => routeTabFromPathname(pathname));
+  const [tab, setTab] = useState<TelegramAdSalesTab>(() =>
+    routeTabFromPathname(pathname),
+  );
   const [calendarView, setCalendarView] = useState<SlotsLayoutView>("calendar");
   const [calendarRangeMode, setCalendarRangeMode] =
     useState<TelegramAdSalesCalendarRangeMode>("week");
@@ -400,7 +419,9 @@ export function AdSalesPage() {
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [responsibleMemberId, setResponsibleMemberId] = useState("");
-  const [slotVisibility, setSlotVisibility] = useState<"all" | "free" | "busy">("all");
+  const [slotVisibility, setSlotVisibility] = useState<"all" | "free" | "busy">(
+    "all",
+  );
   const [salesPage, setSalesPage] = useState(1);
   const [salesPageSize, setSalesPageSize] = useState(25);
   const [saleSearch, setSaleSearch] = useState("");
@@ -409,7 +430,8 @@ export function AdSalesPage() {
   const [unpaidOnly, setUnpaidOnly] = useState(false);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [adSaleModalOpen, setAdSaleModalOpen] = useState(false);
-  const [adSaleSeedSlot, setAdSaleSeedSlot] = useState<TelegramAdAvailabilitySlot | null>(null);
+  const [adSaleSeedSlot, setAdSaleSeedSlot] =
+    useState<TelegramAdAvailabilitySlot | null>(null);
   const [paymentSaleId, setPaymentSaleId] = useState<string | null>(null);
   const [postEditorPlacement, setPostEditorPlacement] = useState<{
     saleId: string;
@@ -452,7 +474,9 @@ export function AdSalesPage() {
     if (calendarRangeSelection?.from) {
       return {
         from: new Date(`${calendarRangeSelection.from}T00:00:00`),
-        to: new Date(`${(calendarRangeSelection.to || calendarRangeSelection.from)}T23:59:59.999`),
+        to: new Date(
+          `${calendarRangeSelection.to || calendarRangeSelection.from}T23:59:59.999`,
+        ),
       };
     }
     return rangeForCalendarMode(calendarRangeMode, calendarCursor);
@@ -468,8 +492,24 @@ export function AdSalesPage() {
     const start = calendarDays[0] ?? from;
     const end = calendarDays[calendarDays.length - 1] ?? to;
     return {
-      from: new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0),
-      to: new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999),
+      from: new Date(
+        start.getFullYear(),
+        start.getMonth(),
+        start.getDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+      to: new Date(
+        end.getFullYear(),
+        end.getMonth(),
+        end.getDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
     };
   }, [calendarDays, from, to]);
 
@@ -516,7 +556,8 @@ export function AdSalesPage() {
     staleTime: 60 * 1000,
   });
   const savePreferencesMutation = useMutation({
-    mutationFn: (payload: Record<string, unknown>) => telegramAdSalesApi.updatePreferences(payload),
+    mutationFn: (payload: Record<string, unknown>) =>
+      telegramAdSalesApi.updatePreferences(payload),
     onSuccess: (preferences) => {
       queryClient.setQueryData(telegramAdSalesKeys.preferences(), preferences);
     },
@@ -535,14 +576,15 @@ export function AdSalesPage() {
       }),
   });
   const selectedSaleQuery = useQuery({
-    queryKey: selectedSaleId ? telegramAdSalesKeys.sale(selectedSaleId) : ["telegram-ad-sale", "none"],
+    queryKey: selectedSaleId
+      ? telegramAdSalesKeys.sale(selectedSaleId)
+      : ["telegram-ad-sale", "none"],
     queryFn: () => telegramAdSalesApi.getSale(selectedSaleId!),
     enabled: Boolean(selectedSaleId),
   });
 
   const saleableChannels = useMemo(
-    () =>
-      channels.filter((channel) => channel.preview?.canPostMessages),
+    () => channels.filter((channel) => channel.preview?.canPostMessages),
     [channels],
   );
   const saleableChannelIdsList = useMemo(
@@ -574,21 +616,29 @@ export function AdSalesPage() {
         selectedNetworkId: selectedNetworkId || null,
         networks: saleableNetworks as TelegramChannelNetwork[],
       }),
-    [saleableChannelIdsList, saleableNetworks, selectedChannelIds, selectedNetworkId],
+    [
+      saleableChannelIdsList,
+      saleableNetworks,
+      selectedChannelIds,
+      selectedNetworkId,
+    ],
   );
 
   useEffect(() => {
     const preferences = preferencesQuery.data;
     if (!preferences) return;
     const allowedIds = new Set(saleableChannelIdsList);
-    const filteredPreferenceIds = preferences.selectedChannelIds.filter((channelId) =>
-      allowedIds.has(channelId),
+    const filteredPreferenceIds = preferences.selectedChannelIds.filter(
+      (channelId) => allowedIds.has(channelId),
     );
-    const nextNetworkId = preferences.initialized ? preferences.selectedNetworkId ?? "" : "";
+    const nextNetworkId = preferences.initialized
+      ? (preferences.selectedNetworkId ?? "")
+      : "";
     const networkChannelIds = nextNetworkId
-      ? (saleableNetworks.find((network) => network.id === nextNetworkId)?.channels ?? []).map(
-          (channel) => channel.id,
-        )
+      ? (
+          saleableNetworks.find((network) => network.id === nextNetworkId)
+            ?.channels ?? []
+        ).map((channel) => channel.id)
       : [];
     const nextIds = preferences.initialized
       ? nextNetworkId
@@ -598,7 +648,9 @@ export function AdSalesPage() {
           : saleableChannelIdsList
       : saleableChannelIdsList;
     const normalizedView =
-      preferences.initialized && preferences.calendarView === "month" ? "month" : "week";
+      preferences.initialized && preferences.calendarView === "month"
+        ? "month"
+        : "week";
     const nextCalendarRangeMode = normalizedView;
     writeAdSalesCalendarRangeMode(window.localStorage, nextCalendarRangeMode);
     const nextPreferencesSignature = JSON.stringify({
@@ -613,8 +665,12 @@ export function AdSalesPage() {
     }
     appliedPreferencesSignatureRef.current = nextPreferencesSignature;
 
-    setSelectedChannelIds((current) => (sameStringArray(current, nextIds) ? current : nextIds));
-    setSelectedNetworkId((current) => (current === nextNetworkId ? current : nextNetworkId));
+    setSelectedChannelIds((current) =>
+      sameStringArray(current, nextIds) ? current : nextIds,
+    );
+    setSelectedNetworkId((current) =>
+      current === nextNetworkId ? current : nextNetworkId,
+    );
     setCalendarRangeMode((current) =>
       current === nextCalendarRangeMode ? current : nextCalendarRangeMode,
     );
@@ -629,7 +685,10 @@ export function AdSalesPage() {
       return;
     }
 
-    if (preferences.initialized && nextIds.length !== preferences.selectedChannelIds.length) {
+    if (
+      preferences.initialized &&
+      nextIds.length !== preferences.selectedChannelIds.length
+    ) {
       savePreferencesMutation.mutate({
         selectedChannelIds: nextIds,
         selectedNetworkId: preferences.selectedNetworkId,
@@ -639,11 +698,13 @@ export function AdSalesPage() {
     }
   }, [preferencesQuery.data, saleableChannelIdsList, saleableNetworks]);
 
-  const persistCalendarPreferences = (payload: Partial<{
-    selectedChannelIds: string[];
-    selectedNetworkId: string | null;
-    calendarView: "week" | "month";
-  }>) => {
+  const persistCalendarPreferences = (
+    payload: Partial<{
+      selectedChannelIds: string[];
+      selectedNetworkId: string | null;
+      calendarView: "week" | "month";
+    }>,
+  ) => {
     savePreferencesMutation.mutate({
       selectedChannelIds,
       selectedNetworkId: selectedNetworkId || null,
@@ -653,7 +714,9 @@ export function AdSalesPage() {
     });
   };
 
-  const handleCalendarRangeModeChange = (view: TelegramAdSalesCalendarRangeMode) => {
+  const handleCalendarRangeModeChange = (
+    view: TelegramAdSalesCalendarRangeMode,
+  ) => {
     writeAdSalesCalendarRangeMode(window.localStorage, view);
     setCalendarRangeMode(view);
     persistCalendarPreferences({ calendarView: view });
@@ -673,10 +736,14 @@ export function AdSalesPage() {
   const shiftCalendarRange = (direction: -1 | 1) => {
     if (calendarRangeSelection?.from) {
       const currentFrom = new Date(`${calendarRangeSelection.from}T00:00:00`);
-      const currentTo = new Date(`${(calendarRangeSelection.to || calendarRangeSelection.from)}T00:00:00`);
+      const currentTo = new Date(
+        `${calendarRangeSelection.to || calendarRangeSelection.from}T00:00:00`,
+      );
       const span = Math.max(
         1,
-        Math.round((currentTo.getTime() - currentFrom.getTime()) / (24 * 60 * 60 * 1000)) + 1,
+        Math.round(
+          (currentTo.getTime() - currentFrom.getTime()) / (24 * 60 * 60 * 1000),
+        ) + 1,
       );
       const nextFrom = addDays(currentFrom, span * direction);
       const nextTo = addDays(currentTo, span * direction);
@@ -756,14 +823,18 @@ export function AdSalesPage() {
           from: visibleCalendarRange.from.toISOString(),
           to: visibleCalendarRange.to.toISOString(),
           channelIds: [channelId],
-          ...(availabilityCacheBust ? { cacheBust: String(availabilityCacheBust) } : {}),
+          ...(availabilityCacheBust
+            ? { cacheBust: String(availabilityCacheBust) }
+            : {}),
         }),
       enabled: tab === "calendar",
       staleTime: 30 * 1000,
     })),
   });
 
-  const availabilitySlots = availabilityQueries.flatMap((query) => query.data?.slots ?? []);
+  const availabilitySlots = availabilityQueries.flatMap(
+    (query) => query.data?.slots ?? [],
+  );
   const availabilityDaySummaries = availabilityQueries.flatMap(
     (query) => query.data?.summaries ?? [],
   );
@@ -785,16 +856,25 @@ export function AdSalesPage() {
     const search = saleSearch.trim().toLowerCase();
     if (search) {
       items = items.filter((sale) =>
-        [sale.title, sale.advertiserName, sale.advertiserTelegram, sale.advertiserContact]
+        [
+          sale.title,
+          sale.advertiserName,
+          sale.advertiserTelegram,
+          sale.advertiserContact,
+        ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(search)),
       );
     }
     if (paymentStatusFilter) {
-      items = items.filter((sale) => sale.paymentStatus === paymentStatusFilter);
+      items = items.filter(
+        (sale) => sale.paymentStatus === paymentStatusFilter,
+      );
     }
     if (responsibleMemberId) {
-      items = items.filter((sale) => sale.assignedMemberId === responsibleMemberId);
+      items = items.filter(
+        (sale) => sale.assignedMemberId === responsibleMemberId,
+      );
     }
     if (underpricedOnly) {
       items = items.filter(isSaleUnderpriced);
@@ -804,7 +884,9 @@ export function AdSalesPage() {
     }
     if (selectedChannelIds.length) {
       items = items.filter((sale) =>
-        sale.placements.some((placement) => effectiveChannelIds.includes(placement.telegramChannelId)),
+        sale.placements.some((placement) =>
+          effectiveChannelIds.includes(placement.telegramChannelId),
+        ),
       );
     }
     return items;
@@ -825,7 +907,9 @@ export function AdSalesPage() {
     let items = buildAdCalendarSlots(availabilitySlots);
     if (statusFilter) {
       items = items.filter(
-        (slot) => slot.existingPlacement?.status === statusFilter || slot.state === statusFilter,
+        (slot) =>
+          slot.existingPlacement?.status === statusFilter ||
+          slot.state === statusFilter,
       );
     }
     if (slotVisibility === "free") {
@@ -840,7 +924,9 @@ export function AdSalesPage() {
   const pricingChannels = useMemo(
     () =>
       effectiveChannelIds
-        .map((channelId) => channels.find((channel) => channel.id === channelId))
+        .map((channelId) =>
+          channels.find((channel) => channel.id === channelId),
+        )
         .filter((channel): channel is TelegramChannel => Boolean(channel)),
     [channels, effectiveChannelIds],
   );
@@ -871,10 +957,21 @@ export function AdSalesPage() {
       }
       await withFreshApiReads(async () => {
         const refreshTasks: Promise<unknown>[] = [
-          queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.preferences() }),
-          queryClient.refetchQueries({ queryKey: ["telegram-channels"], type: "active" }),
-          queryClient.refetchQueries({ queryKey: ["telegram-channel-networks"], type: "active" }),
-          queryClient.refetchQueries({ queryKey: telegramAdSalesKeys.preferences(), type: "active" }),
+          queryClient.invalidateQueries({
+            queryKey: telegramAdSalesKeys.preferences(),
+          }),
+          queryClient.refetchQueries({
+            queryKey: ["telegram-channels"],
+            type: "active",
+          }),
+          queryClient.refetchQueries({
+            queryKey: ["telegram-channel-networks"],
+            type: "active",
+          }),
+          queryClient.refetchQueries({
+            queryKey: telegramAdSalesKeys.preferences(),
+            type: "active",
+          }),
         ];
 
         if (tab === "settings") {
@@ -884,7 +981,9 @@ export function AdSalesPage() {
               type: "active",
             }),
           );
-          for (const channelId of pricingChannels.map((channel) => channel.id)) {
+          for (const channelId of pricingChannels.map(
+            (channel) => channel.id,
+          )) {
             refreshTasks.push(
               queryClient.refetchQueries({
                 queryKey: telegramAdSalesKeys.channelProducts(channelId),
@@ -935,57 +1034,76 @@ export function AdSalesPage() {
     }
   };
 
-  async function handleCreateSale(payload: Parameters<NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>>[0]) {
+  async function handleCreateSale(
+    payload: Parameters<
+      NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>
+    >[0],
+  ) {
     const seedSlot = adSaleSeedSlot;
-    const sale = await telegramAdSalesApi.createSale({
-      advertiserId: payload.advertiserId,
-      createAdvertiser: payload.createAdvertiser,
-      advertiserName: payload.advertiserName,
-      advertiserTelegram: payload.advertiserTelegram,
-      advertiserContact: payload.advertiserContact,
-      settlementCurrency: payload.paymentCurrency,
-      assignedMemberId: payload.assignedMemberId,
-    }, true);
+    const sale = await telegramAdSalesApi.createSale(
+      {
+        advertiserId: payload.advertiserId,
+        createAdvertiser: payload.createAdvertiser,
+        advertiserName: payload.advertiserName,
+        advertiserTelegram: payload.advertiserTelegram,
+        advertiserContact: payload.advertiserContact,
+        settlementCurrency: payload.paymentCurrency,
+        assignedMemberId: payload.assignedMemberId,
+      },
+      true,
+    );
 
     for (const placement of payload.placements) {
-      await telegramAdSalesApi.addPlacement(sale.id, {
-        telegramChannelId: placement.channelId,
-        telegramAdProductId: placement.productId,
-        inventoryOpportunityKey: placement.inventoryOpportunityKey,
-        scheduledAt: placement.scheduledAt,
-        timezone: placement.timezone,
-        agreedPrice: placement.agreedPrice,
-        recommendedPrice: placement.recommendedPrice,
-        minimumPrice: placement.minimumPrice,
-        expectedViews: placement.expectedViews,
-        pricingMode: placement.pricingMode,
-        manualPriceReason: placement.manualPriceReason,
-      }, true);
+      await telegramAdSalesApi.addPlacement(
+        sale.id,
+        {
+          telegramChannelId: placement.channelId,
+          telegramAdProductId: placement.productId,
+          inventoryOpportunityKey: placement.inventoryOpportunityKey,
+          scheduledAt: placement.scheduledAt,
+          timezone: placement.timezone,
+          agreedPrice: placement.agreedPrice,
+          recommendedPrice: placement.recommendedPrice,
+          minimumPrice: placement.minimumPrice,
+          expectedViews: placement.expectedViews,
+          pricingMode: placement.pricingMode,
+          manualPriceReason: placement.manualPriceReason,
+        },
+        true,
+      );
     }
     const refreshed = await telegramAdSalesApi.getSale(sale.id);
     try {
-      const reserved = await telegramAdSalesApi.reserveSale(sale.id, {
-        placements: refreshed.placements.map((placement) => ({
-          placementId: placement.id,
-          scheduledAt: placement.scheduledAt,
-        })),
-      }, true);
-      const attachmentTasks =
-        payload.placements.flatMap((draft) => {
-          if (!draft.telegramPostId) return [];
-          const placement = reserved.placements.find(
-            (item) =>
-              item.telegramChannelId === draft.channelId &&
-              item.scheduledAt === draft.scheduledAt,
-          );
-          return placement
-            ? [
-                telegramAdSalesApi.attachManagedPost(reserved.id, placement.id, {
+      const reserved = await telegramAdSalesApi.reserveSale(
+        sale.id,
+        {
+          placements: refreshed.placements.map((placement) => ({
+            placementId: placement.id,
+            scheduledAt: placement.scheduledAt,
+          })),
+        },
+        true,
+      );
+      const attachmentTasks = payload.placements.flatMap((draft) => {
+        if (!draft.telegramPostId) return [];
+        const placement = reserved.placements.find(
+          (item) =>
+            item.telegramChannelId === draft.channelId &&
+            item.scheduledAt === draft.scheduledAt,
+        );
+        return placement
+          ? [
+              telegramAdSalesApi.attachManagedPost(
+                reserved.id,
+                placement.id,
+                {
                   telegramPostId: draft.telegramPostId,
-                }, true),
-              ]
-            : [];
-        });
+                },
+                true,
+              ),
+            ]
+          : [];
+      });
       await Promise.all(attachmentTasks);
       if (attachmentTasks.length) {
         await telegramAdSalesApi.reconcileSale(reserved.id, true);
@@ -1011,24 +1129,35 @@ export function AdSalesPage() {
       );
       await invalidateTelegramAdSalesQueries(queryClient, {
         saleId: reserved.id,
-        channelIds: reserved.placements.map((placement) => placement.telegramChannelId),
+        channelIds: reserved.placements.map(
+          (placement) => placement.telegramChannelId,
+        ),
       });
-      if (seedSlot?.state === "PAST" && !payload.placements.some((placement) => placement.telegramPostId)) {
+      if (
+        seedSlot?.state === "PAST" &&
+        !payload.placements.some((placement) => placement.telegramPostId)
+      ) {
         const placement =
           reserved.placements.find((item) =>
             seedSlot.inventoryOpportunityKey
-              ? item.inventoryOpportunityKey === seedSlot.inventoryOpportunityKey
+              ? item.inventoryOpportunityKey ===
+                seedSlot.inventoryOpportunityKey
               : item.telegramChannelId === seedSlot.channelId &&
                 item.scheduledAt === seedSlot.scheduledAt,
           ) ??
-          reserved.placements.find((item) => item.telegramChannelId === seedSlot.channelId);
+          reserved.placements.find(
+            (item) => item.telegramChannelId === seedSlot.channelId,
+          );
         const slotTime = new Date(seedSlot.scheduledAt).getTime();
-        const publishedPosts = await getTelegramChannelPosts(seedSlot.channelId, {
-          page: 1,
-          pageSize: 100,
-          from: new Date(slotTime - 36 * 60 * 60 * 1000).toISOString(),
-          to: new Date(slotTime + 36 * 60 * 60 * 1000).toISOString(),
-        });
+        const publishedPosts = await getTelegramChannelPosts(
+          seedSlot.channelId,
+          {
+            page: 1,
+            pageSize: 100,
+            from: new Date(slotTime - 36 * 60 * 60 * 1000).toISOString(),
+            to: new Date(slotTime + 36 * 60 * 60 * 1000).toISOString(),
+          },
+        );
         const candidates = publishedPosts.items
           .filter(
             (item) =>
@@ -1049,8 +1178,9 @@ export function AdSalesPage() {
             saleId: reserved.id,
             placementId: placement.id,
             channelTitle:
-              saleableChannels.find((channel) => channel.id === seedSlot.channelId)?.title ||
-              "Channel",
+              saleableChannels.find(
+                (channel) => channel.id === seedSlot.channelId,
+              )?.title || "Channel",
             slotDateLabel: new Date(seedSlot.scheduledAt).toLocaleDateString(),
             posts: candidates,
           });
@@ -1066,14 +1196,18 @@ export function AdSalesPage() {
     } catch (error) {
       await invalidateTelegramAdSalesQueries(queryClient, {
         saleId: refreshed.id,
-        channelIds: refreshed.placements.map((placement) => placement.telegramChannelId),
+        channelIds: refreshed.placements.map(
+          (placement) => placement.telegramChannelId,
+        ),
       });
       throw error;
     }
   }
 
   async function submitAdSale(
-    payload: Parameters<NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>>[0],
+    payload: Parameters<
+      NonNullable<React.ComponentProps<typeof AdSaleModal>["onSubmit"]>
+    >[0],
   ) {
     const operation = startOperation({
       id: `ad-sale-create:${Date.now()}`,
@@ -1090,15 +1224,23 @@ export function AdSalesPage() {
     } catch (error) {
       operation.fail({
         title: "Ad sale creation failed",
-        message: error instanceof Error ? error.message : "Could not create the ad sale.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not create the ad sale.",
       });
       throw error;
     }
   }
 
-  async function refreshSaleAfterMutation(saleId: string, channelIds: string[]) {
+  async function refreshSaleAfterMutation(
+    saleId: string,
+    channelIds: string[],
+  ) {
     await invalidateTelegramAdSalesQueries(queryClient, { saleId, channelIds });
-    await queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.sales({}) });
+    await queryClient.invalidateQueries({
+      queryKey: telegramAdSalesKeys.sales({}),
+    });
   }
 
   const selectedSale = selectedSaleQuery.data ?? null;
@@ -1106,7 +1248,8 @@ export function AdSalesPage() {
     paymentSaleId != null
       ? selectedSale?.id === paymentSaleId
         ? selectedSale
-        : salesQuery.data?.items.find((sale) => sale.id === paymentSaleId) ?? null
+        : (salesQuery.data?.items.find((sale) => sale.id === paymentSaleId) ??
+          null)
       : null;
 
   return (
@@ -1121,7 +1264,9 @@ export function AdSalesPage() {
               <FormField label="Network">
                 <Select
                   value={selectedNetworkId}
-                  onChange={(event) => handleSelectedNetworkIdChange(event.target.value)}
+                  onChange={(event) =>
+                    handleSelectedNetworkIdChange(event.target.value)
+                  }
                 >
                   <option value="">All networks</option>
                   {saleableNetworks.map((network) => (
@@ -1157,7 +1302,10 @@ export function AdSalesPage() {
               title="Clear cached data and refresh this page"
             >
               <span className="inline-flex items-center gap-2">
-                <RefreshCw size={16} className={refreshingCurrentPage ? "animate-spin" : ""} />
+                <RefreshCw
+                  size={16}
+                  className={refreshingCurrentPage ? "animate-spin" : ""}
+                />
                 Refresh
               </span>
             </Button>
@@ -1247,7 +1395,9 @@ export function AdSalesPage() {
                 key={item.id}
                 side="top"
                 align="center"
-                content={<span className="block w-72">{tabDescriptions[item.id]}</span>}
+                content={
+                  <span className="block w-72">{tabDescriptions[item.id]}</span>
+                }
               >
                 <button
                   type="button"
@@ -1334,16 +1484,24 @@ export function AdSalesPage() {
       {tab === "settings" ? (
         <SettingsTab
           channels={pricingChannels}
-          supportedCurrencies={settings?.supportedCurrencies ?? ["USD", "EUR", "PLN", "UAH"]}
+          supportedCurrencies={
+            settings?.supportedCurrencies ?? ["USD", "EUR", "PLN", "UAH"]
+          }
           workspaceTimezone={workspaceTimezone}
           workspaceSettings={adSalesWorkspaceSettingsQuery.data}
           productsByChannelId={productsByChannelId}
           baselineQueries={baselineQueries.map((query) => query.data)}
-          baselineLoading={baselineQueries.map((query) => query.isLoading || query.isFetching)}
+          baselineLoading={baselineQueries.map(
+            (query) => query.isLoading || query.isFetching,
+          )}
           policies={policyQueries.map((query) => query.data)}
-          policyLoading={policyQueries.map((query) => query.isLoading || query.isFetching)}
+          policyLoading={policyQueries.map(
+            (query) => query.isLoading || query.isFetching,
+          )}
           productLoading={pricingChannels.map((channel) => {
-            const index = effectiveChannelIds.findIndex((channelId) => channelId === channel.id);
+            const index = effectiveChannelIds.findIndex(
+              (channelId) => channelId === channel.id,
+            );
             const query = index >= 0 ? channelProductQueries[index] : undefined;
             return Boolean(query?.isLoading || query?.isFetching);
           })}
@@ -1363,7 +1521,8 @@ export function AdSalesPage() {
             await telegramAdSalesApi.deactivateProduct(productId);
             queryClient.setQueryData<TelegramAdProduct[]>(
               telegramAdSalesKeys.channelProducts(channelId),
-              (current) => (current ?? []).filter((product) => product.id !== productId),
+              (current) =>
+                (current ?? []).filter((product) => product.id !== productId),
             );
             await queryClient.invalidateQueries({
               queryKey: telegramAdSalesKeys.channelProducts(channelId),
@@ -1377,7 +1536,9 @@ export function AdSalesPage() {
           }}
           onApplyPolicyToChannels={async (channelIds, payload) => {
             await Promise.all(
-              channelIds.map((channelId) => telegramAdSalesApi.updatePolicy(channelId, payload)),
+              channelIds.map((channelId) =>
+                telegramAdSalesApi.updatePolicy(channelId, payload),
+              ),
             );
             await Promise.all(
               channelIds.map((channelId) =>
@@ -1420,15 +1581,27 @@ export function AdSalesPage() {
         workspaceTimezone={workspaceTimezone}
         initialChannelId={adSaleSeedSlot?.channelId ?? null}
         initialScheduledAt={adSaleSeedSlot?.scheduledAt ?? null}
-        initialInventoryOpportunityKey={adSaleSeedSlot?.inventoryOpportunityKey ?? null}
-        onSearchAdvertisers={(query) => telegramAdSalesApi.searchAdvertisers({ q: query, limit: 5 })}
-        onRequestQuote={async ({ channelId, productId, pricingMode, currency }) =>
-          telegramAdSalesApi.createQuote({
-            telegramChannelId: channelId,
-            telegramAdProductId: productId,
-            pricingMode,
-            currency,
-          }, true)
+        initialInventoryOpportunityKey={
+          adSaleSeedSlot?.inventoryOpportunityKey ?? null
+        }
+        onSearchAdvertisers={(query) =>
+          telegramAdSalesApi.searchAdvertisers({ q: query, limit: 5 })
+        }
+        onRequestQuote={async ({
+          channelId,
+          productId,
+          pricingMode,
+          currency,
+        }) =>
+          telegramAdSalesApi.createQuote(
+            {
+              telegramChannelId: channelId,
+              telegramAdProductId: productId,
+              pricingMode,
+              currency,
+            },
+            true,
+          )
         }
         onLoadAvailableSlots={async ({ channelId, productId, from, to }) => {
           const result = await telegramAdSalesApi.availability({
@@ -1437,15 +1610,24 @@ export function AdSalesPage() {
             channelIds: [channelId],
             ...(productId ? { productIds: [productId] } : {}),
           });
-          return result.slots.filter((slot) => slot.state === "AVAILABLE" || slot.state === "PAST");
+          return result.slots.filter(
+            (slot) => slot.state === "AVAILABLE" || slot.state === "PAST",
+          );
         }}
         onLoadPublishedPosts={async ({ channelId, date }) => {
           const from = new Date(`${date}T00:00:00`).toISOString();
           const to = new Date(`${date}T23:59:59.999`).toISOString();
-          const result = await getTelegramChannelPosts(channelId, { page: 1, pageSize: 100, from, to });
+          const result = await getTelegramChannelPosts(channelId, {
+            page: 1,
+            pageSize: 100,
+            from,
+            to,
+          });
           return result.items.map((post) => ({
             id: post.id,
-            title: post.text?.trim().split("\n").find(Boolean)?.slice(0, 90) || "Telegram post",
+            title:
+              post.text?.trim().split("\n").find(Boolean)?.slice(0, 90) ||
+              "Telegram post",
             publishedAt: post.postDate,
           }));
         }}
@@ -1460,10 +1642,15 @@ export function AdSalesPage() {
         defaultCurrency={settings?.primaryCurrency || "USD"}
         onSubmit={async (payload) => {
           if (!selectedPaymentSale) return;
-          await telegramAdSalesApi.createPayment(selectedPaymentSale.id, payload);
+          await telegramAdSalesApi.createPayment(
+            selectedPaymentSale.id,
+            payload,
+          );
           await refreshSaleAfterMutation(
             selectedPaymentSale.id,
-            selectedPaymentSale.placements.map((placement) => placement.telegramChannelId),
+            selectedPaymentSale.placements.map(
+              (placement) => placement.telegramChannelId,
+            ),
           );
           setPaymentSaleId(null);
         }}
@@ -1488,7 +1675,11 @@ export function AdSalesPage() {
             });
           } else if (action === "cancel") {
             placementId
-              ? await telegramAdSalesApi.cancelPlacement(sale.id, placementId, {})
+              ? await telegramAdSalesApi.cancelPlacement(
+                  sale.id,
+                  placementId,
+                  {},
+                )
               : await telegramAdSalesApi.cancelSale(sale.id);
           } else if (action === "register-payment") {
             setPaymentSaleId(sale.id);
@@ -1500,7 +1691,11 @@ export function AdSalesPage() {
             setPostImages("");
             return;
           } else if (action === "schedule" && placementId) {
-            await telegramAdSalesApi.schedulePlacement(sale.id, placementId, {});
+            await telegramAdSalesApi.schedulePlacement(
+              sale.id,
+              placementId,
+              {},
+            );
           } else if (action === "publish" && placementId) {
             await telegramAdSalesApi.publishPlacement(sale.id, placementId, {});
           } else if (action === "reschedule" && placementId) {
@@ -1510,12 +1705,23 @@ export function AdSalesPage() {
           } else if (action === "retry-deletion" && placementId) {
             await telegramAdSalesApi.retryDeletion(sale.id, placementId, {});
           } else if (action === "complete-permanent" && placementId) {
-            await telegramAdSalesApi.completePermanentPlacement(sale.id, placementId, {});
+            await telegramAdSalesApi.completePermanentPlacement(
+              sale.id,
+              placementId,
+              {},
+            );
           } else if (action === "attach-post" && placementId) {
-            const channelPosts = await telegramChannelsApi.managedPosts(placement.telegramChannelId);
-            const candidate = channelPosts.find((post) => post.status === "DRAFT");
+            const channelPosts = await telegramChannelsApi.managedPosts(
+              placement.telegramChannelId,
+            );
+            const candidate = channelPosts.find(
+              (post) => post.status === "DRAFT",
+            );
             if (!candidate) {
-              pushToast("No draft managed post found for this channel.", "error");
+              pushToast(
+                "No draft managed post found for this channel.",
+                "error",
+              );
               return;
             }
             await telegramAdSalesApi.attachManagedPost(sale.id, placementId, {
@@ -1556,7 +1762,9 @@ export function AdSalesPage() {
                   const label = post.title?.trim() || "Untitled post";
                   return (
                     <option key={post.id} value={post.id}>
-                      {post.dateValue ? `${new Date(post.dateValue).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ` : ""}
+                      {post.dateValue
+                        ? `${new Date(post.dateValue).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · `
+                        : ""}
                       {post.kind === "telegram" ? "Post · " : "Managed · "}
                       {label}
                     </option>
@@ -1579,16 +1787,24 @@ export function AdSalesPage() {
                 onClick={async () => {
                   if (!pastSlotAssignment || !selectedPastPostId) return;
                   const current = pastSlotAssignment;
-                  const selectedPost = current.posts.find((post) => post.id === selectedPastPostId);
+                  const selectedPost = current.posts.find(
+                    (post) => post.id === selectedPastPostId,
+                  );
                   setPastSlotAssignment(null);
                   setSelectedPastPostId("");
-                  await telegramAdSalesApi.attachManagedPost(current.saleId, current.placementId, {
-                    ...(selectedPost?.kind === "telegram"
-                      ? { telegramPostId: selectedPost.id }
-                      : { managedPostId: selectedPost?.id }),
-                  });
+                  await telegramAdSalesApi.attachManagedPost(
+                    current.saleId,
+                    current.placementId,
+                    {
+                      ...(selectedPost?.kind === "telegram"
+                        ? { telegramPostId: selectedPost.id }
+                        : { managedPostId: selectedPost?.id }),
+                    },
+                  );
                   await telegramAdSalesApi.reconcileSale(current.saleId);
-                  await invalidateTelegramAdSalesQueries(queryClient, { saleId: current.saleId });
+                  await invalidateTelegramAdSalesQueries(queryClient, {
+                    saleId: current.saleId,
+                  });
                 }}
               >
                 Save
@@ -1606,10 +1822,17 @@ export function AdSalesPage() {
       >
         <div className="space-y-4">
           <FormField label="Title">
-            <Input value={postTitle} onChange={(event) => setPostTitle(event.target.value)} />
+            <Input
+              value={postTitle}
+              onChange={(event) => setPostTitle(event.target.value)}
+            />
           </FormField>
           <FormField label="Text">
-            <Textarea rows={8} value={postText} onChange={(event) => setPostText(event.target.value)} />
+            <Textarea
+              rows={8}
+              value={postText}
+              onChange={(event) => setPostText(event.target.value)}
+            />
           </FormField>
           <FormField label="Image URLs">
             <Textarea
@@ -1620,7 +1843,10 @@ export function AdSalesPage() {
             />
           </FormField>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setPostEditorPlacement(null)}>
+            <Button
+              variant="secondary"
+              onClick={() => setPostEditorPlacement(null)}
+            >
               Cancel
             </Button>
             <Button
@@ -1643,7 +1869,9 @@ export function AdSalesPage() {
                 await queryClient.invalidateQueries({
                   queryKey: telegramAdSalesKeys.sale(saleId),
                 });
-                await queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.root });
+                await queryClient.invalidateQueries({
+                  queryKey: telegramAdSalesKeys.root,
+                });
               }}
             >
               Create post
@@ -1739,7 +1967,8 @@ function CalendarTab(props: {
     for (const slots of grouped.values()) {
       slots.sort(
         (left, right) =>
-          new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime(),
+          new Date(left.scheduledAt).getTime() -
+          new Date(right.scheduledAt).getTime(),
       );
     }
     return grouped;
@@ -1750,7 +1979,9 @@ function CalendarTab(props: {
     [props.sales],
   );
 
-  const renderSlot = (slot: ReturnType<typeof buildAdCalendarSlots>[number]) => {
+  const renderSlot = (
+    slot: ReturnType<typeof buildAdCalendarSlots>[number],
+  ) => {
     const sale = slot.existingPlacement?.saleId
       ? saleById.get(slot.existingPlacement.saleId)
       : undefined;
@@ -1783,21 +2014,42 @@ function CalendarTab(props: {
           <FormField label="Status">
             <Select
               value={props.statusFilter}
-              onChange={(event) => props.onStatusFilterChange(event.target.value)}
+              onChange={(event) =>
+                props.onStatusFilterChange(event.target.value)
+              }
             >
               <option value="">All states</option>
-              <option value="AVAILABLE" className="text-emerald-300">● Available</option>
-              <option value="RESERVED" className="text-amber-300">● Reserved</option>
-              <option value="SOLD" className="text-blue-300">● Sold</option>
-              <option value="BLOCKED_BY_POLICY" className="text-rose-300">● Blocked</option>
-              <option value="CONFLICT_WITH_ORGANIC_POST" className="text-orange-300">● Conflict</option>
-              <option value="PAST" className="text-neutral-400">● Past</option>
+              <option value="AVAILABLE" className="text-emerald-300">
+                ● Available
+              </option>
+              <option value="RESERVED" className="text-amber-300">
+                ● Reserved
+              </option>
+              <option value="SOLD" className="text-blue-300">
+                ● Sold
+              </option>
+              <option value="BLOCKED_BY_POLICY" className="text-rose-300">
+                ● Blocked
+              </option>
+              <option
+                value="CONFLICT_WITH_ORGANIC_POST"
+                className="text-orange-300"
+              >
+                ● Conflict
+              </option>
+              <option value="PAST" className="text-neutral-400">
+                ● Past
+              </option>
             </Select>
           </FormField>
           <FormField label="Visibility">
             <Select
               value={props.slotVisibility}
-              onChange={(event) => props.onSlotVisibilityChange(event.target.value as "all" | "free" | "busy")}
+              onChange={(event) =>
+                props.onSlotVisibilityChange(
+                  event.target.value as "all" | "free" | "busy",
+                )
+              }
             >
               <option value="all">All</option>
               <option value="free">Only free</option>
@@ -1808,7 +2060,9 @@ function CalendarTab(props: {
             <Select
               value={props.calendarView}
               onChange={(event) =>
-                props.onCalendarViewChange(event.target.value as "calendar" | "list")
+                props.onCalendarViewChange(
+                  event.target.value as "calendar" | "list",
+                )
               }
             >
               <option value="calendar">Calendar</option>
@@ -1818,22 +2072,31 @@ function CalendarTab(props: {
         </div>
       </Card>
 
-      {props.calendarView === "calendar" && props.calendarRangeMode === "month" ? (
+      {props.calendarView === "calendar" &&
+      props.calendarRangeMode === "month" ? (
         <div className={adSalesPanelClass}>
           <div className="overflow-hidden rounded-xl border border-slate-800/80">
             <div className="grid grid-cols-7 border-b border-slate-800/80 bg-[#09111e]">
-              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
-                <div key={label} className="border-r border-slate-800/80 px-3 py-2 text-center text-xs font-medium text-neutral-400 last:border-r-0">
-                  {label}
-                </div>
-              ))}
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
+                (label) => (
+                  <div
+                    key={label}
+                    className="border-r border-slate-800/80 px-3 py-2 text-center text-xs font-medium text-neutral-400 last:border-r-0"
+                  >
+                    {label}
+                  </div>
+                ),
+              )}
             </div>
             <div className="grid grid-cols-7">
               {props.calendarDays.map((day) => {
                 const dayDateKey = dateKey(day);
-                const outsideMonth = day.getMonth() !== props.calendarCursor.getMonth();
+                const outsideMonth =
+                  day.getMonth() !== props.calendarCursor.getMonth();
                 const daySlots = visibleChannels.flatMap((channel) =>
-                  (slotsByChannelDay.get(`${channel.id}:${dayDateKey}`) ?? []).map((slot) => ({
+                  (
+                    slotsByChannelDay.get(`${channel.id}:${dayDateKey}`) ?? []
+                  ).map((slot) => ({
                     channel,
                     slot,
                   })),
@@ -1844,9 +2107,13 @@ function CalendarTab(props: {
                     className={`min-h-28 border-b border-r border-slate-900/70 p-2 ${outsideMonth ? "bg-black/20 opacity-45" : "bg-[#111111]"}`}
                   >
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="text-sm font-semibold text-white">{day.getDate()}</span>
+                      <span className="text-sm font-semibold text-white">
+                        {day.getDate()}
+                      </span>
                       {dayDateKey === todayKey ? (
-                        <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">Today</span>
+                        <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                          Today
+                        </span>
                       ) : null}
                     </div>
                     <div className="space-y-1">
@@ -1854,7 +2121,10 @@ function CalendarTab(props: {
                         <button
                           key={`${channel.id}:${slot.id}`}
                           type="button"
-                          disabled={Boolean(slot.existingPlacement) || !["AVAILABLE", "PAST"].includes(slot.state)}
+                          disabled={
+                            Boolean(slot.existingPlacement) ||
+                            !["AVAILABLE", "PAST"].includes(slot.state)
+                          }
                           onClick={() => props.onCreateFromSlot(slot)}
                           title={`${channel.title} · ${slot.state === "PAST" ? "Missed ad slot" : "Add Ad Slot"}`}
                           className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] font-medium transition ${
@@ -1865,8 +2135,15 @@ function CalendarTab(props: {
                                 : "border-slate-800 bg-[#0b1220] text-neutral-300"
                           }`}
                         >
-                          <TelegramEntityAvatar imageUrl={channel.photoUrl} kind="channel" alt={channel.title} size="xs" />
-                          <span className="min-w-0 truncate">{channel.title}</span>
+                          <TelegramEntityAvatar
+                            imageUrl={channel.photoUrl}
+                            kind="channel"
+                            alt={channel.title}
+                            size="xs"
+                          />
+                          <span className="min-w-0 truncate">
+                            {channel.title}
+                          </span>
                           <span className="ml-auto shrink-0 text-[9px] opacity-80">
                             {slot.state === "PAST"
                               ? "Missed ad slot"
@@ -1876,7 +2153,9 @@ function CalendarTab(props: {
                           </span>
                         </button>
                       ))}
-                      {props.loadingChannelIds.length ? <Skeleton className="h-6 w-full" /> : null}
+                      {props.loadingChannelIds.length ? (
+                        <Skeleton className="h-6 w-full" />
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -1886,21 +2165,32 @@ function CalendarTab(props: {
         </div>
       ) : null}
 
-      {props.calendarView === "calendar" && props.calendarRangeMode !== "month" ? (
+      {props.calendarView === "calendar" &&
+      props.calendarRangeMode !== "month" ? (
         <div className={adSalesPanelClass}>
           <div className="overflow-x-auto">
             <div className="min-w-max">
               <div
                 className="sticky top-0 z-10 border-b border-slate-800/80 bg-[#09111e]/95 backdrop-blur"
-                style={{ display: "grid", gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))` }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))`,
+                }}
               >
                 <div className="border-r border-slate-800/80 px-4 py-3 text-sm font-semibold text-white">
                   Channels
                 </div>
                 {props.calendarDays.map((day) => (
-                  <div key={day.toISOString()} className="border-r border-slate-800/80 px-3 py-2.5 text-sm">
+                  <div
+                    key={day.toISOString()}
+                    className="border-r border-slate-800/80 px-3 py-2.5 text-sm"
+                  >
                     <p className="font-semibold text-white">
-                      {day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                      {day.toLocaleDateString(undefined, {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                      })}
                     </p>
                   </div>
                 ))}
@@ -1909,7 +2199,10 @@ function CalendarTab(props: {
                 <div
                   key={channel.id}
                   className="border-b border-slate-900/60 last:border-b-0"
-                  style={{ display: "grid", gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))` }}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))`,
+                  }}
                 >
                   <div className="sticky left-0 z-[1] border-r border-slate-800/80 bg-[#09111e] px-3 py-3">
                     <div className="flex items-center gap-2">
@@ -1920,9 +2213,13 @@ function CalendarTab(props: {
                         size="sm"
                       />
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-white">{channel.title}</p>
+                        <p className="truncate font-medium text-white">
+                          {channel.title}
+                        </p>
                         {channel.username ? (
-                          <p className="truncate text-xs text-neutral-500">{channel.username}</p>
+                          <p className="truncate text-xs text-neutral-500">
+                            {channel.username}
+                          </p>
                         ) : null}
                       </div>
                     </div>
@@ -1932,23 +2229,31 @@ function CalendarTab(props: {
                     const slots = slotsByChannelDay.get(dayKey) ?? [];
                     const summary = daySummariesByChannelDay.get(dayKey);
                     const organicCount = summary?.organicPostsCountForDay ?? 0;
-                    const adSlotsCount = summary?.adsCountForDay ?? slots.length;
+                    const adSlotsCount =
+                      summary?.adsCountForDay ?? slots.length;
                     return (
-                      <div key={dayKey} className="min-h-24 border-r border-slate-900/60 p-2">
+                      <div
+                        key={dayKey}
+                        className="min-h-24 border-r border-slate-900/60 p-2"
+                      >
                         {loadingChannelIds.has(channel.id) ? (
                           <>
                             <Skeleton className="mb-2 h-3 w-24" />
                             <Skeleton className="h-10 w-full" />
                           </>
                         ) : failedChannelIds.has(channel.id) ? (
-                          <p className="text-xs text-rose-300">Could not load slots.</p>
+                          <p className="text-xs text-rose-300">
+                            Could not load slots.
+                          </p>
                         ) : (
                           <>
                             <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
                               <span>{organicCount} organic</span>
                               <span>{adSlotsCount} ad slots</span>
                             </div>
-                            <div className="space-y-1.5">{slots.slice(0, 2).map(renderSlot)}</div>
+                            <div className="space-y-1.5">
+                              {slots.slice(0, 2).map(renderSlot)}
+                            </div>
                           </>
                         )}
                       </div>
@@ -1968,15 +2273,24 @@ function CalendarTab(props: {
             return (
               <Card key={channel.id} className={adSalesSoftPanelClass}>
                 <div className="flex items-center gap-2">
-                  <TelegramEntityAvatar imageUrl={channel.photoUrl} kind="channel" alt={channel.title} size="sm" />
+                  <TelegramEntityAvatar
+                    imageUrl={channel.photoUrl}
+                    kind="channel"
+                    alt={channel.title}
+                    size="sm"
+                  />
                   <p className="font-medium text-white">{channel.title}</p>
                 </div>
                 {loadingChannelIds.has(channel.id) ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                    {Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}
+                    {Array.from({ length: 3 }, (_, index) => (
+                      <Skeleton key={index} className="h-16 w-full" />
+                    ))}
                   </div>
                 ) : failedChannelIds.has(channel.id) ? (
-                  <p className="mt-3 text-sm text-rose-300">Could not load slots.</p>
+                  <p className="mt-3 text-sm text-rose-300">
+                    Could not load slots.
+                  </p>
                 ) : slots.length ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                     {slots.slice(0, 6).map((slot) => (
@@ -1984,7 +2298,10 @@ function CalendarTab(props: {
                         key={slot.id}
                         type="button"
                         disabled={slot.state !== "AVAILABLE"}
-                        onClick={() => slot.state === "AVAILABLE" && props.onCreateFromSlot(slot)}
+                        onClick={() =>
+                          slot.state === "AVAILABLE" &&
+                          props.onCreateFromSlot(slot)
+                        }
                         className={`rounded-lg border p-3 text-left transition ${
                           slot.state === "AVAILABLE"
                             ? "border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500"
@@ -1992,18 +2309,29 @@ function CalendarTab(props: {
                         }`}
                       >
                         <p className="text-sm font-medium text-white">
-                          {new Date(slot.scheduledAt).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                          {new Date(slot.scheduledAt).toLocaleDateString(
+                            undefined,
+                            {
+                              weekday: "short",
+                              day: "numeric",
+                              month: "short",
+                            },
+                          )}
                           {" · "}
                           {channelLocalTime(slot.scheduledAt, slot.timezone)}
                         </p>
                         <p className="mt-1 text-xs text-neutral-400">
-                          {slot.state === "AVAILABLE" ? "Add Ad Slot" : slot.state.replaceAll("_", " ")}
+                          {slot.state === "AVAILABLE"
+                            ? "Add Ad Slot"
+                            : slot.state.replaceAll("_", " ")}
                         </p>
                       </button>
                     ))}
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-neutral-500">No upcoming slots for the selected filters.</p>
+                  <p className="mt-3 text-sm text-neutral-500">
+                    No upcoming slots for the selected filters.
+                  </p>
                 )}
               </Card>
             );
@@ -2020,7 +2348,14 @@ function SalesTab(props: {
   error: unknown;
   page: number;
   pageSize: number;
-  pagination?: { totalItems: number; totalPages: number; hasNextPage: boolean; hasPreviousPage: boolean; page: number; pageSize: number };
+  pagination?: {
+    totalItems: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    page: number;
+    pageSize: number;
+  };
   onPageChange: (value: number) => void;
   onPageSizeChange: (value: number) => void;
   search: string;
@@ -2061,12 +2396,17 @@ function SalesTab(props: {
       <Card className={adSalesPanelClass}>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
           <FormField label="Search">
-            <Input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} />
+            <Input
+              value={props.search}
+              onChange={(event) => props.onSearchChange(event.target.value)}
+            />
           </FormField>
           <FormField label="Status">
             <Select
               value={props.statusFilter}
-              onChange={(event) => props.onStatusFilterChange(event.target.value)}
+              onChange={(event) =>
+                props.onStatusFilterChange(event.target.value)
+              }
             >
               {statusOptions.map((option) => (
                 <option key={option.value || "all"} value={option.value}>
@@ -2078,7 +2418,9 @@ function SalesTab(props: {
           <FormField label="Payment status">
             <Select
               value={props.paymentStatusFilter}
-              onChange={(event) => props.onPaymentStatusFilterChange(event.target.value)}
+              onChange={(event) =>
+                props.onPaymentStatusFilterChange(event.target.value)
+              }
             >
               {paymentStatusOptions.map((option) => (
                 <option key={option.value || "all"} value={option.value}>
@@ -2100,7 +2442,9 @@ function SalesTab(props: {
                 <input
                   type="checkbox"
                   checked={props.underpricedOnly}
-                  onChange={(event) => props.onUnderpricedOnlyChange(event.target.checked)}
+                  onChange={(event) =>
+                    props.onUnderpricedOnlyChange(event.target.checked)
+                  }
                   className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-neutral-600 bg-neutral-900 checked:border-blue-500 checked:bg-blue-600"
                 />
                 <span className="pointer-events-none absolute text-xs font-bold text-white opacity-0 peer-checked:opacity-100">
@@ -2116,7 +2460,9 @@ function SalesTab(props: {
                 <input
                   type="checkbox"
                   checked={props.unpaidOnly}
-                  onChange={(event) => props.onUnpaidOnlyChange(event.target.checked)}
+                  onChange={(event) =>
+                    props.onUnpaidOnlyChange(event.target.checked)
+                  }
                   className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-neutral-600 bg-neutral-900 checked:border-blue-500 checked:bg-blue-600"
                 />
                 <span className="pointer-events-none absolute text-xs font-bold text-white opacity-0 peer-checked:opacity-100">
@@ -2149,8 +2495,9 @@ function SalesTab(props: {
               </thead>
               <tbody className="divide-y divide-neutral-900">
                 {props.sales.map((sale) => {
-                  const nearestPlacement = [...sale.placements].sort((left, right) =>
-                    left.scheduledAt.localeCompare(right.scheduledAt),
+                  const nearestPlacement = [...sale.placements].sort(
+                    (left, right) =>
+                      left.scheduledAt.localeCompare(right.scheduledAt),
                   )[0];
                   return (
                     <tr
@@ -2159,24 +2506,44 @@ function SalesTab(props: {
                       onClick={() => props.onOpenSale(sale.id)}
                     >
                       <td className="px-4 py-4">
-                        <p className="font-medium text-white">{sale.title || "Untitled sale"}</p>
-                        <p className="text-xs text-neutral-500">{new Date(sale.createdAt).toLocaleString()}</p>
+                        <p className="font-medium text-white">
+                          {sale.title || "Untitled sale"}
+                        </p>
+                        <p className="text-xs text-neutral-500">
+                          {new Date(sale.createdAt).toLocaleString()}
+                        </p>
                       </td>
                       <td className="px-4 py-4">
                         <p className="text-white">{sale.advertiserName}</p>
-                        <p className="text-xs text-neutral-500">{sale.advertiserTelegram || sale.advertiserContact || "-"}</p>
+                        <p className="text-xs text-neutral-500">
+                          {sale.advertiserTelegram ||
+                            sale.advertiserContact ||
+                            "-"}
+                        </p>
                       </td>
                       <td className="px-4 py-4">{saleChannelCount(sale)}</td>
                       <td className="px-4 py-4">
-                        {nearestPlacement ? new Date(nearestPlacement.scheduledAt).toLocaleString() : "-"}
-                      </td>
-                      <td className="px-4 py-4">
-                        <EnumPill label={sale.status.replaceAll("_", " ")} tone={saleStatusTone(sale.status)} />
+                        {nearestPlacement
+                          ? new Date(
+                              nearestPlacement.scheduledAt,
+                            ).toLocaleString()
+                          : "-"}
                       </td>
                       <td className="px-4 py-4">
                         <EnumPill
-                          label={(sale.paymentStatus || "UNPAID").replaceAll("_", " ")}
-                          tone={paymentStatusTone(sale.paymentStatus || "UNPAID")}
+                          label={sale.status.replaceAll("_", " ")}
+                          tone={saleStatusTone(sale.status)}
+                        />
+                      </td>
+                      <td className="px-4 py-4">
+                        <EnumPill
+                          label={(sale.paymentStatus || "UNPAID").replaceAll(
+                            "_",
+                            " ",
+                          )}
+                          tone={paymentStatusTone(
+                            sale.paymentStatus || "UNPAID",
+                          )}
                         />
                       </td>
                       <td className="px-4 py-4">
@@ -2201,7 +2568,11 @@ function SalesTab(props: {
               </tbody>
             </table>
           </div>
-          {!props.sales.length ? <div className="p-4"><EmptyState text="No sales matched the current filters." /></div> : null}
+          {!props.sales.length ? (
+            <div className="p-4">
+              <EmptyState text="No sales matched the current filters." />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -2232,22 +2603,56 @@ function AnalyticsTab(props: {
         acc.revenue += Number(sale.totalAgreedAmount || 0);
         acc.paid += Number(sale.totalPaidAmount || 0);
         acc.outstanding += Number(sale.outstandingAmount || 0);
-        acc.expectedViews += sale.placements.reduce((sum, placement) => sum + placement.expectedViews, 0);
-        acc.actualViews += sale.placements.reduce((sum, placement) => sum + (placement.actualViewsFinal || 0), 0);
+        acc.expectedViews += sale.placements.reduce(
+          (sum, placement) => sum + placement.expectedViews,
+          0,
+        );
+        acc.actualViews += sale.placements.reduce(
+          (sum, placement) => sum + (placement.actualViewsFinal || 0),
+          0,
+        );
         acc.placements += sale.placements.length;
         return acc;
       },
-      { revenue: 0, paid: 0, outstanding: 0, expectedViews: 0, actualViews: 0, placements: 0 },
+      {
+        revenue: 0,
+        paid: 0,
+        outstanding: 0,
+        expectedViews: 0,
+        actualViews: 0,
+        placements: 0,
+      },
     );
   }, [props.sales]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-5">
-      <MetricMoneyCard label="Revenue" amount={totals.revenue} settings={props.settings} rates={props.rates} />
-      <MetricMoneyCard label="Paid" amount={totals.paid} settings={props.settings} rates={props.rates} />
-      <MetricMoneyCard label="Outstanding" amount={totals.outstanding} settings={props.settings} rates={props.rates} />
-      <MetricCard label="Expected views" value={totals.expectedViews.toLocaleString()} />
-      <MetricCard label="Actual views" value={totals.actualViews.toLocaleString()} />
+      <MetricMoneyCard
+        label="Revenue"
+        amount={totals.revenue}
+        settings={props.settings}
+        rates={props.rates}
+      />
+      <MetricMoneyCard
+        label="Paid"
+        amount={totals.paid}
+        settings={props.settings}
+        rates={props.rates}
+      />
+      <MetricMoneyCard
+        label="Outstanding"
+        amount={totals.outstanding}
+        settings={props.settings}
+        rates={props.rates}
+      />
+      <MetricCard
+        label="Expected views"
+        value={totals.expectedViews.toLocaleString()}
+      />
+      <MetricCard
+        label="Actual views"
+        value={totals.actualViews.toLocaleString()}
+      />
     </div>
   );
 }
@@ -2256,23 +2661,50 @@ function SettingsTab(props: {
   channels: TelegramChannel[];
   supportedCurrencies: string[];
   workspaceTimezone: string;
-  workspaceSettings: Awaited<ReturnType<typeof telegramAdSalesApi.getWorkspaceSettings>> | undefined;
+  workspaceSettings:
+    | Awaited<ReturnType<typeof telegramAdSalesApi.getWorkspaceSettings>>
+    | undefined;
   productsByChannelId: Record<string, TelegramAdProduct[]>;
   baselineQueries: Array<TelegramAdChannelBaseline | undefined>;
   baselineLoading: boolean[];
-  policies: Array<Awaited<ReturnType<typeof telegramAdSalesApi.getPolicy>> | undefined>;
+  policies: Array<
+    Awaited<ReturnType<typeof telegramAdSalesApi.getPolicy>> | undefined
+  >;
   policyLoading: boolean[];
   productLoading: boolean[];
-  onCreateProduct: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
-  onUpdateProduct: (productId: string, payload: Record<string, unknown>, channelId: string) => Promise<void>;
+  onCreateProduct: (
+    channelId: string,
+    payload: Record<string, unknown>,
+  ) => Promise<void>;
+  onUpdateProduct: (
+    productId: string,
+    payload: Record<string, unknown>,
+    channelId: string,
+  ) => Promise<void>;
   onDeleteProduct: (productId: string, channelId: string) => Promise<void>;
-  onUpdatePolicy: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
-  onApplyPolicyToChannels: (channelIds: string[], payload: Record<string, unknown>) => Promise<void>;
-  onUpdateChannelPricing: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
-  onRecommendPolicy: (channelId: string, payload: Record<string, unknown>) => Promise<void>;
+  onUpdatePolicy: (
+    channelId: string,
+    payload: Record<string, unknown>,
+  ) => Promise<void>;
+  onApplyPolicyToChannels: (
+    channelIds: string[],
+    payload: Record<string, unknown>,
+  ) => Promise<void>;
+  onUpdateChannelPricing: (
+    channelId: string,
+    payload: Record<string, unknown>,
+  ) => Promise<void>;
+  onRecommendPolicy: (
+    channelId: string,
+    payload: Record<string, unknown>,
+  ) => Promise<void>;
 }) {
-  const [draftPolicyByChannel, setDraftPolicyByChannel] = useState<Record<string, Record<string, string>>>({});
-  const [channelPricingDrafts, setChannelPricingDrafts] = useState<Record<string, { baseCpm: string; currency: string }>>({});
+  const [draftPolicyByChannel, setDraftPolicyByChannel] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [channelPricingDrafts, setChannelPricingDrafts] = useState<
+    Record<string, { baseCpm: string; currency: string }>
+  >({});
   const [editingChannelPricing, setEditingChannelPricing] = useState<{
     channelId: string;
     baseCpm: string;
@@ -2293,15 +2725,19 @@ function SettingsTab(props: {
     name: string;
     channelId: string;
   } | null>(null);
-  const [activeChannelId, setActiveChannelId] = useState<string>(props.channels[0]?.id ?? "");
+  const [activeChannelId, setActiveChannelId] = useState<string>(
+    props.channels[0]?.id ?? "",
+  );
 
   useEffect(() => {
-    const workspaceDefault = props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3;
+    const workspaceDefault =
+      props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3;
     setDraftPolicyByChannel(
       Object.fromEntries(
         props.channels.map((channel, index) => {
           const policy = props.policies[index];
-          const organicPostsPerAdSlot = policy?.organicPostsPerAdSlot ?? workspaceDefault;
+          const organicPostsPerAdSlot =
+            policy?.organicPostsPerAdSlot ?? workspaceDefault;
           const useWorkspaceDefault =
             policy?.useWorkspaceDefault === true ||
             organicPostsPerAdSlot === workspaceDefault;
@@ -2315,7 +2751,11 @@ function SettingsTab(props: {
         }),
       ),
     );
-  }, [props.channels, props.policies, props.workspaceSettings?.defaultOrganicPostsPerAdSlot]);
+  }, [
+    props.channels,
+    props.policies,
+    props.workspaceSettings?.defaultOrganicPostsPerAdSlot,
+  ]);
 
   useEffect(() => {
     setChannelPricingDrafts(
@@ -2326,7 +2766,10 @@ function SettingsTab(props: {
             channel.id,
             {
               baseCpm: baseline?.pricing.baseCpm ?? "",
-              currency: baseline?.pricing.currency ?? props.supportedCurrencies[0] ?? "USD",
+              currency:
+                baseline?.pricing.currency ??
+                props.supportedCurrencies[0] ??
+                "USD",
             },
           ];
         }),
@@ -2340,12 +2783,16 @@ function SettingsTab(props: {
       return;
     }
     setActiveChannelId((current) =>
-      props.channels.some((channel) => channel.id === current) ? current : props.channels[0]!.id,
+      props.channels.some((channel) => channel.id === current)
+        ? current
+        : props.channels[0]!.id,
     );
   }, [props.channels]);
 
   if (!props.channels.length) {
-    return <EmptyState text="Choose one or more channels in Calendar to manage products and schedule policies." />;
+    return (
+      <EmptyState text="Choose one or more channels in Calendar to manage products and schedule policies." />
+    );
   }
 
   const activeChannelIndex = Math.max(
@@ -2354,19 +2801,27 @@ function SettingsTab(props: {
   );
   const activeChannel = props.channels[activeChannelIndex] ?? props.channels[0];
   const products = props.productsByChannelId[activeChannel.id] ?? [];
-  const visibleProducts = products.reduce<TelegramAdProduct[]>((items, product) => {
-    const semanticKey = placementFormatCanonicalKey(product);
-    const existingIndex = items.findIndex((item) => placementFormatCanonicalKey(item) === semanticKey);
-    if (existingIndex === -1) {
-      items.push(product);
+  const visibleProducts = products.reduce<TelegramAdProduct[]>(
+    (items, product) => {
+      const semanticKey = placementFormatCanonicalKey(product);
+      const existingIndex = items.findIndex(
+        (item) => placementFormatCanonicalKey(item) === semanticKey,
+      );
+      if (existingIndex === -1) {
+        items.push(product);
+        return items;
+      }
+      const existing = items[existingIndex]!;
+      if (
+        existing.name.trim() === "1/permanent" &&
+        product.name.trim() === "No auto-delete"
+      ) {
+        items[existingIndex] = product;
+      }
       return items;
-    }
-    const existing = items[existingIndex]!;
-    if (existing.name.trim() === "1/permanent" && product.name.trim() === "No auto-delete") {
-      items[existingIndex] = product;
-    }
-    return items;
-  }, []);
+    },
+    [],
+  );
   const baseline = props.baselineQueries[activeChannelIndex];
   const baselineLoading = props.baselineLoading[activeChannelIndex] ?? false;
   const policyLoading = props.policyLoading[activeChannelIndex] ?? false;
@@ -2375,7 +2830,8 @@ function SettingsTab(props: {
   const policyDraft = draftPolicyByChannel[activeChannel.id] ?? {};
   const pricingDraft = channelPricingDrafts[activeChannel.id] ?? {
     baseCpm: baseline?.pricing.baseCpm ?? "",
-    currency: baseline?.pricing.currency ?? props.supportedCurrencies[0] ?? "USD",
+    currency:
+      baseline?.pricing.currency ?? props.supportedCurrencies[0] ?? "USD",
   };
 
   return (
@@ -2416,290 +2872,345 @@ function SettingsTab(props: {
         </div>
       </Card>
       <Card key={activeChannel.id} className={adSalesPanelClass}>
-            <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(280px,1.15fr)_repeat(4,minmax(150px,0.7fr))]">
-                <div className="rounded-[18px] border border-slate-800/80 bg-[#0a0f18] p-4">
-                  {setupLoading ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-4 w-24" />
-                      <Skeleton className="h-9 w-40" />
-                      <Skeleton className="h-4 w-56" />
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-medium uppercase tracking-wide text-neutral-400">Post CPM</h4>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditingChannelPricing({
-                              channelId: activeChannel.id,
-                              baseCpm: pricingDraft.baseCpm,
-                              currency: pricingDraft.currency,
-                            })
-                          }
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-[#0f172a] text-neutral-300 transition hover:border-slate-600 hover:text-white"
-                          aria-label={`Edit CPM for ${activeChannel.title}`}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-baseline gap-3">
-                        <p className="text-2xl font-semibold text-white">
-                          {pricingDraft.baseCpm.trim()
-                            ? `${pricingDraft.baseCpm} ${pricingDraft.currency}`
-                            : "CPM not set"}
-                        </p>
-                        <p className="text-sm text-neutral-500">
-                          Price per 1,000 views for this channel.
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <MetricCard
-                  label="24h views"
-                  value={baseline?.windows.h24.expectedViews != null ? String(baseline.windows.h24.expectedViews) : "—"}
-                  loading={baselineLoading}
-                />
-                <MetricCard
-                  label="48h views"
-                  value={baseline?.windows.h48.expectedViews != null ? String(baseline.windows.h48.expectedViews) : "—"}
-                  loading={baselineLoading}
-                />
-                <MetricCard
-                  label="72h views"
-                  value={baseline?.windows.h72.expectedViews != null ? String(baseline.windows.h72.expectedViews) : "—"}
-                  loading={baselineLoading}
-                />
-                <MetricCard
-                  label="7d views"
-                  value={baseline?.windows.d7.expectedViews != null ? String(baseline.windows.d7.expectedViews) : "—"}
-                  loading={baselineLoading}
-                />
-            </div>
-
-            <div className="mt-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-base font-semibold text-white">Formats</h4>
-                  <p className="text-sm text-neutral-400">
-                    Standard placements are generated automatically. Add only custom ones here.
-                  </p>
-                </div>
-                <Tooltip
-                  side="bottom"
-                  align="right"
-                  content={
-                    <span className="block w-80">
-                      Format = what we sell on a channel, for example a native post, 24h feed placement, or top placement. Policy = how organic posting cadence turns into available ad slots.
-                    </span>
-                  }
-                >
-                  <Button
+        <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(280px,1.15fr)_repeat(4,minmax(150px,0.7fr))]">
+          <div className="rounded-[18px] border border-slate-800/80 bg-[#0a0f18] p-4">
+            {setupLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-9 w-40" />
+                <Skeleton className="h-4 w-56" />
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+                    Post CPM
+                  </h4>
+                  <button
+                    type="button"
                     onClick={() =>
-                      setEditingProduct({
+                      setEditingChannelPricing({
                         channelId: activeChannel.id,
-                        name: "",
-                        topDurationHours: "1",
-                        feedDurationHours: "24",
-                        isPermanent: false,
-                        isActive: true,
-                        position: String(visibleProducts.length),
+                        baseCpm: pricingDraft.baseCpm,
+                        currency: pricingDraft.currency,
                       })
                     }
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/80 bg-[#0f172a] text-neutral-300 transition hover:border-slate-600 hover:text-white"
+                    aria-label={`Edit CPM for ${activeChannel.title}`}
                   >
-                    Add custom format
-                  </Button>
-                </Tooltip>
-              </div>
-              <div className="overflow-hidden rounded-[18px] border border-slate-800/80 bg-[#0b1220]">
-                {productLoading ? (
-                  <div className="p-4">
-                    <TableLoadingState columns={5} rows={4} />
-                  </div>
-                ) : (
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#09111e] text-xs uppercase text-neutral-400">
-                      <tr>
-                        <th className="px-3 py-2">Format</th>
-                        <th className="px-3 py-2">Expected views</th>
-                        <th className="px-3 py-2">Auto price</th>
-                        <th className="px-3 py-2">Active</th>
-                        <th className="px-3 py-2 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/80">
-                      {visibleProducts.map((product) => {
-                        const expectedViews = placementExpectedViews(product, baseline);
-                        const estimatedPrice = placementEstimatedPrice(product, baseline, pricingDraft.baseCpm);
-                        const priceCurrency = baseline?.pricing.currency ?? product.currency;
-                        return (
-                          <tr key={product.id} className="bg-transparent">
-                            <td className="px-3 py-2">
-                              <Tooltip side="top" content={placementDeliveryLabel(product)}>
-                                {isDefaultPlacementFormat(product) ? (
-                                  <span className="font-medium text-white">{placementFormatName(product)}</span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="font-medium text-white underline-offset-2 hover:underline"
-                                    onClick={() =>
-                                      setEditingProduct({
-                                        channelId: activeChannel.id,
-                                        productId: product.id,
-                                        name: product.name,
-                                        topDurationHours: String(
-                                          product.topDurationMinutes
-                                            ? Math.max(1, Math.round(product.topDurationMinutes / 60))
-                                            : 1,
-                                        ),
-                                        feedDurationHours: String(
-                                          product.feedDurationHours ?? product.deleteAfterHours ?? 24,
-                                        ),
-                                        isPermanent: product.isPermanent,
-                                        isActive: product.isActive,
-                                        position: String(product.position),
-                                      })
-                                    }
-                                  >
-                                    {placementFormatName(product)}
-                                  </button>
-                                )}
-                              </Tooltip>
-                            </td>
-                            <td className="px-3 py-2">
-                              {expectedViews != null ? expectedViews.toLocaleString() : "—"}
-                            </td>
-                            <td className="px-3 py-2">
-                              {estimatedPrice === "—" ? "—" : `${estimatedPrice} ${priceCurrency}`}
-                            </td>
-                            <td className="px-3 py-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void props.onUpdateProduct(
-                                    product.id,
-                                    { isActive: !product.isActive },
-                                    activeChannel.id,
-                                  )
-                                }
-                                className={`relative inline-flex h-8 w-14 items-center rounded-full border transition ${
-                                  product.isActive
-                                    ? "border-emerald-500/70 bg-emerald-500/20"
-                                    : "border-neutral-700 bg-neutral-900"
-                                }`}
-                                aria-label={`${product.isActive ? "Disable" : "Enable"} ${product.name}`}
-                              >
-                                <span
-                                  className={`absolute h-6 w-6 rounded-full bg-white transition ${
-                                    product.isActive ? "left-7" : "left-1"
-                                  }`}
-                                />
-                              </button>
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              {!isDefaultPlacementFormat(product) ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDeletingProduct({
-                                      id: product.id,
-                                      name: placementFormatName(product),
-                                      channelId: activeChannel.id,
-                                    })
-                                  }
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-900/70 bg-red-950/30 text-red-300 transition hover:border-red-700 hover:text-red-200"
-                                  aria-label={`Delete ${product.name}`}
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                              ) : (
-                                <span className="text-neutral-600">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
+                    <Pencil size={14} />
+                  </button>
+                </div>
+                <div className="mt-2 flex flex-wrap items-baseline gap-3">
+                  <p className="text-2xl font-semibold text-white">
+                    {pricingDraft.baseCpm.trim()
+                      ? `${pricingDraft.baseCpm} ${pricingDraft.currency}`
+                      : "CPM not set"}
+                  </p>
+                  <p className="text-sm text-neutral-500">
+                    Price per 1,000 views for this channel.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+          <MetricCard
+            label="24h views"
+            value={
+              baseline?.windows.h24.expectedViews != null
+                ? String(baseline.windows.h24.expectedViews)
+                : "—"
+            }
+            loading={baselineLoading}
+          />
+          <MetricCard
+            label="48h views"
+            value={
+              baseline?.windows.h48.expectedViews != null
+                ? String(baseline.windows.h48.expectedViews)
+                : "—"
+            }
+            loading={baselineLoading}
+          />
+          <MetricCard
+            label="72h views"
+            value={
+              baseline?.windows.h72.expectedViews != null
+                ? String(baseline.windows.h72.expectedViews)
+                : "—"
+            }
+            loading={baselineLoading}
+          />
+          <MetricCard
+            label="7d views"
+            value={
+              baseline?.windows.d7.expectedViews != null
+                ? String(baseline.windows.d7.expectedViews)
+                : "—"
+            }
+            loading={baselineLoading}
+          />
+        </div>
 
-            <div className="mt-5">
-              <h4 className="text-base font-semibold text-white">Audience baseline</h4>
+        <div className="mt-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h4 className="text-base font-semibold text-white">Formats</h4>
               <p className="text-sm text-neutral-400">
-                Expected views come automatically from recent ordinary channel posts. This block updates from live data and does not need a manual refresh.
+                Standard placements are generated automatically. Add only custom
+                ones here.
               </p>
             </div>
-            <div className="mt-5 space-y-4">
-              {policyLoading ? (
-                <div className={adSalesTileClass + " space-y-3 p-4"}>
-                  <Skeleton className="h-5 w-44" />
-                  <Skeleton className="h-4 w-64" />
-                </div>
-              ) : (
-                <ToggleRow
-                  checked={policyDraft.useWorkspaceDefault === "true"}
-                  onChange={(checked) =>
-                    setDraftPolicyByChannel((current) => ({
-                      ...current,
-                      [activeChannel.id]: {
-                        ...current[activeChannel.id],
-                        useWorkspaceDefault: checked ? "true" : "false",
-                      },
-                    }))
-                  }
-                  label="Use workspace default"
-                  description={`1 ad opportunity after every ${props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3} organic posts.`}
-                />
-              )}
-              {!policyLoading && policyDraft.useWorkspaceDefault === "false" ? (
-                <div className="max-w-xl text-sm">
-                  <span className="mb-1 flex items-center gap-2 text-neutral-300">
-                    <span>Organic posts per ad opportunity</span>
-                    <Tooltip
-                      side="top"
-                      align="left"
-                      content={`Effective rule = 1 ad opportunity after every ${policyDraft.organicPostsPerAdSlot || "3"} organic posts.`}
-                    >
-                      <button
-                        type="button"
-                        className="inline-flex items-center justify-center text-neutral-400 transition hover:text-white"
-                        aria-label="Explain organic posts per ad opportunity"
-                      >
-                        <Info size={14} />
-                      </button>
-                    </Tooltip>
-                  </span>
-                  <Input
-                    value={policyDraft.organicPostsPerAdSlot || ""}
-                    onChange={(event) =>
-                      setDraftPolicyByChannel((current) => ({
-                        ...current,
-                        [activeChannel.id]: { ...current[activeChannel.id], organicPostsPerAdSlot: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-              ) : null}
-            </div>
-            <p className="mt-4 text-sm text-neutral-400">
-              Workspace timezone: <span className="text-white">{props.workspaceTimezone}</span>
-            </p>
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Tooltip
+              side="bottom"
+              align="right"
+              content={
+                <span className="block w-80">
+                  Format = what we sell on a channel, for example a native post,
+                  24h feed placement, or top placement. Policy = how organic
+                  posting cadence turns into available ad slots.
+                </span>
+              }
+            >
               <Button
-                disabled={policyLoading}
                 onClick={() =>
-                  void props.onUpdatePolicy(activeChannel.id, {
-                    useWorkspaceDefault: policyDraft.useWorkspaceDefault === "true",
-                    organicPostsPerAdSlot: Number(policyDraft.organicPostsPerAdSlot || 3),
+                  setEditingProduct({
+                    channelId: activeChannel.id,
+                    name: "",
+                    topDurationHours: "1",
+                    feedDurationHours: "24",
+                    isPermanent: false,
+                    isActive: true,
+                    position: String(visibleProducts.length),
                   })
                 }
               >
-                Save
+                Add custom format
               </Button>
+            </Tooltip>
+          </div>
+          <div className="overflow-hidden rounded-[18px] border border-slate-800/80 bg-[#0b1220]">
+            {productLoading ? (
+              <div className="p-4">
+                <TableLoadingState columns={5} rows={4} />
+              </div>
+            ) : (
+              <table className="w-full text-left text-sm">
+                <thead className="bg-[#09111e] text-xs uppercase text-neutral-400">
+                  <tr>
+                    <th className="px-3 py-2">Format</th>
+                    <th className="px-3 py-2">Expected views</th>
+                    <th className="px-3 py-2">Auto price</th>
+                    <th className="px-3 py-2">Active</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/80">
+                  {visibleProducts.map((product) => {
+                    const expectedViews = placementExpectedViews(
+                      product,
+                      baseline,
+                    );
+                    const estimatedPrice = placementEstimatedPrice(
+                      product,
+                      baseline,
+                      pricingDraft.baseCpm,
+                    );
+                    const priceCurrency =
+                      baseline?.pricing.currency ?? product.currency;
+                    return (
+                      <tr key={product.id} className="bg-transparent">
+                        <td className="px-3 py-2">
+                          <Tooltip
+                            side="top"
+                            content={placementDeliveryLabel(product)}
+                          >
+                            {isDefaultPlacementFormat(product) ? (
+                              <span className="font-medium text-white">
+                                {placementFormatName(product)}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="font-medium text-white underline-offset-2 hover:underline"
+                                onClick={() =>
+                                  setEditingProduct({
+                                    channelId: activeChannel.id,
+                                    productId: product.id,
+                                    name: product.name,
+                                    topDurationHours: String(
+                                      product.topDurationMinutes
+                                        ? Math.max(
+                                            1,
+                                            Math.round(
+                                              product.topDurationMinutes / 60,
+                                            ),
+                                          )
+                                        : 1,
+                                    ),
+                                    feedDurationHours: String(
+                                      product.feedDurationHours ??
+                                        product.deleteAfterHours ??
+                                        24,
+                                    ),
+                                    isPermanent: product.isPermanent,
+                                    isActive: product.isActive,
+                                    position: String(product.position),
+                                  })
+                                }
+                              >
+                                {placementFormatName(product)}
+                              </button>
+                            )}
+                          </Tooltip>
+                        </td>
+                        <td className="px-3 py-2">
+                          {expectedViews != null
+                            ? expectedViews.toLocaleString()
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {estimatedPrice === "—"
+                            ? "—"
+                            : `${estimatedPrice} ${priceCurrency}`}
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void props.onUpdateProduct(
+                                product.id,
+                                { isActive: !product.isActive },
+                                activeChannel.id,
+                              )
+                            }
+                            className={`relative inline-flex h-8 w-14 items-center rounded-full border transition ${
+                              product.isActive
+                                ? "border-emerald-500/70 bg-emerald-500/20"
+                                : "border-neutral-700 bg-neutral-900"
+                            }`}
+                            aria-label={`${product.isActive ? "Disable" : "Enable"} ${product.name}`}
+                          >
+                            <span
+                              className={`absolute h-6 w-6 rounded-full bg-white transition ${
+                                product.isActive ? "left-7" : "left-1"
+                              }`}
+                            />
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {!isDefaultPlacementFormat(product) ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeletingProduct({
+                                  id: product.id,
+                                  name: placementFormatName(product),
+                                  channelId: activeChannel.id,
+                                })
+                              }
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-900/70 bg-red-950/30 text-red-300 transition hover:border-red-700 hover:text-red-200"
+                              aria-label={`Delete ${product.name}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          ) : (
+                            <span className="text-neutral-600">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <h4 className="text-base font-semibold text-white">
+            Audience baseline
+          </h4>
+          <p className="text-sm text-neutral-400">
+            Expected views come automatically from recent ordinary channel
+            posts. This block updates from live data and does not need a manual
+            refresh.
+          </p>
+        </div>
+        <div className="mt-5 space-y-4">
+          {policyLoading ? (
+            <div className={adSalesTileClass + " space-y-3 p-4"}>
+              <Skeleton className="h-5 w-44" />
+              <Skeleton className="h-4 w-64" />
             </div>
+          ) : (
+            <ToggleRow
+              checked={policyDraft.useWorkspaceDefault === "true"}
+              onChange={(checked) =>
+                setDraftPolicyByChannel((current) => ({
+                  ...current,
+                  [activeChannel.id]: {
+                    ...current[activeChannel.id],
+                    useWorkspaceDefault: checked ? "true" : "false",
+                  },
+                }))
+              }
+              label="Use workspace default"
+              description={`1 ad opportunity after every ${props.workspaceSettings?.defaultOrganicPostsPerAdSlot ?? 3} organic posts.`}
+            />
+          )}
+          {!policyLoading && policyDraft.useWorkspaceDefault === "false" ? (
+            <div className="max-w-xl text-sm">
+              <span className="mb-1 flex items-center gap-2 text-neutral-300">
+                <span>Organic posts per ad opportunity</span>
+                <Tooltip
+                  side="top"
+                  align="left"
+                  content={`Effective rule = 1 ad opportunity after every ${policyDraft.organicPostsPerAdSlot || "3"} organic posts.`}
+                >
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center text-neutral-400 transition hover:text-white"
+                    aria-label="Explain organic posts per ad opportunity"
+                  >
+                    <Info size={14} />
+                  </button>
+                </Tooltip>
+              </span>
+              <Input
+                value={policyDraft.organicPostsPerAdSlot || ""}
+                onChange={(event) =>
+                  setDraftPolicyByChannel((current) => ({
+                    ...current,
+                    [activeChannel.id]: {
+                      ...current[activeChannel.id],
+                      organicPostsPerAdSlot: event.target.value,
+                    },
+                  }))
+                }
+              />
+            </div>
+          ) : null}
+        </div>
+        <p className="mt-4 text-sm text-neutral-400">
+          Workspace timezone:{" "}
+          <span className="text-white">{props.workspaceTimezone}</span>
+        </p>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={policyLoading}
+            onClick={() =>
+              void props.onUpdatePolicy(activeChannel.id, {
+                useWorkspaceDefault: policyDraft.useWorkspaceDefault === "true",
+                organicPostsPerAdSlot: Number(
+                  policyDraft.organicPostsPerAdSlot || 3,
+                ),
+              })
+            }
+          >
+            Save
+          </Button>
+        </div>
       </Card>
       <ChannelPricingModal
         open={Boolean(editingChannelPricing)}
@@ -2727,8 +3238,14 @@ function SettingsTab(props: {
         supportedCurrencies={props.supportedCurrencies}
         onClose={() => setEditingProduct(null)}
         onSubmit={async (draft) => {
-          const topDurationHours = Math.max(1, Number(draft.topDurationHours || 1));
-          const feedDurationHours = Math.max(1, Number(draft.feedDurationHours || 24));
+          const topDurationHours = Math.max(
+            1,
+            Number(draft.topDurationHours || 1),
+          );
+          const feedDurationHours = Math.max(
+            1,
+            Number(draft.feedDurationHours || 24),
+          );
           const formatConfig = {
             topDurationMinutes: topDurationHours * 60,
             feedDurationHours: draft.isPermanent ? null : feedDurationHours,
@@ -2742,7 +3259,10 @@ function SettingsTab(props: {
                 name: draft.name.trim(),
                 defaultPricingMode: "CPM",
                 minimumPrice: 0,
-                currency: channelPricingDrafts[draft.channelId]?.currency || props.supportedCurrencies[0] || "USD",
+                currency:
+                  channelPricingDrafts[draft.channelId]?.currency ||
+                  props.supportedCurrencies[0] ||
+                  "USD",
                 isActive: draft.isActive,
                 position: Number(draft.position || 0),
                 ...formatConfig,
@@ -2754,7 +3274,10 @@ function SettingsTab(props: {
               name: draft.name.trim(),
               defaultPricingMode: "CPM",
               minimumPrice: 0,
-              currency: channelPricingDrafts[draft.channelId]?.currency || props.supportedCurrencies[0] || "USD",
+              currency:
+                channelPricingDrafts[draft.channelId]?.currency ||
+                props.supportedCurrencies[0] ||
+                "USD",
               isActive: draft.isActive,
               position: Number(draft.position || 0),
               ...formatConfig,
@@ -2770,7 +3293,10 @@ function SettingsTab(props: {
         description="This custom format will be removed from the channel setup and will stop appearing in new bookings."
         onConfirm={() =>
           deletingProduct
-            ? props.onDeleteProduct(deletingProduct.id, deletingProduct.channelId)
+            ? props.onDeleteProduct(
+                deletingProduct.id,
+                deletingProduct.channelId,
+              )
             : undefined
         }
       />
@@ -2802,14 +3328,23 @@ function ChannelPricingModal(props: {
   if (!draft) return null;
 
   return (
-    <Modal open={props.open} onClose={props.onClose} title="Edit CPM" allowOverflow>
+    <Modal
+      open={props.open}
+      onClose={props.onClose}
+      title="Edit CPM"
+      allowOverflow
+    >
       <div className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Post CPM">
             <Input
               value={draft.baseCpm}
               onChange={(event) =>
-                setDraft((current) => (current ? { ...current, baseCpm: event.target.value } : current))
+                setDraft((current) =>
+                  current
+                    ? { ...current, baseCpm: event.target.value }
+                    : current,
+                )
               }
               placeholder="Leave empty to unset CPM"
             />
@@ -2818,22 +3353,23 @@ function ChannelPricingModal(props: {
             <CurrencySelect
               value={draft.currency}
               onChange={(currency) =>
-                setDraft((current) => (current ? { ...current, currency } : current))
+                setDraft((current) =>
+                  current ? { ...current, currency } : current,
+                )
               }
               currencies={props.supportedCurrencies}
             />
           </FormField>
         </div>
         <p className="text-sm text-neutral-500">
-          Format prices for this channel are calculated automatically from the CPM you set here.
+          Format prices for this channel are calculated automatically from the
+          CPM you set here.
         </p>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={props.onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void props.onSubmit(draft)}>
-            Save
-          </Button>
+          <Button onClick={() => void props.onSubmit(draft)}>Save</Button>
         </div>
       </div>
     </Modal>
@@ -2874,13 +3410,19 @@ function ProductEditorModal(props: {
   if (!draft) return null;
 
   return (
-    <Modal open={props.open} onClose={props.onClose} title={draft.productId ? "Edit format" : "Add format"}>
+    <Modal
+      open={props.open}
+      onClose={props.onClose}
+      title={draft.productId ? "Edit format" : "Add format"}
+    >
       <div className="space-y-4">
         <FormField label="Format name" required>
           <Input
             value={draft.name}
             onChange={(event) =>
-              setDraft((current) => (current ? { ...current, name: event.target.value } : current))
+              setDraft((current) =>
+                current ? { ...current, name: event.target.value } : current,
+              )
             }
           />
         </FormField>
@@ -2890,7 +3432,9 @@ function ProductEditorModal(props: {
               value={draft.topDurationHours}
               onChange={(event) =>
                 setDraft((current) =>
-                  current ? { ...current, topDurationHours: event.target.value } : current,
+                  current
+                    ? { ...current, topDurationHours: event.target.value }
+                    : current,
                 )
               }
             />
@@ -2900,7 +3444,9 @@ function ProductEditorModal(props: {
               value={draft.feedDurationHours}
               onChange={(event) =>
                 setDraft((current) =>
-                  current ? { ...current, feedDurationHours: event.target.value } : current,
+                  current
+                    ? { ...current, feedDurationHours: event.target.value }
+                    : current,
                 )
               }
               disabled={draft.isPermanent}
@@ -2916,10 +3462,14 @@ function ProductEditorModal(props: {
           </div>
         </div>
         <p className="text-sm text-neutral-500">
-          Price is calculated automatically from channel CPM and the matching post-performance window.
+          Price is calculated automatically from channel CPM and the matching
+          post-performance window.
         </p>
         <div className="hidden">
-          <Select value={props.supportedCurrencies[0] ?? "USD"} onChange={() => undefined}>
+          <Select
+            value={props.supportedCurrencies[0] ?? "USD"}
+            onChange={() => undefined}
+          >
             {props.supportedCurrencies.map((currency) => (
               <option key={currency} value={currency}>
                 {currency}
@@ -2931,7 +3481,9 @@ function ProductEditorModal(props: {
           <ToggleRow
             checked={draft.isActive}
             onChange={(checked) =>
-              setDraft((current) => (current ? { ...current, isActive: checked } : current))
+              setDraft((current) =>
+                current ? { ...current, isActive: checked } : current,
+              )
             }
             label="Active"
           />
@@ -2951,7 +3503,11 @@ function ProductEditorModal(props: {
           </Button>
           <Button
             onClick={() => void props.onSubmit(draft)}
-            disabled={!draft.name.trim() || !draft.topDurationHours.trim() || (!draft.isPermanent && !draft.feedDurationHours.trim())}
+            disabled={
+              !draft.name.trim() ||
+              !draft.topDurationHours.trim() ||
+              (!draft.isPermanent && !draft.feedDurationHours.trim())
+            }
           >
             Save
           </Button>
@@ -2967,42 +3523,87 @@ function SaleDetailsModal(props: {
   onClose: () => void;
   settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
   rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
-  onAction: (sale: TelegramAdSale, action: SaleActionKey, placement?: TelegramAdSale["placements"][number]) => Promise<void>;
+  onAction: (
+    sale: TelegramAdSale,
+    action: SaleActionKey,
+    placement?: TelegramAdSale["placements"][number],
+  ) => Promise<void>;
 }) {
   if (!props.sale) return null;
 
   return (
-    <Modal open={props.open} onClose={props.onClose} title={props.sale.title || props.sale.advertiserName} size="xl">
+    <Modal
+      open={props.open}
+      onClose={props.onClose}
+      title={props.sale.title || props.sale.advertiserName}
+      size="xl"
+    >
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
         <div className="space-y-4">
           <Card>
             <h4 className="font-medium text-white">Summary</h4>
             <dl className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Advertiser</dt><dd>{props.sale.advertiserName}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Status</dt><dd>{props.sale.status}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Payment</dt><dd>{props.sale.paymentStatus || "UNPAID"}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Total agreed</dt><dd>{props.sale.totalAgreedAmount} {props.sale.settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Total paid</dt><dd>{props.sale.totalPaidAmount} {props.sale.settlementCurrency}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-neutral-400">Outstanding</dt><dd>{props.sale.outstandingAmount} {props.sale.settlementCurrency}</dd></div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Advertiser</dt>
+                <dd>{props.sale.advertiserName}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Status</dt>
+                <dd>{props.sale.status}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Payment</dt>
+                <dd>{props.sale.paymentStatus || "UNPAID"}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Total agreed</dt>
+                <dd>
+                  {props.sale.totalAgreedAmount} {props.sale.settlementCurrency}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Total paid</dt>
+                <dd>
+                  {props.sale.totalPaidAmount} {props.sale.settlementCurrency}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-neutral-400">Outstanding</dt>
+                <dd>
+                  {props.sale.outstandingAmount} {props.sale.settlementCurrency}
+                </dd>
+              </div>
             </dl>
           </Card>
           <Card>
             <h4 className="mb-3 font-medium text-white">Sale actions</h4>
-            <SaleStatusActions sale={props.sale} onAction={(action) => void props.onAction(props.sale!, action)} />
+            <SaleStatusActions
+              sale={props.sale}
+              onAction={(action) => void props.onAction(props.sale!, action)}
+            />
           </Card>
           <Card>
             <h4 className="mb-3 font-medium text-white">Payments</h4>
             <div className="space-y-2">
               {(props.sale.payments ?? []).map((payment) => (
-                <div key={payment.id} className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 text-sm">
+                <div
+                  key={payment.id}
+                  className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 text-sm"
+                >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-white">{payment.amount} {payment.currency}</span>
+                    <span className="font-medium text-white">
+                      {payment.amount} {payment.currency}
+                    </span>
                     <span className="text-neutral-400">{payment.status}</span>
                   </div>
-                  <p className="mt-1 text-xs text-neutral-500">{new Date(payment.paidAt).toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-neutral-500">
+                    {new Date(payment.paidAt).toLocaleString()}
+                  </p>
                 </div>
               ))}
-              {!(props.sale.payments ?? []).length ? <EmptyState text="No payments yet." /> : null}
+              {!(props.sale.payments ?? []).length ? (
+                <EmptyState text="No payments yet." />
+              ) : null}
             </div>
           </Card>
         </div>
@@ -3012,35 +3613,52 @@ function SaleDetailsModal(props: {
             <h4 className="mb-3 font-medium text-white">Placements</h4>
             <div className="space-y-3">
               {props.sale.placements.map((placement) => (
-                <div key={placement.id} className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div
+                  key={placement.id}
+                  className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{placement.telegramChannelId}</p>
+                      <p className="font-medium text-white">
+                        {placement.telegramChannelId}
+                      </p>
                       <p className="text-xs text-neutral-500">
-                        {new Date(placement.scheduledAt).toLocaleString()} · {placement.timezone}
+                        {new Date(placement.scheduledAt).toLocaleString()} ·{" "}
+                        {placement.timezone}
                       </p>
                     </div>
                     <div className="text-right text-sm">
-                      <p className="text-white">{placement.agreedPrice} {placement.currency}</p>
-                      <p className="text-xs text-neutral-500">{placement.status}</p>
+                      <p className="text-white">
+                        {placement.agreedPrice} {placement.currency}
+                      </p>
+                      <p className="text-xs text-neutral-500">
+                        {placement.status}
+                      </p>
                     </div>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-4 text-sm">
-                    <div>Expected: {placement.expectedViews.toLocaleString()}</div>
-                    <div>Paid allocation: {placement.paidAllocatedAmount || "0"}</div>
+                    <div>
+                      Expected: {placement.expectedViews.toLocaleString()}
+                    </div>
+                    <div>
+                      Paid allocation: {placement.paidAllocatedAmount || "0"}
+                    </div>
                     <div>Actual views: {placement.actualViewsFinal ?? "-"}</div>
                     <div>Actual CPM: {placement.actualCpm ?? "-"}</div>
                   </div>
                   {placement.managedPostId ? (
                     <p className="mt-2 text-xs text-neutral-500">
-                      Managed post: {placement.managedPostId} · Deletion: {placement.plannedDeleteAt || "n/a"}
+                      Managed post: {placement.managedPostId} · Deletion:{" "}
+                      {placement.plannedDeleteAt || "n/a"}
                     </p>
                   ) : null}
                   <div className="mt-4">
                     <SaleStatusActions
                       sale={props.sale!}
                       placement={placement}
-                      onAction={(action) => void props.onAction(props.sale!, action, placement)}
+                      onAction={(action) =>
+                        void props.onAction(props.sale!, action, placement)
+                      }
                     />
                   </div>
                 </div>
@@ -3094,7 +3712,12 @@ function MetricMoneyCard({
     <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4">
       <MetricPreviewLabel label={label} />
       <div className="mt-2">
-        <MoneyStack amount={amount} currency={settings?.primaryCurrency || "USD"} settings={settings} rates={rates} />
+        <MoneyStack
+          amount={amount}
+          currency={settings?.primaryCurrency || "USD"}
+          settings={settings}
+          rates={rates}
+        />
       </div>
     </div>
   );

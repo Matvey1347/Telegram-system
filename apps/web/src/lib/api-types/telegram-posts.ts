@@ -1,4 +1,4 @@
-import type { Icon, WorkspaceMember } from "./core";
+import type { Icon, ResolvedEmoji, WorkspaceMember } from "./core";
 import type { TelegramChannel } from "./telegram-channels";
 
 export type TelegramPost = {
@@ -33,6 +33,19 @@ export type TelegramManagedPostRemoteStatus =
   | "BROKEN"
   | "MISSING"
   | "UNKNOWN";
+export type TelegramManagedPostGroupSummary = {
+  id: string;
+  workspaceId: string;
+  telegramChannelId: string;
+  title: string;
+  icon?: string | null;
+  iconData?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
+  isSystem?: boolean;
+  systemKey?: string | null;
+  statusNumberingEnabled?: boolean;
+  sidebarPosition?: number | null;
+};
 export type TelegramManagedPost = {
   id: string;
   workspaceId: string;
@@ -42,10 +55,12 @@ export type TelegramManagedPost = {
   assignedMember: WorkspaceMember;
   icon?: string | null;
   iconData?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   groupId?: string | null;
   groupPosition?: number | null;
+  statusPosition?: number | null;
   sidebarPosition?: number | null;
-  group?: PostGroup | null;
+  group?: TelegramManagedPostGroupSummary | null;
   title: string;
   text?: string | null;
   imageUrls: string[];
@@ -71,8 +86,7 @@ export type TelegramManagedPostsImportRow = {
   icon?: unknown;
   emoji?: unknown;
   iconText?: unknown;
-  imageUrl?: unknown;
-  imageUrls?: unknown;
+  urls?: unknown;
   groupPosition?: unknown;
   order?: unknown;
 };
@@ -121,8 +135,10 @@ export type TelegramManagedPostRevision = {
   assignedMemberId: string;
   icon?: string | null;
   iconData?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   groupId?: string | null;
   groupPosition?: number | null;
+  statusPosition?: number | null;
   sidebarPosition?: number | null;
   reason: string;
   createdAt: string;
@@ -132,6 +148,7 @@ export type TelegramManagedPostLinkTarget = {
   title: string;
   icon?: string | null;
   iconData?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   status: TelegramManagedPostStatus;
   telegramRemoteStatus: TelegramManagedPostRemoteStatus;
   groupId?: string | null;
@@ -149,6 +166,7 @@ export type PromptNote = {
   emoji?: string | null;
   iconId?: string | null;
   icon?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   assignedMemberId?: string | null;
   telegramChannelId?: string | null;
   telegramChannelIds: string[];
@@ -181,8 +199,10 @@ export type PostGroup = {
   description?: string | null;
   icon?: string | null;
   iconData?: Icon | null;
+  iconPresentation?: ResolvedEmoji | null;
   isSystem?: boolean;
   systemKey?: string | null;
+  statusNumberingEnabled?: boolean;
   createdByMemberId: string;
   sidebarPosition?: number | null;
   createdByMember: WorkspaceMember;

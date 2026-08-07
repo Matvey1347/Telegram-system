@@ -1,0 +1,2 @@
+ALTER TABLE "PostGroup"
+ADD COLUMN IF NOT EXISTS "statusNumberingEnabled" BOOLEAN NOT NULL DEFAULT false;

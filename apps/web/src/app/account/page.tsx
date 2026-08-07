@@ -101,6 +101,7 @@ export default function AccountPage() {
             <IconPicker
               compact
               iconId={avatarIconId}
+              icon={data.avatarIcon}
               onChange={setAvatarIconId}
               buttonLabel="Upload avatar"
               className="!h-16 !w-16 !overflow-hidden !rounded-2xl !border-neutral-700/80 !bg-neutral-950 text-xl shadow-inner"
