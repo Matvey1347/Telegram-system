@@ -441,6 +441,20 @@ export class TelegramChannelsController {
   ) {
     return this.service.importManagedPosts(user.sub, id, dto);
   }
+  @Post(':id/managed-posts/import-stream')
+  importManagedPostsStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ImportTelegramManagedPostsDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(
+      res,
+      (onProgress) =>
+        this.service.importManagedPosts(user.sub, id, dto, onProgress as never),
+      'telegram_channel.managed_posts_import_stream',
+    );
+  }
   @Patch(':id/managed-posts/:postId')
   updateManagedPost(
     @CurrentUser() user: JwtUser,
@@ -505,6 +519,28 @@ export class TelegramChannelsController {
       (onProgress) =>
         this.service.scheduleManagedPostsBatch(user.sub, id, dto, onProgress),
       'telegram_channel.managed_posts_schedule_batch_stream',
+    );
+  }
+  @Post(':id/managed-posts/delete-batch')
+  deleteManagedPostsBatch(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: PostIdsDto,
+  ) {
+    return this.service.deleteManagedPostsBatch(user.sub, id, dto);
+  }
+  @Post(':id/managed-posts/delete-batch-stream')
+  deleteManagedPostsBatchStream(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: PostIdsDto,
+    @Res() res: Response,
+  ) {
+    return this.streamBulkAction(
+      res,
+      (onProgress) =>
+        this.service.deleteManagedPostsBatch(user.sub, id, dto, onProgress),
+      'telegram_channel.managed_posts_delete_batch_stream',
     );
   }
   @Delete(':id/managed-posts/:postId')

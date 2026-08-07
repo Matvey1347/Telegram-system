@@ -111,6 +111,13 @@ describe('TelegramChannelsService importManagedPosts', () => {
           ),
       },
       icon: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockImplementation(async ({ where }) => ({
+          id: where.id,
+        })),
+        upsert: jest.fn().mockImplementation(async ({ create }) => ({
+          id: `icon-${create.emoji}`,
+        })),
         findMany: jest.fn().mockResolvedValue([]),
       },
       $executeRaw: executeRaw,
@@ -141,7 +148,7 @@ describe('TelegramChannelsService importManagedPosts', () => {
   };
 
   it('creates selected rows in the selected group with managed-post defaults and normalized positions', async () => {
-    const { service, create, posts } = setup();
+    const { service, prisma, create, posts } = setup();
 
     const result = await service.importManagedPosts('user', 'channel', {
       postGroupId: 'group-1',
@@ -178,8 +185,19 @@ describe('TelegramChannelsService importManagedPosts', () => {
           text: 'First body',
           imageUrls: ['https://example.com/one.png'],
           origin: 'SYSTEM',
-          icon: '🔥',
+          icon: 'icon-🔥',
           groupPosition: 1,
+        }),
+      }),
+    );
+    expect(prisma.icon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          workspaceId: 'workspace',
+          type: 'emoji',
+          name: 'First',
+          emoji: '🔥',
+          createdByUserId: 'user',
         }),
       }),
     );
@@ -194,18 +212,24 @@ describe('TelegramChannelsService importManagedPosts', () => {
 
   it('skips invalid rows and still creates valid rows', async () => {
     const { service, create } = setup();
+    const onProgress = jest.fn();
 
-    const result = await service.importManagedPosts('user', 'channel', {
-      postGroupId: 'group-1',
-      rows: [
-        { title: '   ', text: 'No title' },
-        { title: 'Bad image', urls: 42 },
-        {
-          title: 'Good',
-          urls: 'https://example.com/one.png, https://example.com/two.png',
-        },
-      ],
-    });
+    const result = await service.importManagedPosts(
+      'user',
+      'channel',
+      {
+        postGroupId: 'group-1',
+        rows: [
+          { title: '   ', text: 'No title' },
+          { title: 'Bad image', urls: 42 },
+          {
+            title: 'Good',
+            urls: 'https://example.com/one.png, https://example.com/two.png',
+          },
+        ],
+      },
+      onProgress,
+    );
 
     expect(result.createdCount).toBe(1);
     expect(result.skippedCount).toBe(2);
@@ -219,6 +243,25 @@ describe('TelegramChannelsService importManagedPosts', () => {
       expect.objectContaining({ index: 2, status: 'created' }),
     ]);
     expect(create).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        index: 0,
+        status: 'skipped',
+        error: 'Title is required',
+      }),
+      1,
+      3,
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        index: 2,
+        status: 'created',
+        title: 'Good',
+        message: 'Post 1 created in drafts: Good',
+      }),
+      3,
+      3,
+    );
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -228,6 +271,48 @@ describe('TelegramChannelsService importManagedPosts', () => {
             'https://example.com/two.png',
           ],
         }),
+      }),
+    );
+  });
+
+  it('cleans markdown-wrapped image urls during import', async () => {
+    const { service, create } = setup();
+
+    await service.importManagedPosts('user', 'channel', {
+      rows: [
+        {
+          title: 'Markdown image',
+          urls: [
+            '[https://images.example.com/a.png](https://images.example.com/a.png)',
+          ],
+        },
+      ],
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          imageUrls: ['https://images.example.com/a.png'],
+        }),
+      }),
+    );
+  });
+
+  it('uses an extended transaction timeout for large imports', async () => {
+    const { service, prisma } = setup();
+
+    await service.importManagedPosts('user', 'channel', {
+      postGroupId: 'group-1',
+      rows: Array.from({ length: 8 }, (_, index) => ({
+        title: `Post ${index + 1}`,
+      })),
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        maxWait: 10_000,
+        timeout: 30_000,
       }),
     );
   });

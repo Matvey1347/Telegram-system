@@ -507,6 +507,7 @@ import type {
   TelegramManagedPostLinkTarget,
   TelegramManagedPostsImportRow,
   TelegramManagedPostsImportPayload,
+  TelegramManagedPostsImportProgressItem,
   TelegramManagedPostsImportResult,
   TelegramManagedPostRevision,
   TelegramPost,
@@ -618,6 +619,7 @@ export type {
   TelegramManagedPostRemoteStatus,
   TelegramManagedPostsImportRow,
   TelegramManagedPostsImportPayload,
+  TelegramManagedPostsImportProgressItem,
   TelegramManagedPostsImportResult,
   TelegramManagedPostsImportResultRow,
   TelegramManagedPostRevision,
@@ -1329,6 +1331,19 @@ export const telegramChannelsApi = {
         payload,
       )
     ).data,
+  importManagedPostsWithProgress: async (
+    channelId: string,
+    payload: TelegramManagedPostsImportPayload,
+    onProgress: StreamProgressHandler<TelegramManagedPostsImportProgressItem>,
+  ) =>
+    streamProgressAction<
+      TelegramManagedPostsImportResult,
+      TelegramManagedPostsImportProgressItem
+    >(
+      `/telegram-channels/${channelId}/managed-posts/import-stream`,
+      payload,
+      onProgress,
+    ),
   updateManagedPost: async (
     channelId: string,
     postId: string,
@@ -1590,6 +1605,24 @@ export const telegramChannelsApi = {
         `/telegram-channels/${channelId}/managed-posts/${postId}`,
       )
     ).data,
+  deleteManagedPosts: async (
+    channelId: string,
+    postIds: string[],
+    onProgress?: BulkProgressHandler,
+  ) =>
+    onProgress
+      ? streamBulkAction(
+          `/telegram-channels/${channelId}/managed-posts/delete-batch-stream`,
+          { postIds },
+          onProgress,
+        )
+      : (
+          await api.post<BulkActionResult>(
+            `/telegram-channels/${channelId}/managed-posts/delete-batch`,
+            { postIds },
+            silentFeedbackConfig,
+          )
+        ).data,
   adAnalyses: async (channelId: string) =>
     (
       await api.get<TelegramChannelAdAnalysis[]>(

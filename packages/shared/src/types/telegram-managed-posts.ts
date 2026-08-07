@@ -130,3 +130,12 @@ export type TelegramPostPlannerApplyResult = {
   preview: TelegramPostPlannerPreviewResult;
   schedule: ScheduleManagedPostsBatchResult;
 };
+
+export type TelegramManagedPostsImportProgressItem = {
+  index: number;
+  status: "created" | "skipped";
+  title?: string;
+  postId?: string;
+  error?: string;
+  message: string;
+};

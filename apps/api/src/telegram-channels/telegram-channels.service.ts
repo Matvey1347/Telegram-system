@@ -29,6 +29,7 @@ import type {
   TelegramChannelSyncProgressItem,
   TelegramPublishingCapabilities,
   TelegramManagedPostCalendarResult,
+  TelegramManagedPostsImportProgressItem,
   TelegramManagedPostOrigin,
 } from '@telegram-system/shared';
 import { HTMLParser } from 'telegram/extensions/html';
@@ -269,6 +270,12 @@ type ManagedPostImportResultRow =
       status: 'created';
       post: unknown;
     };
+
+type ManagedPostImportProgressHandler = (
+  item: TelegramManagedPostsImportProgressItem,
+  current: number,
+  total: number,
+) => void;
 
 @Injectable()
 export class TelegramChannelsService {
@@ -7054,12 +7061,33 @@ export class TelegramChannelsService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  private cleanRepeatedMarkdownLinks(value: string) {
+    let next = value;
+    for (let pass = 0; pass < 3; pass += 1) {
+      const cleaned = next.replace(
+        /\[\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)\]\((https?:\/\/[^)\s]+)\)/g,
+        '[$1]($2)',
+      );
+      if (cleaned === next) break;
+      next = cleaned;
+    }
+    return next;
+  }
+
+  private cleanImportImageUrl(value: string) {
+    const urls = [...value.matchAll(/https?:\/\/[^\s\])"']+/g)].map(
+      (match) => match[0].replace(/[.,;:]+$/g, ''),
+    );
+    return urls.at(-1) ?? value.trim();
+  }
+
   private imageUrlsFromImportRow(row: ImportTelegramManagedPostRowDto) {
     const values: unknown[] = [];
-    if (Array.isArray(row.urls)) {
-      values.push(...row.urls);
-    } else if (row.urls !== undefined && row.urls !== null) {
-      values.push(row.urls);
+    const rawImages = row.urls ?? row.imageUrls ?? row.images;
+    if (Array.isArray(rawImages)) {
+      values.push(...rawImages);
+    } else if (rawImages !== undefined && rawImages !== null) {
+      values.push(rawImages);
     }
     const urls: string[] = [];
     for (const value of values) {
@@ -7070,7 +7098,7 @@ export class TelegramChannelsService {
         .split(/[\n,]+/)
         .map((part) => part.trim())
         .filter(Boolean);
-      urls.push(...parts);
+      urls.push(...parts.map((part) => this.cleanImportImageUrl(part)));
     }
     return { imageUrls: urls };
   }
@@ -7098,7 +7126,9 @@ export class TelegramChannelsService {
   } {
     const title = this.stringFromImportCell(row.title);
     if (!title) return { error: 'Title is required' };
-    const text = this.stringFromImportCell(row.text) || null;
+    const text = this.cleanRepeatedMarkdownLinks(
+      this.stringFromImportCell(row.text),
+    ) || null;
     const images = this.imageUrlsFromImportRow(row);
     if (images.error) return { error: images.error };
     const position = this.groupPositionFromImportRow(row);
@@ -7117,6 +7147,60 @@ export class TelegramChannelsService {
         groupPosition: position.groupPosition ?? null,
       },
     };
+  }
+
+  private async resolveManagedPostImportIconId(
+    workspaceId: string,
+    userId: string,
+    rawIcon: string | null,
+    title: string,
+  ) {
+    const icon = rawIcon?.trim();
+    if (!icon) return null;
+
+    const existingById = await this.prisma.icon.findFirst({
+      where: { id: icon, workspaceId },
+      select: { id: true },
+    });
+    if (existingById) return existingById.id;
+
+    const existingByEmoji = await this.prisma.icon.findFirst({
+      where: { workspaceId, type: 'emoji', emoji: icon },
+      select: { id: true },
+    });
+    if (existingByEmoji) {
+      return (
+        await this.prisma.icon.update({
+          where: { id: existingByEmoji.id },
+          data: { name: title, createdByUserId: userId },
+          select: { id: true },
+        })
+      ).id;
+    }
+
+    return (
+      await this.prisma.icon.upsert({
+        where: {
+          workspaceId_type_name: {
+            workspaceId,
+            type: 'emoji',
+            name: title,
+          },
+        },
+        update: {
+          emoji: icon,
+          createdByUserId: userId,
+        },
+        create: {
+          workspaceId,
+          type: 'emoji',
+          name: title,
+          emoji: icon,
+          createdByUserId: userId,
+        },
+        select: { id: true },
+      })
+    ).id;
   }
 
   private createManagedPostRecord(
@@ -7186,6 +7270,7 @@ export class TelegramChannelsService {
     userId: string,
     channelId: string,
     dto: ImportTelegramManagedPostsDto,
+    onProgress?: ManagedPostImportProgressHandler,
   ) {
     const { workspaceId, assignedMemberId } =
       await this.workspaceService.resolveAssignedMemberId(
@@ -7222,53 +7307,118 @@ export class TelegramChannelsService {
         status: 'skipped' as const,
         error: row.error ?? 'Row is invalid',
       }));
+    const skippedRows = rows
+      .filter(
+        (row): row is Extract<ManagedPostImportResultRow, { status: 'skipped' }> =>
+          row.status === 'skipped',
+      )
+      .sort((left, right) => left.index - right.index);
     const validRows = normalized.filter(
       (row): row is { index: number; value: NormalizedManagedPostImportRow } =>
         Boolean(row.value),
     );
+    const validRowsWithIcons = await Promise.all(
+      validRows.map(async (row) => ({
+        ...row,
+        value: {
+          ...row.value,
+          icon: await this.resolveManagedPostImportIconId(
+            workspaceId,
+            userId,
+            row.value.icon,
+            row.value.title,
+          ),
+        },
+      })),
+    );
 
-    const createdRows = await this.prisma.$transaction(async (tx) => {
-      const existingCount = group
-        ? await tx.telegramManagedPost.count({
-            where: { groupId: group.id },
-          })
-        : 0;
-      const created: Array<{
-        index: number;
-        post: { id: string; workspaceId: string; icon?: string | null };
-      }> = [];
-      for (const [sequence, row] of validRows.entries()) {
-        const post = await this.createManagedPostRecord(tx, {
-          workspaceId,
-          channelId,
-          assignedMemberId,
-          title: row.value.title,
-          text: row.value.text,
-          imageUrls: row.value.imageUrls,
-          icon: row.value.icon,
-          groupId: group?.id ?? null,
-          groupPosition:
-            group != null
-              ? (row.value.groupPosition ?? existingCount + sequence)
-              : null,
-        });
-        created.push({ index: row.index, post });
+    let processedRows = 0;
+    let skippedRowIndex = 0;
+    const reportSkippedRowsBefore = (index: number) => {
+      while (
+        skippedRowIndex < skippedRows.length &&
+        skippedRows[skippedRowIndex].index < index
+      ) {
+        const row = skippedRows[skippedRowIndex];
+        processedRows += 1;
+        onProgress?.(
+          {
+            index: row.index,
+            status: 'skipped',
+            error: row.error,
+            message: `Row ${row.index + 1} skipped: ${row.error}`,
+          },
+          processedRows,
+          normalized.length,
+        );
+        skippedRowIndex += 1;
       }
-      if (created.length && group) {
-        await this.normalizePostGroupNumbering(tx, group.id);
-      }
-      const posts = created.length
-        ? await tx.telegramManagedPost.findMany({
-            where: { id: { in: created.map((row) => row.post.id) } },
-            include: this.managedPostInclude,
-          })
-        : [];
-      const postsById = new Map(posts.map((post) => [post.id, post]));
-      return created.map((row) => ({
-        index: row.index,
-        post: postsById.get(row.post.id) ?? row.post,
-      }));
-    });
+    };
+
+    let createdProgressCount = 0;
+    const createdRows = await this.prisma.$transaction(
+      async (tx) => {
+        const existingCount = group
+          ? await tx.telegramManagedPost.count({
+              where: { groupId: group.id },
+            })
+          : 0;
+        const created: Array<{
+          index: number;
+          post: { id: string; workspaceId: string; icon?: string | null };
+        }> = [];
+        for (const [sequence, row] of validRowsWithIcons.entries()) {
+          reportSkippedRowsBefore(row.index);
+          const post = await this.createManagedPostRecord(tx, {
+            workspaceId,
+            channelId,
+            assignedMemberId,
+            title: row.value.title,
+            text: row.value.text,
+            imageUrls: row.value.imageUrls,
+            icon: row.value.icon,
+            groupId: group?.id ?? null,
+            groupPosition:
+              group != null
+                ? (row.value.groupPosition ?? existingCount + sequence)
+                : null,
+          });
+          created.push({ index: row.index, post });
+          createdProgressCount += 1;
+          processedRows += 1;
+          onProgress?.(
+            {
+              index: row.index,
+              status: 'created',
+              title: row.value.title,
+              postId: post.id,
+              message: `Post ${createdProgressCount} created in drafts: ${row.value.title}`,
+            },
+            processedRows,
+            normalized.length,
+          );
+        }
+        reportSkippedRowsBefore(Number.MAX_SAFE_INTEGER);
+        if (created.length && group) {
+          await this.normalizePostGroupNumbering(tx, group.id);
+        }
+        const posts = created.length
+          ? await tx.telegramManagedPost.findMany({
+              where: { id: { in: created.map((row) => row.post.id) } },
+              include: this.managedPostInclude,
+            })
+          : [];
+        const postsById = new Map(posts.map((post) => [post.id, post]));
+        return created.map((row) => ({
+          index: row.index,
+          post: postsById.get(row.post.id) ?? row.post,
+        }));
+      },
+      {
+        maxWait: 10_000,
+        timeout: Math.max(30_000, validRows.length * 1_000),
+      },
+    );
 
     const hydratedCreatedPosts = await this.attachManagedPostIcons(
       createdRows.map((row) => row.post),
@@ -8830,6 +8980,118 @@ export class TelegramChannelsService {
       }
       return deleted;
     });
+  }
+
+  async deleteManagedPostsBatch(
+    userId: string,
+    channelId: string,
+    dto: PostIdsDto,
+    onProgress?: BulkProgressCallback,
+  ): Promise<BulkActionResult> {
+    const workspaceId = await this.workspace(userId);
+    await this.findOne(userId, channelId);
+    const postIds = [
+      ...new Set(dto.postIds.map((id) => id.trim()).filter(Boolean)),
+    ];
+    if (!postIds.length) {
+      throw new BadRequestException('postIds must contain at least one post');
+    }
+    const posts = await this.prisma.telegramManagedPost.findMany({
+      where: {
+        id: { in: postIds },
+        workspaceId,
+        telegramChannelId: channelId,
+      },
+      include: { telegramChannel: true },
+    });
+    const postById = new Map(posts.map((post) => [post.id, post]));
+    const total = postIds.length;
+    const results: BulkActionResultItem[] = [];
+    const affectedGroupIds = new Set<string>();
+
+    for (const [offset, postId] of postIds.entries()) {
+      const index = offset + 1;
+      const post = postById.get(postId);
+      if (!post) {
+        await this.appendBulkResult(
+          results,
+          {
+            postId,
+            index,
+            total,
+            action: 'FAILED',
+            success: false,
+            message: `Post ${index}/${total} failed: post not found`,
+            error: 'Post draft not found',
+          },
+          onProgress,
+        );
+        continue;
+      }
+      const previousStatus = post.status;
+      try {
+        if (
+          post.status === TelegramManagedPostStatus.SCHEDULED &&
+          post.telegramMessageIds.length
+        ) {
+          await this.cancelScheduledManagedPost(workspaceId, post);
+        }
+        await this.prisma.$transaction(async (tx) => {
+          await this.createManagedPostRevision(tx, post, 'before_delete');
+          await tx.telegramManagedPost.delete({ where: { id: post.id } });
+        });
+        if (post.groupId) affectedGroupIds.add(post.groupId);
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            action: 'DELETED',
+            success: true,
+            message: `Post ${index}/${total} deleted`,
+          },
+          onProgress,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Could not delete post';
+        await this.appendBulkResult(
+          results,
+          {
+            postId: post.id,
+            title: post.title,
+            index,
+            total,
+            previousStatus,
+            newStatus: previousStatus,
+            action: 'FAILED',
+            success: false,
+            message: `Post ${index}/${total} failed: ${message}`,
+            error: message,
+          },
+          onProgress,
+        );
+      }
+    }
+
+    if (affectedGroupIds.size) {
+      await this.prisma.$transaction((tx) =>
+        Promise.all(
+          [...affectedGroupIds].map((groupId) =>
+            this.normalizePostGroupNumbering(tx, groupId),
+          ),
+        ),
+      );
+    }
+
+    return {
+      action: 'DELETE_POSTS',
+      ...bulkActionCounts(results),
+      results,
+    };
   }
 
   async adAnalyses(userId: string, channelId: string) {

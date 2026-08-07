@@ -11,6 +11,7 @@ export type BulkActionResultItem = {
     | "SCHEDULED"
     | "MOVED"
     | "CONVERTED_TO_DRAFT"
+    | "DELETED"
     | "SKIPPED"
     | "FAILED";
   success: boolean;
@@ -27,7 +28,8 @@ export type BulkActionResult = {
     | "SCHEDULE_SEQUENCE"
     | "MOVE_GROUP_CHANNEL"
     | "MOVE_POST_CHANNEL"
-    | "RESET_GROUP_TO_DRAFT";
+    | "RESET_GROUP_TO_DRAFT"
+    | "DELETE_POSTS";
   total: number;
   successCount: number;
   failedCount: number;

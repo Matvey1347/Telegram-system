@@ -182,6 +182,46 @@ function PlannerFormatEmojiPicker({
     />
   );
 }
+
+function PlannerFormatWeightSlider({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}) {
+  const percent = Math.max(0, Math.min(100, value));
+
+  return (
+    <label className="group relative block h-8">
+      <span className="sr-only">{label}</span>
+      <span className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-neutral-800" />
+      <span
+        className="absolute left-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-blue-500"
+        style={{ width: `${percent}%` }}
+      />
+      <span
+        className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-sm shadow-black/50 ring-0 transition group-focus-within:ring-4 group-focus-within:ring-blue-500/25"
+        style={{ left: `${percent}%` }}
+      />
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+        aria-label={label}
+      />
+    </label>
+  );
+}
 type PostSidebarSection = {
   key: string;
   group: EffectivePostGroup | null;
@@ -606,6 +646,8 @@ export function TelegramPostsPageClient({
           open={importModalOpen}
           onClose={() => setImportModalOpen(false)}
           channelId={channel.id}
+          channelTitle={channel.title}
+          channelPhotoUrl={channel.photoUrl}
         />
       ) : null}
       {channels.isLoading ? <LoadingState /> : null}
@@ -721,10 +763,6 @@ function TelegramPostWorkspace({
   const [autoPlannerTo, setAutoPlannerTo] = useState(() =>
     toLocalDateKey(addDays(new Date(), 6)),
   );
-  const [autoPlannerFormatIds, setAutoPlannerFormatIds] = useState<string[]>(
-    [],
-  );
-  const [autoPlannerGroupIds, setAutoPlannerGroupIds] = useState<string[]>([]);
   const [newPlannerFormatName, setNewPlannerFormatName] = useState("");
   const [newPlannerFormatIcon, setNewPlannerFormatIcon] = useState("");
   const [plannerSlotDraftsByFormatId, setPlannerSlotDraftsByFormatId] =
@@ -1307,15 +1345,6 @@ function TelegramPostWorkspace({
       ),
     [calendarPresetScheduleSlots],
   );
-  const plannerFormatOptions = useMemo(
-    () =>
-      (plannerFormats.data || []).map((format) => ({
-        value: format.id,
-        label: format.name,
-        iconFallback: format.name,
-      })),
-    [plannerFormats.data],
-  );
   const plannerGroupOptions = useMemo(
     () =>
       (postGroups.data || []).map((group) => ({
@@ -1803,18 +1832,10 @@ function TelegramPostWorkspace({
       const result = await telegramChannelsApi.applyPostPlanner(channelId, {
         from,
         to,
-        formatIds: (
-          autoPlannerFormatIds.length
-            ? autoPlannerFormatIds
-            : plannerFormatsWithWeights
-                .filter((item) => item.weight > 0)
-                .map((item) => item.format.id)
-        ).filter(
-          (formatId) =>
-            (plannerFormatWeights[formatId] ?? 100) > 0,
-        ),
+        formatIds: plannerFormatsWithWeights
+          .filter((item) => item.weight > 0)
+          .map((item) => item.format.id),
         formatWeights,
-        postGroupIds: autoPlannerGroupIds,
         limit: 50,
       });
       setAutoPlannerResult(result);
@@ -2604,16 +2625,54 @@ function TelegramPostWorkspace({
   };
 
   const deletePosts = async (targetPosts: TelegramManagedPost[]) => {
+    const progressId = `managed-post-delete:${channelId}`;
     try {
-      for (const post of targetPosts) {
-        await telegramChannelsApi.deleteManagedPost(channelId, post.id);
-      }
-      if (targetPosts.some((post) => post.id === editing?.id)) {
+      setProgress({
+        id: progressId,
+        title: "Delete posts",
+        current: 0,
+        total: targetPosts.length,
+        message: "Deleting selected posts...",
+        iconUrl: channelPhotoUrl || undefined,
+      });
+      const result = await telegramChannelsApi.deleteManagedPosts(
+        channelId,
+        targetPosts.map((post) => post.id),
+        (item, current, total) => {
+          setProgress({
+            id: progressId,
+            title: "Delete posts",
+            current,
+            total,
+            message: item.message || "Deleting selected posts...",
+            iconUrl: channelPhotoUrl || undefined,
+          });
+        },
+      );
+      setProgress({
+        id: progressId,
+        title: "Delete posts",
+        current: result.total,
+        total: result.total,
+        message: `${result.successCount} deleted, ${result.failedCount} failed, ${result.skippedCount} skipped.`,
+        completed: true,
+        successCount: result.successCount,
+        failedCount: result.failedCount,
+        skippedCount: result.skippedCount,
+        iconUrl: channelPhotoUrl || undefined,
+      });
+      window.setTimeout(() => clearProgress(progressId), 2800);
+      const deletedPostIds = new Set(
+        result.results
+          .filter((item) => item.success)
+          .map((item) => item.postId),
+      );
+      if (editing?.id && deletedPostIds.has(editing.id)) {
         reset();
         onPostSelect(null);
       }
       setSelectedPostIds((current) =>
-        current.filter((id) => !targetPosts.some((post) => post.id === id)),
+        current.filter((id) => !deletedPostIds.has(id)),
       );
       await Promise.all([
         queryClient.invalidateQueries({
@@ -2622,12 +2681,15 @@ function TelegramPostWorkspace({
         queryClient.invalidateQueries({ queryKey: ["post-groups", channelId] }),
       ]);
       pushToast(
-        targetPosts.length === 1
-          ? `"${targetPosts[0].title}" deleted.`
-          : `${targetPosts.length} posts deleted.`,
-        "success",
+        result.failedCount
+          ? `${result.successCount} deleted, ${result.failedCount} failed.`
+          : targetPosts.length === 1
+            ? `"${targetPosts[0].title}" deleted.`
+            : `${result.successCount} posts deleted.`,
+        result.failedCount ? "info" : "success",
       );
     } catch (error) {
+      clearProgress(progressId);
       pushToast(
         apiErrorMessage(error, "Could not delete posts"),
         "error",
@@ -3088,26 +3150,6 @@ function TelegramPostWorkspace({
                   </span>
                 </Button>
               </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <FormField label="Formats">
-                  <MultiSelect
-                    value={autoPlannerFormatIds}
-                    onChange={setAutoPlannerFormatIds}
-                    options={plannerFormatOptions}
-                    placeholder="All active formats"
-                    allSelectedLabel="All formats"
-                  />
-                </FormField>
-                <FormField label="Groups">
-                  <MultiSelect
-                    value={autoPlannerGroupIds}
-                    onChange={setAutoPlannerGroupIds}
-                    options={plannerGroupOptions}
-                    placeholder="All groups"
-                    allSelectedLabel="All groups"
-                  />
-                </FormField>
-              </div>
               {plannerFormatsWithWeights.length ? (
                 <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -3128,20 +3170,16 @@ function TelegramPostWorkspace({
                           <span className="shrink-0">{format.icon || "◌"}</span>
                           <span className="truncate">{format.name}</span>
                         </div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={5}
+                        <PlannerFormatWeightSlider
+                          label={`${format.name} frequency`}
                           value={weight}
-                          onChange={(event) =>
+                          disabled={autoPlannerBusy}
+                          onChange={(nextWeight) =>
                             setPlannerFormatWeights((current) => ({
                               ...current,
-                              [format.id]: Number(event.target.value),
+                              [format.id]: nextWeight,
                             }))
                           }
-                          className="h-2 w-full accent-blue-500"
-                          aria-label={`${format.name} frequency`}
                         />
                         <div className="text-right text-xs tabular-nums text-neutral-400">
                           {weight}%
@@ -3324,7 +3362,7 @@ function TelegramPostWorkspace({
                             variant="secondary"
                             onClick={() => createPlannerSlot(format.id)}
                             disabled={autoPlannerBusy || !draft.timePostId}
-                            className="shrink-0 whitespace-nowrap"
+                            className="inline-flex min-w-[112px] shrink-0 items-center justify-center gap-2 whitespace-nowrap"
                           >
                             <Plus size={15} />
                             Add slot

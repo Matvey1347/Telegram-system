@@ -189,6 +189,8 @@ export class ImportTelegramManagedPostRowDto {
   @Allow() emoji?: unknown;
   @Allow() iconText?: unknown;
   @Allow() urls?: unknown;
+  @Allow() imageUrls?: unknown;
+  @Allow() images?: unknown;
   @Allow() groupPosition?: unknown;
   @Allow() order?: unknown;
 }

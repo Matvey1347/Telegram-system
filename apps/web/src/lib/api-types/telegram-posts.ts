@@ -85,6 +85,8 @@ export type TelegramManagedPostsImportRow = {
   emoji?: unknown;
   iconText?: unknown;
   urls?: unknown;
+  imageUrls?: unknown;
+  images?: unknown;
   groupPosition?: unknown;
   order?: unknown;
 };
@@ -108,6 +110,14 @@ export type TelegramManagedPostsImportResult = {
   createdCount: number;
   skippedCount: number;
   rows: TelegramManagedPostsImportResultRow[];
+};
+export type TelegramManagedPostsImportProgressItem = {
+  index: number;
+  status: "created" | "skipped";
+  title?: string;
+  postId?: string;
+  error?: string;
+  message: string;
 };
 export type TelegramManagedPostRevision = {
   id: string;
