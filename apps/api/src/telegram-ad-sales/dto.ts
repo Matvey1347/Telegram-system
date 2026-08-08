@@ -20,6 +20,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsDefined,
   IsEnum,
   IsIn,
   IsInt,
@@ -120,6 +121,7 @@ export class CreateTelegramAdQuoteDto {
   @IsOptional() @IsEnum(TelegramAdPricingMode) pricingMode?: TelegramAdPricingMode;
   @IsOptional() @Transform(normalizeCurrency) @IsString() @Matches(/^[A-Z]{3}$/) currency?: string;
   @IsOptional() @IsString() source?: string;
+  @IsOptional() @IsDateString() scheduledAt?: string;
 }
 
 export class TelegramAdPriceHistoryQueryDto {
@@ -464,7 +466,16 @@ export class CreateTelegramAdSalePaymentDto {
 }
 
 export class UpdateTelegramAdSalePaymentDto {
+  @IsOptional() @IsString() accountId?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) amount?: number;
+  @IsOptional() @Transform(normalizeCurrency) @IsString() @Matches(/^[A-Z]{3}$/) currency?: string;
+  @IsOptional() @IsDateString() paidAt?: string;
   @IsOptional() @IsString() notes?: string | null;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateTelegramAdSalePaymentAllocationDto)
+  allocations?: CreateTelegramAdSalePaymentAllocationDto[];
 }
 
 export class VoidTelegramAdSalePaymentDto {
@@ -538,6 +549,86 @@ export class ReserveTelegramAdSaleDto {
   @ValidateNested({ each: true })
   @Type(() => ReserveTelegramAdSalePlacementDto)
   placements?: ReserveTelegramAdSalePlacementDto[];
+}
+
+export class TelegramAdSalesBulkAdvertiserDto {
+  @IsOptional() @IsString() advertiserId?: string | null;
+  @IsString() advertiserName!: string;
+  @IsOptional() @IsString() advertiserTelegram?: string | null;
+  @IsOptional() @IsString() advertiserContact?: string | null;
+  @IsOptional() @IsString() advertiserCompanyName?: string | null;
+  @IsOptional() @IsBoolean() createAdvertiser?: boolean;
+}
+
+export class TelegramAdSalesBulkTargetDto {
+  @IsIn(['CHANNEL', 'NETWORK']) type!: 'CHANNEL' | 'NETWORK';
+  @ValidateIf((target) => target.type === 'CHANNEL')
+  @IsString()
+  channelId?: string;
+  @ValidateIf((target) => target.type === 'NETWORK')
+  @IsString()
+  networkId?: string;
+}
+
+export class TelegramAdSalesBulkDefaultsDto extends TelegramAdSalesBulkAdvertiserDto {
+  @Type(() => Number) @IsNumber() @Min(0) agreedPrice!: number;
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time!: string;
+  @IsString() timezone!: string;
+  @IsOptional() @IsString() productId?: string | null;
+  @IsOptional() @IsEnum(TelegramAdPricingMode) pricingMode?: TelegramAdPricingMode;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) expectedViews?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) recommendedPrice?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) minimumPrice?: number | null;
+  @IsOptional() @IsString() manualPriceReason?: string | null;
+  @Transform(normalizeCurrency) @IsString() @Matches(/^[A-Z]{3}$/) settlementCurrency!: string;
+  @IsOptional() @IsString() assignedMemberId?: string | null;
+}
+
+export class TelegramAdSalesBulkChannelOverrideDto {
+  @IsString() channelId!: string;
+  @IsOptional() @IsString() telegramPostId?: string | null;
+  @IsOptional() @IsString() productId?: string | null;
+  @IsOptional() @ValidateIf((_, value) => value !== null) @Matches(/^([01]\d|2[0-3]):[0-5]\d$/) time?: string | null;
+  @IsOptional() @IsEnum(TelegramAdPricingMode) pricingMode?: TelegramAdPricingMode;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) expectedViews?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) recommendedPrice?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) minimumPrice?: number | null;
+  @IsOptional() @IsString() manualPriceReason?: string | null;
+}
+
+export class TelegramAdSalesBulkRowDto {
+  @IsString() clientRowId!: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/) date!: string;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TelegramAdSalesBulkAdvertiserDto)
+  advertiserOverride?: TelegramAdSalesBulkAdvertiserDto | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) agreedPriceOverride?: number | null;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => TelegramAdSalesBulkChannelOverrideDto)
+  channelOverrides?: TelegramAdSalesBulkChannelOverrideDto[];
+}
+
+export class TelegramAdSalesBulkCreateDto {
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => TelegramAdSalesBulkTargetDto)
+  target!: TelegramAdSalesBulkTargetDto;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => TelegramAdSalesBulkDefaultsDto)
+  defaults!: TelegramAdSalesBulkDefaultsDto;
+
+  @IsDefined()
+  @IsArray()
+  @ArrayMaxSize(400)
+  @ValidateNested({ each: true })
+  @Type(() => TelegramAdSalesBulkRowDto)
+  rows!: TelegramAdSalesBulkRowDto[];
 }
 
 export class ReserveTelegramAdSalePlacementDto {

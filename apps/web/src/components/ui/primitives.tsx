@@ -910,7 +910,9 @@ export function DateRangeInput({
   const end = from && to && from > to ? from : to;
   const display =
     start || end
-      ? `${formatDisplayDate(start)}${end ? ` - ${formatDisplayDate(end)}` : ""}`
+      ? start && end && start === end
+        ? formatDisplayDate(start)
+        : `${formatDisplayDate(start)}${end ? ` - ${formatDisplayDate(end)}` : ""}`
       : placeholder;
   const cells = monthCells(cursor);
 

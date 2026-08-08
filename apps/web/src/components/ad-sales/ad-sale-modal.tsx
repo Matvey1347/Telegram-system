@@ -22,6 +22,7 @@ import {
   expandNetworkChannelIds,
   getChannelOptionLabel,
   toNumber,
+  zonedDateTimeToUtc,
 } from "@/lib/telegram-ad-sales";
 import {
   Button,
@@ -71,6 +72,9 @@ type QuoteRequestDraft = {
   channelId: string;
   productId: string;
   pricingMode: SalePlacementDraft["pricingMode"];
+  date: string;
+  time: string;
+  timezone: string;
 };
 
 function channelKey(channelId: string) {
@@ -155,6 +159,7 @@ export function AdSaleModal({
     productId?: string;
     pricingMode?: "CPM" | "FIXED" | "MANUAL";
     currency?: string;
+    scheduledAt?: string;
   }) => Promise<TelegramAdPriceQuote>;
   onSearchAdvertisers: (query: string) => Promise<TelegramAdvertiser[]>;
   onSubmit: (payload: {
@@ -195,7 +200,6 @@ export function AdSaleModal({
   const [advertiserMatches, setAdvertiserMatches] = useState<TelegramAdvertiser[]>([]);
   const [assignedMemberId, setAssignedMemberId] = useState("");
   const [accountId, setAccountId] = useState("");
-  const [paymentAmount, setPaymentAmount] = useState("");
   const [channelSelectionMode, setChannelSelectionMode] = useState<"network" | "channels">(
     "network",
   );
@@ -214,6 +218,10 @@ export function AdSaleModal({
   const publishedPostRequestsRef = useRef(new Map<string, symbol>());
   const paymentCurrency =
     accounts.find((account) => account.id === accountId)?.currency ?? defaultCurrency;
+  const paymentAmount = useMemo(
+    () => placements.reduce((sum, placement) => sum + toNumber(placement.agreedPrice), 0),
+    [placements],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -230,7 +238,6 @@ export function AdSaleModal({
     setAssignedMemberId("");
     const preferredAccount = accounts.find((account) => account.isActive) ?? accounts[0];
     setAccountId(preferredAccount?.id ?? "");
-    setPaymentAmount("");
     setChannelSelectionMode(initialChannelId ? "channels" : "network");
     setSelectedNetworkId("");
     setSelectedChannelIds(initialChannelId ? [initialChannelId] : []);
@@ -370,6 +377,9 @@ export function AdSaleModal({
         channelId: placement.channelId,
         productId: placement.productId,
         pricingMode: placement.pricingMode,
+        date: placement.date,
+        time: placement.time,
+        timezone: placement.timezone,
       })),
     [placements],
   );
@@ -394,6 +404,11 @@ export function AdSaleModal({
           productId: placement.productId || undefined,
           pricingMode: placement.pricingMode,
           currency: paymentCurrency,
+          scheduledAt: zonedDateTimeToUtc(
+            placement.date,
+            placement.time,
+            placement.timezone,
+          ).toISOString(),
         });
         if (cancelled) return;
         setPlacements((current) => {
@@ -448,9 +463,8 @@ export function AdSaleModal({
   }, [onRequestQuote, paymentCurrency, productsByChannelId, quoteRequestKey, quoteRequests]);
 
   const canSubmit =
-    !!advertiserContact.trim() &&
     !!accountId &&
-    toNumber(paymentAmount) > 0 &&
+    paymentAmount > 0 &&
     effectiveChannelIds.length > 0 &&
     placements.length > 0;
 
@@ -501,7 +515,7 @@ export function AdSaleModal({
     setSubmissionError("");
     try {
       const normalizedContact = advertiserContact.trim();
-      const derivedAdvertiserName = selectedAdvertiser?.displayName || normalizedContact;
+      const derivedAdvertiserName = selectedAdvertiser?.displayName || normalizedContact || "Advertiser";
       const submission = onSubmit({
         advertiserId: selectedAdvertiserId,
         createAdvertiser: !selectedAdvertiserId,
@@ -513,7 +527,7 @@ export function AdSaleModal({
         advertiserContact: normalizedContact || undefined,
         assignedMemberId: assignedMemberId || null,
         accountId,
-        paymentAmount: toNumber(paymentAmount),
+        paymentAmount,
         paymentCurrency,
         placements: placements.map((placement) => ({
           channelId: placement.channelId,
@@ -578,7 +592,7 @@ export function AdSaleModal({
               the same screen.
             </p>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Contact" required>
               <div className="space-y-2">
                 <Input
@@ -663,18 +677,6 @@ export function AdSaleModal({
               <p className="mt-2 text-xs text-neutral-500">
                 Currency is taken automatically from the selected account.
               </p>
-            </FormField>
-
-            <FormField label="Price" required>
-              <div className="space-y-2">
-                <Input
-                  value={paymentAmount}
-                  onChange={(event) => setPaymentAmount(event.target.value)}
-                  placeholder="0"
-                  inputMode="decimal"
-                />
-                <p className="text-xs text-neutral-500">Payment currency: {paymentCurrency}</p>
-              </div>
             </FormField>
 
           </div>

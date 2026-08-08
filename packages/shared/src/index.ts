@@ -7,6 +7,7 @@ export * from './types/application-logs';
 export * from './types/telegram-managed-posts';
 export * from './types/telegram-capabilities';
 export * from './types/telegram-ad-sales';
+export * from './types/telegram-ad-sales-bulk';
 export * from './types/resolved-emoji';
 export * from './telegram-spoilers';
 export * from './pagination';

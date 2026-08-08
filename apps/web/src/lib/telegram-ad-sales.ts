@@ -209,6 +209,42 @@ export function channelLocalTime(value: string | Date, timezone = "Europe/Warsaw
   }).format(date);
 }
 
+function zonedParts(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+export function zonedDateTimeToUtc(dateKey: string, time: string, timezone: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const [hour, minute, second = 0] = time.split(":").map(Number);
+  let guess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  for (let index = 0; index < 4; index += 1) {
+    const parts = zonedParts(guess, timezone);
+    const desired = Date.UTC(year, month - 1, day, hour, minute, second);
+    const actual = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    const delta = desired - actual;
+    if (delta === 0) return guess;
+    guess = new Date(guess.getTime() + delta);
+  }
+  return guess;
+}
+
 export function availabilityStateTone(
   state: TelegramAdAvailabilityState,
 ): TelegramAdCalendarSlotTone {

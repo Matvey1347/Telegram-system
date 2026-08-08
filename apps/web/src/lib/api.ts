@@ -33,6 +33,8 @@ import type {
   TelegramAdSchedulePolicy,
   TelegramAdSalesMemberPreferences,
   TelegramAdSalesWorkspaceSettings,
+  TelegramAdSalesBulkCreateRequest,
+  TelegramAdSalesBulkCreateResponse,
   ScheduleManagedPostsBatchPayload,
   TelegramPostPlannerApplyResult,
   TelegramPostPlannerFormat,
@@ -2258,6 +2260,14 @@ export const telegramAdSalesApi = {
     (
       await api.post<TelegramAdSale>(
         "/telegram-ad-sales",
+        payload,
+        silent ? silentFeedbackConfig : undefined,
+      )
+    ).data,
+  bulkCreate: async (payload: TelegramAdSalesBulkCreateRequest, silent = false) =>
+    (
+      await api.post<TelegramAdSalesBulkCreateResponse>(
+        "/telegram-ad-sales/bulk",
         payload,
         silent ? silentFeedbackConfig : undefined,
       )

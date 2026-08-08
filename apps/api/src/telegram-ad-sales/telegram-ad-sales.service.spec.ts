@@ -390,6 +390,185 @@ describe('TelegramAdSalesService', () => {
     expect(prisma.telegramAdPriceSnapshot.create).toHaveBeenCalledTimes(2);
   });
 
+  it('prices quote from post metrics available at scheduled time', async () => {
+    const { service, prisma } = createService();
+    const scheduledAt = new Date('2026-08-02T12:00:00.000Z');
+    prisma.telegramChannel.findFirst.mockResolvedValue({
+      id: 'channel-1',
+      workspaceId: 'ws-1',
+      timePosts: [],
+      adBaseCpm: decimal(10),
+      adBaseCurrency: 'UAH',
+      currentSubscribersCount: 10000,
+      ownViewsPerPost: null,
+    });
+    prisma.telegramPost.findMany.mockResolvedValue([
+      {
+        id: 'post-future',
+        postDate: new Date('2026-08-03T10:00:00.000Z'),
+        viewsCount: 5000,
+        manualOwnViews: null,
+        excludeFromAnalytics: false,
+        adSalePlacements: [],
+        metricSnapshots: [
+          { viewsCount: 5000, collectedAt: new Date('2026-08-03T12:00:00.000Z') },
+        ],
+      },
+      {
+        id: 'post-1',
+        postDate: new Date('2026-08-01T10:00:00.000Z'),
+        viewsCount: 9000,
+        manualOwnViews: null,
+        excludeFromAnalytics: false,
+        adSalePlacements: [],
+        metricSnapshots: [
+          { viewsCount: 1000, collectedAt: new Date('2026-08-01T12:00:00.000Z') },
+          { viewsCount: 9000, collectedAt: new Date('2026-08-03T12:00:00.000Z') },
+        ],
+      },
+      {
+        id: 'post-2',
+        postDate: new Date('2026-07-31T10:00:00.000Z'),
+        viewsCount: 9100,
+        manualOwnViews: null,
+        excludeFromAnalytics: false,
+        adSalePlacements: [],
+        metricSnapshots: [
+          { viewsCount: 1100, collectedAt: new Date('2026-07-31T12:00:00.000Z') },
+        ],
+      },
+      {
+        id: 'post-3',
+        postDate: new Date('2026-07-30T10:00:00.000Z'),
+        viewsCount: 9200,
+        manualOwnViews: null,
+        excludeFromAnalytics: false,
+        adSalePlacements: [],
+        metricSnapshots: [
+          { viewsCount: 1200, collectedAt: new Date('2026-07-30T12:00:00.000Z') },
+        ],
+      },
+    ]);
+    prisma.telegramAdPriceSnapshot.create.mockImplementation(async ({ data }: any) => ({
+      id: 'snapshot-historical',
+      expectedViews: data.expectedViews,
+      targetCpm: data.targetCpm,
+      recommendedPrice: data.recommendedPrice,
+      minimumPrice: data.minimumPrice,
+      currency: data.currency,
+      calculatedAt: new Date('2026-08-08T00:00:00.000Z'),
+      createdAt: new Date('2026-08-08T00:00:00.000Z'),
+    }));
+
+    const quote = await service.createQuote('user-1', {
+      telegramChannelId: 'channel-1',
+      targetCpm: 10,
+      currency: 'UAH',
+      scheduledAt: scheduledAt.toISOString(),
+    });
+
+    expect(prisma.telegramPost.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          postDate: { lte: scheduledAt },
+        }),
+        select: expect.objectContaining({
+          metricSnapshots: expect.objectContaining({
+            where: { collectedAt: { lte: scheduledAt } },
+          }),
+        }),
+      }),
+    );
+    expect(prisma.telegramAdPriceSnapshot.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          expectedViews: 1100,
+          recommendedPrice: decimal(11),
+          currency: 'UAH',
+        }),
+      }),
+    );
+    expect(quote.expectedViews).toBe(1100);
+    expect(quote.recommendedPrice).toBe('11');
+  });
+
+  it('uses latest available pricing when a future quote has no scheduled-time sample yet', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-08T12:00:00.000Z'));
+    const { service, prisma } = createService();
+    prisma.telegramChannel.findFirst.mockResolvedValue({
+      id: 'channel-1',
+      workspaceId: 'ws-1',
+      timePosts: [],
+      adBaseCpm: decimal(10),
+      adBaseCurrency: 'UAH',
+      currentSubscribersCount: 10000,
+      ownViewsPerPost: null,
+    });
+    prisma.telegramPost.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 'post-no-snapshot',
+          postDate: new Date('2026-08-05T10:00:00.000Z'),
+          viewsCount: 7750,
+          manualOwnViews: null,
+          excludeFromAnalytics: false,
+          adSalePlacements: [],
+          metricSnapshots: [],
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'post-1',
+          postDate: new Date('2026-08-05T10:00:00.000Z'),
+          viewsCount: 7700,
+          manualOwnViews: null,
+          excludeFromAnalytics: false,
+          adSalePlacements: [],
+          metricSnapshots: [],
+        },
+        {
+          id: 'post-2',
+          postDate: new Date('2026-08-04T10:00:00.000Z'),
+          viewsCount: 7750,
+          manualOwnViews: null,
+          excludeFromAnalytics: false,
+          adSalePlacements: [],
+          metricSnapshots: [],
+        },
+        {
+          id: 'post-3',
+          postDate: new Date('2026-08-03T10:00:00.000Z'),
+          viewsCount: 7800,
+          manualOwnViews: null,
+          excludeFromAnalytics: false,
+          adSalePlacements: [],
+          metricSnapshots: [],
+        },
+      ]);
+    prisma.telegramAdPriceSnapshot.create.mockImplementation(async ({ data }: any) => ({
+      id: 'snapshot-future-fallback',
+      expectedViews: data.expectedViews,
+      targetCpm: data.targetCpm,
+      recommendedPrice: data.recommendedPrice,
+      minimumPrice: data.minimumPrice,
+      currency: data.currency,
+      calculatedAt: new Date('2026-08-08T12:00:00.000Z'),
+      createdAt: new Date('2026-08-08T12:00:00.000Z'),
+    }));
+
+    const quote = await service.createQuote('user-1', {
+      telegramChannelId: 'channel-1',
+      targetCpm: 10,
+      currency: 'UAH',
+      scheduledAt: '2026-08-15T12:00:00.000Z',
+    });
+
+    expect(prisma.telegramPost.findMany).toHaveBeenCalledTimes(2);
+    expect(quote.expectedViews).toBe(7750);
+    expect(quote.recommendedPrice).toBe('77.5');
+    jest.useRealTimers();
+  });
+
   it('detects reservation conflicts transactionally', async () => {
     const { service, prisma } = createService();
     prisma.telegramAdSale.findFirst.mockResolvedValue(
@@ -596,6 +775,110 @@ describe('TelegramAdSalesService', () => {
 
     expect(existing.id).toBe('payment-1');
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('updates payment and its finance transaction together', async () => {
+    const { service, prisma } = createService();
+    prisma.telegramAdSale.findFirst.mockResolvedValue(
+      makeSale({
+        assignedMemberId: 'member-1',
+        placements: [
+          makePlacement({
+            agreedPrice: decimal(200),
+            paymentAllocations: [
+              {
+                id: 'allocation-1',
+                telegramAdSalePaymentId: 'payment-1',
+                amount: decimal(120),
+                payment: { status: TelegramAdSalePaymentStatus.ACTIVE },
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    prisma.telegramAdSalePayment.findFirst.mockResolvedValue(makePayment());
+    prisma.account.findFirst.mockResolvedValue({
+      id: 'account-2',
+      workspaceId: 'ws-1',
+      name: 'UAH account',
+      currency: 'UAH',
+      isActive: true,
+    });
+    prisma.workspace.findUnique.mockResolvedValue({ primaryCurrency: 'UAH' });
+    const transactionUpdate = jest.fn();
+    const allocationDeleteMany = jest.fn();
+    const paymentUpdate = jest.fn().mockResolvedValue(
+      makePayment({
+        accountId: 'account-2',
+        amount: decimal(150),
+        currency: 'UAH',
+        paidAt: new Date('2026-08-03T10:00:00.000Z'),
+        allocations: [
+          {
+            id: 'allocation-2',
+            workspaceId: 'ws-1',
+            telegramAdSalePaymentId: 'payment-1',
+            telegramAdSalePlacementId: 'placement-1',
+            amount: decimal(150),
+            currency: 'UAH',
+            amountInPrimaryCurrency: decimal(150),
+            createdAt: new Date('2026-08-03T10:00:00.000Z'),
+          },
+        ],
+      }),
+    );
+    prisma.$transaction.mockImplementation(async (callback: any) =>
+      callback({
+        transaction: { update: transactionUpdate },
+        telegramAdSalePaymentAllocation: { deleteMany: allocationDeleteMany },
+        telegramAdSalePayment: { update: paymentUpdate },
+      }),
+    );
+
+    const updated = await service.updatePayment('user-1', 'sale-1', 'payment-1', {
+      accountId: 'account-2',
+      amount: 150,
+      currency: 'UAH',
+      paidAt: '2026-08-03T10:00:00.000Z',
+      notes: 'Updated payment',
+      allocations: [{ placementId: 'placement-1', amount: 150 }],
+    });
+
+    expect(transactionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'tx-1' },
+        data: expect.objectContaining({
+          accountId: 'account-2',
+          amount: decimal(150),
+          currency: 'UAH',
+          date: new Date('2026-08-03T10:00:00.000Z'),
+          description: 'Updated payment',
+        }),
+      }),
+    );
+    expect(allocationDeleteMany).toHaveBeenCalledWith({
+      where: { telegramAdSalePaymentId: 'payment-1' },
+    });
+    expect(paymentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          accountId: 'account-2',
+          amount: decimal(150),
+          currency: 'UAH',
+          allocations: {
+            create: [
+              expect.objectContaining({
+                telegramAdSalePlacementId: 'placement-1',
+                amount: decimal(150),
+                currency: 'UAH',
+              }),
+            ],
+          },
+        }),
+      }),
+    );
+    expect(updated.amount).toBe('150');
   });
 
   it('voids a payment by creating a reversal transaction', async () => {
@@ -1094,7 +1377,7 @@ describe('TelegramAdSalesService', () => {
       return acc;
     }, {});
 
-    expect(slotsByDate['2026-07-31'] ?? 0).toBe(0);
+    expect(slotsByDate['2026-07-31'] ?? 0).toBe(1);
     expect(slotsByDate['2026-08-01'] ?? 0).toBe(1);
   });
 
@@ -1156,9 +1439,158 @@ describe('TelegramAdSalesService', () => {
     });
 
     expect(result.slots.map((slot) => slot.date)).toEqual([
+      '2026-08-03',
+      '2026-08-04',
       '2026-08-05',
+      '2026-08-06',
+      '2026-08-07',
       '2026-08-08',
     ]);
+    jest.useRealTimers();
+  });
+
+  it('shows sold placements without adding a missed slot on past sold days', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+    const { service, prisma } = createService();
+    prisma.telegramChannel.findMany.mockResolvedValue([
+      {
+        id: 'channel-1',
+        workspaceId: 'ws-1',
+        title: 'Mentor',
+        username: 'mentor',
+        language: 'UTC',
+        adBaseCurrency: 'USD',
+        timePosts: [],
+      },
+    ]);
+    prisma.telegramAdProduct.findMany.mockResolvedValue([]);
+    prisma.telegramAdSchedulePolicy.findFirst.mockResolvedValue({
+      id: 'policy-1',
+      workspaceId: 'ws-1',
+      telegramChannelId: 'channel-1',
+      timezone: 'UTC',
+      autoFrequencyEnabled: true,
+      expectedOrganicPostsPerDay: null,
+      useWorkspaceDefault: false,
+      organicPostsPerAdSlot: 3,
+      maxAdsPerDay: 1,
+      minHoursBetweenAds: 0,
+      minDaysBetweenAds: 0,
+      slotStrategy: 'BEFORE_ORGANIC_POST',
+      fallbackSlotTimes: [],
+      allowManualSlots: false,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    prisma.telegramPost.findMany.mockResolvedValue([]);
+    prisma.telegramManagedPost.findMany.mockResolvedValue([]);
+    prisma.telegramAdSalePlacement.findMany.mockResolvedValue([
+      makePlacement({
+        id: 'placement-18',
+        telegramAdSaleId: 'sale-18',
+        status: TelegramAdPlacementStatus.PUBLISHED,
+        scheduledAt: new Date('2026-08-31T18:00:00.000Z'),
+      }),
+      makePlacement({
+        id: 'placement-20',
+        telegramAdSaleId: 'sale-20',
+        status: TelegramAdPlacementStatus.PUBLISHED,
+        scheduledAt: new Date('2026-08-31T20:00:00.000Z'),
+      }),
+    ]);
+    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
+      expectedViews: 1500,
+      averageViews: null,
+      medianViews: null,
+      adjustedViews: null,
+      postsSampleCount: 0,
+      dataQuality: 'low',
+      warnings: [],
+      fallbackSource: 'none',
+      methodVersion: 'test',
+      pricingWindowHours: null,
+      pricingWindowLabel: 'Post',
+    });
+
+    const result = await service.availability('user-1', {
+      from: '2026-08-31T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.000Z',
+      channelIds: ['channel-1'],
+    });
+
+    const daySlots = result.slots.filter((slot) => slot.date === '2026-08-31');
+    expect(daySlots.filter((slot) => slot.existingPlacement)).toHaveLength(2);
+    expect(daySlots).toHaveLength(2);
+    expect(daySlots.some((slot) => slot.state === 'PAST')).toBe(false);
+    jest.useRealTimers();
+  });
+
+  it('offers an extra future slot even when cadence produced no slots', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T00:00:00.000Z'));
+    const { service, prisma } = createService();
+    prisma.telegramChannel.findMany.mockResolvedValue([
+      {
+        id: 'channel-1',
+        workspaceId: 'ws-1',
+        title: 'Mentor',
+        username: 'mentor',
+        language: 'UTC',
+        adBaseCurrency: 'USD',
+        timePosts: [],
+      },
+    ]);
+    prisma.telegramAdProduct.findMany.mockResolvedValue([]);
+    prisma.telegramAdSchedulePolicy.findFirst.mockResolvedValue({
+      id: 'policy-1',
+      workspaceId: 'ws-1',
+      telegramChannelId: 'channel-1',
+      timezone: 'UTC',
+      autoFrequencyEnabled: true,
+      expectedOrganicPostsPerDay: null,
+      useWorkspaceDefault: false,
+      organicPostsPerAdSlot: 3,
+      maxAdsPerDay: 1,
+      minHoursBetweenAds: 0,
+      minDaysBetweenAds: 0,
+      slotStrategy: 'BEFORE_ORGANIC_POST',
+      fallbackSlotTimes: [],
+      allowManualSlots: false,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    prisma.telegramPost.findMany.mockResolvedValue([]);
+    prisma.telegramManagedPost.findMany.mockResolvedValue([]);
+    prisma.telegramAdSalePlacement.findMany.mockResolvedValue([
+      makePlacement({
+        id: 'placement-18',
+        telegramAdSaleId: 'sale-18',
+        status: TelegramAdPlacementStatus.PUBLISHED,
+        scheduledAt: new Date('2026-08-31T18:00:00.000Z'),
+      }),
+    ]);
+    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
+      expectedViews: 1500,
+      averageViews: null,
+      medianViews: null,
+      adjustedViews: null,
+      postsSampleCount: 0,
+      dataQuality: 'low',
+      warnings: [],
+      fallbackSource: 'none',
+      methodVersion: 'test',
+      pricingWindowHours: null,
+      pricingWindowLabel: 'Post',
+    });
+
+    const result = await service.availability('user-1', {
+      from: '2026-08-31T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.000Z',
+      channelIds: ['channel-1'],
+    });
+
+    const daySlots = result.slots.filter((slot) => slot.date === '2026-08-31');
+    expect(daySlots.filter((slot) => slot.existingPlacement)).toHaveLength(1);
+    expect(daySlots.some((slot) => slot.state === 'AVAILABLE')).toBe(true);
     jest.useRealTimers();
   });
 

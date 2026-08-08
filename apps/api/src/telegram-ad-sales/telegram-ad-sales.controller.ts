@@ -45,6 +45,7 @@ import {
   TelegramAdAvailabilityQueryDto,
   TelegramAdPriceHistoryQueryDto,
   TelegramAdProductsQueryDto,
+  TelegramAdSalesBulkCreateDto,
   TelegramAdSalesQueryDto,
   TelegramAdvertiserActivitiesQueryDto,
   TelegramAdvertiserSearchDto,
@@ -67,12 +68,16 @@ import {
   UpdateTelegramAdSalePlacementDto,
   VoidTelegramAdSalePaymentDto,
 } from './dto';
+import { TelegramAdSalesBulkService } from './telegram-ad-sales-bulk.service';
 import { TelegramAdSalesService } from './telegram-ad-sales.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('telegram-ad-sales')
 export class TelegramAdSalesController {
-  constructor(private readonly service: TelegramAdSalesService) {}
+  constructor(
+    private readonly service: TelegramAdSalesService,
+    private readonly bulkService: TelegramAdSalesBulkService,
+  ) {}
 
   @Get('settings/workspace')
   getWorkspaceSettings(@CurrentUser() user: JwtUser) {
@@ -183,6 +188,11 @@ export class TelegramAdSalesController {
   @Post('availability')
   availability(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdAvailabilityQueryDto) {
     return this.service.availability(user.sub, dto);
+  }
+
+  @Post('bulk')
+  bulkCreate(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdSalesBulkCreateDto) {
+    return this.bulkService.create(user.sub, dto);
   }
 
   @Get('analytics/summary')

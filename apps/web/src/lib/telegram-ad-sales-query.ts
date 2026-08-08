@@ -53,6 +53,7 @@ export async function invalidateTelegramAdSalesQueries(
 ) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.root }),
+    queryClient.invalidateQueries({ queryKey: ["telegram-ad-availability"] }),
     queryClient.invalidateQueries({ queryKey: dashboardKeys.summary() }),
     queryClient.invalidateQueries({ queryKey: accountKeys.transactions() }),
     queryClient.invalidateQueries({ queryKey: accountKeys.accounts() }),

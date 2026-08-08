@@ -40,6 +40,8 @@ import {
   Card,
   ConfirmDeleteModal,
   CurrencySelect,
+  CustomSelect,
+  DateInput,
   DateRangeInput,
   EmptyState,
   ErrorState,
@@ -53,6 +55,7 @@ import {
   Skeleton,
   TableLoadingState,
   Textarea,
+  TimeInput,
   ToggleRow,
   Tooltip,
 } from "@/components/ui/primitives";
@@ -64,6 +67,7 @@ import {
 } from "@/components/ad-sales/sale-status-actions";
 import { RegisterPaymentModal } from "@/components/ad-sales/register-payment-modal";
 import { AdSaleModal } from "@/components/ad-sales/ad-sale-modal";
+import { BulkAdSaleModal } from "@/components/ad-sales/bulk/bulk-ad-sale-modal";
 import { AdSalesAnalyticsPanel } from "@/components/ad-sales/ad-sales-analytics-panel";
 import {
   accountsApi,
@@ -87,7 +91,9 @@ import {
   expandNetworkChannelIds,
   getChannelOptionLabel,
   readAdSalesCalendarRangeMode,
+  toNumber,
   writeAdSalesCalendarRangeMode,
+  zonedDateTimeToUtc,
   type TelegramAdSalesCalendarRangeMode,
   type TelegramAdSalesTab,
 } from "@/lib/telegram-ad-sales";
@@ -97,6 +103,7 @@ import {
   telegramAdSalesKeys,
 } from "@/lib/telegram-ad-sales-query";
 import { useAppToast } from "@/providers/toast-provider";
+import { accountDisplayName } from "@/lib/account-display";
 
 const tabs: Array<{
   id: TelegramAdSalesTab;
@@ -430,6 +437,7 @@ export function AdSalesPage() {
   const [unpaidOnly, setUnpaidOnly] = useState(false);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [adSaleModalOpen, setAdSaleModalOpen] = useState(false);
+  const [bulkAdSaleModalOpen, setBulkAdSaleModalOpen] = useState(false);
   const [adSaleSeedSlot, setAdSaleSeedSlot] =
     useState<TelegramAdAvailabilitySlot | null>(null);
   const [paymentSaleId, setPaymentSaleId] = useState<string | null>(null);
@@ -791,23 +799,26 @@ export function AdSalesPage() {
     });
   };
 
+  const productQueryChannelIds = bulkAdSaleModalOpen
+    ? saleableChannelIdsList
+    : effectiveChannelIds;
   const channelProductQueries = useQueries({
-    queries: effectiveChannelIds.map((channelId) => ({
+    queries: productQueryChannelIds.map((channelId) => ({
       queryKey: telegramAdSalesKeys.channelProducts(channelId),
       queryFn: () => telegramAdSalesApi.listChannelProducts(channelId),
-      enabled: tab === "settings" || adSaleModalOpen,
+      enabled: tab === "settings" || adSaleModalOpen || bulkAdSaleModalOpen,
       staleTime: 60 * 1000,
     })),
   });
   const productsByChannelId = useMemo<Record<string, TelegramAdProduct[]>>(
     () =>
       Object.fromEntries(
-        effectiveChannelIds.map((channelId, index) => [
+        productQueryChannelIds.map((channelId, index) => [
           channelId,
           (channelProductQueries[index]?.data ?? []) as TelegramAdProduct[],
         ]),
       ),
-    [channelProductQueries, effectiveChannelIds],
+    [channelProductQueries, productQueryChannelIds],
   );
 
   const availabilityQueries = useQueries({
@@ -1067,6 +1078,7 @@ export function AdSalesPage() {
           minimumPrice: placement.minimumPrice,
           expectedViews: placement.expectedViews,
           pricingMode: placement.pricingMode,
+          currency: payload.paymentCurrency,
           manualPriceReason: placement.manualPriceReason,
         },
         true,
@@ -1233,6 +1245,68 @@ export function AdSalesPage() {
     }
   }
 
+  async function submitBulkAdSale(
+    payload: Parameters<typeof telegramAdSalesApi.bulkCreate>[0],
+    options: { paymentAccountId: string },
+  ) {
+    const operation = startOperation({
+      id: `ad-sale-bulk-create:${Date.now()}`,
+      title: "Creating ad sales",
+      message: "Saving and reserving the selected placements...",
+    });
+    try {
+      const result = await telegramAdSalesApi.bulkCreate(payload, true);
+      const paymentAccount = (accounts as Account[]).find(
+        (account) => account.id === options.paymentAccountId,
+      );
+      if (!paymentAccount) {
+        throw new Error("Payment account not found.");
+      }
+      for (const sale of result.sales) {
+        const paymentAmount = sale.placements.reduce(
+          (sum, placement) => sum + toNumber(placement.agreedPrice),
+          0,
+        );
+        const autoAllocation = autoAllocatePayment({
+          amount: paymentAmount,
+          placements: sale.placements.map((placement) => ({
+            id: placement.id,
+            agreedPrice: placement.agreedPrice,
+            paidAllocatedAmount: placement.paidAllocatedAmount,
+          })),
+        });
+        if (autoAllocation.allocatedTotal <= 0) continue;
+        await telegramAdSalesApi.createPayment(
+          sale.id,
+          {
+            accountId: paymentAccount.id,
+            amount: autoAllocation.allocatedTotal,
+            currency: paymentAccount.currency,
+            paidAt: new Date().toISOString(),
+            allocations: autoAllocation.allocations,
+          },
+          true,
+        );
+      }
+      await invalidateTelegramAdSalesQueries(queryClient, {
+        channelIds: result.channelIds,
+      });
+      operation.succeed({
+        title: "Ad sales created",
+        message: `${result.createdPlacementCount} placements were created.`,
+      });
+    } catch (error) {
+      operation.fail({
+        title: "Bulk ad creation failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not create bulk ad sales.",
+      });
+      throw error;
+    }
+  }
+
   async function refreshSaleAfterMutation(
     saleId: string,
     channelIds: string[],
@@ -1259,8 +1333,9 @@ export function AdSalesPage() {
         title="Advertising sales"
         subtitle="Sell ad placements across your own Telegram channels and networks."
         action={
-          <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row xl:items-end xl:gap-4">
-            <div className="min-w-[220px] xl:min-w-[260px]">
+          <div className="flex w-full flex-col gap-3 xl:w-[760px] 2xl:w-auto 2xl:flex-row 2xl:items-end 2xl:gap-4">
+            <div className="grid gap-3 md:grid-cols-[minmax(180px,260px)_minmax(260px,1fr)] 2xl:contents">
+              <div className="min-w-0 2xl:min-w-[260px]">
               <FormField label="Network">
                 <Select
                   value={selectedNetworkId}
@@ -1277,7 +1352,7 @@ export function AdSalesPage() {
                 </Select>
               </FormField>
             </div>
-            <div className="min-w-[280px] xl:min-w-[360px]">
+              <div className="min-w-0 2xl:min-w-[360px]">
               <FormField label="Channels">
                 <MultiSelect
                   value={selectedChannelIds}
@@ -1294,9 +1369,11 @@ export function AdSalesPage() {
                 />
               </FormField>
             </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-2 2xl:flex-nowrap 2xl:self-end">
             <Button
               variant="secondary"
-              className="hidden shrink-0 whitespace-nowrap lg:inline-flex xl:self-end"
+              className="hidden h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap lg:inline-flex"
               onClick={() => void handleRefreshCurrentPage()}
               disabled={refreshingCurrentPage}
               title="Clear cached data and refresh this page"
@@ -1310,17 +1387,28 @@ export function AdSalesPage() {
               </span>
             </Button>
             <Button
-              className="shrink-0 whitespace-nowrap xl:self-end"
+              variant="secondary"
+              className="h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap"
+              onClick={() => setBulkAdSaleModalOpen(true)}
+            >
+              <span className="inline-flex items-center gap-2 leading-none">
+                <Plus size={18} className="shrink-0" />
+                Mass add ads
+              </span>
+            </Button>
+            <Button
+              className="h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap"
               onClick={() => {
                 setAdSaleSeedSlot(null);
                 setAdSaleModalOpen(true);
               }}
             >
-              <span className="inline-flex items-center gap-2">
-                <Plus size={16} />
+              <span className="inline-flex items-center gap-2 leading-none">
+                <Plus size={18} className="shrink-0" />
                 New sale
               </span>
             </Button>
+            </div>
           </div>
         }
       />
@@ -1441,6 +1529,7 @@ export function AdSalesPage() {
             setAdSaleSeedSlot(slot);
             setAdSaleModalOpen(true);
           }}
+          onOpenSale={setSelectedSaleId}
         />
       ) : null}
 
@@ -1592,6 +1681,7 @@ export function AdSalesPage() {
           productId,
           pricingMode,
           currency,
+          scheduledAt,
         }) =>
           telegramAdSalesApi.createQuote(
             {
@@ -1599,6 +1689,7 @@ export function AdSalesPage() {
               telegramAdProductId: productId,
               pricingMode,
               currency,
+              scheduledAt,
             },
             true,
           )
@@ -1614,9 +1705,9 @@ export function AdSalesPage() {
             (slot) => slot.state === "AVAILABLE" || slot.state === "PAST",
           );
         }}
-        onLoadPublishedPosts={async ({ channelId, date }) => {
-          const from = new Date(`${date}T00:00:00`).toISOString();
-          const to = new Date(`${date}T23:59:59.999`).toISOString();
+        onLoadPublishedPosts={async ({ channelId, date, timezone }) => {
+          const from = zonedDateTimeToUtc(date, "00:00:00", timezone).toISOString();
+          const to = zonedDateTimeToUtc(date, "23:59:59", timezone).toISOString();
           const result = await getTelegramChannelPosts(channelId, {
             page: 1,
             pageSize: 100,
@@ -1632,6 +1723,53 @@ export function AdSalesPage() {
           }));
         }}
         onSubmit={submitAdSale}
+      />
+
+      <BulkAdSaleModal
+        open={bulkAdSaleModalOpen}
+        onClose={() => setBulkAdSaleModalOpen(false)}
+        accounts={accounts as Account[]}
+        channels={saleableChannels}
+        networks={saleableNetworks as TelegramChannelNetwork[]}
+        productsByChannelId={productsByChannelId}
+        defaultCurrency={settings?.primaryCurrency || "USD"}
+        workspaceTimezone={workspaceTimezone}
+        onLoadPublishedPosts={async ({ channelId, date, timezone }) => {
+          const from = zonedDateTimeToUtc(date, "00:00:00", timezone).toISOString();
+          const to = zonedDateTimeToUtc(date, "23:59:59", timezone).toISOString();
+          const result = await getTelegramChannelPosts(channelId, {
+            page: 1,
+            pageSize: 100,
+            from,
+            to,
+          });
+          return result.items.map((post) => ({
+            id: post.id,
+            title:
+              post.text?.trim().split("\n").find(Boolean)?.slice(0, 90) ||
+              "Telegram post",
+            publishedAt: post.postDate,
+          }));
+        }}
+        onRequestQuote={async ({
+          channelId,
+          productId,
+          pricingMode,
+          currency,
+          scheduledAt,
+        }) =>
+          telegramAdSalesApi.createQuote(
+            {
+              telegramChannelId: channelId,
+              telegramAdProductId: productId,
+              pricingMode,
+              currency,
+              scheduledAt,
+            },
+            true,
+          )
+        }
+        onSubmit={submitBulkAdSale}
       />
 
       <RegisterPaymentModal
@@ -1660,8 +1798,54 @@ export function AdSalesPage() {
         sale={selectedSale}
         open={Boolean(selectedSaleId)}
         onClose={() => setSelectedSaleId(null)}
+        accounts={accounts as Account[]}
         settings={settings}
         rates={rates}
+        onSave={async (sale, draft) => {
+          const targetCurrency = draft.payments[0]?.currency ?? sale.settlementCurrency;
+          if (targetCurrency !== sale.settlementCurrency) {
+            await telegramAdSalesApi.updateSale(sale.id, {
+              settlementCurrency: targetCurrency,
+            });
+          }
+          for (const placement of draft.placements) {
+            await telegramAdSalesApi.updatePlacement(
+              sale.id,
+              placement.id,
+              {
+                scheduledAt: placement.scheduledAt,
+                timezone: placement.timezone,
+                agreedPrice: placement.agreedPrice,
+                recommendedPrice: placement.recommendedPrice,
+                minimumPrice: placement.minimumPrice,
+                currency: placement.currency,
+                manualPriceReason: placement.manualPriceReason || null,
+              },
+            );
+          }
+          for (const payment of draft.payments) {
+            await telegramAdSalesApi.updatePayment(
+              sale.id,
+              payment.id,
+              {
+                accountId: payment.accountId,
+                amount: payment.amount,
+                currency: payment.currency,
+                paidAt: payment.paidAt,
+                notes: payment.notes || null,
+                allocations: payment.allocations,
+              },
+            );
+          }
+          await refreshSaleAfterMutation(
+            sale.id,
+            sale.placements.map((item) => item.telegramChannelId),
+          );
+          await queryClient.invalidateQueries({
+            queryKey: telegramAdSalesKeys.sale(sale.id),
+          });
+          await queryClient.invalidateQueries({ queryKey: ["transactions"] });
+        }}
         onAction={async (sale, action, placement) => {
           const placementId = placement?.id;
           if (action === "confirm") {
@@ -1909,6 +2093,7 @@ function CalendarTab(props: {
     adsCountForDay: number;
   }>;
   onCreateFromSlot: (slot: TelegramAdAvailabilitySlot) => void;
+  onOpenSale: (saleId: string) => void;
 }) {
   const loadingChannelIds = useMemo(
     () => new Set(props.loadingChannelIds),
@@ -1998,8 +2183,10 @@ function CalendarTab(props: {
           )?.agreedPrice
         }
         onClick={
-          slot.state === "AVAILABLE" ||
-          (slot.state === "PAST" && !slot.existingPlacement)
+          slot.existingPlacement?.saleId
+            ? () => props.onOpenSale(slot.existingPlacement!.saleId)
+            : slot.state === "AVAILABLE" ||
+                (slot.state === "PAST" && !slot.existingPlacement)
             ? () => props.onCreateFromSlot(slot)
             : undefined
         }
@@ -2121,11 +2308,14 @@ function CalendarTab(props: {
                         <button
                           key={`${channel.id}:${slot.id}`}
                           type="button"
-                          disabled={
-                            Boolean(slot.existingPlacement) ||
-                            !["AVAILABLE", "PAST"].includes(slot.state)
-                          }
-                          onClick={() => props.onCreateFromSlot(slot)}
+                          disabled={!slot.existingPlacement && !["AVAILABLE", "PAST"].includes(slot.state)}
+                          onClick={() => {
+                            if (slot.existingPlacement?.saleId) {
+                              props.onOpenSale(slot.existingPlacement.saleId);
+                              return;
+                            }
+                            props.onCreateFromSlot(slot);
+                          }}
                           title={`${channel.title} · ${slot.state === "PAST" ? "Missed ad slot" : "Add Ad Slot"}`}
                           className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] font-medium transition ${
                             slot.state === "AVAILABLE"
@@ -2297,15 +2487,20 @@ function CalendarTab(props: {
                       <button
                         key={slot.id}
                         type="button"
-                        disabled={slot.state !== "AVAILABLE"}
-                        onClick={() =>
-                          slot.state === "AVAILABLE" &&
-                          props.onCreateFromSlot(slot)
-                        }
+                        disabled={slot.state !== "AVAILABLE" && !slot.existingPlacement?.saleId}
+                        onClick={() => {
+                          if (slot.existingPlacement?.saleId) {
+                            props.onOpenSale(slot.existingPlacement.saleId);
+                            return;
+                          }
+                          if (slot.state === "AVAILABLE") props.onCreateFromSlot(slot);
+                        }}
                         className={`rounded-lg border p-3 text-left transition ${
                           slot.state === "AVAILABLE"
                             ? "border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500"
-                            : "cursor-default border-neutral-800 bg-neutral-950/60"
+                            : slot.existingPlacement?.saleId
+                              ? "border-slate-700 bg-slate-950/70 hover:border-slate-500"
+                              : "cursor-default border-neutral-800 bg-neutral-950/60"
                         }`}
                       >
                         <p className="text-sm font-medium text-white">
@@ -2394,7 +2589,7 @@ function SalesTab(props: {
   return (
     <div className="space-y-5">
       <Card className={adSalesPanelClass}>
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto] xl:items-end">
           <FormField label="Search">
             <Input
               value={props.search}
@@ -2436,8 +2631,8 @@ function SalesTab(props: {
               includeAll
             />
           </FormField>
-          <label className="flex min-h-[76px] items-end">
-            <span className="inline-flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 text-sm text-neutral-200">
+          <label className="flex">
+            <span className="inline-flex h-[38px] items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950/70 px-4 text-sm font-medium text-neutral-200">
               <span className="relative inline-flex h-5 w-5 items-center justify-center">
                 <input
                   type="checkbox"
@@ -2454,8 +2649,8 @@ function SalesTab(props: {
               Underpriced only
             </span>
           </label>
-          <label className="flex min-h-[76px] items-end">
-            <span className="inline-flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950/70 px-4 py-3 text-sm text-neutral-200">
+          <label className="flex">
+            <span className="inline-flex h-[38px] items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950/70 px-4 text-sm font-medium text-neutral-200">
               <span className="relative inline-flex h-5 w-5 items-center justify-center">
                 <input
                   type="checkbox"
@@ -3517,19 +3712,167 @@ function ProductEditorModal(props: {
   );
 }
 
+type SalePlacementEditDraft = {
+  id: string;
+  date: string;
+  time: string;
+  timezone: string;
+  agreedPrice: string;
+  recommendedPrice: string;
+  minimumPrice: string;
+  manualPriceReason: string;
+};
+
+type SalePaymentEditDraft = {
+  id: string;
+  accountId: string;
+  amount: string;
+  currency: string;
+  paidDate: string;
+  paidTime: string;
+  notes: string;
+};
+
+function allocatePaymentDraft(
+  amount: number,
+  placements: SalePlacementEditDraft[],
+) {
+  let remaining = amount;
+  return placements.flatMap((placement) => {
+    const agreedPrice = toNumber(placement.agreedPrice);
+    const allocation = Math.max(0, Math.min(remaining, agreedPrice));
+    remaining -= allocation;
+    return allocation > 0 ? [{ placementId: placement.id, amount: allocation }] : [];
+  });
+}
+
 function SaleDetailsModal(props: {
   sale: TelegramAdSale | null;
   open: boolean;
   onClose: () => void;
+  accounts: Account[];
   settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
   rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
+  onSave: (
+    sale: TelegramAdSale,
+    draft: {
+      placements: Array<{
+        id: string;
+        scheduledAt: string;
+        timezone: string;
+        agreedPrice: number;
+        recommendedPrice: number;
+        minimumPrice: number;
+        currency: string;
+        manualPriceReason: string | null;
+      }>;
+      payments: Array<{
+        id: string;
+        accountId: string;
+        amount: number;
+        currency: string;
+        paidAt: string;
+        notes: string | null;
+        allocations: Array<{ placementId: string; amount: number }>;
+      }>;
+    },
+  ) => Promise<void>;
   onAction: (
     sale: TelegramAdSale,
     action: SaleActionKey,
     placement?: TelegramAdSale["placements"][number],
   ) => Promise<void>;
 }) {
+  const [placementDrafts, setPlacementDrafts] = useState<SalePlacementEditDraft[]>([]);
+  const [paymentDrafts, setPaymentDrafts] = useState<SalePaymentEditDraft[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    if (!props.sale || !props.open) return;
+    setPlacementDrafts(
+      props.sale.placements.map((placement) => ({
+        id: placement.id,
+        date: channelLocalDateKey(placement.scheduledAt, placement.timezone),
+        time: channelLocalTime(placement.scheduledAt, placement.timezone),
+        timezone: placement.timezone,
+        agreedPrice: placement.agreedPrice,
+        recommendedPrice: placement.recommendedPrice,
+        minimumPrice: placement.minimumPrice,
+        manualPriceReason: placement.manualPriceReason ?? "",
+      })),
+    );
+    setPaymentDrafts(
+      (props.sale.payments ?? [])
+        .filter((payment) => payment.status !== "VOIDED")
+        .map((payment) => {
+          const account = props.accounts.find((item) => item.id === payment.accountId);
+          return {
+            id: payment.id,
+            accountId: payment.accountId,
+            amount: payment.amount,
+            currency: account?.currency ?? payment.currency,
+            paidDate: payment.paidAt.slice(0, 10),
+            paidTime: payment.paidAt.slice(11, 16),
+            notes: payment.notes ?? "",
+          };
+        }),
+    );
+    setSaveError("");
+  }, [props.accounts, props.open, props.sale]);
+
   if (!props.sale) return null;
+  const editCurrency = paymentDrafts[0]?.currency ?? props.sale.settlementCurrency;
+
+  const updatePlacementDraft = (id: string, patch: Partial<SalePlacementEditDraft>) => {
+    setPlacementDrafts((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  };
+  const updatePaymentDraft = (id: string, patch: Partial<SalePaymentEditDraft>) => {
+    setPaymentDrafts((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  };
+  const saveChanges = async () => {
+    setSaveError("");
+    setSaving(true);
+    try {
+      await props.onSave(props.sale!, {
+        placements: placementDrafts.map((placement) => ({
+          id: placement.id,
+          scheduledAt: zonedDateTimeToUtc(
+            placement.date,
+            placement.time,
+            placement.timezone,
+          ).toISOString(),
+          timezone: placement.timezone,
+          agreedPrice: toNumber(placement.agreedPrice),
+          recommendedPrice: toNumber(placement.recommendedPrice),
+          minimumPrice: toNumber(placement.minimumPrice),
+          currency: editCurrency,
+          manualPriceReason: placement.manualPriceReason.trim() || null,
+        })),
+        payments: paymentDrafts.map((payment) => {
+          const account = props.accounts.find((item) => item.id === payment.accountId);
+          const amount = toNumber(payment.amount);
+          return {
+            id: payment.id,
+            accountId: payment.accountId,
+            amount,
+            currency: account?.currency ?? payment.currency,
+            paidAt: new Date(`${payment.paidDate}T${payment.paidTime || "00:00"}:00`).toISOString(),
+            notes: payment.notes.trim() || null,
+            allocations: allocatePaymentDraft(amount, placementDrafts),
+          };
+        }),
+      });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Modal
@@ -3583,25 +3926,71 @@ function SaleDetailsModal(props: {
             />
           </Card>
           <Card>
-            <h4 className="mb-3 font-medium text-white">Payments</h4>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h4 className="font-medium text-white">Payments</h4>
+              {paymentDrafts.length ? (
+                <span className="text-xs text-neutral-500">Finance transaction updates too</span>
+              ) : null}
+            </div>
             <div className="space-y-2">
-              {(props.sale.payments ?? []).map((payment) => (
+              {paymentDrafts.map((payment) => (
                 <div
                   key={payment.id}
                   className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 text-sm"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-white">
-                      {payment.amount} {payment.currency}
-                    </span>
-                    <span className="text-neutral-400">{payment.status}</span>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <FormField label="Account">
+                      <CustomSelect
+                        value={payment.accountId}
+                        onChange={(accountId) => {
+                          const account = props.accounts.find((item) => item.id === accountId);
+                          updatePaymentDraft(payment.id, {
+                            accountId,
+                            currency: account?.currency ?? payment.currency,
+                          });
+                        }}
+                        options={props.accounts
+                          .filter((account) => account.isActive)
+                          .map((account) => ({
+                            value: account.id,
+                            label: `${accountDisplayName(account)} (${account.currency})`,
+                            iconUrl: account.iconPresentation?.type === "image" ? account.iconPresentation.url : undefined,
+                            iconEmoji: account.iconPresentation?.type === "unicode" ? account.iconPresentation.value : undefined,
+                            iconFallback: account.name,
+                          }))}
+                      />
+                    </FormField>
+                    <FormField label={`Amount (${payment.currency})`}>
+                      <Input
+                        value={payment.amount}
+                        inputMode="decimal"
+                        onChange={(event) => updatePaymentDraft(payment.id, { amount: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label="Paid date">
+                      <DateInput
+                        value={payment.paidDate}
+                        onChange={(event) => updatePaymentDraft(payment.id, { paidDate: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label="Paid time">
+                      <TimeInput
+                        value={payment.paidTime}
+                        onChange={(event) => updatePaymentDraft(payment.id, { paidTime: event.target.value })}
+                      />
+                    </FormField>
                   </div>
-                  <p className="mt-1 text-xs text-neutral-500">
-                    {new Date(payment.paidAt).toLocaleString()}
-                  </p>
+                  <div className="mt-3">
+                    <FormField label="Notes">
+                      <Input
+                        value={payment.notes}
+                        onChange={(event) => updatePaymentDraft(payment.id, { notes: event.target.value })}
+                      />
+                    </FormField>
+                  </div>
                 </div>
               ))}
-              {!(props.sale.payments ?? []).length ? (
+              {!paymentDrafts.length ? (
                 <EmptyState text="No payments yet." />
               ) : null}
             </div>
@@ -3612,7 +4001,9 @@ function SaleDetailsModal(props: {
           <Card>
             <h4 className="mb-3 font-medium text-white">Placements</h4>
             <div className="space-y-3">
-              {props.sale.placements.map((placement) => (
+              {props.sale.placements.map((placement) => {
+                const draft = placementDrafts.find((item) => item.id === placement.id);
+                return (
                 <div
                   key={placement.id}
                   className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
@@ -3629,7 +4020,7 @@ function SaleDetailsModal(props: {
                     </div>
                     <div className="text-right text-sm">
                       <p className="text-white">
-                        {placement.agreedPrice} {placement.currency}
+                        {placement.agreedPrice} {editCurrency}
                       </p>
                       <p className="text-xs text-neutral-500">
                         {placement.status}
@@ -3637,15 +4028,47 @@ function SaleDetailsModal(props: {
                     </div>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-4 text-sm">
-                    <div>
-                      Expected: {placement.expectedViews.toLocaleString()}
-                    </div>
-                    <div>
-                      Paid allocation: {placement.paidAllocatedAmount || "0"}
-                    </div>
+                    <FormField label="Date">
+                      <DateInput
+                        value={draft?.date ?? ""}
+                        onChange={(event) => updatePlacementDraft(placement.id, { date: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label="Time">
+                      <TimeInput
+                        value={draft?.time ?? ""}
+                        onChange={(event) => updatePlacementDraft(placement.id, { time: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label={`Price (${editCurrency})`}>
+                      <Input
+                        value={draft?.agreedPrice ?? placement.agreedPrice}
+                        inputMode="decimal"
+                        onChange={(event) => updatePlacementDraft(placement.id, { agreedPrice: event.target.value })}
+                      />
+                    </FormField>
+                    <FormField label="Recommended">
+                      <Input
+                        value={draft?.recommendedPrice ?? placement.recommendedPrice}
+                        inputMode="decimal"
+                        onChange={(event) => updatePlacementDraft(placement.id, { recommendedPrice: event.target.value })}
+                      />
+                    </FormField>
+                    <div>Expected: {placement.expectedViews.toLocaleString()}</div>
+                    <div>Paid allocation: {placement.paidAllocatedAmount || "0"}</div>
                     <div>Actual views: {placement.actualViewsFinal ?? "-"}</div>
                     <div>Actual CPM: {placement.actualCpm ?? "-"}</div>
                   </div>
+                  {toNumber(draft?.agreedPrice ?? placement.agreedPrice) < toNumber(draft?.minimumPrice ?? placement.minimumPrice) ? (
+                    <div className="mt-3">
+                      <FormField label="Reason for low price">
+                        <Input
+                          value={draft?.manualPriceReason ?? ""}
+                          onChange={(event) => updatePlacementDraft(placement.id, { manualPriceReason: event.target.value })}
+                        />
+                      </FormField>
+                    </div>
+                  ) : null}
                   {placement.managedPostId ? (
                     <p className="mt-2 text-xs text-neutral-500">
                       Managed post: {placement.managedPostId} · Deletion:{" "}
@@ -3662,9 +4085,20 @@ function SaleDetailsModal(props: {
                     />
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </Card>
+          {saveError ? (
+            <div className="rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
+              {saveError}
+            </div>
+          ) : null}
+          <div className="flex justify-end">
+            <Button onClick={() => void saveChanges()} disabled={saving}>
+              {saving ? "Saving..." : "Save changes"}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>
