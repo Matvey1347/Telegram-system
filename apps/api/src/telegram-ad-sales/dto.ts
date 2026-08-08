@@ -328,6 +328,18 @@ export class TelegramAdAnalyticsQueryDto {
   dateTo?: string;
   @IsOptional() @IsString() timezone?: string;
   @IsOptional() @IsString() networkId?: string;
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(',').map((item) => item.trim()).filter(Boolean)
+        : value,
+  )
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  channelIds?: string[];
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(366) rangeDays?: number;
   @IsOptional() @IsIn(['PREVIOUS_PERIOD', 'PREVIOUS_30_DAYS', 'PREVIOUS_MONTH', 'CUSTOM', 'NONE']) compareMode?: 'PREVIOUS_PERIOD' | 'PREVIOUS_30_DAYS' | 'PREVIOUS_MONTH' | 'CUSTOM' | 'NONE';
   @IsOptional() @IsDateString() compareDateFrom?: string;

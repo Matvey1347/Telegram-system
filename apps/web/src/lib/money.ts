@@ -53,10 +53,28 @@ export function getExchangeRate(
   const to = String(toCurrency || '').toUpperCase();
   if (!from || !to) return null;
   if (from === to) return 1;
-  const direct = rates?.find((rate) => rate.baseCurrency === from && rate.targetCurrency === to);
-  if (direct) return Number(direct.rate);
-  const reverse = rates?.find((rate) => rate.baseCurrency === to && rate.targetCurrency === from);
-  if (reverse && Number(reverse.rate) > 0) return 1 / Number(reverse.rate);
+  const directRate = (base: string, target: string) => {
+    const direct = rates?.find((rate) => rate.baseCurrency === base && rate.targetCurrency === target);
+    if (direct) return Number(direct.rate);
+    const reverse = rates?.find((rate) => rate.baseCurrency === target && rate.targetCurrency === base);
+    if (reverse && Number(reverse.rate) > 0) return 1 / Number(reverse.rate);
+    return null;
+  };
+  const direct = directRate(from, to);
+  if (direct != null) return direct;
+  const currencies = [
+    ...new Set(
+      (rates ?? []).flatMap((rate) => [rate.baseCurrency, rate.targetCurrency]),
+    ),
+  ];
+  for (const bridge of currencies) {
+    if (bridge === from || bridge === to) continue;
+    const fromToBridge = directRate(from, bridge);
+    const bridgeToTarget = directRate(bridge, to);
+    if (fromToBridge != null && bridgeToTarget != null) {
+      return fromToBridge * bridgeToTarget;
+    }
+  }
   return null;
 }
 

@@ -1481,11 +1481,12 @@ export class TelegramAdSalesService {
       const policy =
         policies.find((item) => item.telegramChannelId === channel.id) ??
         (await this.resolvePolicy(params.workspaceId, channel.id, 'UTC'));
-      const expectedViews = await this.computeExpectedViews(
-        params.workspaceId,
-        channel.id,
-      );
       const product = products.find((item) => item.telegramChannelId === channel.id) ?? null;
+      const pricingPreview = await this.buildProductPricingPreview(
+        params.workspaceId,
+        channel,
+        product,
+      );
       for (
         let cursor = new Date(params.from);
         cursor <= params.to;
@@ -1514,10 +1515,10 @@ export class TelegramAdSalesService {
           product: {
             id: product?.id ?? null,
             topDurationMinutes: product?.topDurationMinutes ?? null,
-            currency: product?.currency ?? 'USD',
-            expectedViews: expectedViews.expectedViews ?? 0,
-            recommendedPrice: decimalToString(product?.defaultFixedPrice) ?? '0.00',
-            minimumPrice: decimalToString(product?.minimumPrice) ?? '0.00',
+            currency: pricingPreview.currency,
+            expectedViews: pricingPreview.expectedViews ?? 0,
+            recommendedPrice: pricingPreview.recommendedPrice,
+            minimumPrice: pricingPreview.minimumPrice,
           },
           organicTimes:
             policy.slotStrategy === TelegramAdSlotStrategy.FIXED_TIMES
@@ -1705,6 +1706,10 @@ export class TelegramAdSalesService {
     return { placements, payments, channels };
   }
 
+  private analyticsChannelIds(query: TelegramAdAnalyticsQueryDto) {
+    return query.channelIds?.length ? query.channelIds : undefined;
+  }
+
   private sumPaidAllocations(
     placements: Array<{
       paymentAllocations?: Array<{
@@ -1726,6 +1731,19 @@ export class TelegramAdSalesService {
         ),
       decimal(0),
     );
+  }
+
+  private commonCurrency(
+    items: Array<{ currency?: string | null }>,
+  ): string | null {
+    const currencies = [
+      ...new Set(
+        items
+          .map((item) => item.currency?.toUpperCase())
+          .filter((currency): currency is string => Boolean(currency)),
+      ),
+    ];
+    return currencies.length === 1 ? currencies[0] : null;
   }
 
   private startOfUtcDay(value: Date) {
@@ -2815,7 +2833,13 @@ export class TelegramAdSalesService {
     const { from, to, timezone } = this.analyticsRange(query);
     const now = new Date();
     const periodMs = Math.max(1, to.getTime() - from.getTime());
-    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to, networkId: query.networkId ?? null });
+    const dataset = await this.adAnalyticsDataset({
+      workspaceId,
+      from,
+      to,
+      channelIds: this.analyticsChannelIds(query),
+      networkId: query.networkId ?? null,
+    });
     const nextSevenDays = await this.inventorySlotsForChannels({
       workspaceId,
       channelIds: dataset.channels.map((channel) => channel.id),
@@ -2896,7 +2920,13 @@ export class TelegramAdSalesService {
     const currentMonthRevenue = dataset.placements
       .reduce((sum, placement) => sum.add(decimal(placement.agreedPrice)), decimal(0));
     const previousMonthRevenue = (
-      await this.adAnalyticsDataset({ workspaceId, from: previousPeriodStart, to: previousPeriodEnd, networkId: query.networkId ?? null })
+      await this.adAnalyticsDataset({
+        workspaceId,
+        from: previousPeriodStart,
+        to: previousPeriodEnd,
+        channelIds: this.analyticsChannelIds(query),
+        networkId: query.networkId ?? null,
+      })
     ).placements.reduce(
       (sum, placement) => sum.add(decimal(placement.agreedPrice)),
       decimal(0),
@@ -2906,6 +2936,7 @@ export class TelegramAdSalesService {
       dateFrom: from.toISOString(),
       dateTo: to.toISOString(),
       timezone,
+      currency: this.commonCurrency(dataset.placements),
       revenueThisMonth: decimalToString(currentMonthRevenue),
       revenuePreviousMonth: decimalToString(previousMonthRevenue),
       monthOverMonthChangePercent: previousMonthRevenue.gt(0)
@@ -2991,14 +3022,13 @@ export class TelegramAdSalesService {
       channelIds: [channelId],
     });
     const placements = dataset.placements;
-    const inventory = this.summarizeInventory(
-      await this.inventorySlotsForChannels({
-        workspaceId,
-        channelIds: [channelId],
-        from,
-        to,
-      }),
-    );
+    const inventorySlots = await this.inventorySlotsForChannels({
+      workspaceId,
+      channelIds: [channelId],
+      from,
+      to,
+    });
+    const inventory = this.summarizeInventory(inventorySlots);
     const priceHistory = await this.prisma.telegramAdPriceSnapshot.findMany({
       where: {
         workspaceId,
@@ -3062,15 +3092,56 @@ export class TelegramAdSalesService {
       expectedViews > 0 ? totalAgreed.div(expectedViews).mul(1000) : decimal(0);
     const actualCpm =
       actualViewsFinal > 0 ? totalAgreed.div(actualViewsFinal).mul(1000) : decimal(0);
+    const activePlacementStatuses = new Set<TelegramAdPlacementStatus>([
+      TelegramAdPlacementStatus.RESERVED,
+      TelegramAdPlacementStatus.SCHEDULED,
+      TelegramAdPlacementStatus.PUBLISHED,
+      TelegramAdPlacementStatus.COMPLETED,
+    ]);
+    const elapsedPeriodEnd = to < now ? to : now;
+    const elapsedPlacements = placements.filter(
+      (placement) =>
+        activePlacementStatuses.has(placement.status) &&
+        placement.scheduledAt >= from &&
+        placement.scheduledAt <= elapsedPeriodEnd,
+    );
+    const elapsedEligibleSlots = inventorySlots.filter(
+      (slot) =>
+        slot.state !== 'MANUAL_ONLY' &&
+        slot.scheduledAt >= from &&
+        slot.scheduledAt <= elapsedPeriodEnd,
+    );
+    const elapsedMinimumRevenue = elapsedEligibleSlots.reduce(
+      (sum, slot) => sum.add(decimal(slot.minimumPrice)),
+      decimal(0),
+    );
+    const elapsedSoldRevenue = elapsedPlacements.reduce(
+      (sum, placement) => sum.add(decimal(placement.agreedPrice)),
+      decimal(0),
+    );
+    const elapsedRevenueGap = elapsedMinimumRevenue.gt(elapsedSoldRevenue)
+      ? elapsedMinimumRevenue.sub(elapsedSoldRevenue)
+      : decimal(0);
+    const revenueCurrency =
+      this.commonCurrency(placements) ?? this.commonCurrency(inventorySlots);
 
     return {
       channelId: channel.id,
       title: channel.title,
+      iconPresentation: channel.photoUrl
+        ? {
+            type: 'image' as const,
+            id: channel.id,
+            url: channel.photoUrl,
+            name: channel.title,
+          }
+        : null,
       dateFrom: from.toISOString(),
       dateTo: to.toISOString(),
       timezone,
       dateRules: this.analyticsDateRules(),
       revenue: {
+        currency: revenueCurrency,
         totalAgreedRevenue: decimalToString(totalAgreed),
         totalPaidRevenue: decimalToString(totalPaid),
         totalRevenueInPrimaryCurrency: decimalToString(totalPrimary),
@@ -3081,17 +3152,14 @@ export class TelegramAdSalesService {
           placements.length ? totalAgreed.div(placements.length) : decimal(0),
         ),
         medianSalePrice: decimalToString(this.medianDecimal(agreedPrices)),
+        elapsedMinimumRevenue: decimalToString(elapsedMinimumRevenue),
+        elapsedSoldRevenue: decimalToString(elapsedSoldRevenue),
+        elapsedRevenueGap: decimalToString(elapsedRevenueGap),
       },
       placements: {
-        sold: placements.filter((placement) => {
-          const activeStatuses = new Set<TelegramAdPlacementStatus>([
-            TelegramAdPlacementStatus.RESERVED,
-            TelegramAdPlacementStatus.SCHEDULED,
-            TelegramAdPlacementStatus.PUBLISHED,
-            TelegramAdPlacementStatus.COMPLETED,
-          ]);
-          return activeStatuses.has(placement.status);
-        }).length,
+        sold: placements.filter((placement) =>
+          activePlacementStatuses.has(placement.status),
+        ).length,
         published: placements.filter(
           (placement) => placement.status === TelegramAdPlacementStatus.PUBLISHED,
         ).length,
@@ -3101,6 +3169,7 @@ export class TelegramAdSalesService {
         cancelled: placements.filter(
           (placement) => placement.status === TelegramAdPlacementStatus.CANCELLED,
         ).length,
+        slotsEligible: inventory.eligibleSlots,
         slotsAvailable: inventory.availableSlots,
         slotsReserved: inventory.reservedSlots,
         slotFillRate: Number((inventory.bookingFillRate * 100).toFixed(2)),
@@ -3205,6 +3274,26 @@ export class TelegramAdSalesService {
           currency: placement.currency,
         })),
     };
+  }
+
+  async analyticsOverview(
+    userId: string,
+    query: TelegramAdAnalyticsSeriesQueryDto,
+  ) {
+    const channelIds = query.channelIds?.slice(0, 6) ?? [];
+    const [summary, revenueSeries, inventory, alerts, channels] =
+      await Promise.all([
+        this.analyticsSummary(userId, query),
+        this.revenueSeries(userId, query),
+        this.inventoryAnalytics(userId, query),
+        this.analyticsAlerts(userId, query),
+        Promise.all(
+          channelIds.map((channelId) =>
+            this.channelAnalytics(userId, channelId, query),
+          ),
+        ),
+      ]);
+    return { summary, revenueSeries, inventory, alerts, channels };
   }
 
   async networkAnalytics(
@@ -3322,7 +3411,9 @@ export class TelegramAdSalesService {
     const { from, to, timezone } = this.analyticsRange(query);
     const overdueCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const granularity = query.granularity ?? 'day';
-    const channelIds = query.channelId ? [query.channelId] : undefined;
+    const channelIds = query.channelId
+      ? [query.channelId]
+      : this.analyticsChannelIds(query);
     const dataset = await this.adAnalyticsDataset({
       workspaceId,
       from,
@@ -3433,11 +3524,13 @@ export class TelegramAdSalesService {
   async inventoryAnalytics(userId: string, query: TelegramAdAnalyticsSeriesQueryDto) {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
-    const channelIds = await this.resolveAnalyticsChannelIds({
-      workspaceId,
-      channelId: query.channelId,
-      networkId: query.networkId,
-    });
+    const channelIds = query.channelIds?.length
+      ? query.channelIds
+      : await this.resolveAnalyticsChannelIds({
+          workspaceId,
+          channelId: query.channelId,
+          networkId: query.networkId,
+        });
     const snapshots = await this.loadInventorySnapshots({
       workspaceId,
       channelIds,
@@ -3503,7 +3596,13 @@ export class TelegramAdSalesService {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
     const overdueCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to, networkId: query.networkId ?? null });
+    const dataset = await this.adAnalyticsDataset({
+      workspaceId,
+      from,
+      to,
+      channelIds: this.analyticsChannelIds(query),
+      networkId: query.networkId ?? null,
+    });
     const inventory = await this.inventoryAnalytics(userId, query);
     const items = [
       ...dataset.placements

@@ -7,6 +7,7 @@ import type {
   TelegramAdProduct,
   TelegramAdSale,
   TelegramAdAnalyticsAlertsResponse,
+  TelegramAdAnalyticsOverviewResponse,
   TelegramAdAnalyticsSummaryResponse,
   TelegramAdChannelBaseline,
   TelegramAdChannelPricingSettings,
@@ -354,6 +355,13 @@ export function createTelegramAdSalesApi({
       (
         await api.get<TelegramAdAnalyticsSummaryResponse>(
           "/telegram-ad-sales/analytics/summary",
+          { params },
+        )
+      ).data,
+    analyticsOverview: async (params?: Record<string, unknown>) =>
+      (
+        await api.get<TelegramAdAnalyticsOverviewResponse>(
+          "/telegram-ad-sales/analytics/overview",
           { params },
         )
       ).data,

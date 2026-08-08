@@ -17,6 +17,9 @@ describe("telegram-ad-sales query invalidation", () => {
       queryKey: ["telegram-ad-sales"],
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["telegram-ad-analytics"],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["telegram-ad-sale", "sale-1"],
     });
     expect(invalidateQueries).toHaveBeenCalledWith({

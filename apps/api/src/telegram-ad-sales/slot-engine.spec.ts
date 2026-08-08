@@ -65,6 +65,45 @@ describe('buildAvailabilitySlots', () => {
     expect(['RESERVED', 'BLOCKED_BY_POLICY', 'SOLD']).toContain(result[0].state);
   });
 
+  it('keeps existing past placements sold instead of marking them as unused past slots', () => {
+    const result = buildAvailabilitySlots({
+      ...base,
+      now: new Date('2026-08-03T08:00:00.000Z'),
+      organicTimes: ['19:15'],
+      organicScheduledAt: [new Date('2026-08-02T17:15:00.000Z')],
+      placements: [
+        {
+          id: 'placement-1',
+          saleId: 'sale-1',
+          status: 'PUBLISHED',
+          scheduledAt: new Date('2026-08-02T16:15:00.000Z'),
+        },
+      ],
+    });
+
+    expect(result[0].state).toBe('SOLD');
+  });
+
+  it('matches same-day placements to generated slots when the exact scheduled time differs', () => {
+    const result = buildAvailabilitySlots({
+      ...base,
+      now: new Date('2026-08-03T08:00:00.000Z'),
+      organicTimes: ['19:15'],
+      organicScheduledAt: [new Date('2026-08-02T17:15:00.000Z')],
+      placements: [
+        {
+          id: 'placement-1',
+          saleId: 'sale-1',
+          status: 'PUBLISHED',
+          scheduledAt: new Date('2026-08-02T09:00:00.000Z'),
+        },
+      ],
+    });
+
+    expect(result[0].state).toBe('SOLD');
+    expect(result[0].existingPlacement?.id).toBe('placement-1');
+  });
+
   it('creates no ad slots when there are no organic posts for before-organic strategy', () => {
     const result = buildAvailabilitySlots({
       ...base,

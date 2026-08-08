@@ -32,6 +32,9 @@ export const telegramAdSalesKeys = {
     ["telegram-ad-price-history", channelId, params ?? {}] as const,
   analytics: (params?: Record<string, unknown>) =>
     ["telegram-ad-analytics", params ?? {}] as const,
+  analyticsRoot: () => ["telegram-ad-analytics"] as const,
+  analyticsOverview: (params?: Record<string, unknown>) =>
+    ["telegram-ad-analytics", "overview", params ?? {}] as const,
   analyticsSummary: (params?: Record<string, unknown>) =>
     ["telegram-ad-analytics", "summary", params ?? {}] as const,
   channelAnalytics: (channelId: string, params?: Record<string, unknown>) =>
@@ -57,6 +60,7 @@ export async function invalidateTelegramAdSalesQueries(
 ) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.root }),
+    queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.analyticsRoot() }),
     queryClient.invalidateQueries({ queryKey: ["telegram-ad-availability"] }),
     queryClient.invalidateQueries({ queryKey: dashboardKeys.summary() }),
     queryClient.invalidateQueries({ queryKey: accountKeys.transactions() }),

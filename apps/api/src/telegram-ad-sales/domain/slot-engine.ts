@@ -118,6 +118,23 @@ export function buildAvailabilitySlots(input: SlotEngineInput): SlotEngineSlot[]
             .toString()
             .padStart(2, '0')}`;
         });
+  const candidateScheduledTimes = candidateTimes.map((time) =>
+    zonedDateTimeToUtc(input.dateKey, time, input.policy.timezone).getTime(),
+  );
+  const candidateScheduledTimeSet = new Set(candidateScheduledTimes);
+  const exactPlacementsByTime = new Map(
+    input.placements.map((placement) => [
+      placement.scheduledAt.getTime(),
+      placement,
+    ]),
+  );
+  const fallbackPlacements = [...input.placements]
+    .filter(
+      (placement) =>
+        !candidateScheduledTimeSet.has(placement.scheduledAt.getTime()),
+    )
+    .sort((left, right) => left.scheduledAt.getTime() - right.scheduledAt.getTime());
+  let fallbackPlacementIndex = 0;
 
   return candidateTimes.map((time, index) => {
     const scheduledAt = zonedDateTimeToUtc(input.dateKey, time, input.policy.timezone);
@@ -126,9 +143,9 @@ export function buildAvailabilitySlots(input: SlotEngineInput): SlotEngineSlot[]
         .filter((value) => value.getTime() >= scheduledAt.getTime())
         .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
     const existingPlacement =
-      input.placements.find(
-        (placement) => placement.scheduledAt.getTime() === scheduledAt.getTime(),
-      ) ?? null;
+      exactPlacementsByTime.get(scheduledAt.getTime()) ??
+      fallbackPlacements[fallbackPlacementIndex++] ??
+      null;
     const blockingByHours = input.placements.some(
       (placement) =>
         hoursBetween(placement.scheduledAt, scheduledAt) <
@@ -142,13 +159,13 @@ export function buildAvailabilitySlots(input: SlotEngineInput): SlotEngineSlot[]
 
     let state: SlotEngineSlot['state'] = 'AVAILABLE';
     let blockingReason: string | null = null;
-    if (scheduledAt.getTime() <= input.now.getTime()) {
-      state = 'PAST';
-      blockingReason = 'past';
-    } else if (existingPlacement) {
+    if (existingPlacement) {
       state =
         existingPlacement.status === 'RESERVED' ? 'RESERVED' : 'SOLD';
       blockingReason = 'existing_placement';
+    } else if (scheduledAt.getTime() <= input.now.getTime()) {
+      state = 'PAST';
+      blockingReason = 'past';
     } else if (
       input.policy.maxAdsPerDay >= 0 &&
       input.placements.length >= input.policy.maxAdsPerDay

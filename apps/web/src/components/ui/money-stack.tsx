@@ -32,19 +32,22 @@ export function MoneyStack({
     amountInPrimary,
   });
   const [primary, secondary, tertiary] = preview;
-  const formatPreviewItem = (item: (typeof preview)[number]) =>
-    item.amount == null ? 'Rate missing' : item.label;
+  const firstLine = [primary, secondary]
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .map((item) => item.amount == null ? 'Rate missing' : item.label)
+    .join(' / ');
+  const secondLine = tertiary?.amount == null
+    ? tertiary
+      ? 'Rate missing'
+      : ''
+    : `${approximate ? '≈ ' : ''}${tertiary.label}`;
 
   return (
     <div className={className}>
       <div className={mainClassName}>
-        {[primary, secondary].filter(Boolean).map(formatPreviewItem).join(' / ')}
+        {firstLine || '-'}
       </div>
-      {tertiary ? (
-        <div className={subClassName}>
-          {tertiary.amount == null ? 'Rate missing' : `${approximate ? '≈ ' : ''}${tertiary.label}`}
-        </div>
-      ) : null}
+      {secondLine ? <div className={subClassName}>{secondLine}</div> : null}
     </div>
   );
 }

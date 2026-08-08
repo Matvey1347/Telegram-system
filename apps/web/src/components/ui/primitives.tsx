@@ -1371,6 +1371,7 @@ export const TooltipBubble = forwardRef<
     align?: "left" | "center" | "right";
     className?: string;
     style?: React.CSSProperties;
+    arrowStyle?: React.CSSProperties;
     floating?: boolean;
   }
 >(function TooltipBubble(
@@ -1380,6 +1381,7 @@ export const TooltipBubble = forwardRef<
     align = "center",
     className = "",
     style,
+    arrowStyle,
     floating = false,
   },
   ref,
@@ -1416,7 +1418,8 @@ export const TooltipBubble = forwardRef<
     >
       {children}
       <span
-        className={`absolute h-3 w-3 border-neutral-700 bg-neutral-950 ${arrowAnchorClass} ${arrowClass}`}
+        style={arrowStyle}
+        className={`absolute h-3 w-3 border-neutral-700 bg-neutral-950 ${arrowStyle ? "" : arrowAnchorClass} ${arrowClass}`}
         aria-hidden="true"
       />
     </span>
@@ -1440,25 +1443,55 @@ export function Tooltip({
   const bubbleRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const [position, setPosition] = useState({
+    left: 0,
+    top: 0,
+    arrowLeft: 0,
+  });
 
   useEffect(() => setMounted(true), []);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !mounted) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const left =
+    const bubbleWidth = bubbleRef.current?.offsetWidth ?? 0;
+    const margin = 12;
+    const desiredLeft =
       align === "left"
         ? rect.left
         : align === "right"
           ? rect.right
           : rect.left + rect.width / 2;
+    const minLeft =
+      align === "right"
+        ? margin + bubbleWidth
+        : align === "center"
+          ? margin + bubbleWidth / 2
+          : margin;
+    const maxLeft =
+      align === "left"
+        ? window.innerWidth - margin - bubbleWidth
+        : align === "center"
+          ? window.innerWidth - margin - bubbleWidth / 2
+          : window.innerWidth - margin;
     const top = side === "top" ? rect.top - 12 : rect.bottom + 12;
+    const left = Math.max(minLeft, Math.min(maxLeft, desiredLeft));
+    const bubbleLeft =
+      align === "right"
+        ? left - bubbleWidth
+        : align === "center"
+          ? left - bubbleWidth / 2
+          : left;
+    const triggerCenter = rect.left + rect.width / 2;
+    const arrowLeft = bubbleWidth
+      ? Math.max(16, Math.min(bubbleWidth - 16, triggerCenter - bubbleLeft))
+      : 0;
     setPosition({
-      left: Math.max(12, Math.min(window.innerWidth - 12, left)),
+      left,
       top,
+      arrowLeft,
     });
-  }, [align, mounted, open, side]);
+  }, [align, content, mounted, open, side]);
 
   useEffect(() => {
     if (!open) return;
@@ -1512,6 +1545,14 @@ export function Tooltip({
                 transform:
                   side === "top" ? `${transform} translateY(-100%)` : transform,
               }}
+              arrowStyle={
+                position.arrowLeft
+                  ? {
+                      left: position.arrowLeft,
+                      marginLeft: -6,
+                    }
+                  : undefined
+              }
             >
               {content}
             </TooltipBubble>,

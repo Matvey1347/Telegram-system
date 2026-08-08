@@ -107,6 +107,8 @@ export type TelegramAdCrmAdvertiserListItem = {
   lifecycleStage: TelegramAdvertiserLifecycleStage;
   completedSalesCount: number;
   totalSalesCount: number;
+  completedPlacementsCount: number;
+  totalPlacementsCount: number;
   totalRevenueInPrimaryCurrency: string;
   averageOrderValueInPrimaryCurrency: string;
   firstPurchaseAt: string | null;

@@ -232,6 +232,14 @@ export class TelegramAdSalesController {
     return this.service.analyticsSummary(user.sub, query);
   }
 
+  @Get('analytics/overview')
+  analyticsOverview(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAnalyticsSeriesQueryDto,
+  ) {
+    return this.service.analyticsOverview(user.sub, query);
+  }
+
   @Get('analytics/channels/:channelId')
   channelAnalytics(
     @CurrentUser() user: JwtUser,

@@ -1,4 +1,5 @@
 import type { PaginatedResponse } from "../pagination";
+import type { ResolvedEmoji } from "./resolved-emoji";
 
 export type TelegramAdPricingMode = "CPM" | "FIXED" | "MANUAL";
 
@@ -657,6 +658,7 @@ export type TelegramAdAnalyticsSummaryResponse = {
   dateFrom: string;
   dateTo: string;
   timezone: string;
+  currency?: string | null;
   revenueThisMonth: string;
   revenuePreviousMonth: string;
   monthOverMonthChangePercent: number | null;
@@ -686,14 +688,24 @@ export type TelegramAdAnalyticsSummaryResponse = {
   deletionFailuresCount: number;
 };
 
+export type TelegramAdAnalyticsOverviewResponse = {
+  summary: TelegramAdAnalyticsSummaryResponse;
+  revenueSeries: TelegramAdRevenueSeriesResponse;
+  inventory: TelegramAdInventoryAnalyticsResponse;
+  alerts: TelegramAdAnalyticsAlertsResponse;
+  channels: TelegramAdChannelAnalyticsResponse[];
+};
+
 export type TelegramAdChannelAnalyticsResponse = {
   channelId: string;
   title: string;
+  iconPresentation?: ResolvedEmoji | null;
   dateFrom: string;
   dateTo: string;
   timezone: string;
   dateRules: TelegramAdAnalyticsDateRule[];
   revenue: {
+    currency?: string | null;
     totalAgreedRevenue: string;
     totalPaidRevenue: string;
     totalRevenueInPrimaryCurrency: string;
@@ -702,12 +714,16 @@ export type TelegramAdChannelAnalyticsResponse = {
     refundedRevenue: string;
     averageSalePrice: string;
     medianSalePrice: string;
+    elapsedMinimumRevenue: string;
+    elapsedSoldRevenue: string;
+    elapsedRevenueGap: string;
   };
   placements: {
     sold: number;
     published: number;
     completed: number;
     cancelled: number;
+    slotsEligible: number;
     slotsAvailable: number;
     slotsReserved: number;
     slotFillRate: number;

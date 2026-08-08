@@ -80,17 +80,12 @@ function ClientCard({
             <h3 className="truncate text-sm font-semibold text-white">
               {unspecified ? "No client" : client.displayName}
             </h3>
-            {unspecified ? (
-              <Pill
-                label="No client"
-                className="border-neutral-700 bg-neutral-900 text-neutral-300"
-              />
-            ) : (
+            {!unspecified ? (
               <Pill
                 label={formatEnum(client.status)}
                 className={statusTone(client.status)}
               />
-            )}
+            ) : null}
           </div>
           {!unspecified ? (
             <>
@@ -118,6 +113,7 @@ function ClientCard({
           <Metric label="Revenue" value={<MoneyStack amount={client.totalRevenueInPrimaryCurrency} currency={settings.primaryCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-500" />} />
           <Metric label="AOV" value={<MoneyStack amount={client.averageOrderValueInPrimaryCurrency} currency={settings.primaryCurrency} settings={settings} rates={rates} mainClassName="font-medium text-white" subClassName="text-xs text-neutral-500" />} />
           <Metric label="Sales" value={`${client.completedSalesCount}/${client.totalSalesCount}`} />
+          <Metric label="Placements" value={String(client.totalPlacementsCount ?? 0)} />
           {client.lastPurchaseAt ? (
             <Metric label="Last purchase" value={formatDate(client.lastPurchaseAt)} />
           ) : null}
@@ -169,7 +165,7 @@ function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <p className="text-xs uppercase text-neutral-500">{label}</p>
-      <p className="mt-1 font-medium text-white">{value}</p>
+      <div className="mt-1 font-medium text-white">{value}</div>
     </div>
   );
 }
@@ -200,7 +196,6 @@ function OwnerRow({
         />
         <span className="min-w-0 truncate">
           {owner.name}
-          {owner.email ? ` · ${owner.email}` : ""}
         </span>
       </span>
     </div>
@@ -260,6 +255,7 @@ function hasClientStats(client: TelegramAdCrmAdvertiserListItem) {
     Number(client.averageOrderValueInPrimaryCurrency) > 0 ||
     client.completedSalesCount > 0 ||
     client.totalSalesCount > 0 ||
+    (client.totalPlacementsCount ?? 0) > 0 ||
     Boolean(client.lastPurchaseAt)
   );
 }

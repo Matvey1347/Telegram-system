@@ -17,7 +17,11 @@ import {
 } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { TelegramAdAlertsQueryDto, TelegramAdAnalyticsQueryDto } from './dto';
+import {
+  TelegramAdAlertsQueryDto,
+  TelegramAdAnalyticsQueryDto,
+  TelegramAdAnalyticsSeriesQueryDto,
+} from './dto';
 import { TelegramAdSalesService } from './telegram-ad-sales.service';
 
 const decimal = (value: number | string) => new Prisma.Decimal(value);
@@ -329,6 +333,22 @@ describe('TelegramAdSalesService', () => {
     await expect(
       validate(alertsDto, { whitelist: true, forbidNonWhitelisted: true }),
     ).resolves.toHaveLength(0);
+  });
+
+  it('accepts comma-separated analytics channel ids under whitelist validation', async () => {
+    const dto = plainToInstance(TelegramAdAnalyticsSeriesQueryDto, {
+      dateFrom: '2026-08-01T00:00:00.000Z',
+      dateTo: '2026-08-07T23:59:59.000Z',
+      channelIds: 'channel-1, channel-2',
+    });
+
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    expect(errors).toHaveLength(0);
+    expect(dto.channelIds).toEqual(['channel-1', 'channel-2']);
   });
 
   it('enforces workspace isolation for channel products', async () => {
@@ -1155,13 +1175,65 @@ describe('TelegramAdSalesService', () => {
     });
 
     expect(result.paidRevenue).toBe('100');
+    expect(result.currency).toBe('USD');
     expect(result.accountsReceivable).toBe('50');
     expect(result.bestChannelByRevenue?.channelId).toBe('channel-1');
     expect(result.paymentOverdueCount).toBe(1);
     expect(datasetSpy).toHaveBeenCalledWith(expect.objectContaining({ networkId: 'network-1' }));
   });
 
+  it('scopes analytics summary to selected channel ids', async () => {
+    const { service } = createService();
+    const datasetSpy = jest
+      .spyOn(service as any, 'adAnalyticsDataset')
+      .mockResolvedValue({
+        placements: [],
+        payments: [],
+        channels: [],
+      } as any);
+    jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([]);
+
+    await service.analyticsSummary('user-1', {
+      rangeDays: 30,
+      channelIds: ['channel-1', 'channel-2'],
+    });
+
+    expect(datasetSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelIds: ['channel-1', 'channel-2'],
+      }),
+    );
+  });
+
+  it('returns analytics overview in one service response for selected channels', async () => {
+    const { service } = createService();
+    jest.spyOn(service, 'analyticsSummary').mockResolvedValue({ paidRevenue: '10' } as any);
+    jest.spyOn(service, 'revenueSeries').mockResolvedValue({ points: [] } as any);
+    jest.spyOn(service, 'inventoryAnalytics').mockResolvedValue({ points: [] } as any);
+    jest.spyOn(service, 'analyticsAlerts').mockResolvedValue({ items: [] } as any);
+    const channelSpy = jest
+      .spyOn(service, 'channelAnalytics')
+      .mockImplementation(async (_userId, channelId) => ({ channelId }) as any);
+
+    const result = await service.analyticsOverview('user-1', {
+      channelIds: ['channel-1', 'channel-2'],
+    });
+
+    expect(result.summary).toEqual({ paidRevenue: '10' });
+    expect(result.channels).toEqual([
+      { channelId: 'channel-1' },
+      { channelId: 'channel-2' },
+    ]);
+    expect(channelSpy).toHaveBeenCalledTimes(2);
+    expect(channelSpy).toHaveBeenCalledWith(
+      'user-1',
+      'channel-1',
+      expect.objectContaining({ channelIds: ['channel-1', 'channel-2'] }),
+    );
+  });
+
   it('builds channel analytics with revenue, fill rate, and recent sales', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-08T12:00:00.000Z'));
     const { service, prisma } = createService();
     prisma.telegramChannel.findFirst.mockResolvedValueOnce({
       id: 'channel-1',
@@ -1212,10 +1284,18 @@ describe('TelegramAdSalesService', () => {
       channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
     } as any);
     jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([
-      { channelId: 'channel-1', state: 'AVAILABLE', existingPlacement: null },
+      {
+        channelId: 'channel-1',
+        state: 'PAST',
+        scheduledAt: new Date('2026-08-01T10:00:00.000Z'),
+        minimumPrice: '0',
+        existingPlacement: null,
+      },
       {
         channelId: 'channel-1',
         state: 'SOLD',
+        scheduledAt: new Date('2026-08-02T10:00:00.000Z'),
+        minimumPrice: '140',
         existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED },
       },
     ]);
@@ -1225,10 +1305,143 @@ describe('TelegramAdSalesService', () => {
     });
 
     expect(result.revenue.totalAgreedRevenue).toBe('150');
+    expect(result.revenue.currency).toBe('USD');
     expect(result.revenue.totalPaidRevenue).toBe('120');
+    expect(result.revenue.elapsedMinimumRevenue).toBe('140');
+    expect(result.revenue.elapsedSoldRevenue).toBe('150');
+    expect(result.revenue.elapsedRevenueGap).toBe('0');
+    expect(result.placements.slotsEligible).toBe(2);
     expect(result.placements.slotFillRate).toBe(50);
     expect(result.performance.actualViewsFinal).toBe(900);
     expect(result.recentSales[0]?.advertiserName).toBe('Advertiser');
+  });
+
+  it('calculates elapsed plan versus sold revenue only for past selected-period placements', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-08T12:00:00.000Z'));
+    const { service, prisma } = createService();
+    prisma.telegramChannel.findFirst.mockResolvedValueOnce({
+      id: 'channel-1',
+      workspaceId: 'ws-1',
+      title: 'Channel One',
+      username: 'one',
+      timePosts: [],
+    });
+    prisma.telegramAdPriceSnapshot.findMany.mockResolvedValue([]);
+    jest.spyOn(service as any, 'adAnalyticsDataset').mockResolvedValue({
+      placements: [
+        makePlacement({
+          id: 'placement-past-1',
+          status: TelegramAdPlacementStatus.PUBLISHED,
+          telegramChannelId: 'channel-1',
+          scheduledAt: new Date('2026-08-06T10:00:00.000Z'),
+          minimumPrice: decimal(100),
+          agreedPrice: decimal(60),
+          sale: makeSale({
+            id: 'sale-past-1',
+            status: TelegramAdSaleStatus.CONFIRMED,
+            settlementCurrency: 'USD',
+          }),
+        }),
+        makePlacement({
+          id: 'placement-past-2',
+          status: TelegramAdPlacementStatus.COMPLETED,
+          telegramChannelId: 'channel-1',
+          scheduledAt: new Date('2026-08-07T10:00:00.000Z'),
+          minimumPrice: decimal(75),
+          agreedPrice: decimal(60),
+          sale: makeSale({
+            id: 'sale-past-2',
+            status: TelegramAdSaleStatus.CONFIRMED,
+            settlementCurrency: 'USD',
+          }),
+        }),
+        makePlacement({
+          id: 'placement-future',
+          status: TelegramAdPlacementStatus.SCHEDULED,
+          telegramChannelId: 'channel-1',
+          scheduledAt: new Date('2026-08-09T10:00:00.000Z'),
+          minimumPrice: decimal(70),
+          agreedPrice: decimal(60),
+          sale: makeSale({
+            id: 'sale-future',
+            status: TelegramAdSaleStatus.CONFIRMED,
+            settlementCurrency: 'USD',
+          }),
+        }),
+      ],
+      payments: [],
+      channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
+    } as any);
+    jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([
+      {
+        channelId: 'channel-1',
+        state: 'SOLD',
+        scheduledAt: new Date('2026-08-06T10:00:00.000Z'),
+        minimumPrice: '100',
+        existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED },
+      },
+      {
+        channelId: 'channel-1',
+        state: 'SOLD',
+        scheduledAt: new Date('2026-08-07T10:00:00.000Z'),
+        minimumPrice: '75',
+        existingPlacement: { status: TelegramAdPlacementStatus.COMPLETED },
+      },
+      {
+        channelId: 'channel-1',
+        state: 'AVAILABLE',
+        scheduledAt: new Date('2026-08-09T10:00:00.000Z'),
+        minimumPrice: '70',
+        existingPlacement: null,
+      },
+    ]);
+
+    const result = await service.channelAnalytics('user-1', 'channel-1', {
+      dateFrom: '2026-08-01T00:00:00.000Z',
+      dateTo: '2026-08-31T23:59:59.999Z',
+    });
+
+    expect(result.revenue.elapsedMinimumRevenue).toBe('175');
+    expect(result.revenue.elapsedSoldRevenue).toBe('120');
+    expect(result.revenue.elapsedRevenueGap).toBe('55');
+  });
+
+  it('uses elapsed inventory slots for plan revenue when a channel has no sales', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-08T12:00:00.000Z'));
+    const { service, prisma } = createService();
+    prisma.telegramChannel.findFirst.mockResolvedValueOnce({
+      id: 'channel-1',
+      workspaceId: 'ws-1',
+      title: 'Channel One',
+      username: 'one',
+      timePosts: [],
+    });
+    prisma.telegramAdPriceSnapshot.findMany.mockResolvedValue([]);
+    jest.spyOn(service as any, 'adAnalyticsDataset').mockResolvedValue({
+      placements: [],
+      payments: [],
+      channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
+    } as any);
+    jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([
+      {
+        channelId: 'channel-1',
+        state: 'PAST',
+        scheduledAt: new Date('2026-08-06T10:00:00.000Z'),
+        minimumPrice: '100',
+        currency: 'UAH',
+        existingPlacement: null,
+      },
+    ]);
+
+    const result = await service.channelAnalytics('user-1', 'channel-1', {
+      dateFrom: '2026-08-01T00:00:00.000Z',
+      dateTo: '2026-08-31T23:59:59.999Z',
+    });
+
+    expect(result.revenue.currency).toBe('UAH');
+    expect(result.revenue.elapsedMinimumRevenue).toBe('100');
+    expect(result.revenue.elapsedSoldRevenue).toBe('0');
+    expect(result.revenue.elapsedRevenueGap).toBe('100');
   });
 
   it('keeps availability stable when product prices are hydrated as strings', async () => {

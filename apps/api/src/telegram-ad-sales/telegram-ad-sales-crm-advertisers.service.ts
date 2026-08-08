@@ -85,6 +85,14 @@ export class TelegramAdSalesCrmAdvertisersService {
     return 'POWER';
   }
 
+  private completedPlacementsCount(
+    placements: Array<{ status?: string | null }>,
+  ) {
+    return placements.filter((placement) =>
+      ['PUBLISHED', 'COMPLETED'].includes(String(placement.status)),
+    ).length;
+  }
+
   private monetaryBucket(monetaryValue: number, highValueThreshold: number) {
     if (highValueThreshold <= 0) return monetaryValue > 0 ? 'HIGH' : 'LOW';
     if (monetaryValue >= highValueThreshold) return 'HIGH';
@@ -340,6 +348,8 @@ export class TelegramAdSalesCrmAdvertisersService {
       lifecycleStage: advertiser.lifecycleStage,
       completedSalesCount: advertiser.completedSalesCount,
       totalSalesCount: advertiser.totalSalesCount,
+      completedPlacementsCount: advertiser.completedPlacementsCount ?? 0,
+      totalPlacementsCount: advertiser.totalPlacementsCount ?? 0,
       totalRevenueInPrimaryCurrency: totalRevenue,
       averageOrderValueInPrimaryCurrency: averageOrderValue,
       firstPurchaseAt: advertiser.firstPurchaseAt?.toISOString() ?? null,
@@ -369,22 +379,56 @@ export class TelegramAdSalesCrmAdvertisersService {
     };
   }
 
+  private isUnspecifiedAdvertiser(
+    advertiser: {
+      displayName: string;
+      companyName: string | null;
+      telegramUsername: string | null;
+      primaryContact: unknown | null;
+    },
+  ) {
+    return (
+      advertiser.displayName.trim().toLowerCase() === 'advertiser' &&
+      !advertiser.companyName &&
+      !advertiser.telegramUsername &&
+      !advertiser.primaryContact
+    );
+  }
+
   private async currentStatsByAdvertiser(
     workspaceId: string,
-    advertiserIds: string[],
+    advertisers: Array<{
+      id: string;
+      displayName: string;
+      companyName: string | null;
+      telegramUsername: string | null;
+      contacts?: Array<unknown>;
+    }>,
   ) {
+    const advertiserIds = advertisers.map((advertiser) => advertiser.id);
     if (!advertiserIds.length) return new Map<string, Partial<any>>();
+    const unassignedAdvertiserId = advertisers.find((advertiser) =>
+      this.isUnspecifiedAdvertiser({
+        displayName: advertiser.displayName,
+        companyName: advertiser.companyName,
+        telegramUsername: advertiser.telegramUsername,
+        primaryContact: advertiser.contacts?.[0] ?? null,
+      }),
+    )?.id;
     const sales = await this.prisma.telegramAdSale.findMany({
       where: {
         workspaceId,
-        advertiserId: { in: advertiserIds },
+        OR: [
+          { advertiserId: { in: advertiserIds } },
+          ...(unassignedAdvertiserId ? [{ advertiserId: null }] : []),
+        ],
         status: { not: TelegramAdSaleStatus.CANCELLED },
       },
       select: {
         advertiserId: true,
         status: true,
         createdAt: true,
-        placements: { select: { id: true } },
+        placements: { select: { id: true, status: true } },
         payments: {
           where: { status: { not: TelegramAdSalePaymentStatus.VOIDED } },
           select: { amountInPrimaryCurrency: true },
@@ -398,6 +442,7 @@ export class TelegramAdSalesCrmAdvertisersService {
         totalSalesCount: number;
         completedSalesCount: number;
         totalPlacementsCount: number;
+        completedPlacementsCount: number;
         totalRevenueInPrimaryCurrency: Prisma.Decimal;
         averageOrderValueInPrimaryCurrency: Prisma.Decimal;
         firstPurchaseAt: Date | null;
@@ -405,12 +450,14 @@ export class TelegramAdSalesCrmAdvertisersService {
       }
     >();
     for (const sale of sales) {
-      if (!sale.advertiserId) continue;
+      const advertiserId = sale.advertiserId ?? unassignedAdvertiserId;
+      if (!advertiserId) continue;
       const current =
-        stats.get(sale.advertiserId) ?? {
+        stats.get(advertiserId) ?? {
           totalSalesCount: 0,
           completedSalesCount: 0,
           totalPlacementsCount: 0,
+          completedPlacementsCount: 0,
           totalRevenueInPrimaryCurrency: decimal(0),
           averageOrderValueInPrimaryCurrency: decimal(0),
           firstPurchaseAt: null,
@@ -418,6 +465,9 @@ export class TelegramAdSalesCrmAdvertisersService {
         };
       current.totalSalesCount += 1;
       current.totalPlacementsCount += sale.placements.length;
+      current.completedPlacementsCount += this.completedPlacementsCount(
+        sale.placements,
+      );
       const completed =
         sale.status === TelegramAdSaleStatus.CONFIRMED ||
         sale.status === TelegramAdSaleStatus.IN_PROGRESS ||
@@ -434,7 +484,7 @@ export class TelegramAdSalesCrmAdvertisersService {
             decimal(0),
           ),
         );
-      stats.set(sale.advertiserId, current);
+      stats.set(advertiserId, current);
     }
     for (const value of stats.values()) {
       value.averageOrderValueInPrimaryCurrency = value.totalSalesCount
@@ -525,7 +575,7 @@ export class TelegramAdSalesCrmAdvertisersService {
     const now = new Date();
     const currentStats = await this.currentStatsByAdvertiser(
       workspaceId,
-      items.map((item) => item.id),
+      items,
     );
     return createPaginatedResponse(
       items.map((item) =>

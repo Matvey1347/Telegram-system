@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { MemberSelect } from "@/components/workspace/member-select";
 import { Pagination } from "@/components/ui/pagination";
@@ -11,6 +12,7 @@ import {
   Input,
   Select,
   TableLoadingState,
+  Skeleton,
 } from "@/components/ui/primitives";
 import { AdSalesClientsTable } from "@/components/ad-sales/ad-sales-clients-table";
 import type { CurrencySettings, ExchangeRate } from "@/lib/api";
@@ -99,9 +101,10 @@ export function AdSalesClientsPanel({
   const urgentCount = clients.filter((client) =>
     ["HIGH", "URGENT"].includes(String(client.urgency ?? "").toUpperCase()),
   ).length;
+  const nowMs = clientsQuery.dataUpdatedAt;
   const overdueTaskCount = clients.filter((client) =>
     client.nextOpenTask?.dueAt
-      ? new Date(client.nextOpenTask.dueAt).getTime() < Date.now()
+      ? new Date(client.nextOpenTask.dueAt).getTime() < nowMs
       : false,
   ).length;
 
@@ -178,21 +181,38 @@ export function AdSalesClientsPanel({
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile
           label="Clients"
-          value={String(clientsQuery.data?.pagination.totalItems ?? 0)}
+          value={
+            clientsQuery.isLoading
+              ? <MetricTileSkeleton />
+              : String(clientsQuery.data?.pagination.totalItems ?? 0)
+          }
         />
         <MetricTile
           label="High value"
-          value={String(clients.filter((client) => client.isHighValue).length)}
+          value={
+            clientsQuery.isLoading
+              ? <MetricTileSkeleton />
+              : String(clients.filter((client) => client.isHighValue).length)
+          }
         />
-        <MetricTile label="Needs action" value={String(urgentCount)} />
+        <MetricTile
+          label="Needs action"
+          value={clientsQuery.isLoading ? <MetricTileSkeleton /> : String(urgentCount)}
+        />
         <MetricTile
           label="Page revenue"
-          value={formatMoneyPreview({
-            amount: pageRevenue,
-            currency: moneySettings.primaryCurrency,
-            settings: moneySettings,
-            rates,
-          })}
+          value={
+            clientsQuery.isLoading ? (
+              <MetricTileSkeleton />
+            ) : (
+              formatMoneyPreview({
+                amount: pageRevenue,
+                currency: moneySettings.primaryCurrency,
+                settings: moneySettings,
+                rates,
+              })
+            )
+          }
         />
       </div>
 
@@ -230,11 +250,20 @@ export function AdSalesClientsPanel({
   );
 }
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+function MetricTile({ label, value }: { label: string; value: ReactNode }) {
   return (
     <Card className={tileClass}>
       <p className="text-xs font-medium uppercase text-neutral-500">{label}</p>
-      <p className="mt-2 whitespace-pre-line text-2xl font-semibold text-white">{value}</p>
+      <div className="mt-2 whitespace-pre-line text-2xl font-semibold text-white">{value}</div>
     </Card>
+  );
+}
+
+function MetricTileSkeleton() {
+  return (
+    <div className="space-y-2" role="status" aria-label="Loading metric">
+      <Skeleton className="h-7 w-24" />
+      <Skeleton className="h-4 w-16" />
+    </div>
   );
 }
