@@ -51,4 +51,23 @@ describe("managed posts import parsing", () => {
       urls: ["https://cdn.example.test/after.png"],
     });
   });
+
+  it("keeps image search hints only in the editable import preview", () => {
+    const [row] = normalizeImportRows(
+      JSON.stringify([
+        {
+          title: "Image hint post",
+          text: "Body",
+          imageSearch: ["mountain rest", "quiet lake"],
+        },
+      ]),
+      "posts.json",
+    );
+
+    const editable = rowToEditable(row);
+    expect(editable.imageSearchText).toBe("mountain rest\nquiet lake");
+
+    const importRow = editableRowToImportRow(editable);
+    expect(importRow).not.toHaveProperty("imageSearch");
+  });
 });

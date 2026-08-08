@@ -1102,6 +1102,7 @@ export const telegramChannelsApi = {
       await api.post<TelegramPostPlannerFormat>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats`,
         payload,
+        silentFeedbackConfig,
       )
     ).data,
   updatePostPlannerFormat: async (
@@ -1119,12 +1120,14 @@ export const telegramChannelsApi = {
       await api.patch<TelegramPostPlannerFormat>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats/${formatId}`,
         payload,
+        silentFeedbackConfig,
       )
     ).data,
   deletePostPlannerFormat: async (channelId: string, formatId: string) =>
     (
       await api.delete<TelegramPostPlannerFormat>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/formats/${formatId}`,
+        silentFeedbackConfig,
       )
     ).data,
   postPlannerSlots: async (channelId: string) =>
@@ -1149,6 +1152,7 @@ export const telegramChannelsApi = {
       await api.post<TelegramPostPlannerSlot>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots`,
         payload,
+        silentFeedbackConfig,
       )
     ).data,
   updatePostPlannerSlot: async (
@@ -1168,12 +1172,14 @@ export const telegramChannelsApi = {
       await api.patch<TelegramPostPlannerSlot>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots/${slotId}`,
         payload,
+        silentFeedbackConfig,
       )
     ).data,
   deletePostPlannerSlot: async (channelId: string, slotId: string) =>
     (
       await api.delete<TelegramPostPlannerSlot>(
         `/telegram-channels/${channelId}/managed-posts/calendar-planner/slots/${slotId}`,
+        silentFeedbackConfig,
       )
     ).data,
   previewPostPlanner: async (

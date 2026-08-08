@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Copy,
   FileUp,
   ListChecks,
   LoaderCircle,
@@ -149,6 +150,7 @@ function parseDelimitedRows(content: string, delimiter: string) {
       "emoji",
       "icontext",
       "urls",
+      "imagesearch",
       "groupposition",
       "order",
     ].includes(cell.replace(/\s+/g, "")),
@@ -201,6 +203,7 @@ type EditableImportRow = {
   text: string;
   icon: string;
   urlsText: string;
+  imageSearchText: string;
   groupPosition: string;
   order: string;
 };
@@ -255,6 +258,20 @@ function importUrlsToArray(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function importImageSearchToArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => importImageSearchToArray(item))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (typeof value !== "string") return [];
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function urlsTextToArray(value: string) {
   return value
     .split(/\r?\n/)
@@ -277,6 +294,7 @@ export function rowToEditable(
     urlsText: importUrlsToArray(row.urls ?? row.imageUrls ?? row.images).join(
       "\n",
     ),
+    imageSearchText: importImageSearchToArray(row.imageSearch).join("\n"),
     groupPosition: importValueToString(row.groupPosition),
     order: importValueToString(row.order),
   };
@@ -337,6 +355,7 @@ export function normalizeImportRows(
       emoji: row.emoji,
       iconText: row.icontext ?? row.iconText,
       urls: row.urls ?? row.imageUrls ?? row.images,
+      imageSearch: row.imagesearch ?? row.imageSearch,
       groupPosition: row.groupposition ?? row.groupPosition,
       order: row.order,
     }));
@@ -356,6 +375,7 @@ export function normalizeImportRows(
     emoji: row.emoji,
     iconText: row.icontext ?? row.iconText,
     urls: row.urls ?? row.imageUrls ?? row.images,
+    imageSearch: row.imagesearch ?? row.imageSearch,
     groupPosition: row.groupposition ?? row.groupPosition,
     order: row.order,
   }));
@@ -441,6 +461,13 @@ export function ManagedPostsImportModal({
     selectedRow?.icon && !selectedIconPresentation ? selectedRow.icon : null;
   const selectedImageUrls = useMemo(
     () => (selectedRow ? urlsTextToArray(selectedRow.urlsText) : []),
+    [selectedRow],
+  );
+  const selectedImageSearchQueries = useMemo(
+    () =>
+      selectedRow
+        ? importImageSearchToArray(selectedRow.imageSearchText)
+        : [],
     [selectedRow],
   );
   const canImport = Boolean(channelId) && importRows.length > 0;
@@ -552,6 +579,15 @@ export function ManagedPostsImportModal({
     void runImport();
   };
 
+  const copyImageSearchQuery = async (query: string) => {
+    try {
+      await navigator.clipboard.writeText(query);
+      pushToast("Image search query copied.", "success");
+    } catch {
+      pushToast("Could not copy image search query.", "error");
+    }
+  };
+
   return (
     <Modal open={open} onClose={close} title="Import managed posts" size="xl">
       <div className="space-y-4">
@@ -570,15 +606,22 @@ export function ManagedPostsImportModal({
     "text": "Telegram-ready post text",
     "icon": "🔥",
     "urls": ["https://example.com/1.png"],
-    "groupPosition": null
+    "groupPosition": null,
+    "imageSearch": [
+      "mountain rest",
+      "quiet lake",
+      "empty viewpoint"
+    ]
   }
 ]`}
           </pre>
           <p className="mt-2 text-xs text-blue-100/80">
-            Required: `title`. Optional: `text`, `icon`, `urls`, `groupPosition`.
-            Put the whole post body in `text`; do not split one post into several
-            objects. CSV/TSV still works, including multiline quoted text, but JSON
-            is safer for generated posts.
+            Required: `title`. Optional: `text`, `icon`, `urls`,
+            `groupPosition`, `imageSearch`. `imageSearch` is shown only in this
+            import preview for easy copying and is not saved to posts. Put the
+            whole post body in `text`; do not split one post into several
+            objects. CSV/TSV still works, including multiline quoted text, but
+            JSON is safer for generated posts.
           </p>
         </div>
 
@@ -791,6 +834,46 @@ export function ManagedPostsImportModal({
                       />
                     </FormField>
                   </div>
+                  <FormField label="Image search">
+                    <Textarea
+                      rows={3}
+                      value={selectedRow.imageSearchText}
+                      disabled={importing}
+                      placeholder="One search query per line"
+                      className="font-mono text-xs"
+                      onChange={(event) =>
+                        updateEditableRow(selectedRowIndex, {
+                          imageSearchText: event.target.value,
+                        })
+                      }
+                    />
+                    {selectedImageSearchQueries.length ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedImageSearchQueries.map((query, index) => (
+                          <button
+                            key={`${query}-${index}`}
+                            type="button"
+                            disabled={importing}
+                            onClick={() => {
+                              void copyImageSearchQuery(query);
+                            }}
+                            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-left text-xs text-neutral-200 transition hover:border-blue-600 hover:bg-blue-950/30 disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Copy image search query"
+                          >
+                            <span className="min-w-0 truncate">{query}</span>
+                            <Copy
+                              size={12}
+                              className="shrink-0 text-neutral-400"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-xs text-neutral-500">
+                        Import-only hints for finding replacement images.
+                      </p>
+                    )}
+                  </FormField>
                 </div>
               ) : null}
 
@@ -816,6 +899,11 @@ export function ManagedPostsImportModal({
                     {urlsTextToArray(row.urlsText).length ? (
                       <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-300">
                         img
+                      </span>
+                    ) : null}
+                    {importImageSearchToArray(row.imageSearchText).length ? (
+                      <span className="shrink-0 rounded bg-blue-950/60 px-1.5 py-0.5 text-[11px] text-blue-200">
+                        search
                       </span>
                     ) : null}
                   </button>

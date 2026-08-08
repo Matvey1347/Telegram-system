@@ -9,7 +9,6 @@ import {
   Underline,
 } from "lucide-react";
 import {
-  type FormEvent,
   type MouseEvent,
   type KeyboardEvent,
   useCallback,
@@ -298,7 +297,7 @@ export function TelegramPostPreview({
 
         <div className="telegram-preview-wallpaper min-h-[460px] px-3 py-5">
           {hasContent ? (
-            <div className="max-w-[94%] space-y-2">
+            <div className="max-w-full space-y-2">
               {messages.map((message, index) => (
                 <TelegramMessageBubble
                   key={index}

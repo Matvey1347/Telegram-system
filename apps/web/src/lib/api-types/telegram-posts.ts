@@ -87,6 +87,7 @@ export type TelegramManagedPostsImportRow = {
   urls?: unknown;
   imageUrls?: unknown;
   images?: unknown;
+  imageSearch?: unknown;
   groupPosition?: unknown;
   order?: unknown;
 };
