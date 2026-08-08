@@ -14,6 +14,10 @@ import {
 } from "lucide-react";
 import { IconPicker } from "@/components/icons/icon-picker";
 import {
+  buildManagedPostInternalLinks,
+  ManagedPostInternalLinksNotice,
+} from "@/components/telegram/managed-post-internal-links-notice";
+import {
   TelegramTextEditor,
   type TelegramTextEditorHandle,
 } from "@/components/telegram/telegram-text-editor";
@@ -36,6 +40,24 @@ import { telegramPostKeys } from "@/lib/query-keys";
 import { useAppToast } from "@/providers/toast-provider";
 
 const noGroupValue = "__no_group__";
+const gptImportPromptFormat = `Ask GPT to return only a JSON array. Each array item is one post:
+
+[
+  {
+    "title": "Post title",
+    "text": "Telegram-ready post text",
+    "icon": "🔥",
+    "urls": ["https://example.com/1.png"],
+    "groupPosition": null,
+    "imageSearch": [
+      "mountain rest",
+      "quiet lake",
+      "empty viewpoint"
+    ]
+  }
+]
+
+Required: \`title\`. Optional: \`text\`, \`icon\`, \`urls\`, \`groupPosition\`, \`imageSearch\`. \`imageSearch\` is shown only in this import preview for easy copying and is not saved to posts. Put the whole post body in \`text\`; do not split one post into several objects. CSV/TSV still works, including multiline quoted text, but JSON is safer for generated posts.`;
 
 function apiErrorMessage(error: unknown, fallback: string) {
   const apiError = error as {
@@ -313,6 +335,24 @@ export function editableRowToImportRow(
   };
 }
 
+export function editableRowsToJsonContent(rows: EditableImportRow[]) {
+  return JSON.stringify(
+    rows.map((row) => {
+      const imageSearch = importImageSearchToArray(row.imageSearchText);
+      return {
+        title: row.title,
+        text: row.text,
+        icon: row.icon,
+        urls: urlsTextToArray(row.urlsText),
+        groupPosition: row.groupPosition || null,
+        ...(imageSearch.length ? { imageSearch } : {}),
+      };
+    }),
+    null,
+    2,
+  );
+}
+
 function parseJsonRows(content: string): ParsedImportRow[] | null {
   const trimmed = content.trim();
   if (!trimmed) return [];
@@ -398,12 +438,14 @@ export function ManagedPostsImportModal({
   channelId,
   channelTitle,
   channelPhotoUrl,
+  channelTelegramChatId,
 }: {
   open: boolean;
   onClose: () => void;
   channelId: string;
   channelTitle?: string;
   channelPhotoUrl?: string | null;
+  channelTelegramChatId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const { pushToast, startOperation } = useAppToast();
@@ -415,6 +457,9 @@ export function ManagedPostsImportModal({
   const [importing, setImporting] = useState(false);
   const [editableRows, setEditableRows] = useState<EditableImportRow[]>([]);
   const [selectedRowIndex, setSelectedRowIndex] = useState(0);
+  const [highlightedInternalLinkTargetId, setHighlightedInternalLinkTargetId] =
+    useState<string | null>(null);
+  const [highlightRequestKey, setHighlightRequestKey] = useState(0);
   const [result, setResult] = useState<TelegramManagedPostsImportResult | null>(
     null,
   );
@@ -423,6 +468,12 @@ export function ManagedPostsImportModal({
     queryKey: telegramPostKeys.postGroups(channelId),
     queryFn: () =>
       telegramChannelsApi.postGroups({ telegramChannelId: channelId }),
+    enabled: open && Boolean(channelId),
+  });
+
+  const managedPosts = useQuery({
+    queryKey: telegramPostKeys.managed(channelId),
+    queryFn: () => telegramChannelsApi.managedPosts(channelId),
     enabled: open && Boolean(channelId),
   });
 
@@ -470,6 +521,13 @@ export function ManagedPostsImportModal({
         : [],
     [selectedRow],
   );
+  const selectedOutgoingInternalLinks = useMemo(
+    () =>
+      selectedRow
+        ? buildManagedPostInternalLinks(selectedRow.text, managedPosts.data)
+        : [],
+    [managedPosts.data, selectedRow],
+  );
   const canImport = Boolean(channelId) && importRows.length > 0;
   const resultSummary = summarizeResult(result);
   const skippedRows =
@@ -480,11 +538,14 @@ export function ManagedPostsImportModal({
     patch: Partial<EditableImportRow>,
   ) => {
     setResult(null);
-    setEditableRows((rows) =>
-      rows.map((row, rowIndex) =>
+    setEditableRows((rows) => {
+      const nextRows = rows.map((row, rowIndex) =>
         rowIndex === index ? { ...row, ...patch } : row,
-      ),
-    );
+      );
+      setContent(editableRowsToJsonContent(nextRows));
+      setFileName(null);
+      return nextRows;
+    });
   };
 
   const applyImportContent = (
@@ -588,42 +649,40 @@ export function ManagedPostsImportModal({
     }
   };
 
+  const copyPromptFormat = async () => {
+    try {
+      await navigator.clipboard.writeText(gptImportPromptFormat);
+      pushToast("GPT prompt format copied.", "success");
+    } catch {
+      pushToast("Could not copy GPT prompt format.", "error");
+    }
+  };
+
+  const highlightInternalLinkTarget = (targetId: string) => {
+    setHighlightedInternalLinkTargetId(targetId);
+    setHighlightRequestKey((current) => current + 1);
+  };
+
   return (
     <Modal open={open} onClose={close} title="Import managed posts" size="xl">
       <div className="space-y-4">
-        <div className="rounded-lg border border-blue-800/60 bg-blue-950/20 p-3 text-sm text-blue-100">
-          <div className="mb-2 flex items-center gap-2 font-medium">
-            <ClipboardList size={16} />
-            GPT prompt format
+        <button
+          type="button"
+          onClick={() => {
+            void copyPromptFormat();
+          }}
+          className="group flex w-full items-center justify-between gap-3 rounded-lg border border-blue-800/60 bg-blue-950/20 p-2.5 text-left text-blue-100 transition hover:border-blue-600 hover:bg-blue-950/35"
+          title="Copy GPT prompt format"
+        >
+          <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
+            <ClipboardList size={15} className="shrink-0" />
+            <span className="truncate">GPT prompt format</span>
           </div>
-          <p className="text-blue-100/90">
-            Ask GPT to return only a JSON array. Each array item is one post:
-          </p>
-          <pre className="mt-2 overflow-auto rounded-md bg-neutral-950 p-2 text-xs text-neutral-200">
-            {`[
-  {
-    "title": "Post title",
-    "text": "Telegram-ready post text",
-    "icon": "🔥",
-    "urls": ["https://example.com/1.png"],
-    "groupPosition": null,
-    "imageSearch": [
-      "mountain rest",
-      "quiet lake",
-      "empty viewpoint"
-    ]
-  }
-]`}
-          </pre>
-          <p className="mt-2 text-xs text-blue-100/80">
-            Required: `title`. Optional: `text`, `icon`, `urls`,
-            `groupPosition`, `imageSearch`. `imageSearch` is shown only in this
-            import preview for easy copying and is not saved to posts. Put the
-            whole post body in `text`; do not split one post into several
-            objects. CSV/TSV still works, including multiline quoted text, but
-            JSON is safer for generated posts.
-          </p>
-        </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-blue-800/60 bg-neutral-950/70 px-2 py-1 text-[11px] text-blue-100/80 group-hover:text-white">
+            <Copy size={12} />
+            Copy
+          </span>
+        </button>
 
         <FormField label="Post group">
           <CustomSelect
@@ -799,6 +858,12 @@ export function ManagedPostsImportModal({
                       disabled={importing}
                       channelId={channelId}
                       enableInternalPostLinks
+                      internalLinkUsage="edit"
+                      highlightInternalLinkTargetId={
+                        highlightedInternalLinkTargetId
+                      }
+                      highlightRequestKey={highlightRequestKey}
+                      availableInternalPosts={managedPosts.data || []}
                       onChange={(nextText) =>
                         updateEditableRow(selectedRowIndex, {
                           text: nextText,
@@ -806,6 +871,11 @@ export function ManagedPostsImportModal({
                       }
                     />
                   </FormField>
+                  <ManagedPostInternalLinksNotice
+                    links={selectedOutgoingInternalLinks}
+                    channelTelegramChatId={channelTelegramChatId}
+                    onHighlightTarget={highlightInternalLinkTarget}
+                  />
                   <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_130px]">
                     <FormField label="Image URLs">
                       <Textarea

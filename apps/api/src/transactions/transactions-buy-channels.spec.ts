@@ -71,6 +71,34 @@ describe('TransactionsService buy channels', () => {
     );
   });
 
+  it('does not sync purchase channel links for regular transaction categories', async () => {
+    const { prisma, service } = makeService();
+    prisma.transactionCategory.findFirst.mockResolvedValue({
+      id: 'cat-expense',
+      type: 'expense',
+      key: null,
+      name: 'QA Expense',
+    });
+    prisma.$queryRaw.mockResolvedValue([]);
+
+    const result = await service.create('user-1', {
+      accountId: 'account-1',
+      type: 'expense',
+      amount: 12.34,
+      exchangeRateToPrimary: 1,
+      categoryId: 'cat-expense',
+      date: '2026-08-08',
+    });
+
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'tx-1',
+        purchasedTelegramChannel: null,
+      }),
+    );
+  });
+
   it('links the created transaction to the selected telegram channel', async () => {
     const { prisma, service } = makeService();
     prisma.transactionCategory.findFirst.mockResolvedValue({

@@ -48,6 +48,11 @@ import { IconPicker } from "@/components/icons/icon-picker";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
 import { ManagedPostsImportModal } from "@/components/telegram/managed-posts-import-modal";
+import {
+  buildManagedPostInternalLinks,
+  hasBlockingManagedPostInternalLinks,
+  ManagedPostInternalLinksNotice,
+} from "@/components/telegram/managed-post-internal-links-notice";
 import { TelegramImageUpload } from "@/components/telegram/telegram-image-upload";
 import {
   TelegramTextEditor,
@@ -674,6 +679,7 @@ export function TelegramPostsPageClient({
           channelId={channel.id}
           channelTitle={channel.title}
           channelPhotoUrl={channel.photoUrl}
+          channelTelegramChatId={channel.telegramChatId}
         />
       ) : null}
       {channels.isLoading ? <LoadingState /> : null}
@@ -1122,33 +1128,10 @@ function TelegramPostWorkspace({
   const effectivePublishingMode: PublishingMode = publishedPostNeedsRepublish
     ? "publish"
     : mode;
-  const outgoingInternalLinks = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        targetId: string;
-        labels: string[];
-        target?: TelegramManagedPost;
-      }
-    >();
-    for (const match of text.matchAll(
-      /\[([^\]\n]+)\]\(tg-post:([a-zA-Z0-9_-]+)\)/g,
-    )) {
-      const label = match[1]?.trim() || match[2];
-      const targetId = match[2];
-      const existing = grouped.get(targetId);
-      if (existing) {
-        if (!existing.labels.includes(label)) existing.labels.push(label);
-        continue;
-      }
-      grouped.set(targetId, {
-        targetId,
-        labels: [label],
-        target: posts.data?.find((post) => post.id === targetId),
-      });
-    }
-    return [...grouped.values()];
-  }, [posts.data, text]);
+  const outgoingInternalLinks = useMemo(
+    () => buildManagedPostInternalLinks(text, posts.data),
+    [posts.data, text],
+  );
   const internalLinkTargetIds = useMemo(
     () => outgoingInternalLinks.map((link) => link.targetId),
     [outgoingInternalLinks],
@@ -1169,39 +1152,12 @@ function TelegramPostWorkspace({
       return linkedIds.includes(editing.id);
     });
   }, [editing, posts.data]);
-  const unresolvedInternalLinkTargets = internalLinkTargetIds
-    .map((targetId) => {
-      const target = posts.data?.find((post) => post.id === targetId);
-      const ready =
-        target?.status === "PUBLISHED" &&
-        target.telegramRemoteStatus === "PUBLISHED" &&
-        target.telegramMessageIds.length > 0 &&
-        Boolean(channelTelegramChatId) &&
-        !target.lastError;
-      return ready ? null : { id: targetId, post: target };
-    })
-    .filter(
-      (
-        target,
-      ): target is {
-        id: string;
-        post: TelegramManagedPost | undefined;
-      } => Boolean(target),
-    );
-  const resolvedInternalLinkTargets = outgoingInternalLinks.filter((link) => {
-    const target = link.target;
-    return Boolean(
-      target &&
-      target.status === "PUBLISHED" &&
-      target.telegramRemoteStatus === "PUBLISHED" &&
-      target.telegramMessageIds.length > 0 &&
-      channelTelegramChatId &&
-      !target.lastError,
-    );
-  });
   const dependencyPublishBlocked =
     effectivePublishingMode !== "draft" &&
-    unresolvedInternalLinkTargets.length > 0;
+    hasBlockingManagedPostInternalLinks(
+      outgoingInternalLinks,
+      channelTelegramChatId,
+    );
   const hasValidScheduleTime = isValidTimeInputValue(scheduleTime);
   const selectedTimePostId =
     channelTimePosts.find((timePost) => timePost.time === scheduleTime)?.id ||
@@ -4894,145 +4850,12 @@ function TelegramPostWorkspace({
                 availableInternalPosts={posts.data || []}
               />
             </FormField>
-            {outgoingInternalLinks.length ? (
-              <div className="rounded-lg border border-amber-700/70 bg-amber-950/20 px-3 py-2.5 text-amber-200">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">
-                      {unresolvedInternalLinkTargets.length
-                        ? "Publishing is blocked by linked posts"
-                        : "Internal linked posts are ready"}
-                    </p>
-                    <p className="mt-0.5 text-xs text-amber-300/80">
-                      {unresolvedInternalLinkTargets.length
-                        ? "Publish these posts or attach their Telegram links first:"
-                        : "All linked posts are already ready for publishing."}
-                    </p>
-                    {unresolvedInternalLinkTargets.length ? (
-                      <div className="mt-3">
-                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-300/75">
-                          Blocking
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {unresolvedInternalLinkTargets.map((target) => (
-                            <span
-                              key={target.id}
-                              className="relative inline-flex group"
-                            >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  highlightInternalLinkTarget(target.id)
-                                }
-                                onDoubleClick={(event) => {
-                                  if (target.post) {
-                                    openPostWithModifier(target.post, event);
-                                  }
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-xs transition hover:border-amber-600 hover:bg-amber-900/40"
-                              >
-                                {target.post?.icon ? (
-                                  <PostIcon
-                                    iconId={target.post.icon}
-                                    icon={target.post.iconPresentation}
-                                    label={target.post.title}
-                                    bare
-                                    size="xs"
-                                  />
-                                ) : (
-                                  <span aria-hidden="true">📝</span>
-                                )}
-                                <span>
-                                  {target.post?.title ||
-                                    `Missing post ${target.id}`}
-                                </span>
-                                {target.post ? (
-                                  <span className="text-amber-400/70">
-                                    {target.post.status === "PUBLISHED" &&
-                                    (target.post.telegramRemoteStatus ===
-                                      "BROKEN" ||
-                                      target.post.telegramRemoteStatus ===
-                                        "MISSING" ||
-                                      target.post.lastError)
-                                      ? "link broken"
-                                      : target.post.status.toLowerCase()}
-                                  </span>
-                                ) : null}
-                              </button>
-                              <TooltipBubble
-                                side="top"
-                                align="center"
-                                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
-                              >
-                                Click to jump to this link in the text.
-                                Double-click to open the linked post.
-                                Cmd/Ctrl-click opens it in a new tab.
-                              </TooltipBubble>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {resolvedInternalLinkTargets.length ? (
-                      <div className="mt-3">
-                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-300/75">
-                          Ready
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {resolvedInternalLinkTargets.map((target) => (
-                            <span
-                              key={target.targetId}
-                              className="relative inline-flex group"
-                            >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  highlightInternalLinkTarget(target.targetId)
-                                }
-                                onDoubleClick={(event) => {
-                                  if (target.target) {
-                                    openPostWithModifier(target.target, event);
-                                  }
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/70 bg-emerald-950/30 px-2 py-1 text-xs text-emerald-100 transition hover:border-emerald-600 hover:bg-emerald-900/30"
-                              >
-                                {target.target?.icon ? (
-                                  <PostIcon
-                                    iconId={target.target.icon}
-                                    icon={target.target.iconPresentation}
-                                    label={target.target.title}
-                                    bare
-                                    size="xs"
-                                  />
-                                ) : (
-                                  <span aria-hidden="true">📝</span>
-                                )}
-                                <span>
-                                  {target.target?.title || target.targetId}
-                                </span>
-                                <span className="text-emerald-300/80">
-                                  published
-                                </span>
-                              </button>
-                              <TooltipBubble
-                                side="top"
-                                align="center"
-                                className="max-w-64 px-2.5 py-1.5 text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100"
-                              >
-                                Click to jump to this link in the text.
-                                Double-click to open the linked post.
-                                Cmd/Ctrl-click opens it in a new tab.
-                              </TooltipBubble>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            <ManagedPostInternalLinksNotice
+              links={outgoingInternalLinks}
+              channelTelegramChatId={channelTelegramChatId}
+              onHighlightTarget={highlightInternalLinkTarget}
+              onOpenPost={openPostWithModifier}
+            />
             {!isPublished || imageUrls.length ? (
               <div className="space-y-2">
                 <TelegramImageUpload

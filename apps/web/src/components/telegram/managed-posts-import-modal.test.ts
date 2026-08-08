@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  editableRowsToJsonContent,
   editableRowToImportRow,
   normalizeImportRows,
   rowToEditable,
 } from "@/components/telegram/managed-posts-import-modal";
+import {
+  buildManagedPostInternalLinks,
+  hasBlockingManagedPostInternalLinks,
+} from "@/components/telegram/managed-post-internal-links-notice";
+import type { TelegramManagedPost } from "@/lib/api";
 
 describe("managed posts import parsing", () => {
   it("keeps one JSON object as one editable post with emoji and images", () => {
@@ -69,5 +75,67 @@ describe("managed posts import parsing", () => {
 
     const importRow = editableRowToImportRow(editable);
     expect(importRow).not.toHaveProperty("imageSearch");
+  });
+
+  it("serializes edited preview rows back to GPT-friendly JSON", () => {
+    const editable = rowToEditable({
+      title: "Original",
+      text: "Before",
+      icon: "🌗",
+      urls: ["https://cdn.example.test/before.png"],
+      imageSearch: ["old search"],
+      groupPosition: null,
+    });
+
+    const json = editableRowsToJsonContent([
+      {
+        ...editable,
+        title: "Edited",
+        text: "After",
+        urlsText: "https://pinterest.example.test/image.jpg",
+        imageSearchText: "new pinterest query\nquiet window",
+      },
+    ]);
+
+    expect(JSON.parse(json)).toEqual([
+      {
+        title: "Edited",
+        text: "After",
+        icon: "🌗",
+        urls: ["https://pinterest.example.test/image.jpg"],
+        groupPosition: null,
+        imageSearch: ["new pinterest query", "quiet window"],
+      },
+    ]);
+  });
+
+  it("detects blocking internal post links for import preview rows", () => {
+    const publishedPost = {
+      id: "ready-post",
+      title: "Ready post",
+      status: "PUBLISHED",
+      telegramRemoteStatus: "PUBLISHED",
+      telegramMessageIds: ["42"],
+      lastError: null,
+    } as unknown as TelegramManagedPost;
+    const draftPost = {
+      id: "draft-post",
+      title: "Draft post",
+      status: "DRAFT",
+      telegramRemoteStatus: null,
+      telegramMessageIds: [],
+      lastError: null,
+    } as unknown as TelegramManagedPost;
+
+    const links = buildManagedPostInternalLinks(
+      "[Ready](tg-post:ready-post) and [Draft](tg-post:draft-post)",
+      [publishedPost, draftPost],
+    );
+
+    expect(links.map((link) => link.targetId)).toEqual([
+      "ready-post",
+      "draft-post",
+    ]);
+    expect(hasBlockingManagedPostInternalLinks(links, "12345")).toBe(true);
   });
 });

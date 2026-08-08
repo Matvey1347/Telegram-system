@@ -663,12 +663,14 @@ export class TransactionsService {
           },
         },
       });
-      await this.syncPurchaseChannelLink(
-        tx,
-        workspaceId,
-        transaction.id,
-        purchaseChannel?.id ?? null,
-      );
+      if (purchaseChannel?.id) {
+        await this.syncPurchaseChannelLink(
+          tx,
+          workspaceId,
+          transaction.id,
+          purchaseChannel.id,
+        );
+      }
       return transaction;
     });
     const [enriched] = await this.attachPurchasedTelegramChannels(workspaceId, [
