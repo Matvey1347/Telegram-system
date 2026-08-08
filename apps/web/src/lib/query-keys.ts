@@ -27,7 +27,12 @@ export const dashboardKeys = {
     dateTo?: string | null,
   ) =>
     rangeMode
-      ? (["dashboard-summary", rangeMode, dateFrom ?? null, dateTo ?? null] as const)
+      ? ([
+          "dashboard-summary",
+          rangeMode,
+          dateFrom ?? null,
+          dateTo ?? null,
+        ] as const)
       : (["dashboard-summary"] as const),
 };
 
@@ -61,7 +66,13 @@ export const telegramChannelKeys = {
     pageSize: number,
     search: string,
   ) =>
-    ["telegram-channel-invite-links", channelId, page, pageSize, search] as const,
+    [
+      "telegram-channel-invite-links",
+      channelId,
+      page,
+      pageSize,
+      search,
+    ] as const,
   sources: () => ["telegram-channel-sources"] as const,
   sourceChannels: () => ["telegram-source-channels"] as const,
   publishingCapabilities: () => ["telegram-publishing-capabilities"] as const,
@@ -72,11 +83,13 @@ export const telegramChannelKeys = {
     page: number,
     pageSize: number,
     search: string,
-  ) => ["telegram-channel-campaigns", channelId, page, pageSize, search] as const,
+  ) =>
+    ["telegram-channel-campaigns", channelId, page, pageSize, search] as const,
 };
 
 export const telegramPostKeys = {
-  managed: (channelId: string) => ["telegram-managed-posts", channelId] as const,
+  managed: (channelId: string) =>
+    ["telegram-managed-posts", channelId] as const,
   managedCalendar: (channelId: string) =>
     ["telegram-managed-posts-calendar", channelId] as const,
   plannerFormats: (channelId: string) =>
@@ -115,7 +128,14 @@ export const adCampaignKeys = {
 
 export const networkKeys = {
   list: () => ["telegram-channel-networks"] as const,
-  detail: (networkId: string) => ["telegram-channel-network", networkId] as const,
+  detail: (networkId: string) =>
+    ["telegram-channel-network", networkId] as const,
+};
+
+export const scheduledTaskKeys = {
+  root: ["scheduled-tasks"] as const,
+  list: () => ["scheduled-tasks"] as const,
+  runs: (taskKey: string) => ["scheduled-tasks", taskKey, "runs"] as const,
 };
 
 export const memberKeys = workspaceKeys;

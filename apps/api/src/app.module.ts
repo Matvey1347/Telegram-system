@@ -34,6 +34,7 @@ import { RequestContextMiddleware } from './common/request-context/request-conte
 import { ApplicationLogsModule } from './application-logs/application-logs.module';
 import { StreamModule } from './common/stream/stream.module';
 import { TelegramAdSalesModule } from './telegram-ad-sales/telegram-ad-sales.module';
+import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { TelegramAdSalesModule } from './telegram-ad-sales/telegram-ad-sales.mod
     IconsModule,
     PromptNotesModule,
     TelegramAdSalesModule,
+    ScheduledTasksModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: ResponseCacheInterceptor }],

@@ -357,6 +357,27 @@ enum ApplicationLogKind {
   audit
 }
 
+enum ScheduledTaskScope {
+  WORKSPACE_OPERATION
+  SYSTEM_MAINTENANCE
+}
+
+enum ScheduledTaskTrigger {
+  SCHEDULE
+  MANUAL
+}
+
+enum ScheduledTaskRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum ScheduledTaskNotificationChannel {
+  SYSTEM_TELEGRAM_BOT
+}
+
 model User {
   id                                        String                                @id @default(cuid())
   email                                     String                                @unique
@@ -457,6 +478,9 @@ model Workspace {
   icons                                  Icon[]
   promptNotes                            PromptNote[]
   applicationLogs                        ApplicationLog[]
+  scheduledTaskConfigs                   ScheduledTaskConfig[]
+  scheduledTaskRuns                      ScheduledTaskRun[]
+  scheduledTaskLeases                    ScheduledTaskLease[]
   avatarIcon                             Icon?                                   @relation("WorkspaceAvatarIcon", fields: [avatarIconId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
@@ -2021,6 +2045,66 @@ model DailyAnalyticsSyncRun {
   @@index([workspaceId, startedAt])
   @@index([status])
   @@index([source])
+}
+
+model ScheduledTaskConfig {
+  id                         String                           @id @default(cuid())
+  workspaceId                String?
+  taskKey                    String
+  scope                      ScheduledTaskScope
+  lockKey                    String                           @unique
+  enabled                    Boolean                          @default(true)
+  schedule                   Json
+  notificationChannel        ScheduledTaskNotificationChannel @default(SYSTEM_TELEGRAM_BOT)
+  notifyOnSuccess            Boolean                          @default(false)
+  notifyOnFailure            Boolean                          @default(false)
+  lastScheduledEvaluationAt  DateTime?
+  createdAt                  DateTime                         @default(now())
+  updatedAt                  DateTime                         @updatedAt
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, taskKey])
+  @@index([taskKey])
+  @@index([scope])
+  @@index([enabled])
+}
+
+model ScheduledTaskRun {
+  id            String                 @id @default(cuid())
+  taskKey       String
+  workspaceId   String?
+  trigger       ScheduledTaskTrigger
+  status        ScheduledTaskRunStatus @default(RUNNING)
+  startedAt     DateTime               @default(now())
+  finishedAt    DateTime?
+  durationMs    Int?
+  resultSummary String?
+  error         String?
+  createdAt     DateTime               @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, taskKey, startedAt])
+  @@index([taskKey, startedAt])
+  @@index([status])
+  @@index([trigger])
+}
+
+model ScheduledTaskLease {
+  id          String   @id @default(cuid())
+  lockKey     String   @unique
+  taskKey     String
+  workspaceId String?
+  ownerId     String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, taskKey])
+  @@index([expiresAt])
 }
 
 model ApplicationLog {

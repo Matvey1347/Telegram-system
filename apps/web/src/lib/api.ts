@@ -23,6 +23,7 @@ import { createMarketingApi } from "./marketing-api";
 import { createPromptNotesApi } from "./prompt-notes-api";
 import { createTelegramSourcesApi } from "./telegram-sources-api";
 import { createTelegramAdSalesApi } from "./telegram-ad-sales-api";
+import { createScheduledTasksApi } from "./scheduled-tasks-api";
 import { createWorkspaceApi } from "./workspace-api";
 import {
   clearAccessToken,
@@ -32,6 +33,13 @@ import {
 } from "./auth";
 
 export type { TelegramAdCrmAdvertiserListItem } from "@telegram-system/shared";
+export type {
+  ScheduledTaskListResponse,
+  ScheduledTaskRunSummary,
+  ScheduledTaskSchedule,
+  ScheduledTaskView,
+  UpdateScheduledTaskPayload,
+} from "@telegram-system/shared";
 
 function resolveApiBaseUrl() {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
@@ -747,6 +755,8 @@ export const telegramAdSalesApi = createTelegramAdSalesApi({
   getPaginated,
   silentFeedbackConfig,
 });
+
+export const scheduledTasksApi = createScheduledTasksApi(api);
 
 export async function getDashboardSummary(params?: {
   dateFrom?: string;

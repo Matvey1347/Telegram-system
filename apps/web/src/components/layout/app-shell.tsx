@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { PropsWithChildren, useEffect, useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { logout } from '@/lib/auth';
+import Link from "next/link";
+import { PropsWithChildren, useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { logout } from "@/lib/auth";
 import {
   accountApi,
   globalSearchApi,
@@ -12,13 +12,16 @@ import {
   withFreshApiReads,
   workspacesApi,
   type GlobalSearchResult,
-} from '@/lib/api';
-import { runProgressSequence } from '@/lib/progress';
-import { clearPersistedQueryCache, isWorkspaceScopedQuery } from '@/providers/query-provider';
-import { useAppToast } from '@/providers/toast-provider';
-import { CustomSelect } from '@/components/ui/primitives';
-import { IconPicker } from '@/components/icons/icon-picker';
-import { IconAvatar } from '@/components/icons/icon-avatar';
+} from "@/lib/api";
+import { runProgressSequence } from "@/lib/progress";
+import {
+  clearPersistedQueryCache,
+  isWorkspaceScopedQuery,
+} from "@/providers/query-provider";
+import { useAppToast } from "@/providers/toast-provider";
+import { CustomSelect } from "@/components/ui/primitives";
+import { IconPicker } from "@/components/icons/icon-picker";
+import { IconAvatar } from "@/components/icons/icon-avatar";
 import {
   Bug,
   BriefcaseBusiness,
@@ -40,82 +43,102 @@ import {
   RadioTower,
   ReceiptText,
   Settings,
+  Clock3,
   Target,
   X,
-} from 'lucide-react';
+} from "lucide-react";
 
-const dashboardItem = { label: 'Dashboard', href: '/', icon: Gauge } as const;
+const dashboardItem = { label: "Dashboard", href: "/", icon: Gauge } as const;
 
 export function AppShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const qc = useQueryClient();
   const { pushToast, setProgress, clearProgress } = useAppToast();
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceIconId, setWorkspaceIconId] = useState<string | null>(null);
-  const [globalSearch, setGlobalSearch] = useState('');
-  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState('');
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem('selected-workspace-id') ?? '';
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("selected-workspace-id") ?? "";
   });
-  const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: workspacesApi.list });
-  const { data: currentAccount } = useQuery({ queryKey: ['account-me'], queryFn: accountApi.me });
+  const { data: workspaces } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: workspacesApi.list,
+  });
+  const { data: currentAccount } = useQuery({
+    queryKey: ["account-me"],
+    queryFn: accountApi.me,
+  });
   const { data: searchResults = [], isFetching: searchFetching } = useQuery({
-    queryKey: ['global-search', debouncedGlobalSearch],
+    queryKey: ["global-search", debouncedGlobalSearch],
     queryFn: () => globalSearchApi.search(debouncedGlobalSearch),
     enabled: debouncedGlobalSearch.trim().length >= 2,
   });
   const createWorkspace = useMutation({
-    mutationFn: async (payload: { name: string; avatarIconId?: string | null }) => {
-      const selectedIcon = payload.avatarIconId ? await iconsApi.get(payload.avatarIconId).catch(() => null) : null;
+    mutationFn: async (payload: {
+      name: string;
+      avatarIconId?: string | null;
+    }) => {
+      const selectedIcon = payload.avatarIconId
+        ? await iconsApi.get(payload.avatarIconId).catch(() => null)
+        : null;
       const created = await workspacesApi.create({ name: payload.name });
       if (!selectedIcon) return created;
 
-      localStorage.setItem('selected-workspace-id', created.id);
+      localStorage.setItem("selected-workspace-id", created.id);
       setSelectedWorkspaceId(created.id);
 
       const clonedIcon =
-        selectedIcon.type === 'emoji'
-          ? await iconsApi.createEmoji({
-              name: selectedIcon.name,
-              emoji: selectedIcon.emoji ?? '',
-            }).catch(() => null)
-          : selectedIcon.imageUrl
-            ? await iconsApi.createCustom({
+        selectedIcon.type === "emoji"
+          ? await iconsApi
+              .createEmoji({
                 name: selectedIcon.name,
-                imageUrl: selectedIcon.imageUrl,
-              }).catch(() => null)
+                emoji: selectedIcon.emoji ?? "",
+              })
+              .catch(() => null)
+          : selectedIcon.imageUrl
+            ? await iconsApi
+                .createCustom({
+                  name: selectedIcon.name,
+                  imageUrl: selectedIcon.imageUrl,
+                })
+                .catch(() => null)
             : null;
 
       if (!clonedIcon) return created;
 
       try {
-        return await workspacesApi.update(created.id, { avatarIconId: clonedIcon.id });
+        return await workspacesApi.update(created.id, {
+          avatarIconId: clonedIcon.id,
+        });
       } catch {
         return created;
       }
     },
     onSuccess: (workspace) => {
-      localStorage.setItem('selected-workspace-id', workspace.id);
+      localStorage.setItem("selected-workspace-id", workspace.id);
       setSelectedWorkspaceId(workspace.id);
-      setWorkspaceName('');
+      setWorkspaceName("");
       setWorkspaceIconId(null);
       setCreatingWorkspace(false);
       clearPersistedQueryCache();
-      qc.removeQueries({ predicate: (query) => isWorkspaceScopedQuery(query.queryKey) });
-      qc.invalidateQueries({ queryKey: ['workspaces'] });
-      qc.invalidateQueries({ queryKey: ['auth', 'me'] });
+      qc.removeQueries({
+        predicate: (query) => isWorkspaceScopedQuery(query.queryKey),
+      });
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
   });
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const defaults = { finance: false, telegram: false };
-    if (typeof window === 'undefined') return defaults;
+    if (typeof window === "undefined") return defaults;
     try {
-      const raw = localStorage.getItem('sidebar-open-groups');
+      const raw = localStorage.getItem("sidebar-open-groups");
       if (!raw) return defaults;
       return { ...defaults, ...(JSON.parse(raw) as Record<string, boolean>) };
     } catch {
@@ -124,32 +147,39 @@ export function AppShell({ children }: PropsWithChildren) {
   });
 
   useEffect(() => {
-    localStorage.setItem('sidebar-open-groups', JSON.stringify(openGroups));
+    localStorage.setItem("sidebar-open-groups", JSON.stringify(openGroups));
   }, [openGroups]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedGlobalSearch(globalSearch.trim()), 220);
+    const timeout = window.setTimeout(
+      () => setDebouncedGlobalSearch(globalSearch.trim()),
+      220,
+    );
     return () => window.clearTimeout(timeout);
   }, [globalSearch]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMobileMenuOpen(false);
+      if (event.key === "Escape") setMobileMenuOpen(false);
     };
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKeyDown);
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
     return () => {
-      document.body.style.overflow = '';
-      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, [mobileMenuOpen]);
 
   useEffect(() => {
     if (!workspaces?.length) return;
-    if (selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
+    if (
+      selectedWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === selectedWorkspaceId)
+    )
+      return;
     const nextWorkspaceId = workspaces[0].id;
-    localStorage.setItem('selected-workspace-id', nextWorkspaceId);
+    localStorage.setItem("selected-workspace-id", nextWorkspaceId);
     // Workspace list supplies the initial selected workspace fallback.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedWorkspaceId(nextWorkspaceId);
@@ -171,12 +201,12 @@ export function AppShell({ children }: PropsWithChildren) {
 
   const switchWorkspace = async (workspaceId: string) => {
     if (!workspaceId || workspaceId === activeWorkspaceId) return;
-    localStorage.setItem('selected-workspace-id', workspaceId);
+    localStorage.setItem("selected-workspace-id", workspaceId);
     setSelectedWorkspaceId(workspaceId);
     clearPersistedQueryCache();
     await resetWorkspaceQueries();
-    await qc.resetQueries({ queryKey: ['auth', 'me'] });
-    await qc.invalidateQueries({ queryKey: ['workspaces'] });
+    await qc.resetQueries({ queryKey: ["auth", "me"] });
+    await qc.invalidateQueries({ queryKey: ["workspaces"] });
   };
 
   const handleLogout = () => {
@@ -190,8 +220,8 @@ export function AppShell({ children }: PropsWithChildren) {
     const shouldRefreshQuery = (queryKey: readonly unknown[]) => {
       const [root] = queryKey;
       return (
-        root === 'auth' ||
-        root === 'workspaces' ||
+        root === "auth" ||
+        root === "workspaces" ||
         isWorkspaceScopedQuery(queryKey)
       );
     };
@@ -200,10 +230,10 @@ export function AppShell({ children }: PropsWithChildren) {
         runProgressSequence({
           api: { pushToast, setProgress, clearProgress },
           id: `global-refresh:${Date.now()}`,
-          title: 'Refreshing workspace',
+          title: "Refreshing workspace",
           steps: [
             {
-              message: 'Clearing cached workspace data',
+              message: "Clearing cached workspace data",
               run: async () => {
                 clearPersistedQueryCache();
                 qc.removeQueries({
@@ -214,30 +244,28 @@ export function AppShell({ children }: PropsWithChildren) {
               },
             },
             {
-              message: 'Marking visible workspace data stale',
+              message: "Marking visible workspace data stale",
               run: async () => {
-                await qc.invalidateQueries(
-                  {
-                    predicate: (query) => shouldRefreshQuery(query.queryKey),
-                    refetchType: 'none',
-                  },
-                );
+                await qc.invalidateQueries({
+                  predicate: (query) => shouldRefreshQuery(query.queryKey),
+                  refetchType: "none",
+                });
               },
             },
             {
-              message: 'Refetching visible page data',
+              message: "Refetching visible page data",
               run: async () => {
                 await qc.refetchQueries(
                   {
                     predicate: (query) => shouldRefreshQuery(query.queryKey),
-                    type: 'active',
+                    type: "active",
                   },
                   { throwOnError: true },
                 );
               },
             },
             {
-              message: 'Finalizing refreshed data',
+              message: "Finalizing refreshed data",
               run: async () => {
                 await Promise.resolve();
               },
@@ -245,9 +273,9 @@ export function AppShell({ children }: PropsWithChildren) {
           ],
         }),
       );
-      pushToast('Data refreshed from server.', 'success');
+      pushToast("Data refreshed from server.", "success");
     } catch {
-      pushToast('Failed to refresh data.', 'error');
+      pushToast("Failed to refresh data.", "error");
     } finally {
       setRefreshing(false);
     }
@@ -256,14 +284,14 @@ export function AppShell({ children }: PropsWithChildren) {
   const toggleGroup = (key: string) => {
     setOpenGroups((prev) => {
       const next = { ...prev, [key]: !prev[key] };
-      localStorage.setItem('sidebar-open-groups', JSON.stringify(next));
+      localStorage.setItem("sidebar-open-groups", JSON.stringify(next));
       return next;
     });
   };
   const settingsActive =
-    pathname === '/settings' || pathname === '/workspace-members';
-  const dashboardActive = pathname === '/';
-  const activeWorkspaceId = selectedWorkspaceId || workspaces?.[0]?.id || '';
+    pathname === "/settings" || pathname === "/workspace-members";
+  const dashboardActive = pathname === "/";
+  const activeWorkspaceId = selectedWorkspaceId || workspaces?.[0]?.id || "";
   const activeWorkspace = (workspaces ?? []).find(
     (workspace) => workspace.id === activeWorkspaceId,
   );
@@ -303,8 +331,9 @@ export function AppShell({ children }: PropsWithChildren) {
     const map: Record<string, boolean> = {};
     for (const group of groups) {
       map[group.key] =
-        group.key === 'finance'
-          ? pathname === '/finance' || group.children.some((item) => pathname === item.href)
+        group.key === "finance"
+          ? pathname === "/finance" ||
+            group.children.some((item) => pathname === item.href)
           : group.children.some((item) => pathname === item.href);
     }
     return map;
@@ -329,7 +358,7 @@ export function AppShell({ children }: PropsWithChildren) {
           aria-label="Refresh data"
           title="Refresh data"
         >
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+          <RefreshCw size={18} className={refreshing ? "animate-spin" : ""} />
         </button>
       </header>
       {mobileMenuOpen ? (
@@ -341,9 +370,10 @@ export function AppShell({ children }: PropsWithChildren) {
         />
       ) : null}
       <aside
-        className={`fixed left-0 top-0 z-40 flex h-[100dvh] w-[min(19rem,calc(100vw-1.25rem))] -translate-x-full flex-col border-r border-neutral-800 bg-neutral-950 p-4 shadow-2xl transition-transform duration-200 lg:z-30 lg:h-screen lg:w-64 lg:translate-x-0 lg:p-5 lg:shadow-none ${mobileMenuOpen ? 'translate-x-0' : ''}`}
+        className={`fixed left-0 top-0 z-40 flex h-[100dvh] w-[min(19rem,calc(100vw-1.25rem))] -translate-x-full flex-col border-r border-neutral-800 bg-neutral-950 p-4 shadow-2xl transition-transform duration-200 lg:z-30 lg:h-screen lg:w-64 lg:translate-x-0 lg:p-5 lg:shadow-none ${mobileMenuOpen ? "translate-x-0" : ""}`}
         onClickCapture={(event) => {
-          if ((event.target as HTMLElement).closest('a')) setMobileMenuOpen(false);
+          if ((event.target as HTMLElement).closest("a"))
+            setMobileMenuOpen(false);
         }}
       >
         <button
@@ -360,14 +390,19 @@ export function AppShell({ children }: PropsWithChildren) {
             <button
               type="button"
               onClick={() => void handleGlobalRefresh()}
-              className={`${mobileMenuOpen ? 'hidden' : 'flex'} h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 transition hover:bg-neutral-900 hover:text-white`}
+              className={`${mobileMenuOpen ? "hidden" : "flex"} h-9 w-9 items-center justify-center rounded-lg border border-neutral-800 text-neutral-300 transition hover:bg-neutral-900 hover:text-white`}
               aria-label="Refresh data"
               title="Refresh data"
             >
-              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              <RefreshCw
+                size={16}
+                className={refreshing ? "animate-spin" : ""}
+              />
             </button>
           </div>
-          <p className="mt-1 text-sm text-neutral-400">Finance, ads and analytics</p>
+          <p className="mt-1 text-sm text-neutral-400">
+            Finance, ads and analytics
+          </p>
         </div>
 
         <GlobalSearchBox
@@ -382,7 +417,14 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="mb-5 space-y-2 rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
           <div className="flex items-center justify-between gap-2 text-xs uppercase text-neutral-500">
             <span>Workspace</span>
-            <button type="button" onClick={() => setCreatingWorkspace((v) => !v)} className="rounded p-1 text-neutral-300 hover:bg-neutral-800" aria-label="Create workspace"><Plus size={14} /></button>
+            <button
+              type="button"
+              onClick={() => setCreatingWorkspace((v) => !v)}
+              className="rounded p-1 text-neutral-300 hover:bg-neutral-800"
+              aria-label="Create workspace"
+            >
+              <Plus size={14} />
+            </button>
           </div>
           <CustomSelect
             value={activeWorkspaceId}
@@ -391,8 +433,14 @@ export function AppShell({ children }: PropsWithChildren) {
             options={(workspaces ?? []).map((workspace) => ({
               value: workspace.id,
               label: `${workspace.name} (${workspace.role})`,
-              iconUrl: workspace.avatarPresentation?.type === 'image' ? workspace.avatarPresentation.url : undefined,
-              iconEmoji: workspace.avatarPresentation?.type === 'unicode' ? workspace.avatarPresentation.value : undefined,
+              iconUrl:
+                workspace.avatarPresentation?.type === "image"
+                  ? workspace.avatarPresentation.url
+                  : undefined,
+              iconEmoji:
+                workspace.avatarPresentation?.type === "unicode"
+                  ? workspace.avatarPresentation.value
+                  : undefined,
             }))}
           />
           {creatingWorkspace ? (
@@ -401,20 +449,41 @@ export function AppShell({ children }: PropsWithChildren) {
               onSubmit={(e) => {
                 e.preventDefault();
                 const name = workspaceName.trim();
-                if (name) createWorkspace.mutate({ name, avatarIconId: workspaceIconId });
+                if (name)
+                  createWorkspace.mutate({
+                    name,
+                    avatarIconId: workspaceIconId,
+                  });
               }}
             >
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <IconPicker compact iconId={workspaceIconId} onChange={setWorkspaceIconId} />
-                <input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} placeholder="Workspace name" className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm outline-none focus:border-neutral-500" />
+                <IconPicker
+                  compact
+                  iconId={workspaceIconId}
+                  onChange={setWorkspaceIconId}
+                />
+                <input
+                  value={workspaceName}
+                  onChange={(e) => setWorkspaceName(e.target.value)}
+                  placeholder="Workspace name"
+                  className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm outline-none focus:border-neutral-500"
+                />
               </div>
-              <button type="submit" className="rounded-md border border-neutral-700 px-2 text-sm text-neutral-200 hover:bg-neutral-800">Add</button>
+              <button
+                type="submit"
+                className="rounded-md border border-neutral-700 px-2 text-sm text-neutral-200 hover:bg-neutral-800"
+              >
+                Add
+              </button>
             </form>
           ) : null}
         </div>
 
         <nav className="app-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-          <Link href={dashboardItem.href} className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${dashboardActive ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}>
+          <Link
+            href={dashboardItem.href}
+            className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${dashboardActive ? "bg-neutral-800 text-white" : "text-neutral-300 hover:bg-neutral-900 hover:text-white"}`}
+          >
             <dashboardItem.icon size={16} />
             {dashboardItem.label}
           </Link>
@@ -425,12 +494,15 @@ export function AppShell({ children }: PropsWithChildren) {
             const isOpen = openGroups[group.key];
 
             return (
-              <div key={group.label} className="space-y-1 border-b border-neutral-900 pb-3 last:border-b-0">
+              <div
+                key={group.label}
+                className="space-y-1 border-b border-neutral-900 pb-3 last:border-b-0"
+              >
                 <div className="flex items-center gap-1 rounded-md px-1 py-1 hover:bg-neutral-900">
-                  {group.key === 'finance' ? (
+                  {group.key === "finance" ? (
                     <Link
                       href="/finance"
-                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-xs uppercase tracking-wide ${groupActive ? 'text-neutral-200' : 'text-neutral-500'} hover:text-white`}
+                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-xs uppercase tracking-wide ${groupActive ? "text-neutral-200" : "text-neutral-500"} hover:text-white`}
                     >
                       <GroupIcon size={14} />
                       <span className="truncate">{group.label}</span>
@@ -439,7 +511,7 @@ export function AppShell({ children }: PropsWithChildren) {
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.key)}
-                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-xs uppercase tracking-wide ${groupActive ? 'text-neutral-200' : 'text-neutral-500'} hover:text-white`}
+                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-xs uppercase tracking-wide ${groupActive ? "text-neutral-200" : "text-neutral-500"} hover:text-white`}
                     >
                       <GroupIcon size={14} />
                       <span className="truncate">{group.label}</span>
@@ -448,32 +520,54 @@ export function AppShell({ children }: PropsWithChildren) {
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
-                    className={`rounded-md p-1 ${groupActive ? 'text-neutral-200' : 'text-neutral-500'} hover:bg-neutral-800 hover:text-white`}
+                    className={`rounded-md p-1 ${groupActive ? "text-neutral-200" : "text-neutral-500"} hover:bg-neutral-800 hover:text-white`}
                     aria-label={`Toggle ${group.label}`}
                   >
-                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    {isOpen ? (
+                      <ChevronDown size={14} />
+                    ) : (
+                      <ChevronRight size={14} />
+                    )}
                   </button>
                 </div>
-                {isOpen ? group.children.map((item) => {
-                  const ItemIcon = item.icon;
-                  return (
-                    <Link key={item.href} href={item.href} className={`ml-1 flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${pathname === item.href ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}>
-                      <ItemIcon size={16} />
-                      {item.label}
-                    </Link>
-                  );
-                }) : null}
+                {isOpen
+                  ? group.children.map((item) => {
+                      const ItemIcon = item.icon;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={`ml-1 flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${pathname === item.href ? "bg-neutral-800 text-white" : "text-neutral-300 hover:bg-neutral-900 hover:text-white"}`}
+                        >
+                          <ItemIcon size={16} />
+                          {item.label}
+                        </Link>
+                      );
+                    })
+                  : null}
               </div>
             );
           })}
+
+          <Link
+            href="/scheduled-tasks"
+            className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+              pathname === "/scheduled-tasks"
+                ? "bg-neutral-800 text-white"
+                : "text-neutral-300 hover:bg-neutral-900 hover:text-white"
+            }`}
+          >
+            <Clock3 size={16} />
+            Scheduled Tasks
+          </Link>
 
           {canViewSystemLogs ? (
             <Link
               href="/system-logs"
               className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${
-                pathname === '/system-logs'
-                  ? 'bg-neutral-800 text-white'
-                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'
+                pathname === "/system-logs"
+                  ? "bg-neutral-800 text-white"
+                  : "text-neutral-300 hover:bg-neutral-900 hover:text-white"
               }`}
             >
               <Bug size={16} />
@@ -481,7 +575,10 @@ export function AppShell({ children }: PropsWithChildren) {
             </Link>
           ) : null}
 
-          <Link href="/settings" className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${settingsActive ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}>
+          <Link
+            href="/settings"
+            className={`flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm ${settingsActive ? "bg-neutral-800 text-white" : "text-neutral-300 hover:bg-neutral-900 hover:text-white"}`}
+          >
             <Settings size={16} />
             Settings
           </Link>
@@ -491,41 +588,65 @@ export function AppShell({ children }: PropsWithChildren) {
           <Link
             href="/account"
             className={`flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 transition ${
-              pathname === '/account'
-                ? 'border-blue-700/70 bg-blue-950/30'
-                : 'border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900'
+              pathname === "/account"
+                ? "border-blue-700/70 bg-blue-950/30"
+                : "border-neutral-800 bg-neutral-900/50 hover:border-neutral-700 hover:bg-neutral-900"
             }`}
           >
             <IconAvatar
               icon={currentAccount?.avatarPresentation}
-              label={currentAccount?.name || currentAccount?.email || 'User'}
+              label={currentAccount?.name || currentAccount?.email || "User"}
               size="md"
               className="!rounded-full"
             />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-white">
-                {currentAccount?.name || 'My profile'}
+                {currentAccount?.name || "My profile"}
               </span>
               <span className="block truncate text-xs text-neutral-500">
-                {currentAccount?.email || 'Account settings'}
+                {currentAccount?.email || "Account settings"}
               </span>
             </span>
             <ChevronRight size={16} className="shrink-0 text-neutral-500" />
           </Link>
-          <button onClick={handleLogout} className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"><LogOut size={16} /> Logout</button>
+          <button
+            onClick={handleLogout}
+            className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 hover:text-white"
+          >
+            <LogOut size={16} /> Logout
+          </button>
         </div>
       </aside>
-      <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5"><div key={activeWorkspaceId || 'no-workspace'} className="w-full min-w-0">{children}</div></main>
+      <main className="min-h-[calc(100dvh-3.5rem)] min-w-0 px-3 py-4 sm:px-4 sm:py-5 lg:ml-64 lg:min-h-screen lg:w-[calc(100%-16rem)] 2xl:px-5">
+        <div
+          key={activeWorkspaceId || "no-workspace"}
+          className="w-full min-w-0"
+        >
+          {children}
+        </div>
+      </main>
     </div>
   );
 }
 
 function SearchResultIcon({ result }: { result: GlobalSearchResult }) {
-  if (result.iconUrl) return <img src={result.iconUrl} alt="" className="h-7 w-7 shrink-0 rounded-md object-cover" />;
-  if (result.iconEmoji) return <span className="flex h-7 w-7 shrink-0 items-center justify-center text-base">{result.iconEmoji}</span>;
+  if (result.iconUrl)
+    return (
+      <img
+        src={result.iconUrl}
+        alt=""
+        className="h-7 w-7 shrink-0 rounded-md object-cover"
+      />
+    );
+  if (result.iconEmoji)
+    return (
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-base">
+        {result.iconEmoji}
+      </span>
+    );
   return (
     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-neutral-700 bg-neutral-800 text-xs font-semibold text-neutral-200">
-      {(result.title.trim()[0] || result.label.trim()[0] || '?').toUpperCase()}
+      {(result.title.trim()[0] || result.label.trim()[0] || "?").toUpperCase()}
     </span>
   );
 }
@@ -549,13 +670,16 @@ function GlobalSearchBox({
   return (
     <div className="relative mb-4">
       <div className="relative">
-        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+        <Search
+          size={15}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
+        />
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           onFocus={() => onFocusedChange(true)}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') onFocusedChange(false);
+            if (event.key === "Escape") onFocusedChange(false);
           }}
           placeholder="Search everything"
           className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 py-2 pl-9 pr-3 text-sm text-neutral-100 outline-none transition placeholder:text-neutral-500 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
@@ -566,7 +690,9 @@ function GlobalSearchBox({
           className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950 p-1 shadow-2xl"
           onMouseDown={(event) => event.preventDefault()}
         >
-          {isFetching ? <p className="px-3 py-2 text-sm text-neutral-400">Searching...</p> : null}
+          {isFetching ? (
+            <p className="px-3 py-2 text-sm text-neutral-400">Searching...</p>
+          ) : null}
           {!isFetching && results.length ? (
             <div className="space-y-1">
               {results.map((result) => (
@@ -575,14 +701,19 @@ function GlobalSearchBox({
                   href={result.href}
                   onClick={() => {
                     onFocusedChange(false);
-                    onQueryChange('');
+                    onQueryChange("");
                   }}
                   className="flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-sm text-neutral-200 hover:bg-neutral-900"
                 >
                   <SearchResultIcon result={result} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-white">{result.title}</span>
-                    <span className="block truncate text-xs text-neutral-500">{result.label}{result.subtitle ? ` · ${result.subtitle}` : ''}</span>
+                    <span className="block truncate font-medium text-white">
+                      {result.title}
+                    </span>
+                    <span className="block truncate text-xs text-neutral-500">
+                      {result.label}
+                      {result.subtitle ? ` · ${result.subtitle}` : ""}
+                    </span>
                   </span>
                 </Link>
               ))}

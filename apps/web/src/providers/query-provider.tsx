@@ -1,86 +1,92 @@
-'use client';
+"use client";
 
-import { keepPreviousData, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
-import { PropsWithChildren, useState } from 'react';
+import {
+  keepPreviousData,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
+import { PropsWithChildren, useState } from "react";
 
 const PERSISTED_QUERY_KEYS = [
-  'auth',
-  'account-me',
-  'workspaces',
-  'workspace-selected',
-  'workspace-members',
-  'telegram-channels',
-  'telegram-managed-posts',
-  'post-groups',
-  'post-group',
-  'prompt-notes',
-  'icons',
-  'icon',
-  'currency-settings',
-  'currency-rates',
-  'accounts',
-  'transaction-categories',
-  'transaction-categories-admin',
-  'telegram-channel-networks',
-  'advertising-people',
-  'promos',
-  'ad-campaigns',
-  'ad-hypotheses',
-  'telegram-ad-products',
-  'telegram-ad-policy',
-  'telegram-ad-price-history',
+  "auth",
+  "account-me",
+  "workspaces",
+  "workspace-selected",
+  "workspace-members",
+  "telegram-channels",
+  "telegram-managed-posts",
+  "post-groups",
+  "post-group",
+  "prompt-notes",
+  "icons",
+  "icon",
+  "currency-settings",
+  "currency-rates",
+  "accounts",
+  "transaction-categories",
+  "transaction-categories-admin",
+  "telegram-channel-networks",
+  "advertising-people",
+  "promos",
+  "ad-campaigns",
+  "ad-hypotheses",
+  "telegram-ad-products",
+  "telegram-ad-policy",
+  "telegram-ad-price-history",
+  "scheduled-tasks",
 ] as const;
 
 const workspaceScopedQueryKeys = new Set<string>([
-  'account-me',
-  'workspace-selected',
-  'workspace-members',
-  'telegram-channels',
-  'telegram-channel',
-  'telegram-channel-analytics',
-  'telegram-channel-analytics-sources',
-  'telegram-channel-posts',
-  'telegram-channel-audience',
-  'telegram-channel-financial-summary',
-  'telegram-channel-audience-snapshots',
-  'telegram-channel-invite-links',
-  'telegram-channel-campaigns',
-  'telegram-managed-posts',
-  'telegram-managed-post-link-targets',
-  'post-groups',
-  'post-group',
-  'prompt-notes',
-  'currency-settings',
-  'currency-rates',
-  'accounts',
-  'transactions',
-  'transfers',
-  'transaction-categories',
-  'transaction-categories-admin',
-  'telegram-channel-networks',
-  'advertising-people',
-  'promos',
-  'ad-campaigns',
-  'ad-hypotheses',
-  'telegram-ad-sales',
-  'telegram-ad-sale',
-  'telegram-ad-availability',
-  'telegram-ad-products',
-  'telegram-ad-policy',
-  'telegram-ad-price-history',
-  'telegram-ad-analytics',
-  'dashboard-summary',
-  'application-logs',
-  'application-log-filter-options',
-  'global-search',
+  "account-me",
+  "workspace-selected",
+  "workspace-members",
+  "telegram-channels",
+  "telegram-channel",
+  "telegram-channel-analytics",
+  "telegram-channel-analytics-sources",
+  "telegram-channel-posts",
+  "telegram-channel-audience",
+  "telegram-channel-financial-summary",
+  "telegram-channel-audience-snapshots",
+  "telegram-channel-invite-links",
+  "telegram-channel-campaigns",
+  "telegram-managed-posts",
+  "telegram-managed-post-link-targets",
+  "post-groups",
+  "post-group",
+  "prompt-notes",
+  "currency-settings",
+  "currency-rates",
+  "accounts",
+  "transactions",
+  "transfers",
+  "transaction-categories",
+  "transaction-categories-admin",
+  "telegram-channel-networks",
+  "advertising-people",
+  "promos",
+  "ad-campaigns",
+  "ad-hypotheses",
+  "telegram-ad-sales",
+  "telegram-ad-sale",
+  "telegram-ad-availability",
+  "telegram-ad-products",
+  "telegram-ad-policy",
+  "telegram-ad-price-history",
+  "telegram-ad-analytics",
+  "dashboard-summary",
+  "application-logs",
+  "application-log-filter-options",
+  "scheduled-tasks",
+  "global-search",
 ]);
 
-export const QUERY_PERSIST_STORAGE_KEY = 'telegram-system-react-query-cache';
+export const QUERY_PERSIST_STORAGE_KEY = "telegram-system-react-query-cache";
 
 export function clearPersistedQueryCache() {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   window.localStorage.removeItem(QUERY_PERSIST_STORAGE_KEY);
 }
 
@@ -101,7 +107,7 @@ export function QueryProvider({ children }: PropsWithChildren) {
       }),
   );
   const [persister] = useState(() =>
-    typeof window === 'undefined'
+    typeof window === "undefined"
       ? null
       : createSyncStoragePersister({
           storage: window.localStorage,
@@ -110,15 +116,13 @@ export function QueryProvider({ children }: PropsWithChildren) {
         }),
   );
   const [buster] = useState(() => {
-    if (typeof window === 'undefined') return 'server';
-    return `workspace:${window.localStorage.getItem('selected-workspace-id') ?? 'none'}`;
+    if (typeof window === "undefined") return "server";
+    return `workspace:${window.localStorage.getItem("selected-workspace-id") ?? "none"}`;
   });
 
   if (!persister) {
     return (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
   }
 
@@ -132,10 +136,10 @@ export function QueryProvider({ children }: PropsWithChildren) {
         dehydrateOptions: {
           shouldDehydrateMutation: () => false,
           shouldDehydrateQuery: (query) => {
-            if (query.state.status !== 'success') return false;
+            if (query.state.status !== "success") return false;
             const [root] = query.queryKey;
             return (
-              typeof root === 'string' &&
+              typeof root === "string" &&
               (PERSISTED_QUERY_KEYS as readonly string[]).includes(root)
             );
           },
@@ -149,5 +153,5 @@ export function QueryProvider({ children }: PropsWithChildren) {
 
 export function isWorkspaceScopedQuery(queryKey: readonly unknown[]) {
   const [root] = queryKey;
-  return typeof root === 'string' && workspaceScopedQueryKeys.has(root);
+  return typeof root === "string" && workspaceScopedQueryKeys.has(root);
 }

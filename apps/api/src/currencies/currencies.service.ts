@@ -43,7 +43,9 @@ const getSupportedCurrencies = () => {
     supportedValuesOf?: (key: 'currency') => string[];
   };
   const intlCurrencies = intl.supportedValuesOf?.('currency') ?? [];
-  return Array.from(new Set([...SUPPORTED_CURRENCIES, ...intlCurrencies])).sort();
+  return Array.from(
+    new Set([...SUPPORTED_CURRENCIES, ...intlCurrencies]),
+  ).sort();
 };
 
 type WorkspaceCurrencySettingsRow = {
@@ -60,10 +62,10 @@ export class CurrenciesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workspaceService: WorkspaceService,
-    private readonly applicationLogger: ApplicationLoggerService = ({
+    private readonly applicationLogger: ApplicationLoggerService = {
       info: () => undefined,
       writeStructured: () => undefined,
-    } as unknown) as ApplicationLoggerService,
+    } as unknown as ApplicationLoggerService,
   ) {}
 
   async getSettings(userId: string) {
@@ -221,6 +223,18 @@ export class CurrenciesService {
       );
       return 0;
     }
+  }
+
+  async syncRatesForWorkspaceTask(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { primaryCurrency: true },
+    });
+    const updated = await this.syncRatesForWorkspace(
+      workspaceId,
+      workspace.primaryCurrency,
+    );
+    return { updated };
   }
 
   async syncRatesForAllWorkspaces() {
