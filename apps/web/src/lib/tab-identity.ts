@@ -53,12 +53,14 @@ export function buildRouteTabIdentityCacheKey({
   const rawSearch = searchParams?.toString()?.trim() ?? "";
   if (!rawSearch) return pathname;
   const params = new URLSearchParams(rawSearch);
-  const entries = [...params.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => {
-    if (leftKey === rightKey) {
-      return leftValue.localeCompare(rightValue);
-    }
-    return leftKey.localeCompare(rightKey);
-  });
+  const entries = [...params.entries()].sort(
+    ([leftKey, leftValue], [rightKey, rightValue]) => {
+      if (leftKey === rightKey) {
+        return leftValue.localeCompare(rightValue);
+      }
+      return leftKey.localeCompare(rightKey);
+    },
+  );
   const normalized = new URLSearchParams();
   for (const [key, value] of entries) {
     normalized.append(key, value);
@@ -86,7 +88,10 @@ function parseAccountFilter(value: string | null) {
   return value === "people" ? "people" : "mtproto";
 }
 
-function telegramPostsRouteView(pathname: string, get: (key: string) => string | null) {
+function telegramPostsRouteView(
+  pathname: string,
+  get: (key: string) => string | null,
+) {
   if (pathname === "/telegram-posts") {
     return get("groupId")
       ? "Groups"
@@ -156,7 +161,11 @@ export function resolveRouteTabIdentity({
     const view = telegramPostsView;
     const emoji = view === "Groups" ? "🗂️" : view === "Calendar" ? "🗓️" : "✈️";
     const color =
-      view === "Groups" ? "#475569" : view === "Calendar" ? "#7c2d12" : "#1d4ed8";
+      view === "Groups"
+        ? "#475569"
+        : view === "Calendar"
+          ? "#7c2d12"
+          : "#1d4ed8";
     return { title: pageTitle(view), emoji, color };
   }
   if (pathname.startsWith("/telegram/channels/")) {
@@ -170,13 +179,32 @@ export function resolveRouteTabIdentity({
   }
   if (pathname === "/ad-sales" || pathname.startsWith("/ad-sales/")) {
     if (pathname.startsWith("/ad-sales/pricing")) {
-      return { title: pageTitle("Ad Sales Pricing"), emoji: "📈", color: "#1d4ed8" };
+      return {
+        title: pageTitle("Ad Sales Pricing"),
+        emoji: "📈",
+        color: "#1d4ed8",
+      };
     }
     if (pathname.startsWith("/ad-sales/analytics")) {
-      return { title: pageTitle("Ad Sales Analytics"), emoji: "📊", color: "#0f766e" };
+      return {
+        title: pageTitle("Ad Sales Analytics"),
+        emoji: "📊",
+        color: "#0f766e",
+      };
     }
     if (pathname.startsWith("/ad-sales/settings")) {
-      return { title: pageTitle("Ad Sales Settings"), emoji: "⚙️", color: "#4b5563" };
+      return {
+        title: pageTitle("Ad Sales Settings"),
+        emoji: "⚙️",
+        color: "#4b5563",
+      };
+    }
+    if (pathname.startsWith("/ad-sales/clients")) {
+      return {
+        title: pageTitle("Ad Sales Clients"),
+        emoji: "👥",
+        color: "#0f766e",
+      };
     }
     if (pathname.startsWith("/ad-sales/sales")) {
       return { title: pageTitle("Ad Sales"), emoji: "💰", color: "#0f766e" };

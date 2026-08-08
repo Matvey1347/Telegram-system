@@ -73,21 +73,23 @@ export function convertMoney(
 
 export function getMoneyVariantTargets(
   currency: string | null | undefined,
-  settings: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency'> | null | undefined,
+  settings: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'tertiaryCurrency'> | null | undefined,
 ) {
   const current = String(currency || '').toUpperCase();
   const primary = String(settings?.primaryCurrency || '').toUpperCase();
   const secondary = String(settings?.secondaryCurrency || '').toUpperCase();
+  const tertiary = String(settings?.tertiaryCurrency || 'UAH').toUpperCase();
   if (!current || !primary) return [];
-  if (current === primary) return secondary && secondary !== primary ? [secondary] : [];
-  if (current === secondary) return [primary];
-  return [primary, ...(secondary && secondary !== primary ? [secondary] : [])];
+  return [primary, secondary, tertiary].filter(
+    (target, index, list) =>
+      target && target !== current && list.indexOf(target) === index,
+  );
 }
 
 export function getMoneyVariants(params: {
   amount: number | string | null | undefined;
   currency: string | null | undefined;
-  settings: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'currencyDisplayMode'> | null | undefined;
+  settings: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'tertiaryCurrency' | 'currencyDisplayMode'> | null | undefined;
   rates?: ExchangeRate[];
   amountInPrimary?: number | string | null;
 }) {
@@ -117,4 +119,47 @@ export function getMoneyVariants(params: {
       label: value == null ? 'Rate missing' : formatMoney(value, target, displayMode),
     };
   });
+}
+
+export function getMoneyPreview(params: {
+  amount: number | string | null | undefined;
+  currency: string | null | undefined;
+  settings: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'tertiaryCurrency' | 'currencyDisplayMode'> | null | undefined;
+  rates?: ExchangeRate[];
+  amountInPrimary?: number | string | null;
+}) {
+  const { amount, currency, settings, rates, amountInPrimary } = params;
+  const displayMode = settings?.currencyDisplayMode ?? 'code';
+  const primary = String(settings?.primaryCurrency || currency || '').toUpperCase();
+  const secondary = String(settings?.secondaryCurrency || '').toUpperCase();
+  const tertiary = String(settings?.tertiaryCurrency || 'UAH').toUpperCase();
+  const ordered = [primary, secondary, tertiary].filter(
+    (target, index, list) => target && list.indexOf(target) === index,
+  );
+
+  return ordered.map((target) => {
+    const value =
+      target === String(currency || '').toUpperCase()
+        ? Number(amount ?? 0)
+        : target === primary && amountInPrimary != null
+          ? Number(amountInPrimary)
+          : amountInPrimary != null && primary
+            ? convertMoney(amountInPrimary, primary, target, rates)
+            : convertMoney(amount, currency, target, rates);
+    return {
+      currency: target,
+      amount: value,
+      label: value == null ? 'Rate missing' : formatMoney(value, target, displayMode),
+    };
+  });
+}
+
+export function formatMoneyPreview(params: Parameters<typeof getMoneyPreview>[0]) {
+  const [primary, secondary, tertiary] = getMoneyPreview(params);
+  const firstLine = [primary, secondary]
+    .filter(Boolean)
+    .map((item) => item.amount == null ? 'Rate missing' : item.label)
+    .join(' / ');
+  const secondLine = tertiary ? (tertiary.amount == null ? 'Rate missing' : tertiary.label) : '';
+  return secondLine ? `${firstLine}\n${secondLine}` : firstLine;
 }

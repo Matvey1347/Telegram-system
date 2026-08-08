@@ -7,7 +7,6 @@ import {
 import {
   Prisma,
   TelegramAdCrmDealStage,
-  TelegramAdCrmOwnerMode,
   TelegramAdSalePaymentStatus,
   TelegramAdPlacementStatus,
   TelegramAdPricingMode,
@@ -74,8 +73,6 @@ import {
   TelegramAdvertiserSearchDto,
   TelegramAdvertiserTasksQueryDto,
   TelegramAdvertisersQueryDto,
-  TelegramAdCrmMemberSettingsDto,
-  TelegramAdCrmWorkspaceSettingsDto,
   CompleteTelegramAdvertiserTaskDto,
   SkipTelegramAdvertiserTaskDto,
   UpdateTelegramAdChannelPricingDto,
@@ -141,9 +138,7 @@ export class TelegramAdSalesService {
   }
 
   private invalidateAvailabilityCache(workspaceId: string) {
-    this.responseCache.clearByPrefix(
-      `telegram-ad-sales:availability:${workspaceId}:`,
-    );
+    this.responseCache.clearByPrefix(`telegram-ad-sales:availability:${workspaceId}:`);
   }
 
   private async workspace(userId: string) {
@@ -368,23 +363,6 @@ export class TelegramAdSalesService {
         ? settings.tasks.map((task: any) => this.mapAdvertiserTask(task))
         : undefined,
       sales: Array.isArray(settings.sales) ? settings.sales.map((sale: any) => this.mapSale(sale)) : undefined,
-    };
-  }
-
-  private mapCrmWorkspaceSettings(settings: any) {
-    return {
-      ...settings,
-      highValueCustomerThreshold: decimalToString(settings.highValueCustomerThreshold),
-      createdAt: settings.createdAt.toISOString(),
-      updatedAt: settings.updatedAt.toISOString(),
-    };
-  }
-
-  private mapCrmMemberSettings(settings: any) {
-    return {
-      ...settings,
-      createdAt: settings.createdAt.toISOString(),
-      updatedAt: settings.updatedAt.toISOString(),
     };
   }
 
@@ -1376,16 +1354,12 @@ export class TelegramAdSalesService {
     const now = new Date();
     const fallbackDays = Math.max(1, Math.min(366, query?.rangeDays ?? 30));
     const fallbackFrom = new Date(now.getTime() - (fallbackDays - 1) * 24 * 60 * 60 * 1000);
-    const rawFrom = query?.dateFrom ? new Date(query.dateFrom) : fallbackFrom;
-    const rawTo = query?.dateTo ? new Date(query.dateTo) : now;
+    const rawFrom = query?.dateFrom || query?.from ? new Date(query.dateFrom ?? query.from!) : fallbackFrom;
+    const rawTo = query?.dateTo || query?.to ? new Date(query.dateTo ?? query.to!) : now;
     const from = Number.isNaN(rawFrom.getTime()) ? fallbackFrom : rawFrom;
     const to = Number.isNaN(rawTo.getTime()) ? now : rawTo;
     const normalized = from <= to ? { from, to } : { from: to, to: from };
-    const days =
-      Math.floor(
-        (normalized.to.getTime() - normalized.from.getTime()) /
-          (24 * 60 * 60 * 1000),
-      ) + 1;
+    const days = Math.floor((normalized.to.getTime() - normalized.from.getTime()) / (24 * 60 * 60 * 1000)) + 1;
     if (days > 366) {
       throw new BadRequestException('Analytics range cannot exceed 366 days');
     }
@@ -1729,6 +1703,29 @@ export class TelegramAdSalesService {
         })
       : [];
     return { placements, payments, channels };
+  }
+
+  private sumPaidAllocations(
+    placements: Array<{
+      paymentAllocations?: Array<{
+        amount: Prisma.Decimal | string | number;
+        payment?: { status?: TelegramAdSalePaymentStatus | null } | null;
+      }>;
+    }>,
+  ) {
+    return placements.reduce(
+      (sum, placement) =>
+        sum.add(
+          (placement.paymentAllocations ?? []).reduce(
+            (inner, allocation) =>
+              allocation.payment?.status === TelegramAdSalePaymentStatus.VOIDED
+                ? inner
+                : inner.add(decimal(allocation.amount)),
+            decimal(0),
+          ),
+        ),
+      decimal(0),
+    );
   }
 
   private startOfUtcDay(value: Date) {
@@ -2818,7 +2815,7 @@ export class TelegramAdSalesService {
     const { from, to, timezone } = this.analyticsRange(query);
     const now = new Date();
     const periodMs = Math.max(1, to.getTime() - from.getTime());
-    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to });
+    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to, networkId: query.networkId ?? null });
     const nextSevenDays = await this.inventorySlotsForChannels({
       workspaceId,
       channelIds: dataset.channels.map((channel) => channel.id),
@@ -2851,10 +2848,7 @@ export class TelegramAdSalesService {
         ).length,
       };
     });
-    const paidRevenue = dataset.payments.reduce(
-      (sum, payment) => sum.add(decimal(payment.amount)),
-      decimal(0),
-    );
+    const paidRevenue = this.sumPaidAllocations(dataset.placements);
     const totalRevenue = dataset.placements.reduce(
       (sum, placement) => sum.add(decimal(placement.agreedPrice)),
       decimal(0),
@@ -2879,18 +2873,30 @@ export class TelegramAdSalesService {
       const agreed = decimal(placement.agreedPrice);
       return sum.add(minimum.gt(agreed) ? minimum.sub(agreed) : decimal(0));
     }, decimal(0));
-    const alerts = await this.analyticsAlerts(userId, query);
+    const overdueCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const paymentOverdueCount = dataset.placements.filter((placement) => {
+      const paid = placement.paymentAllocations.reduce(
+        (sum, allocation) =>
+          allocation.payment?.status === TelegramAdSalePaymentStatus.VOIDED
+            ? sum
+            : sum.add(decimal(allocation.amount)),
+        decimal(0),
+      );
+      return (
+        placement.sale.createdAt < overdueCutoff &&
+        paid.lt(decimal(placement.agreedPrice))
+      );
+    }).length;
+    const deletionFailuresCount = dataset.placements.filter((placement) =>
+      Boolean(placement.lastDeletionError),
+    ).length;
 
     const previousPeriodStart = new Date(from.getTime() - periodMs);
     const previousPeriodEnd = new Date(from.getTime() - 1);
     const currentMonthRevenue = dataset.placements
       .reduce((sum, placement) => sum.add(decimal(placement.agreedPrice)), decimal(0));
     const previousMonthRevenue = (
-      await this.adAnalyticsDataset({
-        workspaceId,
-        from: previousPeriodStart,
-        to: previousPeriodEnd,
-      })
+      await this.adAnalyticsDataset({ workspaceId, from: previousPeriodStart, to: previousPeriodEnd, networkId: query.networkId ?? null })
     ).placements.reduce(
       (sum, placement) => sum.add(decimal(placement.agreedPrice)),
       decimal(0),
@@ -2963,8 +2969,8 @@ export class TelegramAdSalesService {
             )[0].unusedSlots,
           }
         : null,
-      paymentOverdueCount: alerts.items.filter((item) => item.kind === 'OVERDUE_PAYMENT').length,
-      deletionFailuresCount: alerts.items.filter((item) => item.kind === 'DELETION_FAILURE').length,
+      paymentOverdueCount,
+      deletionFailuresCount,
     };
   }
 
@@ -3232,10 +3238,7 @@ export class TelegramAdSalesService {
       (sum, placement) => sum.add(decimal(placement.agreedPrice)),
       decimal(0),
     );
-    const paidRevenue = dataset.payments.reduce(
-      (sum, payment) => sum.add(decimal(payment.amount)),
-      decimal(0),
-    );
+    const paidRevenue = this.sumPaidAllocations(dataset.placements);
     const actualViews = dataset.placements.reduce(
       (sum, placement) => sum + (placement.actualViewsFinal ?? 0),
       0,
@@ -3500,7 +3503,7 @@ export class TelegramAdSalesService {
     const workspaceId = await this.workspace(userId);
     const { from, to, timezone } = this.analyticsRange(query);
     const overdueCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to });
+    const dataset = await this.adAnalyticsDataset({ workspaceId, from, to, networkId: query.networkId ?? null });
     const inventory = await this.inventoryAnalytics(userId, query);
     const items = [
       ...dataset.placements
@@ -4004,54 +4007,6 @@ export class TelegramAdSalesService {
       description: dto.reason?.trim() || null,
     });
     return this.mapAdvertiserTask(task);
-  }
-
-  async getCrmWorkspaceSettings(userId: string) {
-    const workspaceId = await this.workspace(userId);
-    const settings =
-      (await this.prisma.telegramAdCrmWorkspaceSettings.findUnique({ where: { workspaceId } })) ??
-      (await this.prisma.telegramAdCrmWorkspaceSettings.create({ data: { workspaceId } }));
-    return this.mapCrmWorkspaceSettings(settings);
-  }
-
-  async updateCrmWorkspaceSettings(userId: string, dto: TelegramAdCrmWorkspaceSettingsDto) {
-    const workspaceId = await this.workspace(userId);
-    const settings = await this.prisma.telegramAdCrmWorkspaceSettings.upsert({
-      where: { workspaceId },
-      create: { workspaceId, ...(dto as Record<string, unknown>) },
-      update: { ...(dto as Record<string, unknown>) },
-    });
-    return this.mapCrmWorkspaceSettings(settings);
-  }
-
-  async getCrmMemberSettings(userId: string) {
-    const membership = await this.workspaceService.requireWorkspaceRole(userId, [
-      WorkspaceRole.owner,
-      WorkspaceRole.admin,
-      WorkspaceRole.MEDIA_BUYER,
-      WorkspaceRole.member,
-    ]);
-    const settings =
-      (await this.prisma.telegramAdCrmMemberSettings.findUnique({ where: { workspaceMemberId: membership.id } })) ??
-      (await this.prisma.telegramAdCrmMemberSettings.create({
-        data: { workspaceId: membership.workspaceId, workspaceMemberId: membership.id },
-      }));
-    return this.mapCrmMemberSettings(settings);
-  }
-
-  async updateCrmMemberSettings(userId: string, dto: TelegramAdCrmMemberSettingsDto) {
-    const membership = await this.workspaceService.requireWorkspaceRole(userId, [
-      WorkspaceRole.owner,
-      WorkspaceRole.admin,
-      WorkspaceRole.MEDIA_BUYER,
-      WorkspaceRole.member,
-    ]);
-    const settings = await this.prisma.telegramAdCrmMemberSettings.upsert({
-      where: { workspaceMemberId: membership.id },
-      create: { workspaceId: membership.workspaceId, workspaceMemberId: membership.id, ...(dto as Record<string, unknown>) },
-      update: { ...(dto as Record<string, unknown>) },
-    });
-    return this.mapCrmMemberSettings(settings);
   }
 
   async rebuildInventorySnapshots(userId: string, dto: TelegramAdInventoryRebuildDto) {
@@ -4772,6 +4727,9 @@ export class TelegramAdSalesService {
       });
       return createdPayment;
     });
+    if (sale.advertiserId) {
+      await this.recalculateAdvertiserStats(workspaceId, sale.advertiserId);
+    }
     return this.mapPayment(payment);
   }
 
@@ -4901,6 +4859,9 @@ export class TelegramAdSalesService {
         },
       });
     });
+    if (sale.advertiserId) {
+      await this.recalculateAdvertiserStats(workspaceId, sale.advertiserId);
+    }
     return this.mapPayment(updated);
   }
 
@@ -4961,6 +4922,13 @@ export class TelegramAdSalesService {
         },
       });
     });
+    const sale = await this.prisma.telegramAdSale.findFirst({
+      where: { id: saleId, workspaceId },
+      select: { advertiserId: true },
+    });
+    if (sale?.advertiserId) {
+      await this.recalculateAdvertiserStats(workspaceId, sale.advertiserId);
+    }
     return this.mapPayment(reversed);
   }
 

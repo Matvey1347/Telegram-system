@@ -108,12 +108,11 @@ export type TelegramAdvertiserTaskStatus =
   | "SKIPPED"
   | "CANCELLED";
 
-export type TelegramAdvertiserTaskPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
-
-export type TelegramAdCrmOwnerMode =
-  | "SALE_ASSIGNEE"
-  | "ADVERTISER_OWNER"
-  | "WORKSPACE_DEFAULT";
+export type TelegramAdvertiserTaskPriority =
+  | "LOW"
+  | "NORMAL"
+  | "HIGH"
+  | "URGENT";
 
 export type TelegramAdSaleComputedPaymentStatus =
   | "UNPAID"
@@ -545,6 +544,7 @@ export type TelegramAdvertiserTask = {
   updatedAt: string;
 };
 
+export * from "./telegram-ad-sales-crm";
 export type TelegramAdvertiser = {
   id: string;
   workspaceId: string;
@@ -583,52 +583,8 @@ export type TelegramAdvertiser = {
   sales?: TelegramAdSale[];
 };
 
-export type TelegramAdvertisersListResult = PaginatedResponse<TelegramAdvertiser>;
-
-export type TelegramAdCrmMemberSettings = {
-  id: string;
-  workspaceId: string;
-  workspaceMemberId: string;
-  defaultFollowUpDays: number;
-  defaultReactivationDays: number;
-  autoCreateFollowUpAfterPlacement: boolean;
-  autoCreateFeedbackTask: boolean;
-  autoCreatePaymentFollowUp: boolean;
-  dailyDigestEnabled: boolean;
-  overdueDigestEnabled: boolean;
-  reminderNotificationsEnabled: boolean;
-  preferredReminderTime: string | null;
-  timezone: string;
-  defaultTaskPriority: TelegramAdvertiserTaskPriority;
-  defaultAdvertiserOwnerMode: TelegramAdCrmOwnerMode;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type TelegramAdCrmWorkspaceSettings = {
-  workspaceId: string;
-  defaultFollowUpDays: number;
-  defaultReactivationDays: number;
-  defaultSaleOwnerAssignment: TelegramAdCrmOwnerMode;
-  autoCreateAdvertiserFromSale: boolean;
-  requireAdvertiserForConfirmedSale: boolean;
-  duplicateDetectionEnabled: boolean;
-  inactivityThresholdDays: number;
-  highValueCustomerThreshold: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type TelegramAdSaleMetricsResponse = {
-  saleId: string;
-  placements: Array<{
-    placementId: string;
-    actualViews24h: number | null;
-    actualViews48h: number | null;
-    actualViewsFinal: number | null;
-    actualCpm: string | null;
-  }>;
-};
+export type TelegramAdvertisersListResult =
+  PaginatedResponse<TelegramAdvertiser>;
 
 export type TelegramAdAnalyticsDateField =
   | "saleCreatedAt"

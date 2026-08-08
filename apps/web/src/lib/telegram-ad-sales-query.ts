@@ -14,6 +14,10 @@ export const telegramAdSalesKeys = {
   sales: (params?: Record<string, unknown>) =>
     ["telegram-ad-sales", "sales", params ?? {}] as const,
   sale: (saleId: string) => ["telegram-ad-sale", saleId] as const,
+  crmAdvertisersRoot: () =>
+    ["telegram-ad-sales", "crm", "advertisers"] as const,
+  crmAdvertisers: (params?: Record<string, unknown>) =>
+    ["telegram-ad-sales", "crm", "advertisers", params ?? {}] as const,
   workspaceSettings: () => ["telegram-ad-sales", "workspace-settings"] as const,
   preferences: () => ["telegram-ad-sales", "preferences"] as const,
   availability: (params: Record<string, unknown>) =>
@@ -61,9 +65,13 @@ export async function invalidateTelegramAdSalesQueries(
     queryClient.invalidateQueries({ queryKey: currencyKeys.settings() }),
     queryClient.invalidateQueries({ queryKey: currencyKeys.rates() }),
     ...(params?.saleId
-      ? [queryClient.invalidateQueries({ queryKey: telegramAdSalesKeys.sale(params.saleId) })]
+      ? [
+          queryClient.invalidateQueries({
+            queryKey: telegramAdSalesKeys.sale(params.saleId),
+          }),
+        ]
       : []),
-    ...((params?.channelIds ?? []).flatMap((channelId) => [
+    ...(params?.channelIds ?? []).flatMap((channelId) => [
       queryClient.invalidateQueries({
         queryKey: telegramPostKeys.managedCalendar(channelId),
       }),
@@ -76,6 +84,6 @@ export async function invalidateTelegramAdSalesQueries(
       queryClient.invalidateQueries({
         queryKey: telegramChannelKeys.analytics(channelId),
       }),
-    ])),
+    ]),
   ]);
 }

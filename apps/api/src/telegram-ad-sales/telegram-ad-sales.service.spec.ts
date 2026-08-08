@@ -1,12 +1,23 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   Prisma,
   TelegramAdPlacementStatus,
   TelegramAdPricingMode,
   TelegramAdSalePaymentStatus,
   TelegramAdSaleStatus,
+  TelegramAdvertiserLifecycleStage,
+  TelegramAdvertiserStatus,
+  TelegramAdvertiserTaskPriority,
+  TelegramAdvertiserTaskStatus,
   TransactionType,
 } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { TelegramAdAlertsQueryDto, TelegramAdAnalyticsQueryDto } from './dto';
 import { TelegramAdSalesService } from './telegram-ad-sales.service';
 
 const decimal = (value: number | string) => new Prisma.Decimal(value);
@@ -136,7 +147,11 @@ function createService() {
     account: { findFirst: jest.fn() },
     transactionCategory: { findFirst: jest.fn() },
     transaction: { create: jest.fn() },
-    telegramManagedPost: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    telegramManagedPost: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
     telegramPostMetricSnapshot: { findMany: jest.fn() },
     telegramChannel: { findFirst: jest.fn(), findMany: jest.fn() },
     telegramChannelNetwork: { findFirst: jest.fn() },
@@ -154,9 +169,48 @@ function createService() {
       findMany: jest.fn(),
       count: jest.fn(),
     },
-    telegramAdSchedulePolicy: { findFirst: jest.fn(), upsert: jest.fn(), findMany: jest.fn() },
+    telegramAdSchedulePolicy: {
+      findFirst: jest.fn(),
+      upsert: jest.fn(),
+      findMany: jest.fn(),
+    },
     telegramAdSalesWorkspaceSettings: { upsert: jest.fn() },
-    telegramAdPriceSnapshot: { create: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
+    telegramAdCrmWorkspaceSettings: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      upsert: jest.fn(),
+    },
+    telegramAdvertiser: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    telegramAdvertiserContact: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    telegramAdvertiserActivity: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
+    telegramAdvertiserTask: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    telegramAdPriceSnapshot: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+    },
     telegramAdSalePlacement: {
       findFirst: jest.fn(),
       create: jest.fn(),
@@ -170,7 +224,11 @@ function createService() {
       create: jest.fn(),
       update: jest.fn(),
     },
-    telegramPost: { findMany: jest.fn(), count: jest.fn(), findFirst: jest.fn() },
+    telegramPost: {
+      findMany: jest.fn(),
+      count: jest.fn(),
+      findFirst: jest.fn(),
+    },
     telegramChannelAudienceSnapshot: { findFirst: jest.fn() },
     $transaction: jest.fn(),
   };
@@ -190,7 +248,10 @@ function createService() {
   });
   const logger: any = { info: jest.fn() };
   const responseCache: any = {
-    getOrSet: jest.fn(async (_key: string, _ttlMs: number, load: () => Promise<unknown>) => load()),
+    getOrSet: jest.fn(
+      async (_key: string, _ttlMs: number, load: () => Promise<unknown>) =>
+        load(),
+    ),
     clearByPrefix: jest.fn(),
   };
   const currencyConversionService: any = {
@@ -235,16 +296,48 @@ function createService() {
 
 describe('TelegramAdSalesService', () => {
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('accepts analytics from/to aliases with whitelist validation and maps them into the range', async () => {
+    const dto = plainToInstance(TelegramAdAnalyticsQueryDto, {
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-07T23:59:59.000Z',
+      timezone: 'UTC',
+      networkId: 'network-1',
+    });
+
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    expect(errors).toHaveLength(0);
+    const { service } = createService();
+    const range = (service as any).analyticsRange(dto);
+    expect(range.from.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    expect(range.to.toISOString()).toBe('2026-08-07T23:59:59.000Z');
+    expect(dto.networkId).toBe('network-1');
+
+    const alertsDto = plainToInstance(TelegramAdAlertsQueryDto, {
+      dateFrom: '2026-08-01T00:00:00.000Z',
+      dateTo: '2026-08-07T23:59:59.000Z',
+      networkId: 'network-1',
+    });
+
+    await expect(
+      validate(alertsDto, { whitelist: true, forbidNonWhitelisted: true }),
+    ).resolves.toHaveLength(0);
   });
 
   it('enforces workspace isolation for channel products', async () => {
     const { service, prisma } = createService();
     prisma.telegramChannel.findFirst.mockResolvedValue(null);
 
-    await expect(service.listChannelProducts('user-1', 'channel-1')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      service.listChannelProducts('user-1', 'channel-1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('requires manual reason when price is below minimum', async () => {
@@ -411,7 +504,10 @@ describe('TelegramAdSalesService', () => {
         excludeFromAnalytics: false,
         adSalePlacements: [],
         metricSnapshots: [
-          { viewsCount: 5000, collectedAt: new Date('2026-08-03T12:00:00.000Z') },
+          {
+            viewsCount: 5000,
+            collectedAt: new Date('2026-08-03T12:00:00.000Z'),
+          },
         ],
       },
       {
@@ -422,8 +518,14 @@ describe('TelegramAdSalesService', () => {
         excludeFromAnalytics: false,
         adSalePlacements: [],
         metricSnapshots: [
-          { viewsCount: 1000, collectedAt: new Date('2026-08-01T12:00:00.000Z') },
-          { viewsCount: 9000, collectedAt: new Date('2026-08-03T12:00:00.000Z') },
+          {
+            viewsCount: 1000,
+            collectedAt: new Date('2026-08-01T12:00:00.000Z'),
+          },
+          {
+            viewsCount: 9000,
+            collectedAt: new Date('2026-08-03T12:00:00.000Z'),
+          },
         ],
       },
       {
@@ -434,7 +536,10 @@ describe('TelegramAdSalesService', () => {
         excludeFromAnalytics: false,
         adSalePlacements: [],
         metricSnapshots: [
-          { viewsCount: 1100, collectedAt: new Date('2026-07-31T12:00:00.000Z') },
+          {
+            viewsCount: 1100,
+            collectedAt: new Date('2026-07-31T12:00:00.000Z'),
+          },
         ],
       },
       {
@@ -445,20 +550,25 @@ describe('TelegramAdSalesService', () => {
         excludeFromAnalytics: false,
         adSalePlacements: [],
         metricSnapshots: [
-          { viewsCount: 1200, collectedAt: new Date('2026-07-30T12:00:00.000Z') },
+          {
+            viewsCount: 1200,
+            collectedAt: new Date('2026-07-30T12:00:00.000Z'),
+          },
         ],
       },
     ]);
-    prisma.telegramAdPriceSnapshot.create.mockImplementation(async ({ data }: any) => ({
-      id: 'snapshot-historical',
-      expectedViews: data.expectedViews,
-      targetCpm: data.targetCpm,
-      recommendedPrice: data.recommendedPrice,
-      minimumPrice: data.minimumPrice,
-      currency: data.currency,
-      calculatedAt: new Date('2026-08-08T00:00:00.000Z'),
-      createdAt: new Date('2026-08-08T00:00:00.000Z'),
-    }));
+    prisma.telegramAdPriceSnapshot.create.mockImplementation(
+      async ({ data }: any) => ({
+        id: 'snapshot-historical',
+        expectedViews: data.expectedViews,
+        targetCpm: data.targetCpm,
+        recommendedPrice: data.recommendedPrice,
+        minimumPrice: data.minimumPrice,
+        currency: data.currency,
+        calculatedAt: new Date('2026-08-08T00:00:00.000Z'),
+        createdAt: new Date('2026-08-08T00:00:00.000Z'),
+      }),
+    );
 
     const quote = await service.createQuote('user-1', {
       telegramChannelId: 'channel-1',
@@ -545,16 +655,18 @@ describe('TelegramAdSalesService', () => {
           metricSnapshots: [],
         },
       ]);
-    prisma.telegramAdPriceSnapshot.create.mockImplementation(async ({ data }: any) => ({
-      id: 'snapshot-future-fallback',
-      expectedViews: data.expectedViews,
-      targetCpm: data.targetCpm,
-      recommendedPrice: data.recommendedPrice,
-      minimumPrice: data.minimumPrice,
-      currency: data.currency,
-      calculatedAt: new Date('2026-08-08T12:00:00.000Z'),
-      createdAt: new Date('2026-08-08T12:00:00.000Z'),
-    }));
+    prisma.telegramAdPriceSnapshot.create.mockImplementation(
+      async ({ data }: any) => ({
+        id: 'snapshot-future-fallback',
+        expectedViews: data.expectedViews,
+        targetCpm: data.targetCpm,
+        recommendedPrice: data.recommendedPrice,
+        minimumPrice: data.minimumPrice,
+        currency: data.currency,
+        calculatedAt: new Date('2026-08-08T12:00:00.000Z'),
+        createdAt: new Date('2026-08-08T12:00:00.000Z'),
+      }),
+    );
 
     const quote = await service.createQuote('user-1', {
       telegramChannelId: 'channel-1',
@@ -600,9 +712,9 @@ describe('TelegramAdSalesService', () => {
       }),
     );
 
-    await expect(service.reserveSale('user-1', 'sale-1', {})).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      service.reserveSale('user-1', 'sale-1', {}),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('supports network placements with multiple channels', async () => {
@@ -706,7 +818,9 @@ describe('TelegramAdSalesService', () => {
       idempotencyKey: 'idem-1',
     });
 
-    expect(financeCategoriesService.ensureSystemCategories).toHaveBeenCalledWith('ws-1');
+    expect(
+      financeCategoriesService.ensureSystemCategories,
+    ).toHaveBeenCalledWith('ws-1');
     expect(payment.amount).toBe('120');
     expect(payment.allocations).toHaveLength(1);
     expect(payment.allocations[0].amount).toBe('120');
@@ -716,7 +830,9 @@ describe('TelegramAdSalesService', () => {
     const { service, prisma } = createService();
     prisma.telegramAdSale.findFirst.mockResolvedValue(
       makeSale({
-        placements: [makePlacement({ agreedPrice: decimal(300), paymentAllocations: [] })],
+        placements: [
+          makePlacement({ agreedPrice: decimal(300), paymentAllocations: [] }),
+        ],
       }),
     );
     prisma.account.findFirst.mockResolvedValue({
@@ -747,7 +863,9 @@ describe('TelegramAdSalesService', () => {
     const { service, prisma } = createService();
     prisma.telegramAdSale.findFirst.mockResolvedValue(
       makeSale({
-        placements: [makePlacement({ agreedPrice: decimal(200), paymentAllocations: [] })],
+        placements: [
+          makePlacement({ agreedPrice: decimal(200), paymentAllocations: [] }),
+        ],
       }),
     );
     prisma.account.findFirst.mockResolvedValue({
@@ -836,14 +954,19 @@ describe('TelegramAdSalesService', () => {
       }),
     );
 
-    const updated = await service.updatePayment('user-1', 'sale-1', 'payment-1', {
-      accountId: 'account-2',
-      amount: 150,
-      currency: 'UAH',
-      paidAt: '2026-08-03T10:00:00.000Z',
-      notes: 'Updated payment',
-      allocations: [{ placementId: 'placement-1', amount: 150 }],
-    });
+    const updated = await service.updatePayment(
+      'user-1',
+      'sale-1',
+      'payment-1',
+      {
+        accountId: 'account-2',
+        amount: 150,
+        currency: 'UAH',
+        paidAt: '2026-08-03T10:00:00.000Z',
+        notes: 'Updated payment',
+        allocations: [{ placementId: 'placement-1', amount: 150 }],
+      },
+    );
 
     expect(transactionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -987,73 +1110,55 @@ describe('TelegramAdSalesService', () => {
   it('builds workspace analytics summary from aggregated placements and alerts', async () => {
     const { service } = createService();
 
-    jest
-      .spyOn(service as any, 'adAnalyticsDataset')
-      .mockResolvedValue({
-        placements: [
-          {
-            ...makePlacement({
-              telegramChannelId: 'channel-1',
-              agreedPrice: decimal(150),
-              minimumPrice: decimal(120),
-              recommendedPrice: decimal(160),
-              expectedViews: 1000,
-              actualViewsFinal: 900,
-              paymentAllocations: [
-                {
-                  amount: decimal(100),
-                  amountInPrimaryCurrency: decimal(100),
-                  payment: { status: TelegramAdSalePaymentStatus.ACTIVE },
-                },
-              ],
-            }),
-          },
-        ],
-        payments: [
-          {
-            id: 'payment-1',
-            paidAt: new Date('2026-08-01T09:00:00.000Z'),
-            amount: decimal(100),
-            amountInPrimaryCurrency: decimal(100),
-            currency: 'USD',
-            sale: { id: 'sale-1' },
-          },
-        ],
-        channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
-      } as any);
-    jest
-      .spyOn(service as any, 'inventorySlotsForChannels')
-      .mockResolvedValue([
-        { channelId: 'channel-1', state: 'AVAILABLE', existingPlacement: null },
-        { channelId: 'channel-1', state: 'SOLD', existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED } },
-        { channelId: 'channel-1', state: 'PAST', existingPlacement: null },
-      ]);
-    jest.spyOn(service, 'analyticsAlerts').mockResolvedValue({
-      dateFrom: '2026-07-03T00:00:00.000Z',
-      dateTo: '2026-08-01T00:00:00.000Z',
-      timezone: 'UTC',
-      items: [
+    const datasetSpy = jest.spyOn(service as any, 'adAnalyticsDataset').mockResolvedValue({
+      placements: [
         {
-          kind: 'OVERDUE_PAYMENT',
-          severity: 'warn',
-          channelId: 'channel-1',
-          saleId: 'sale-1',
-          placementId: 'placement-1',
-          title: 'Overdue unpaid sale',
-          details: 'still unpaid',
-          scheduledAt: '2026-08-02T10:00:00.000Z',
-          amount: '50',
-          currency: 'USD',
+          ...makePlacement({
+            telegramChannelId: 'channel-1',
+            agreedPrice: decimal(150),
+            minimumPrice: decimal(120),
+            recommendedPrice: decimal(160),
+            expectedViews: 1000,
+            actualViewsFinal: 900,
+            paymentAllocations: [
+              {
+                amount: decimal(100),
+                amountInPrimaryCurrency: decimal(100),
+                payment: { status: TelegramAdSalePaymentStatus.ACTIVE },
+              },
+            ],
+            sale: {
+              id: 'sale-1',
+              advertiserName: 'Advertiser',
+              status: TelegramAdSaleStatus.CONFIRMED,
+              createdAt: new Date('2026-07-01T00:00:00.000Z'),
+              settlementCurrency: 'USD',
+            },
+          }),
         },
       ],
+      payments: [],
+      channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
+    } as any);
+    jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([
+      { channelId: 'channel-1', state: 'AVAILABLE', existingPlacement: null },
+      {
+        channelId: 'channel-1',
+        state: 'SOLD',
+        existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED },
+      },
+      { channelId: 'channel-1', state: 'PAST', existingPlacement: null },
+    ]);
+    const result = await service.analyticsSummary('user-1', {
+      rangeDays: 30,
+      networkId: 'network-1',
     });
-
-    const result = await service.analyticsSummary('user-1', { rangeDays: 30 });
 
     expect(result.paidRevenue).toBe('100');
     expect(result.accountsReceivable).toBe('50');
     expect(result.bestChannelByRevenue?.channelId).toBe('channel-1');
     expect(result.paymentOverdueCount).toBe(1);
+    expect(datasetSpy).toHaveBeenCalledWith(expect.objectContaining({ networkId: 'network-1' }));
   });
 
   it('builds channel analytics with revenue, fill rate, and recent sales', async () => {
@@ -1073,47 +1178,47 @@ describe('TelegramAdSalesService', () => {
         minimumPrice: decimal(140),
       },
     ]);
-    jest
-      .spyOn(service as any, 'adAnalyticsDataset')
-      .mockResolvedValue({
-        placements: [
-          {
-            ...makePlacement({
-              status: TelegramAdPlacementStatus.PUBLISHED,
-              telegramChannelId: 'channel-1',
-              agreedPrice: decimal(150),
-              recommendedPrice: decimal(180),
-              minimumPrice: decimal(140),
-              expectedViews: 1000,
-              actualViews24h: 700,
-              actualViews48h: 850,
-              actualViewsFinal: 900,
-              paymentAllocations: [
-                {
-                  amount: decimal(120),
-                  amountInPrimaryCurrency: decimal(120),
-                  payment: { status: TelegramAdSalePaymentStatus.ACTIVE },
-                },
-              ],
-              sale: {
-                id: 'sale-1',
-                advertiserName: 'Advertiser',
-                status: TelegramAdSaleStatus.CONFIRMED,
-                createdAt: new Date('2026-07-20T00:00:00.000Z'),
-                settlementCurrency: 'USD',
+    jest.spyOn(service as any, 'adAnalyticsDataset').mockResolvedValue({
+      placements: [
+        {
+          ...makePlacement({
+            status: TelegramAdPlacementStatus.PUBLISHED,
+            telegramChannelId: 'channel-1',
+            agreedPrice: decimal(150),
+            recommendedPrice: decimal(180),
+            minimumPrice: decimal(140),
+            expectedViews: 1000,
+            actualViews24h: 700,
+            actualViews48h: 850,
+            actualViewsFinal: 900,
+            paymentAllocations: [
+              {
+                amount: decimal(120),
+                amountInPrimaryCurrency: decimal(120),
+                payment: { status: TelegramAdSalePaymentStatus.ACTIVE },
               },
-            }),
-          },
-        ],
-        payments: [],
-        channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
-      } as any);
-    jest
-      .spyOn(service as any, 'inventorySlotsForChannels')
-      .mockResolvedValue([
-        { channelId: 'channel-1', state: 'AVAILABLE', existingPlacement: null },
-        { channelId: 'channel-1', state: 'SOLD', existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED } },
-      ]);
+            ],
+            sale: {
+              id: 'sale-1',
+              advertiserName: 'Advertiser',
+              status: TelegramAdSaleStatus.CONFIRMED,
+              createdAt: new Date('2026-07-20T00:00:00.000Z'),
+              settlementCurrency: 'USD',
+            },
+          }),
+        },
+      ],
+      payments: [],
+      channels: [{ id: 'channel-1', title: 'Channel One', username: 'one' }],
+    } as any);
+    jest.spyOn(service as any, 'inventorySlotsForChannels').mockResolvedValue([
+      { channelId: 'channel-1', state: 'AVAILABLE', existingPlacement: null },
+      {
+        channelId: 'channel-1',
+        state: 'SOLD',
+        existingPlacement: { status: TelegramAdPlacementStatus.PUBLISHED },
+      },
+    ]);
 
     const result = await service.channelAnalytics('user-1', 'channel-1', {
       rangeDays: 30,
@@ -1191,19 +1296,21 @@ describe('TelegramAdSalesService', () => {
     prisma.telegramAdSalePlacement.findMany.mockResolvedValue([]);
     prisma.telegramManagedPost.findMany.mockResolvedValue([]);
 
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-01T00:00:00.000Z',
@@ -1255,14 +1362,12 @@ describe('TelegramAdSalesService', () => {
       ]);
     prisma.telegramAdProduct.createMany.mockResolvedValue({ count: 4 });
 
-    jest
-      .spyOn(service as any, 'buildProductPricingPreview')
-      .mockResolvedValue({
-        pricingWindowHours: 24,
-        pricingWindowLabel: '24h placement',
-        expectedViews: 300,
-        recommendedPrice: '15',
-      });
+    jest.spyOn(service as any, 'buildProductPricingPreview').mockResolvedValue({
+      pricingWindowHours: 24,
+      pricingWindowLabel: '24h placement',
+      expectedViews: 300,
+      recommendedPrice: '15',
+    });
 
     const result = await service.listChannelProducts('user-1', 'channel-1');
 
@@ -1273,7 +1378,10 @@ describe('TelegramAdSalesService', () => {
           expect.objectContaining({ name: '1/24' }),
           expect.objectContaining({ name: '2/48' }),
           expect.objectContaining({ name: '3/72' }),
-          expect.objectContaining({ name: 'No auto-delete', isPermanent: true }),
+          expect.objectContaining({
+            name: 'No auto-delete',
+            isPermanent: true,
+          }),
         ]),
       }),
     );
@@ -1352,19 +1460,21 @@ describe('TelegramAdSalesService', () => {
     prisma.telegramAdSalePlacement.findMany.mockResolvedValue([]);
     prisma.telegramManagedPost.findMany.mockResolvedValue([]);
 
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-07-31T00:00:00.000Z',
@@ -1372,10 +1482,13 @@ describe('TelegramAdSalesService', () => {
       channelIds: ['channel-1'],
     });
 
-    const slotsByDate = result.slots.reduce<Record<string, number>>((acc, slot) => {
-      acc[slot.date] = (acc[slot.date] ?? 0) + 1;
-      return acc;
-    }, {});
+    const slotsByDate = result.slots.reduce<Record<string, number>>(
+      (acc, slot) => {
+        acc[slot.date] = (acc[slot.date] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
 
     expect(slotsByDate['2026-07-31'] ?? 0).toBe(1);
     expect(slotsByDate['2026-08-01'] ?? 0).toBe(1);
@@ -1418,19 +1531,21 @@ describe('TelegramAdSalesService', () => {
     prisma.telegramAdSalePlacement.findMany.mockResolvedValue([]);
     prisma.telegramManagedPost.findMany.mockResolvedValue([]);
 
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-03T00:00:00.000Z',
@@ -1498,19 +1613,21 @@ describe('TelegramAdSalesService', () => {
         scheduledAt: new Date('2026-08-31T20:00:00.000Z'),
       }),
     ]);
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-31T00:00:00.000Z',
@@ -1568,19 +1685,21 @@ describe('TelegramAdSalesService', () => {
         scheduledAt: new Date('2026-08-31T18:00:00.000Z'),
       }),
     ]);
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-31T00:00:00.000Z',
@@ -1670,19 +1789,21 @@ describe('TelegramAdSalesService', () => {
     prisma.telegramAdSalePlacement.findMany.mockResolvedValue([]);
     prisma.telegramManagedPost.findMany.mockResolvedValue([]);
 
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-03T00:00:00.000Z',
@@ -1690,10 +1811,13 @@ describe('TelegramAdSalesService', () => {
       channelIds: ['channel-1'],
     });
 
-    const slotsByDate = result.slots.reduce<Record<string, number>>((acc, slot) => {
-      acc[slot.date] = (acc[slot.date] ?? 0) + 1;
-      return acc;
-    }, {});
+    const slotsByDate = result.slots.reduce<Record<string, number>>(
+      (acc, slot) => {
+        acc[slot.date] = (acc[slot.date] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
 
     expect(slotsByDate['2026-08-03'] ?? 0).toBe(1);
     expect(slotsByDate['2026-08-04'] ?? 0).toBe(1);
@@ -1762,19 +1886,21 @@ describe('TelegramAdSalesService', () => {
     prisma.telegramAdSalePlacement.findMany.mockResolvedValue([]);
     prisma.telegramManagedPost.findMany.mockResolvedValue([]);
 
-    jest.spyOn(service as any, 'computeExpectedViewsForProduct').mockResolvedValue({
-      expectedViews: 1500,
-      averageViews: null,
-      medianViews: null,
-      adjustedViews: null,
-      postsSampleCount: 0,
-      dataQuality: 'low',
-      warnings: [],
-      fallbackSource: 'none',
-      methodVersion: 'test',
-      pricingWindowHours: null,
-      pricingWindowLabel: 'Post',
-    });
+    jest
+      .spyOn(service as any, 'computeExpectedViewsForProduct')
+      .mockResolvedValue({
+        expectedViews: 1500,
+        averageViews: null,
+        medianViews: null,
+        adjustedViews: null,
+        postsSampleCount: 0,
+        dataQuality: 'low',
+        warnings: [],
+        fallbackSource: 'none',
+        methodVersion: 'test',
+        pricingWindowHours: null,
+        pricingWindowLabel: 'Post',
+      });
 
     const result = await service.availability('user-1', {
       from: '2026-08-01T22:00:00.000Z',

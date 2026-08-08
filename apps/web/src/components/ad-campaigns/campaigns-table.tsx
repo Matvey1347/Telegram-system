@@ -13,7 +13,7 @@ import {
   MetricPreviewLabel,
   resolveMetricPreviewIcon,
 } from "@/lib/metric-preview-icons";
-import { convertMoney, formatMoney } from "@/lib/money";
+import { getMoneyPreview } from "@/lib/money";
 import type {
   AdCampaign,
   AdCampaignKpiStatus,
@@ -76,28 +76,16 @@ function formatPercent(value: unknown, decimals = 1) {
 function moneyBreakdown(
   amount: number | null,
   currency: string,
-  displayMode: "code" | "symbol",
+  moneySettings: any,
   rates: any[] | undefined,
 ) {
-  const current = String(currency || "").toUpperCase();
-  const targets = [current, "PLN", "USD"].filter(
-    (value, index, list) => value && list.indexOf(value) === index,
-  );
-
-  return targets.map((target, index) => {
-    const value =
-      index === 0
-        ? amount
-        : convertMoney(amount, current, target, rates);
-    return {
-      currency: target,
-      label:
-        value == null
-          ? null
-          : `${index === 0 ? "" : "≈ "}${formatMoney(value, target, displayMode)}`,
+  return getMoneyPreview({ amount, currency, settings: moneySettings, rates })
+    .map((item, index) => ({
+      currency: item.currency,
+      label: item.amount == null ? null : `${index === 0 ? "" : "≈ "}${item.label}`,
       isMain: index === 0,
-    };
-  }).filter((item) => item.label != null);
+    }))
+    .filter((item) => item.label != null);
 }
 
 function numberOrNull(value: unknown) {
@@ -547,18 +535,17 @@ function PerformanceCell({
     peakPrimaryCostPerJoined != null &&
     primaryCostPerJoined != null &&
     Math.abs(peakPrimaryCostPerJoined - primaryCostPerJoined) >= 0.005;
-  const displayMode = moneySettings?.currencyDisplayMode ?? "code";
-  const spendBreakdown = moneyBreakdown(cost, currency, displayMode, rates);
+  const spendBreakdown = moneyBreakdown(cost, currency, moneySettings, rates);
   const cpaBreakdown =
     costPerJoined != null
-      ? moneyBreakdown(costPerJoined, currency, displayMode, rates)
+      ? moneyBreakdown(costPerJoined, currency, moneySettings, rates)
       : [];
   const peakCpaBreakdown =
     peakCostPerJoined != null
       ? moneyBreakdown(
           peakCostPerJoined,
           currency,
-          displayMode,
+          moneySettings,
           rates,
         )
       : [];

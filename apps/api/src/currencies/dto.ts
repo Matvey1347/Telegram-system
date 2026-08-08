@@ -25,6 +25,12 @@ export class UpdateCurrencySettingsDto {
   secondaryCurrency!: string;
 
   @IsOptional()
+  @Transform(normalizeCurrency)
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  tertiaryCurrency?: string;
+
+  @IsOptional()
   @IsEnum(CurrencyDisplayMode)
   currencyDisplayMode?: CurrencyDisplayMode;
 }

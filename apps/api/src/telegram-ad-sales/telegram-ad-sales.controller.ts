@@ -69,6 +69,8 @@ import {
   VoidTelegramAdSalePaymentDto,
 } from './dto';
 import { TelegramAdSalesBulkService } from './telegram-ad-sales-bulk.service';
+import { TelegramAdSalesCrmAdvertisersService } from './telegram-ad-sales-crm-advertisers.service';
+import { TelegramAdSalesCrmSettingsService } from './telegram-ad-sales-crm-settings.service';
 import { TelegramAdSalesService } from './telegram-ad-sales.service';
 
 @UseGuards(JwtAuthGuard)
@@ -77,6 +79,8 @@ export class TelegramAdSalesController {
   constructor(
     private readonly service: TelegramAdSalesService,
     private readonly bulkService: TelegramAdSalesBulkService,
+    private readonly crmAdvertisersService: TelegramAdSalesCrmAdvertisersService,
+    private readonly crmSettingsService: TelegramAdSalesCrmSettingsService,
   ) {}
 
   @Get('settings/workspace')
@@ -106,12 +110,18 @@ export class TelegramAdSalesController {
   }
 
   @Get('products')
-  listProducts(@CurrentUser() user: JwtUser, @Query() query: TelegramAdProductsQueryDto) {
+  listProducts(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdProductsQueryDto,
+  ) {
     return this.service.listProducts(user.sub, query);
   }
 
   @Get('channels/:channelId/products')
-  listChannelProducts(@CurrentUser() user: JwtUser, @Param('channelId') channelId: string) {
+  listChannelProducts(
+    @CurrentUser() user: JwtUser,
+    @Param('channelId') channelId: string,
+  ) {
     return this.service.listChannelProducts(user.sub, channelId);
   }
 
@@ -125,7 +135,11 @@ export class TelegramAdSalesController {
   }
 
   @Patch('products/:id')
-  updateProduct(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateTelegramAdProductDto) {
+  updateProduct(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTelegramAdProductDto,
+  ) {
     return this.service.updateProduct(user.sub, id, dto);
   }
 
@@ -135,12 +149,18 @@ export class TelegramAdSalesController {
   }
 
   @Get('channels/:channelId/policy')
-  getPolicy(@CurrentUser() user: JwtUser, @Param('channelId') channelId: string) {
+  getPolicy(
+    @CurrentUser() user: JwtUser,
+    @Param('channelId') channelId: string,
+  ) {
     return this.service.getPolicy(user.sub, channelId);
   }
 
   @Get('channels/:channelId/baseline')
-  getChannelBaseline(@CurrentUser() user: JwtUser, @Param('channelId') channelId: string) {
+  getChannelBaseline(
+    @CurrentUser() user: JwtUser,
+    @Param('channelId') channelId: string,
+  ) {
     return this.service.getChannelBaseline(user.sub, channelId);
   }
 
@@ -172,7 +192,10 @@ export class TelegramAdSalesController {
   }
 
   @Post('quotes')
-  createQuote(@CurrentUser() user: JwtUser, @Body() dto: CreateTelegramAdQuoteDto) {
+  createQuote(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreateTelegramAdQuoteDto,
+  ) {
     return this.service.createQuote(user.sub, dto);
   }
 
@@ -186,17 +209,26 @@ export class TelegramAdSalesController {
   }
 
   @Post('availability')
-  availability(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdAvailabilityQueryDto) {
+  availability(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: TelegramAdAvailabilityQueryDto,
+  ) {
     return this.service.availability(user.sub, dto);
   }
 
   @Post('bulk')
-  bulkCreate(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdSalesBulkCreateDto) {
+  bulkCreate(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: TelegramAdSalesBulkCreateDto,
+  ) {
     return this.bulkService.create(user.sub, dto);
   }
 
   @Get('analytics/summary')
-  analyticsSummary(@CurrentUser() user: JwtUser, @Query() query: TelegramAdAnalyticsQueryDto) {
+  analyticsSummary(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAnalyticsQueryDto,
+  ) {
     return this.service.analyticsSummary(user.sub, query);
   }
 
@@ -219,22 +251,34 @@ export class TelegramAdSalesController {
   }
 
   @Get('analytics/revenue-series')
-  revenueSeries(@CurrentUser() user: JwtUser, @Query() query: TelegramAdAnalyticsSeriesQueryDto) {
+  revenueSeries(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAnalyticsSeriesQueryDto,
+  ) {
     return this.service.revenueSeries(user.sub, query);
   }
 
   @Get('analytics/pricing-series')
-  pricingSeries(@CurrentUser() user: JwtUser, @Query() query: TelegramAdAnalyticsSeriesQueryDto) {
+  pricingSeries(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAnalyticsSeriesQueryDto,
+  ) {
     return this.service.pricingSeries(user.sub, query);
   }
 
   @Get('analytics/inventory')
-  inventory(@CurrentUser() user: JwtUser, @Query() query: TelegramAdAnalyticsSeriesQueryDto) {
+  inventory(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAnalyticsSeriesQueryDto,
+  ) {
     return this.service.inventoryAnalytics(user.sub, query);
   }
 
   @Get('analytics/alerts')
-  alerts(@CurrentUser() user: JwtUser, @Query() query: TelegramAdAlertsQueryDto) {
+  alerts(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdAlertsQueryDto,
+  ) {
     return this.service.analyticsAlerts(user.sub, query);
   }
 
@@ -271,12 +315,18 @@ export class TelegramAdSalesController {
   }
 
   @Get('advertisers')
-  listAdvertisers(@CurrentUser() user: JwtUser, @Query() query: TelegramAdvertisersQueryDto) {
+  listAdvertisers(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdvertisersQueryDto,
+  ) {
     return this.service.listAdvertisers(user.sub, query);
   }
 
   @Get('advertisers/search')
-  advertiserSearch(@CurrentUser() user: JwtUser, @Query() query: TelegramAdvertiserSearchDto) {
+  advertiserSearch(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdvertiserSearchDto,
+  ) {
     return this.service.advertiserSearch(user.sub, query);
   }
 
@@ -286,12 +336,19 @@ export class TelegramAdSalesController {
   }
 
   @Post('advertisers')
-  createAdvertiser(@CurrentUser() user: JwtUser, @Body() dto: CreateTelegramAdvertiserDto) {
+  createAdvertiser(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreateTelegramAdvertiserDto,
+  ) {
     return this.service.createAdvertiser(user.sub, dto);
   }
 
   @Patch('advertisers/:id')
-  updateAdvertiser(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateTelegramAdvertiserDto) {
+  updateAdvertiser(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTelegramAdvertiserDto,
+  ) {
     return this.service.updateAdvertiser(user.sub, id, dto);
   }
 
@@ -370,8 +427,19 @@ export class TelegramAdSalesController {
   }
 
   @Get('crm/tasks')
-  listCrmTasks(@CurrentUser() user: JwtUser, @Query() query: TelegramAdvertiserTasksQueryDto) {
+  listCrmTasks(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdvertiserTasksQueryDto,
+  ) {
     return this.service.listCrmTasks(user.sub, query);
+  }
+
+  @Get('crm/advertisers')
+  listCrmAdvertisers(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdvertisersQueryDto,
+  ) {
+    return this.crmAdvertisersService.listCrmAdvertisers(user.sub, query);
   }
 
   @Post('advertisers/:id/tasks')
@@ -421,26 +489,35 @@ export class TelegramAdSalesController {
 
   @Get('crm/settings/workspace')
   getCrmWorkspaceSettings(@CurrentUser() user: JwtUser) {
-    return this.service.getCrmWorkspaceSettings(user.sub);
+    return this.crmSettingsService.getCrmWorkspaceSettings(user.sub);
   }
 
   @Put('crm/settings/workspace')
-  updateCrmWorkspaceSettings(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdCrmWorkspaceSettingsDto) {
-    return this.service.updateCrmWorkspaceSettings(user.sub, dto);
+  updateCrmWorkspaceSettings(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: TelegramAdCrmWorkspaceSettingsDto,
+  ) {
+    return this.crmSettingsService.updateCrmWorkspaceSettings(user.sub, dto);
   }
 
   @Get('crm/settings/member')
   getCrmMemberSettings(@CurrentUser() user: JwtUser) {
-    return this.service.getCrmMemberSettings(user.sub);
+    return this.crmSettingsService.getCrmMemberSettings(user.sub);
   }
 
   @Put('crm/settings/member')
-  updateCrmMemberSettings(@CurrentUser() user: JwtUser, @Body() dto: TelegramAdCrmMemberSettingsDto) {
-    return this.service.updateCrmMemberSettings(user.sub, dto);
+  updateCrmMemberSettings(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: TelegramAdCrmMemberSettingsDto,
+  ) {
+    return this.crmSettingsService.updateCrmMemberSettings(user.sub, dto);
   }
 
   @Get()
-  listSales(@CurrentUser() user: JwtUser, @Query() query: TelegramAdSalesQueryDto) {
+  listSales(
+    @CurrentUser() user: JwtUser,
+    @Query() query: TelegramAdSalesQueryDto,
+  ) {
     return this.service.listSales(user.sub, query);
   }
 
@@ -450,12 +527,19 @@ export class TelegramAdSalesController {
   }
 
   @Post()
-  createSale(@CurrentUser() user: JwtUser, @Body() dto: CreateTelegramAdSaleDto) {
+  createSale(
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreateTelegramAdSaleDto,
+  ) {
     return this.service.createSale(user.sub, dto);
   }
 
   @Patch(':id')
-  updateSale(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: UpdateTelegramAdSaleDto) {
+  updateSale(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTelegramAdSaleDto,
+  ) {
     return this.service.updateSale(user.sub, id, dto);
   }
 
@@ -513,7 +597,11 @@ export class TelegramAdSalesController {
   }
 
   @Post(':id/reserve')
-  reserve(@CurrentUser() user: JwtUser, @Param('id') id: string, @Body() dto: ReserveTelegramAdSaleDto) {
+  reserve(
+    @CurrentUser() user: JwtUser,
+    @Param('id') id: string,
+    @Body() dto: ReserveTelegramAdSaleDto,
+  ) {
     return this.service.reserveSale(user.sub, id, dto);
   }
 
@@ -534,7 +622,12 @@ export class TelegramAdSalesController {
     @Param('placementId') placementId: string,
     @Body() dto: CreatePlacementManagedPostDto,
   ) {
-    return this.service.createManagedPostFromPlacement(user.sub, saleId, placementId, dto);
+    return this.service.createManagedPostFromPlacement(
+      user.sub,
+      saleId,
+      placementId,
+      dto,
+    );
   }
 
   @Post(':saleId/placements/:placementId/attach-managed-post')
@@ -612,7 +705,12 @@ export class TelegramAdSalesController {
     @Param('placementId') placementId: string,
     @Body() dto: CompletePermanentPlacementDto,
   ) {
-    return this.service.completePermanentPlacement(user.sub, saleId, placementId, dto);
+    return this.service.completePermanentPlacement(
+      user.sub,
+      saleId,
+      placementId,
+      dto,
+    );
   }
 
   @Post(':saleId/placements/:placementId/retry-deletion')

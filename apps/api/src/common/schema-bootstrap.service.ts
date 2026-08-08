@@ -74,6 +74,11 @@ ADD COLUMN IF NOT EXISTS "currencyDisplayMode" "CurrencyDisplayMode" NOT NULL DE
 `);
 
     await this.prisma.$executeRawUnsafe(`
+ALTER TABLE "Workspace"
+ADD COLUMN IF NOT EXISTS "tertiaryCurrency" VARCHAR(3) NOT NULL DEFAULT 'UAH';
+`);
+
+    await this.prisma.$executeRawUnsafe(`
 ALTER TABLE "Account"
 ADD COLUMN IF NOT EXISTS "iconId" TEXT;
 `);

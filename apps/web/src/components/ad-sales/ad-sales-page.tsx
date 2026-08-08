@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  keepPreviousData,
   useMutation,
   useQueries,
   useQuery,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Settings2,
   Trash2,
+  Users,
 } from "lucide-react";
 import type {
   TelegramAdAvailabilitySlot,
@@ -30,18 +32,12 @@ import type {
 } from "@telegram-system/shared";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageTabHead } from "@/components/layout/page-tab-head";
-import { MemberBadge } from "@/components/workspace/member-badge";
-import { MemberSelect } from "@/components/workspace/member-select";
 import { TelegramEntityAvatar } from "@/components/telegram/telegram-entity-avatar";
-import { MoneyStack } from "@/components/ui/money-stack";
-import { Pagination } from "@/components/ui/pagination";
 import {
   Button,
   Card,
   ConfirmDeleteModal,
   CurrencySelect,
-  CustomSelect,
-  DateInput,
   DateRangeInput,
   EmptyState,
   ErrorState,
@@ -55,20 +51,21 @@ import {
   Skeleton,
   TableLoadingState,
   Textarea,
-  TimeInput,
   ToggleRow,
   Tooltip,
 } from "@/components/ui/primitives";
-import { CalendarSlotCard } from "@/components/ad-sales/calendar-slot-card";
 import {
   allowedSaleActions,
-  SaleStatusActions,
   type SaleActionKey,
 } from "@/components/ad-sales/sale-status-actions";
 import { RegisterPaymentModal } from "@/components/ad-sales/register-payment-modal";
 import { AdSaleModal } from "@/components/ad-sales/ad-sale-modal";
 import { BulkAdSaleModal } from "@/components/ad-sales/bulk/bulk-ad-sale-modal";
+import { CalendarTab } from "@/components/ad-sales/ad-sales-calendar-tab";
 import { AdSalesAnalyticsPanel } from "@/components/ad-sales/ad-sales-analytics-panel";
+import { AdSalesClientsPanel } from "@/components/ad-sales/ad-sales-clients-panel";
+import { SaleDetailsModal } from "@/components/ad-sales/ad-sales-sale-details-modal";
+import { SalesTab } from "@/components/ad-sales/ad-sales-sales-tab";
 import {
   accountsApi,
   authApi,
@@ -87,7 +84,6 @@ import {
   buildAdCalendarSlots,
   buildUnderpricingSummary,
   channelLocalDateKey,
-  channelLocalTime,
   expandNetworkChannelIds,
   getChannelOptionLabel,
   readAdSalesCalendarRangeMode,
@@ -103,7 +99,6 @@ import {
   telegramAdSalesKeys,
 } from "@/lib/telegram-ad-sales-query";
 import { useAppToast } from "@/providers/toast-provider";
-import { accountDisplayName } from "@/lib/account-display";
 
 const tabs: Array<{
   id: TelegramAdSalesTab;
@@ -112,6 +107,7 @@ const tabs: Array<{
 }> = [
   { id: "calendar", label: "Slots", icon: CalendarRange },
   { id: "sales", label: "Deals", icon: CircleDollarSign },
+  { id: "clients", label: "Clients", icon: Users },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Setup", icon: Settings2 },
 ];
@@ -123,6 +119,7 @@ const calendarRangeModes: Array<{
 }> = [
   { id: "week", label: "Week", icon: CalendarRange },
   { id: "month", label: "Month", icon: CalendarDays },
+  { id: "threeMonths", label: "3 months", icon: CalendarDays },
 ];
 
 const tabDescriptions: Record<TelegramAdSalesTab, string> = {
@@ -130,6 +127,8 @@ const tabDescriptions: Record<TelegramAdSalesTab, string> = {
     "See ad opportunities here and switch between calendar and list layout for the selected period.",
   sales:
     "Track created deals here: reserved, confirmed, paid, published, and completed placements.",
+  clients:
+    "Review CRM advertisers by revenue, RFM segment, owner, urgency, and next task.",
   analytics:
     "See revenue, fill rate, overdue payments, and channel performance for the current selection.",
   settings:
@@ -142,6 +141,13 @@ const adSalesSoftPanelClass =
   "rounded-[18px] border border-neutral-800 bg-[#111111]";
 const adSalesTileClass =
   "rounded-[18px] border border-slate-800/80 bg-[#0b1220] p-4 shadow-[inset_0_1px_0_rgba(96,165,250,0.05)]";
+const calendarSalesPageSize = 100;
+const adSalesDataCacheOptions = {
+  staleTime: 2 * 60 * 1000,
+  gcTime: 15 * 60 * 1000,
+  placeholderData: keepPreviousData,
+  refetchOnWindowFocus: false,
+} as const;
 
 function startOfWeek(value: Date) {
   const date = new Date(value);
@@ -177,16 +183,36 @@ function endOfMonth(value: Date) {
   );
 }
 
+function addMonths(value: Date, months: number) {
+  return new Date(value.getFullYear(), value.getMonth() + months, 1);
+}
+
 function monthGridDays(value: Date) {
   const start = startOfWeek(startOfMonth(value));
   return Array.from({ length: 42 }, (_, index) => addDays(start, index));
 }
 
-function rangeForCalendarMode(view: "week" | "month", cursor: Date) {
+function monthGridDaysForRange(from: Date, to: Date) {
+  const start = startOfWeek(startOfMonth(from));
+  const lastVisibleWeekStart = startOfWeek(addDays(endOfMonth(to), 1));
+  const end = addDays(lastVisibleWeekStart, 6);
+  return listDaysInRange(start, end);
+}
+
+function rangeForCalendarMode(
+  view: TelegramAdSalesCalendarRangeMode,
+  cursor: Date,
+) {
   if (view === "month") {
     return {
       from: startOfMonth(cursor),
       to: endOfMonth(cursor),
+    };
+  }
+  if (view === "threeMonths") {
+    return {
+      from: startOfMonth(addMonths(cursor, -1)),
+      to: endOfMonth(addMonths(cursor, 1)),
     };
   }
   return {
@@ -333,12 +359,6 @@ function tabButtonClass(active: boolean) {
     : "border-slate-800/80 bg-[#0b1220] text-neutral-300 hover:border-slate-700 hover:text-white";
 }
 
-function saleChannelCount(sale: TelegramAdSale) {
-  return new Set(
-    sale.placements.map((placement) => placement.telegramChannelId),
-  ).size;
-}
-
 function isSaleUnderpriced(sale: TelegramAdSale) {
   return sale.placements.some(
     (placement) =>
@@ -350,28 +370,6 @@ function isSaleUnderpriced(sale: TelegramAdSale) {
   );
 }
 
-function saleStatusTone(status: TelegramAdSale["status"]) {
-  if (status === "COMPLETED")
-    return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
-  if (status === "CONFIRMED" || status === "IN_PROGRESS")
-    return "bg-blue-900/40 text-blue-300 border-blue-700";
-  if (status === "RESERVED")
-    return "bg-amber-900/40 text-amber-300 border-amber-700";
-  if (status === "CANCELLED")
-    return "bg-red-900/40 text-red-300 border-red-700";
-  return "bg-neutral-800 text-neutral-300 border-neutral-700";
-}
-
-function paymentStatusTone(status: string) {
-  if (status === "PAID")
-    return "bg-emerald-900/40 text-emerald-300 border-emerald-700";
-  if (status === "PARTIALLY_PAID")
-    return "bg-amber-900/40 text-amber-300 border-amber-700";
-  if (status === "OVERPAID")
-    return "bg-blue-900/40 text-blue-300 border-blue-700";
-  return "bg-red-900/40 text-red-300 border-red-700";
-}
-
 function sameStringArray(left: string[], right: string[]) {
   return (
     left.length === right.length &&
@@ -381,19 +379,10 @@ function sameStringArray(left: string[], right: string[]) {
 
 type SlotsLayoutView = "calendar" | "list";
 
-function EnumPill({ label, tone }: { label: string; tone: string }) {
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${tone}`}
-    >
-      {label}
-    </span>
-  );
-}
-
 const tabRouteMap: Record<TelegramAdSalesTab, string> = {
   calendar: "/ad-sales/calendar",
   sales: "/ad-sales/sales",
+  clients: "/ad-sales/clients",
   analytics: "/ad-sales/analytics",
   settings: "/ad-sales/settings",
 };
@@ -402,6 +391,7 @@ function routeTabFromPathname(pathname: string): TelegramAdSalesTab {
   if (pathname.startsWith("/ad-sales/pricing")) return "settings";
   if (pathname.startsWith("/ad-sales/analytics")) return "analytics";
   if (pathname.startsWith("/ad-sales/settings")) return "settings";
+  if (pathname.startsWith("/ad-sales/clients")) return "clients";
   if (pathname.startsWith("/ad-sales/sales")) return "sales";
   return "calendar";
 }
@@ -424,7 +414,8 @@ export function AdSalesPage() {
   } | null>(null);
   const [selectedNetworkId, setSelectedNetworkId] = useState("");
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
+  const [slotStatusFilter, setSlotStatusFilter] = useState("");
+  const [saleStatusFilter, setSaleStatusFilter] = useState("");
   const [responsibleMemberId, setResponsibleMemberId] = useState("");
   const [slotVisibility, setSlotVisibility] = useState<"all" | "free" | "busy">(
     "all",
@@ -463,7 +454,6 @@ export function AdSalesPage() {
   const [postText, setPostText] = useState("");
   const [postImages, setPostImages] = useState("");
   const [refreshingCurrentPage, setRefreshingCurrentPage] = useState(false);
-  const [availabilityCacheBust, setAvailabilityCacheBust] = useState(0);
   const appliedPreferencesSignatureRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
@@ -494,33 +484,11 @@ export function AdSalesPage() {
     if (calendarRangeMode === "month" && !calendarRangeSelection?.from) {
       return monthGridDays(calendarCursor);
     }
+    if (calendarRangeMode === "threeMonths" && !calendarRangeSelection?.from) {
+      return monthGridDaysForRange(from, to);
+    }
     return listDaysInRange(from, to);
   }, [calendarCursor, calendarRangeMode, calendarRangeSelection, from, to]);
-  const visibleCalendarRange = useMemo(() => {
-    const start = calendarDays[0] ?? from;
-    const end = calendarDays[calendarDays.length - 1] ?? to;
-    return {
-      from: new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        start.getDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-      to: new Date(
-        end.getFullYear(),
-        end.getMonth(),
-        end.getDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    };
-  }, [calendarDays, from, to]);
-
   const { data: settings } = useQuery({
     queryKey: ["currency-settings"],
     queryFn: currenciesApi.getSettings,
@@ -574,14 +542,29 @@ export function AdSalesPage() {
     queryKey: telegramAdSalesKeys.sales({
       page: salesPage,
       pageSize: salesPageSize,
-      status: statusFilter || undefined,
+      status: saleStatusFilter || undefined,
     }),
     queryFn: () =>
       telegramAdSalesApi.listSalesPage({
         page: salesPage,
         pageSize: salesPageSize,
-        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(saleStatusFilter ? { status: saleStatusFilter } : {}),
       }),
+    ...adSalesDataCacheOptions,
+  });
+  const calendarSalesQuery = useQuery({
+    queryKey: telegramAdSalesKeys.sales({
+      page: 1,
+      pageSize: calendarSalesPageSize,
+      scope: "calendar",
+    }),
+    queryFn: () =>
+      telegramAdSalesApi.listSalesPage({
+        page: 1,
+        pageSize: calendarSalesPageSize,
+      }),
+    enabled: tab === "calendar",
+    ...adSalesDataCacheOptions,
   });
   const selectedSaleQuery = useQuery({
     queryKey: selectedSaleId
@@ -655,10 +638,13 @@ export function AdSalesPage() {
           ? filteredPreferenceIds
           : saleableChannelIdsList
       : saleableChannelIdsList;
+    const storedRangeMode = readAdSalesCalendarRangeMode(window.localStorage);
     const normalizedView =
-      preferences.initialized && preferences.calendarView === "month"
-        ? "month"
-        : "week";
+      storedRangeMode === "threeMonths"
+        ? "threeMonths"
+        : preferences.initialized && preferences.calendarView === "month"
+          ? "month"
+          : "week";
     const nextCalendarRangeMode = normalizedView;
     writeAdSalesCalendarRangeMode(window.localStorage, nextCalendarRangeMode);
     const nextPreferencesSignature = JSON.stringify({
@@ -716,7 +702,9 @@ export function AdSalesPage() {
     savePreferencesMutation.mutate({
       selectedChannelIds,
       selectedNetworkId: selectedNetworkId || null,
-      calendarView: payload.calendarView ?? calendarRangeMode,
+      calendarView:
+        payload.calendarView ??
+        (calendarRangeMode === "threeMonths" ? "month" : calendarRangeMode),
       ...payload,
       initialized: true,
     });
@@ -727,7 +715,9 @@ export function AdSalesPage() {
   ) => {
     writeAdSalesCalendarRangeMode(window.localStorage, view);
     setCalendarRangeMode(view);
-    persistCalendarPreferences({ calendarView: view });
+    if (view !== "threeMonths") {
+      persistCalendarPreferences({ calendarView: view });
+    }
   };
 
   const handleCalendarViewChange = (view: SlotsLayoutView) => {
@@ -765,6 +755,12 @@ export function AdSalesPage() {
     setCalendarCursor((current) =>
       calendarRangeMode === "month"
         ? new Date(current.getFullYear(), current.getMonth() + direction, 1)
+        : calendarRangeMode === "threeMonths"
+          ? new Date(
+              current.getFullYear(),
+              current.getMonth() + direction * 3,
+              1,
+            )
         : addDays(current, direction * 7),
     );
   };
@@ -819,41 +815,6 @@ export function AdSalesPage() {
         ]),
       ),
     [channelProductQueries, productQueryChannelIds],
-  );
-
-  const availabilityQueries = useQueries({
-    queries: effectiveChannelIds.map((channelId) => ({
-      queryKey: telegramAdSalesKeys.availability({
-        from: visibleCalendarRange.from.toISOString(),
-        to: visibleCalendarRange.to.toISOString(),
-        channelIds: [channelId],
-        cacheBust: availabilityCacheBust || undefined,
-      }),
-      queryFn: () =>
-        telegramAdSalesApi.availability({
-          from: visibleCalendarRange.from.toISOString(),
-          to: visibleCalendarRange.to.toISOString(),
-          channelIds: [channelId],
-          ...(availabilityCacheBust
-            ? { cacheBust: String(availabilityCacheBust) }
-            : {}),
-        }),
-      enabled: tab === "calendar",
-      staleTime: 30 * 1000,
-    })),
-  });
-
-  const availabilitySlots = availabilityQueries.flatMap(
-    (query) => query.data?.slots ?? [],
-  );
-  const availabilityDaySummaries = availabilityQueries.flatMap(
-    (query) => query.data?.summaries ?? [],
-  );
-  const loadingAvailabilityChannelIds = effectiveChannelIds.filter(
-    (_, index) => availabilityQueries[index]?.isFetching,
-  );
-  const failedAvailabilityChannelIds = effectiveChannelIds.filter(
-    (_, index) => availabilityQueries[index]?.isError,
   );
 
   const filteredSales = useMemo(() => {
@@ -915,22 +876,60 @@ export function AdSalesPage() {
   ]);
 
   const filteredSlots = useMemo(() => {
-    let items = buildAdCalendarSlots(availabilitySlots);
-    if (statusFilter) {
+    const channelIds = new Set(effectiveChannelIds);
+    let items = buildAdCalendarSlots(
+      (calendarSalesQuery.data?.items ?? []).flatMap((sale) =>
+        sale.placements
+          .filter((placement) => channelIds.has(placement.telegramChannelId))
+          .map((placement): TelegramAdAvailabilitySlot => ({
+            channelId: placement.telegramChannelId,
+            date: channelLocalDateKey(
+              placement.scheduledAt,
+              placement.timezone,
+            ),
+            inventoryOpportunityKey: placement.inventoryOpportunityKey,
+            scheduledAt: placement.scheduledAt,
+            timezone: placement.timezone || workspaceTimezone,
+            source: "sale",
+            state: "SOLD",
+            blockingReason: null,
+            nextOrganicPostAt: null,
+            productId: placement.telegramAdProductId,
+            expectedViews: placement.expectedViews,
+            recommendedPrice: placement.recommendedPrice,
+            minimumPrice: placement.minimumPrice,
+            currency: placement.currency,
+            existingPlacement: {
+              id: placement.id,
+              saleId: sale.id,
+              status: placement.status,
+            },
+            organicPostsCountForDay: 0,
+            adsCountForDay: 1,
+          })),
+      ),
+    );
+    if (slotStatusFilter) {
       items = items.filter(
         (slot) =>
-          slot.existingPlacement?.status === statusFilter ||
-          slot.state === statusFilter,
+          slot.existingPlacement?.status === slotStatusFilter ||
+          slot.state === slotStatusFilter,
       );
     }
     if (slotVisibility === "free") {
-      items = items.filter((slot) => slot.state === "AVAILABLE");
+      items = [];
     }
     if (slotVisibility === "busy") {
       items = items.filter((slot) => slot.state !== "AVAILABLE");
     }
     return items;
-  }, [availabilitySlots, slotVisibility, statusFilter]);
+  }, [
+    effectiveChannelIds,
+    calendarSalesQuery.data?.items,
+    slotStatusFilter,
+    slotVisibility,
+    workspaceTimezone,
+  ]);
 
   const pricingChannels = useMemo(
     () =>
@@ -963,9 +962,6 @@ export function AdSalesPage() {
   const handleRefreshCurrentPage = async () => {
     setRefreshingCurrentPage(true);
     try {
-      if (tab === "calendar") {
-        setAvailabilityCacheBust(Date.now());
-      }
       await withFreshApiReads(async () => {
         const refreshTasks: Promise<unknown>[] = [
           queryClient.invalidateQueries({
@@ -1012,14 +1008,36 @@ export function AdSalesPage() {
           }
         }
 
+        if (tab === "calendar") {
+          refreshTasks.push(
+            queryClient.refetchQueries({
+              queryKey: telegramAdSalesKeys.sales({
+                page: 1,
+                pageSize: calendarSalesPageSize,
+                scope: "calendar",
+              }),
+              type: "active",
+            }),
+          );
+        }
+
         if (tab === "sales") {
           refreshTasks.push(
             queryClient.refetchQueries({
               queryKey: telegramAdSalesKeys.sales({
                 page: salesPage,
                 pageSize: salesPageSize,
-                status: statusFilter || undefined,
+                status: saleStatusFilter || undefined,
               }),
+              type: "active",
+            }),
+          );
+        }
+
+        if (tab === "clients") {
+          refreshTasks.push(
+            queryClient.refetchQueries({
+              queryKey: telegramAdSalesKeys.crmAdvertisersRoot(),
               type: "active",
             }),
           );
@@ -1336,78 +1354,78 @@ export function AdSalesPage() {
           <div className="flex w-full flex-col gap-3 xl:w-[760px] 2xl:w-auto 2xl:flex-row 2xl:items-end 2xl:gap-4">
             <div className="grid gap-3 md:grid-cols-[minmax(180px,260px)_minmax(260px,1fr)] 2xl:contents">
               <div className="min-w-0 2xl:min-w-[260px]">
-              <FormField label="Network">
-                <Select
-                  value={selectedNetworkId}
-                  onChange={(event) =>
-                    handleSelectedNetworkIdChange(event.target.value)
-                  }
-                >
-                  <option value="">All networks</option>
-                  {saleableNetworks.map((network) => (
-                    <option key={network.id} value={network.id}>
-                      {network.name}
-                    </option>
-                  ))}
-                </Select>
-              </FormField>
-            </div>
+                <FormField label="Network">
+                  <Select
+                    value={selectedNetworkId}
+                    onChange={(event) =>
+                      handleSelectedNetworkIdChange(event.target.value)
+                    }
+                  >
+                    <option value="">All networks</option>
+                    {saleableNetworks.map((network) => (
+                      <option key={network.id} value={network.id}>
+                        {network.name}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+              </div>
               <div className="min-w-0 2xl:min-w-[360px]">
-              <FormField label="Channels">
-                <MultiSelect
-                  value={selectedChannelIds}
-                  onChange={handleSelectedChannelIdsChange}
-                  placeholder="Choose channels"
-                  allSelectedLabel="All channels"
-                  options={saleableChannels.map((channel) => ({
-                    value: channel.id,
-                    label: channel.title,
-                    selectedLabel: channel.title,
-                    iconUrl: channel.photoUrl,
-                    iconFallback: channel.title,
-                  }))}
-                />
-              </FormField>
-            </div>
+                <FormField label="Channels">
+                  <MultiSelect
+                    value={selectedChannelIds}
+                    onChange={handleSelectedChannelIdsChange}
+                    placeholder="Choose channels"
+                    allSelectedLabel="All channels"
+                    options={saleableChannels.map((channel) => ({
+                      value: channel.id,
+                      label: channel.title,
+                      selectedLabel: channel.title,
+                      iconUrl: channel.photoUrl,
+                      iconFallback: channel.title,
+                    }))}
+                  />
+                </FormField>
+              </div>
             </div>
             <div className="flex flex-wrap items-end gap-2 2xl:flex-nowrap 2xl:self-end">
-            <Button
-              variant="secondary"
-              className="hidden h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap lg:inline-flex"
-              onClick={() => void handleRefreshCurrentPage()}
-              disabled={refreshingCurrentPage}
-              title="Clear cached data and refresh this page"
-            >
-              <span className="inline-flex items-center gap-2">
-                <RefreshCw
-                  size={16}
-                  className={refreshingCurrentPage ? "animate-spin" : ""}
-                />
-                Refresh
-              </span>
-            </Button>
-            <Button
-              variant="secondary"
-              className="h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap"
-              onClick={() => setBulkAdSaleModalOpen(true)}
-            >
-              <span className="inline-flex items-center gap-2 leading-none">
-                <Plus size={18} className="shrink-0" />
-                Mass add ads
-              </span>
-            </Button>
-            <Button
-              className="h-11 shrink-0 items-center rounded-xl px-5 whitespace-nowrap"
-              onClick={() => {
-                setAdSaleSeedSlot(null);
-                setAdSaleModalOpen(true);
-              }}
-            >
-              <span className="inline-flex items-center gap-2 leading-none">
-                <Plus size={18} className="shrink-0" />
-                New sale
-              </span>
-            </Button>
+              <Button
+                variant="secondary"
+                className="hidden h-11 shrink-0 items-center justify-center rounded-xl px-5 leading-none whitespace-nowrap lg:inline-flex"
+                onClick={() => void handleRefreshCurrentPage()}
+                disabled={refreshingCurrentPage}
+                title="Clear cached data and refresh this page"
+              >
+                <span className="inline-flex items-center justify-center gap-2 leading-none">
+                  <RefreshCw
+                    size={16}
+                    className={refreshingCurrentPage ? "animate-spin" : ""}
+                  />
+                  Refresh
+                </span>
+              </Button>
+              <Button
+                variant="secondary"
+                className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl px-5 leading-none whitespace-nowrap"
+                onClick={() => setBulkAdSaleModalOpen(true)}
+              >
+                <span className="inline-flex items-center justify-center gap-2 leading-none">
+                  <Plus size={18} className="shrink-0" />
+                  Mass add ads
+                </span>
+              </Button>
+              <Button
+                className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl px-5 leading-none whitespace-nowrap"
+                onClick={() => {
+                  setAdSaleSeedSlot(null);
+                  setAdSaleModalOpen(true);
+                }}
+              >
+                <span className="inline-flex items-center justify-center gap-2 leading-none">
+                  <Plus size={18} className="shrink-0" />
+                  New sale
+                </span>
+              </Button>
             </div>
           </div>
         }
@@ -1431,7 +1449,7 @@ export function AdSalesPage() {
                   key={view.id}
                   type="button"
                   onClick={() => handleCalendarRangeModeChange(view.id)}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${tabButtonClass(calendarRangeMode === view.id)}`}
+                  className={`inline-flex h-10 items-center justify-center gap-2 rounded-full border px-3 text-sm ${tabButtonClass(calendarRangeMode === view.id)}`}
                 >
                   <Icon size={15} />
                   {view.label}
@@ -1507,8 +1525,8 @@ export function AdSalesPage() {
 
       {tab === "calendar" ? (
         <CalendarTab
-          loadingChannelIds={loadingAvailabilityChannelIds}
-          failedChannelIds={failedAvailabilityChannelIds}
+          loadingChannelIds={[]}
+          failedChannelIds={[]}
           calendarView={calendarView}
           calendarRangeMode={calendarRangeMode}
           calendarCursor={calendarCursor}
@@ -1518,13 +1536,16 @@ export function AdSalesPage() {
           calendarDays={calendarDays}
           channels={saleableChannels}
           selectedChannelIds={selectedChannelIds}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
+          statusFilter={slotStatusFilter}
+          onStatusFilterChange={setSlotStatusFilter}
           slotVisibility={slotVisibility}
           onSlotVisibilityChange={setSlotVisibility}
           filteredSlots={filteredSlots}
-          sales={salesQuery.data?.items ?? []}
-          daySummaries={availabilityDaySummaries}
+          sales={calendarSalesQuery.data?.items ?? []}
+          daySummaries={[]}
+          settings={settings}
+          rates={rates}
+          workspaceTimezone={workspaceTimezone}
           onCreateFromSlot={(slot) => {
             setAdSaleSeedSlot(slot);
             setAdSaleModalOpen(true);
@@ -1545,8 +1566,8 @@ export function AdSalesPage() {
           onPageSizeChange={setSalesPageSize}
           search={saleSearch}
           onSearchChange={setSaleSearch}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
+          statusFilter={saleStatusFilter}
+          onStatusFilterChange={setSaleStatusFilter}
           paymentStatusFilter={paymentStatusFilter}
           onPaymentStatusFilterChange={setPaymentStatusFilter}
           responsibleMemberId={responsibleMemberId}
@@ -1561,12 +1582,21 @@ export function AdSalesPage() {
         />
       ) : null}
 
+      {tab === "clients" ? (
+        <AdSalesClientsPanel
+          settings={settings}
+          rates={rates}
+        />
+      ) : null}
+
       {tab === "analytics" ? (
         <AdSalesAnalyticsPanel
           selectedChannelIds={effectiveChannelIds}
           selectedNetworkId={selectedNetworkId || null}
           from={from}
           to={to}
+          settings={settings}
+          rates={rates}
         />
       ) : null}
 
@@ -1706,8 +1736,16 @@ export function AdSalesPage() {
           );
         }}
         onLoadPublishedPosts={async ({ channelId, date, timezone }) => {
-          const from = zonedDateTimeToUtc(date, "00:00:00", timezone).toISOString();
-          const to = zonedDateTimeToUtc(date, "23:59:59", timezone).toISOString();
+          const from = zonedDateTimeToUtc(
+            date,
+            "00:00:00",
+            timezone,
+          ).toISOString();
+          const to = zonedDateTimeToUtc(
+            date,
+            "23:59:59",
+            timezone,
+          ).toISOString();
           const result = await getTelegramChannelPosts(channelId, {
             page: 1,
             pageSize: 100,
@@ -1735,8 +1773,16 @@ export function AdSalesPage() {
         defaultCurrency={settings?.primaryCurrency || "USD"}
         workspaceTimezone={workspaceTimezone}
         onLoadPublishedPosts={async ({ channelId, date, timezone }) => {
-          const from = zonedDateTimeToUtc(date, "00:00:00", timezone).toISOString();
-          const to = zonedDateTimeToUtc(date, "23:59:59", timezone).toISOString();
+          const from = zonedDateTimeToUtc(
+            date,
+            "00:00:00",
+            timezone,
+          ).toISOString();
+          const to = zonedDateTimeToUtc(
+            date,
+            "23:59:59",
+            timezone,
+          ).toISOString();
           const result = await getTelegramChannelPosts(channelId, {
             page: 1,
             pageSize: 100,
@@ -1802,40 +1848,33 @@ export function AdSalesPage() {
         settings={settings}
         rates={rates}
         onSave={async (sale, draft) => {
-          const targetCurrency = draft.payments[0]?.currency ?? sale.settlementCurrency;
+          const targetCurrency =
+            draft.payments[0]?.currency ?? sale.settlementCurrency;
           if (targetCurrency !== sale.settlementCurrency) {
             await telegramAdSalesApi.updateSale(sale.id, {
               settlementCurrency: targetCurrency,
             });
           }
           for (const placement of draft.placements) {
-            await telegramAdSalesApi.updatePlacement(
-              sale.id,
-              placement.id,
-              {
-                scheduledAt: placement.scheduledAt,
-                timezone: placement.timezone,
-                agreedPrice: placement.agreedPrice,
-                recommendedPrice: placement.recommendedPrice,
-                minimumPrice: placement.minimumPrice,
-                currency: placement.currency,
-                manualPriceReason: placement.manualPriceReason || null,
-              },
-            );
+            await telegramAdSalesApi.updatePlacement(sale.id, placement.id, {
+              scheduledAt: placement.scheduledAt,
+              timezone: placement.timezone,
+              agreedPrice: placement.agreedPrice,
+              recommendedPrice: placement.recommendedPrice,
+              minimumPrice: placement.minimumPrice,
+              currency: placement.currency,
+              manualPriceReason: placement.manualPriceReason || null,
+            });
           }
           for (const payment of draft.payments) {
-            await telegramAdSalesApi.updatePayment(
-              sale.id,
-              payment.id,
-              {
-                accountId: payment.accountId,
-                amount: payment.amount,
-                currency: payment.currency,
-                paidAt: payment.paidAt,
-                notes: payment.notes || null,
-                allocations: payment.allocations,
-              },
-            );
+            await telegramAdSalesApi.updatePayment(sale.id, payment.id, {
+              accountId: payment.accountId,
+              amount: payment.amount,
+              currency: payment.currency,
+              paidAt: payment.paidAt,
+              notes: payment.notes || null,
+              allocations: payment.allocations,
+            });
           }
           await refreshSaleAfterMutation(
             sale.id,
@@ -2064,791 +2103,6 @@ export function AdSalesPage() {
         </div>
       </Modal>
     </AppShell>
-  );
-}
-
-function CalendarTab(props: {
-  loadingChannelIds: string[];
-  failedChannelIds: string[];
-  calendarView: SlotsLayoutView;
-  onCalendarViewChange: (value: SlotsLayoutView) => void;
-  calendarRangeMode: "week" | "month";
-  calendarCursor: Date;
-  calendarFrom: Date;
-  calendarTo: Date;
-  calendarDays: Date[];
-  channels: TelegramChannel[];
-  selectedChannelIds: string[];
-  statusFilter: string;
-  onStatusFilterChange: (value: string) => void;
-  slotVisibility: "all" | "free" | "busy";
-  onSlotVisibilityChange: (value: "all" | "free" | "busy") => void;
-  filteredSlots: ReturnType<typeof buildAdCalendarSlots>;
-  sales: TelegramAdSale[];
-  daySummaries: Array<{
-    channelId: string;
-    date: string;
-    timezone: string;
-    organicPostsCountForDay: number;
-    adsCountForDay: number;
-  }>;
-  onCreateFromSlot: (slot: TelegramAdAvailabilitySlot) => void;
-  onOpenSale: (saleId: string) => void;
-}) {
-  const loadingChannelIds = useMemo(
-    () => new Set(props.loadingChannelIds),
-    [props.loadingChannelIds],
-  );
-  const failedChannelIds = useMemo(
-    () => new Set(props.failedChannelIds),
-    [props.failedChannelIds],
-  );
-  const slotsByChannelDay = useMemo(() => {
-    const grouped = new Map<string, typeof props.filteredSlots>();
-    for (const slot of props.filteredSlots) {
-      const key = `${slot.channelId}:${slot.date}`;
-      const current = grouped.get(key) ?? [];
-      current.push(slot);
-      grouped.set(key, current);
-    }
-    return grouped;
-  }, [props.filteredSlots]);
-
-  const daySummariesByChannelDay = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        channelId: string;
-        date: string;
-        timezone: string;
-        organicPostsCountForDay: number;
-        adsCountForDay: number;
-      }
-    >();
-    for (const summary of props.daySummaries) {
-      grouped.set(`${summary.channelId}:${summary.date}`, summary);
-    }
-    return grouped;
-  }, [props.daySummaries]);
-
-  const visibleChannels = useMemo(
-    () =>
-      props.channels.filter((channel) =>
-        props.selectedChannelIds.length
-          ? props.selectedChannelIds.includes(channel.id)
-          : true,
-      ),
-    [props.channels, props.selectedChannelIds],
-  );
-  const todayKey = channelLocalDateKey(new Date());
-  const futureSlotsByChannel = useMemo(() => {
-    const grouped = new Map<string, typeof props.filteredSlots>();
-    for (const slot of props.filteredSlots) {
-      if (slot.date < todayKey) continue;
-      const current = grouped.get(slot.channelId) ?? [];
-      current.push(slot);
-      grouped.set(slot.channelId, current);
-    }
-    for (const slots of grouped.values()) {
-      slots.sort(
-        (left, right) =>
-          new Date(left.scheduledAt).getTime() -
-          new Date(right.scheduledAt).getTime(),
-      );
-    }
-    return grouped;
-  }, [props.filteredSlots, todayKey]);
-
-  const saleById = useMemo(
-    () => new Map(props.sales.map((sale) => [sale.id, sale])),
-    [props.sales],
-  );
-
-  const renderSlot = (
-    slot: ReturnType<typeof buildAdCalendarSlots>[number],
-  ) => {
-    const sale = slot.existingPlacement?.saleId
-      ? saleById.get(slot.existingPlacement.saleId)
-      : undefined;
-    return (
-      <CalendarSlotCard
-        key={slot.id}
-        slot={slot}
-        advertiserName={sale?.advertiserName}
-        saleTitle={sale?.title}
-        paymentStatus={sale?.paymentStatus || "UNPAID"}
-        agreedPrice={
-          sale?.placements.find(
-            (placement) => placement.id === slot.existingPlacement?.id,
-          )?.agreedPrice
-        }
-        onClick={
-          slot.existingPlacement?.saleId
-            ? () => props.onOpenSale(slot.existingPlacement!.saleId)
-            : slot.state === "AVAILABLE" ||
-                (slot.state === "PAST" && !slot.existingPlacement)
-            ? () => props.onCreateFromSlot(slot)
-            : undefined
-        }
-      />
-    );
-  };
-
-  return (
-    <div className="space-y-5">
-      <Card className={adSalesPanelClass}>
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_180px]">
-          <FormField label="Status">
-            <Select
-              value={props.statusFilter}
-              onChange={(event) =>
-                props.onStatusFilterChange(event.target.value)
-              }
-            >
-              <option value="">All states</option>
-              <option value="AVAILABLE" className="text-emerald-300">
-                ● Available
-              </option>
-              <option value="RESERVED" className="text-amber-300">
-                ● Reserved
-              </option>
-              <option value="SOLD" className="text-blue-300">
-                ● Sold
-              </option>
-              <option value="BLOCKED_BY_POLICY" className="text-rose-300">
-                ● Blocked
-              </option>
-              <option
-                value="CONFLICT_WITH_ORGANIC_POST"
-                className="text-orange-300"
-              >
-                ● Conflict
-              </option>
-              <option value="PAST" className="text-neutral-400">
-                ● Past
-              </option>
-            </Select>
-          </FormField>
-          <FormField label="Visibility">
-            <Select
-              value={props.slotVisibility}
-              onChange={(event) =>
-                props.onSlotVisibilityChange(
-                  event.target.value as "all" | "free" | "busy",
-                )
-              }
-            >
-              <option value="all">All</option>
-              <option value="free">Only free</option>
-              <option value="busy">Only busy</option>
-            </Select>
-          </FormField>
-          <FormField label="Layout">
-            <Select
-              value={props.calendarView}
-              onChange={(event) =>
-                props.onCalendarViewChange(
-                  event.target.value as "calendar" | "list",
-                )
-              }
-            >
-              <option value="calendar">Calendar</option>
-              <option value="list">List</option>
-            </Select>
-          </FormField>
-        </div>
-      </Card>
-
-      {props.calendarView === "calendar" &&
-      props.calendarRangeMode === "month" ? (
-        <div className={adSalesPanelClass}>
-          <div className="overflow-hidden rounded-xl border border-slate-800/80">
-            <div className="grid grid-cols-7 border-b border-slate-800/80 bg-[#09111e]">
-              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
-                (label) => (
-                  <div
-                    key={label}
-                    className="border-r border-slate-800/80 px-3 py-2 text-center text-xs font-medium text-neutral-400 last:border-r-0"
-                  >
-                    {label}
-                  </div>
-                ),
-              )}
-            </div>
-            <div className="grid grid-cols-7">
-              {props.calendarDays.map((day) => {
-                const dayDateKey = dateKey(day);
-                const outsideMonth =
-                  day.getMonth() !== props.calendarCursor.getMonth();
-                const daySlots = visibleChannels.flatMap((channel) =>
-                  (
-                    slotsByChannelDay.get(`${channel.id}:${dayDateKey}`) ?? []
-                  ).map((slot) => ({
-                    channel,
-                    slot,
-                  })),
-                );
-                return (
-                  <div
-                    key={day.toISOString()}
-                    className={`min-h-28 border-b border-r border-slate-900/70 p-2 ${outsideMonth ? "bg-black/20 opacity-45" : "bg-[#111111]"}`}
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-sm font-semibold text-white">
-                        {day.getDate()}
-                      </span>
-                      {dayDateKey === todayKey ? (
-                        <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
-                          Today
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="space-y-1">
-                      {daySlots.map(({ channel, slot }) => (
-                        <button
-                          key={`${channel.id}:${slot.id}`}
-                          type="button"
-                          disabled={!slot.existingPlacement && !["AVAILABLE", "PAST"].includes(slot.state)}
-                          onClick={() => {
-                            if (slot.existingPlacement?.saleId) {
-                              props.onOpenSale(slot.existingPlacement.saleId);
-                              return;
-                            }
-                            props.onCreateFromSlot(slot);
-                          }}
-                          title={`${channel.title} · ${slot.state === "PAST" ? "Missed ad slot" : "Add Ad Slot"}`}
-                          className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1 text-left text-[10px] font-medium transition ${
-                            slot.state === "AVAILABLE"
-                              ? "border-emerald-700/60 bg-emerald-950/30 text-emerald-200 hover:border-emerald-500"
-                              : slot.state === "PAST"
-                                ? "border-rose-700/60 bg-rose-950/25 text-rose-200 hover:border-rose-500"
-                                : "border-slate-800 bg-[#0b1220] text-neutral-300"
-                          }`}
-                        >
-                          <TelegramEntityAvatar
-                            imageUrl={channel.photoUrl}
-                            kind="channel"
-                            alt={channel.title}
-                            size="xs"
-                          />
-                          <span className="min-w-0 truncate">
-                            {channel.title}
-                          </span>
-                          <span className="ml-auto shrink-0 text-[9px] opacity-80">
-                            {slot.state === "PAST"
-                              ? "Missed ad slot"
-                              : slot.state === "AVAILABLE"
-                                ? "Add Ad Slot"
-                                : "Busy"}
-                          </span>
-                        </button>
-                      ))}
-                      {props.loadingChannelIds.length ? (
-                        <Skeleton className="h-6 w-full" />
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {props.calendarView === "calendar" &&
-      props.calendarRangeMode !== "month" ? (
-        <div className={adSalesPanelClass}>
-          <div className="overflow-x-auto">
-            <div className="min-w-max">
-              <div
-                className="sticky top-0 z-10 border-b border-slate-800/80 bg-[#09111e]/95 backdrop-blur"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))`,
-                }}
-              >
-                <div className="border-r border-slate-800/80 px-4 py-3 text-sm font-semibold text-white">
-                  Channels
-                </div>
-                {props.calendarDays.map((day) => (
-                  <div
-                    key={day.toISOString()}
-                    className="border-r border-slate-800/80 px-3 py-2.5 text-sm"
-                  >
-                    <p className="font-semibold text-white">
-                      {day.toLocaleDateString(undefined, {
-                        weekday: "short",
-                        day: "numeric",
-                        month: "short",
-                      })}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              {visibleChannels.map((channel) => (
-                <div
-                  key={channel.id}
-                  className="border-b border-slate-900/60 last:border-b-0"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `180px repeat(${props.calendarDays.length}, minmax(165px, 165px))`,
-                  }}
-                >
-                  <div className="sticky left-0 z-[1] border-r border-slate-800/80 bg-[#09111e] px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <TelegramEntityAvatar
-                        imageUrl={channel.photoUrl}
-                        kind="channel"
-                        alt={channel.title}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-white">
-                          {channel.title}
-                        </p>
-                        {channel.username ? (
-                          <p className="truncate text-xs text-neutral-500">
-                            {channel.username}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  {props.calendarDays.map((day) => {
-                    const dayKey = `${channel.id}:${dateKey(day)}`;
-                    const slots = slotsByChannelDay.get(dayKey) ?? [];
-                    const summary = daySummariesByChannelDay.get(dayKey);
-                    const organicCount = summary?.organicPostsCountForDay ?? 0;
-                    const adSlotsCount =
-                      summary?.adsCountForDay ?? slots.length;
-                    return (
-                      <div
-                        key={dayKey}
-                        className="min-h-24 border-r border-slate-900/60 p-2"
-                      >
-                        {loadingChannelIds.has(channel.id) ? (
-                          <>
-                            <Skeleton className="mb-2 h-3 w-24" />
-                            <Skeleton className="h-10 w-full" />
-                          </>
-                        ) : failedChannelIds.has(channel.id) ? (
-                          <p className="text-xs text-rose-300">
-                            Could not load slots.
-                          </p>
-                        ) : (
-                          <>
-                            <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
-                              <span>{organicCount} organic</span>
-                              <span>{adSlotsCount} ad slots</span>
-                            </div>
-                            <div className="space-y-1.5">
-                              {slots.slice(0, 2).map(renderSlot)}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {props.calendarView === "list" ? (
-        <div className="space-y-3">
-          {visibleChannels.map((channel) => {
-            const slots = futureSlotsByChannel.get(channel.id) ?? [];
-            return (
-              <Card key={channel.id} className={adSalesSoftPanelClass}>
-                <div className="flex items-center gap-2">
-                  <TelegramEntityAvatar
-                    imageUrl={channel.photoUrl}
-                    kind="channel"
-                    alt={channel.title}
-                    size="sm"
-                  />
-                  <p className="font-medium text-white">{channel.title}</p>
-                </div>
-                {loadingChannelIds.has(channel.id) ? (
-                  <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                    {Array.from({ length: 3 }, (_, index) => (
-                      <Skeleton key={index} className="h-16 w-full" />
-                    ))}
-                  </div>
-                ) : failedChannelIds.has(channel.id) ? (
-                  <p className="mt-3 text-sm text-rose-300">
-                    Could not load slots.
-                  </p>
-                ) : slots.length ? (
-                  <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                    {slots.slice(0, 6).map((slot) => (
-                      <button
-                        key={slot.id}
-                        type="button"
-                        disabled={slot.state !== "AVAILABLE" && !slot.existingPlacement?.saleId}
-                        onClick={() => {
-                          if (slot.existingPlacement?.saleId) {
-                            props.onOpenSale(slot.existingPlacement.saleId);
-                            return;
-                          }
-                          if (slot.state === "AVAILABLE") props.onCreateFromSlot(slot);
-                        }}
-                        className={`rounded-lg border p-3 text-left transition ${
-                          slot.state === "AVAILABLE"
-                            ? "border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500"
-                            : slot.existingPlacement?.saleId
-                              ? "border-slate-700 bg-slate-950/70 hover:border-slate-500"
-                              : "cursor-default border-neutral-800 bg-neutral-950/60"
-                        }`}
-                      >
-                        <p className="text-sm font-medium text-white">
-                          {new Date(slot.scheduledAt).toLocaleDateString(
-                            undefined,
-                            {
-                              weekday: "short",
-                              day: "numeric",
-                              month: "short",
-                            },
-                          )}
-                          {" · "}
-                          {channelLocalTime(slot.scheduledAt, slot.timezone)}
-                        </p>
-                        <p className="mt-1 text-xs text-neutral-400">
-                          {slot.state === "AVAILABLE"
-                            ? "Add Ad Slot"
-                            : slot.state.replaceAll("_", " ")}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-3 text-sm text-neutral-500">
-                    No upcoming slots for the selected filters.
-                  </p>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SalesTab(props: {
-  sales: TelegramAdSale[];
-  loading: boolean;
-  error: unknown;
-  page: number;
-  pageSize: number;
-  pagination?: {
-    totalItems: number;
-    totalPages: number;
-    hasNextPage: boolean;
-    hasPreviousPage: boolean;
-    page: number;
-    pageSize: number;
-  };
-  onPageChange: (value: number) => void;
-  onPageSizeChange: (value: number) => void;
-  search: string;
-  onSearchChange: (value: string) => void;
-  statusFilter: string;
-  onStatusFilterChange: (value: string) => void;
-  paymentStatusFilter: string;
-  onPaymentStatusFilterChange: (value: string) => void;
-  responsibleMemberId: string;
-  onResponsibleMemberIdChange: (value: string) => void;
-  underpricedOnly: boolean;
-  onUnderpricedOnlyChange: (value: boolean) => void;
-  unpaidOnly: boolean;
-  onUnpaidOnlyChange: (value: boolean) => void;
-  settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
-  rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
-  onOpenSale: (saleId: string) => void;
-}) {
-  const statusOptions = [
-    { value: "", label: "All statuses" },
-    { value: "DRAFT", label: "Draft" },
-    { value: "RESERVED", label: "Reserved" },
-    { value: "CONFIRMED", label: "Confirmed" },
-    { value: "IN_PROGRESS", label: "In progress" },
-    { value: "COMPLETED", label: "Completed" },
-    { value: "CANCELLED", label: "Cancelled" },
-  ];
-  const paymentStatusOptions = [
-    { value: "", label: "All payment states" },
-    { value: "UNPAID", label: "Unpaid" },
-    { value: "PARTIALLY_PAID", label: "Partially paid" },
-    { value: "PAID", label: "Paid" },
-    { value: "OVERPAID", label: "Overpaid" },
-  ];
-
-  return (
-    <div className="space-y-5">
-      <Card className={adSalesPanelClass}>
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto] xl:items-end">
-          <FormField label="Search">
-            <Input
-              value={props.search}
-              onChange={(event) => props.onSearchChange(event.target.value)}
-            />
-          </FormField>
-          <FormField label="Status">
-            <Select
-              value={props.statusFilter}
-              onChange={(event) =>
-                props.onStatusFilterChange(event.target.value)
-              }
-            >
-              {statusOptions.map((option) => (
-                <option key={option.value || "all"} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <FormField label="Payment status">
-            <Select
-              value={props.paymentStatusFilter}
-              onChange={(event) =>
-                props.onPaymentStatusFilterChange(event.target.value)
-              }
-            >
-              {paymentStatusOptions.map((option) => (
-                <option key={option.value || "all"} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <FormField label="Responsible">
-            <MemberSelect
-              value={props.responsibleMemberId}
-              onChange={props.onResponsibleMemberIdChange}
-              includeAll
-            />
-          </FormField>
-          <label className="flex">
-            <span className="inline-flex h-[38px] items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950/70 px-4 text-sm font-medium text-neutral-200">
-              <span className="relative inline-flex h-5 w-5 items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={props.underpricedOnly}
-                  onChange={(event) =>
-                    props.onUnderpricedOnlyChange(event.target.checked)
-                  }
-                  className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-neutral-600 bg-neutral-900 checked:border-blue-500 checked:bg-blue-600"
-                />
-                <span className="pointer-events-none absolute text-xs font-bold text-white opacity-0 peer-checked:opacity-100">
-                  ✓
-                </span>
-              </span>
-              Underpriced only
-            </span>
-          </label>
-          <label className="flex">
-            <span className="inline-flex h-[38px] items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950/70 px-4 text-sm font-medium text-neutral-200">
-              <span className="relative inline-flex h-5 w-5 items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={props.unpaidOnly}
-                  onChange={(event) =>
-                    props.onUnpaidOnlyChange(event.target.checked)
-                  }
-                  className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-neutral-600 bg-neutral-900 checked:border-blue-500 checked:bg-blue-600"
-                />
-                <span className="pointer-events-none absolute text-xs font-bold text-white opacity-0 peer-checked:opacity-100">
-                  ✓
-                </span>
-              </span>
-              Unpaid only
-            </span>
-          </label>
-        </div>
-      </Card>
-
-      {props.loading ? <TableLoadingState columns={8} rows={6} /> : null}
-      {props.error ? <ErrorState text="Could not load ad sales." /> : null}
-      {!props.loading && !props.error ? (
-        <div className={adSalesPanelClass}>
-          <div className="table-scroll w-full">
-            <table className="w-full min-w-[1180px] text-left text-sm">
-              <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
-                <tr>
-                  <th className="px-4 py-3">Sale</th>
-                  <th className="px-4 py-3">Advertiser</th>
-                  <th className="px-4 py-3">Channels</th>
-                  <th className="px-4 py-3">Nearest placement</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Payment</th>
-                  <th className="px-4 py-3">Total agreed</th>
-                  <th className="px-4 py-3">Outstanding</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-900">
-                {props.sales.map((sale) => {
-                  const nearestPlacement = [...sale.placements].sort(
-                    (left, right) =>
-                      left.scheduledAt.localeCompare(right.scheduledAt),
-                  )[0];
-                  return (
-                    <tr
-                      key={sale.id}
-                      className="cursor-pointer bg-neutral-950 transition hover:bg-neutral-900/60"
-                      onClick={() => props.onOpenSale(sale.id)}
-                    >
-                      <td className="px-4 py-4">
-                        <p className="font-medium text-white">
-                          {sale.title || "Untitled sale"}
-                        </p>
-                        <p className="text-xs text-neutral-500">
-                          {new Date(sale.createdAt).toLocaleString()}
-                        </p>
-                      </td>
-                      <td className="px-4 py-4">
-                        <p className="text-white">{sale.advertiserName}</p>
-                        <p className="text-xs text-neutral-500">
-                          {sale.advertiserTelegram ||
-                            sale.advertiserContact ||
-                            "-"}
-                        </p>
-                      </td>
-                      <td className="px-4 py-4">{saleChannelCount(sale)}</td>
-                      <td className="px-4 py-4">
-                        {nearestPlacement
-                          ? new Date(
-                              nearestPlacement.scheduledAt,
-                            ).toLocaleString()
-                          : "-"}
-                      </td>
-                      <td className="px-4 py-4">
-                        <EnumPill
-                          label={sale.status.replaceAll("_", " ")}
-                          tone={saleStatusTone(sale.status)}
-                        />
-                      </td>
-                      <td className="px-4 py-4">
-                        <EnumPill
-                          label={(sale.paymentStatus || "UNPAID").replaceAll(
-                            "_",
-                            " ",
-                          )}
-                          tone={paymentStatusTone(
-                            sale.paymentStatus || "UNPAID",
-                          )}
-                        />
-                      </td>
-                      <td className="px-4 py-4">
-                        <MoneyStack
-                          amount={Number(sale.totalAgreedAmount || 0)}
-                          currency={sale.settlementCurrency}
-                          settings={props.settings}
-                          rates={props.rates}
-                        />
-                      </td>
-                      <td className="px-4 py-4">
-                        <MoneyStack
-                          amount={Number(sale.outstandingAmount || 0)}
-                          currency={sale.settlementCurrency}
-                          settings={props.settings}
-                          rates={props.rates}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {!props.sales.length ? (
-            <div className="p-4">
-              <EmptyState text="No sales matched the current filters." />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {props.pagination ? (
-        <Pagination
-          page={props.pagination.page}
-          pageSize={props.pagination.pageSize}
-          totalItems={props.pagination.totalItems}
-          totalPages={props.pagination.totalPages}
-          hasNextPage={props.pagination.hasNextPage}
-          hasPreviousPage={props.pagination.hasPreviousPage}
-          onPageChange={props.onPageChange}
-          onPageSizeChange={props.onPageSizeChange}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function AnalyticsTab(props: {
-  sales: TelegramAdSale[];
-  settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
-  rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
-}) {
-  const totals = useMemo(() => {
-    return props.sales.reduce(
-      (acc, sale) => {
-        acc.revenue += Number(sale.totalAgreedAmount || 0);
-        acc.paid += Number(sale.totalPaidAmount || 0);
-        acc.outstanding += Number(sale.outstandingAmount || 0);
-        acc.expectedViews += sale.placements.reduce(
-          (sum, placement) => sum + placement.expectedViews,
-          0,
-        );
-        acc.actualViews += sale.placements.reduce(
-          (sum, placement) => sum + (placement.actualViewsFinal || 0),
-          0,
-        );
-        acc.placements += sale.placements.length;
-        return acc;
-      },
-      {
-        revenue: 0,
-        paid: 0,
-        outstanding: 0,
-        expectedViews: 0,
-        actualViews: 0,
-        placements: 0,
-      },
-    );
-  }, [props.sales]);
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-5">
-      <MetricMoneyCard
-        label="Revenue"
-        amount={totals.revenue}
-        settings={props.settings}
-        rates={props.rates}
-      />
-      <MetricMoneyCard
-        label="Paid"
-        amount={totals.paid}
-        settings={props.settings}
-        rates={props.rates}
-      />
-      <MetricMoneyCard
-        label="Outstanding"
-        amount={totals.outstanding}
-        settings={props.settings}
-        rates={props.rates}
-      />
-      <MetricCard
-        label="Expected views"
-        value={totals.expectedViews.toLocaleString()}
-      />
-      <MetricCard
-        label="Actual views"
-        value={totals.actualViews.toLocaleString()}
-      />
-    </div>
   );
 }
 
@@ -3712,399 +2966,6 @@ function ProductEditorModal(props: {
   );
 }
 
-type SalePlacementEditDraft = {
-  id: string;
-  date: string;
-  time: string;
-  timezone: string;
-  agreedPrice: string;
-  recommendedPrice: string;
-  minimumPrice: string;
-  manualPriceReason: string;
-};
-
-type SalePaymentEditDraft = {
-  id: string;
-  accountId: string;
-  amount: string;
-  currency: string;
-  paidDate: string;
-  paidTime: string;
-  notes: string;
-};
-
-function allocatePaymentDraft(
-  amount: number,
-  placements: SalePlacementEditDraft[],
-) {
-  let remaining = amount;
-  return placements.flatMap((placement) => {
-    const agreedPrice = toNumber(placement.agreedPrice);
-    const allocation = Math.max(0, Math.min(remaining, agreedPrice));
-    remaining -= allocation;
-    return allocation > 0 ? [{ placementId: placement.id, amount: allocation }] : [];
-  });
-}
-
-function SaleDetailsModal(props: {
-  sale: TelegramAdSale | null;
-  open: boolean;
-  onClose: () => void;
-  accounts: Account[];
-  settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
-  rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
-  onSave: (
-    sale: TelegramAdSale,
-    draft: {
-      placements: Array<{
-        id: string;
-        scheduledAt: string;
-        timezone: string;
-        agreedPrice: number;
-        recommendedPrice: number;
-        minimumPrice: number;
-        currency: string;
-        manualPriceReason: string | null;
-      }>;
-      payments: Array<{
-        id: string;
-        accountId: string;
-        amount: number;
-        currency: string;
-        paidAt: string;
-        notes: string | null;
-        allocations: Array<{ placementId: string; amount: number }>;
-      }>;
-    },
-  ) => Promise<void>;
-  onAction: (
-    sale: TelegramAdSale,
-    action: SaleActionKey,
-    placement?: TelegramAdSale["placements"][number],
-  ) => Promise<void>;
-}) {
-  const [placementDrafts, setPlacementDrafts] = useState<SalePlacementEditDraft[]>([]);
-  const [paymentDrafts, setPaymentDrafts] = useState<SalePaymentEditDraft[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-
-  useEffect(() => {
-    if (!props.sale || !props.open) return;
-    setPlacementDrafts(
-      props.sale.placements.map((placement) => ({
-        id: placement.id,
-        date: channelLocalDateKey(placement.scheduledAt, placement.timezone),
-        time: channelLocalTime(placement.scheduledAt, placement.timezone),
-        timezone: placement.timezone,
-        agreedPrice: placement.agreedPrice,
-        recommendedPrice: placement.recommendedPrice,
-        minimumPrice: placement.minimumPrice,
-        manualPriceReason: placement.manualPriceReason ?? "",
-      })),
-    );
-    setPaymentDrafts(
-      (props.sale.payments ?? [])
-        .filter((payment) => payment.status !== "VOIDED")
-        .map((payment) => {
-          const account = props.accounts.find((item) => item.id === payment.accountId);
-          return {
-            id: payment.id,
-            accountId: payment.accountId,
-            amount: payment.amount,
-            currency: account?.currency ?? payment.currency,
-            paidDate: payment.paidAt.slice(0, 10),
-            paidTime: payment.paidAt.slice(11, 16),
-            notes: payment.notes ?? "",
-          };
-        }),
-    );
-    setSaveError("");
-  }, [props.accounts, props.open, props.sale]);
-
-  if (!props.sale) return null;
-  const editCurrency = paymentDrafts[0]?.currency ?? props.sale.settlementCurrency;
-
-  const updatePlacementDraft = (id: string, patch: Partial<SalePlacementEditDraft>) => {
-    setPlacementDrafts((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-  };
-  const updatePaymentDraft = (id: string, patch: Partial<SalePaymentEditDraft>) => {
-    setPaymentDrafts((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-  };
-  const saveChanges = async () => {
-    setSaveError("");
-    setSaving(true);
-    try {
-      await props.onSave(props.sale!, {
-        placements: placementDrafts.map((placement) => ({
-          id: placement.id,
-          scheduledAt: zonedDateTimeToUtc(
-            placement.date,
-            placement.time,
-            placement.timezone,
-          ).toISOString(),
-          timezone: placement.timezone,
-          agreedPrice: toNumber(placement.agreedPrice),
-          recommendedPrice: toNumber(placement.recommendedPrice),
-          minimumPrice: toNumber(placement.minimumPrice),
-          currency: editCurrency,
-          manualPriceReason: placement.manualPriceReason.trim() || null,
-        })),
-        payments: paymentDrafts.map((payment) => {
-          const account = props.accounts.find((item) => item.id === payment.accountId);
-          const amount = toNumber(payment.amount);
-          return {
-            id: payment.id,
-            accountId: payment.accountId,
-            amount,
-            currency: account?.currency ?? payment.currency,
-            paidAt: new Date(`${payment.paidDate}T${payment.paidTime || "00:00"}:00`).toISOString(),
-            notes: payment.notes.trim() || null,
-            allocations: allocatePaymentDraft(amount, placementDrafts),
-          };
-        }),
-      });
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save changes.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={props.open}
-      onClose={props.onClose}
-      title={props.sale.title || props.sale.advertiserName}
-      size="xl"
-    >
-      <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="space-y-4">
-          <Card>
-            <h4 className="font-medium text-white">Summary</h4>
-            <dl className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Advertiser</dt>
-                <dd>{props.sale.advertiserName}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Status</dt>
-                <dd>{props.sale.status}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Payment</dt>
-                <dd>{props.sale.paymentStatus || "UNPAID"}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Total agreed</dt>
-                <dd>
-                  {props.sale.totalAgreedAmount} {props.sale.settlementCurrency}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Total paid</dt>
-                <dd>
-                  {props.sale.totalPaidAmount} {props.sale.settlementCurrency}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-neutral-400">Outstanding</dt>
-                <dd>
-                  {props.sale.outstandingAmount} {props.sale.settlementCurrency}
-                </dd>
-              </div>
-            </dl>
-          </Card>
-          <Card>
-            <h4 className="mb-3 font-medium text-white">Sale actions</h4>
-            <SaleStatusActions
-              sale={props.sale}
-              onAction={(action) => void props.onAction(props.sale!, action)}
-            />
-          </Card>
-          <Card>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h4 className="font-medium text-white">Payments</h4>
-              {paymentDrafts.length ? (
-                <span className="text-xs text-neutral-500">Finance transaction updates too</span>
-              ) : null}
-            </div>
-            <div className="space-y-2">
-              {paymentDrafts.map((payment) => (
-                <div
-                  key={payment.id}
-                  className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 text-sm"
-                >
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <FormField label="Account">
-                      <CustomSelect
-                        value={payment.accountId}
-                        onChange={(accountId) => {
-                          const account = props.accounts.find((item) => item.id === accountId);
-                          updatePaymentDraft(payment.id, {
-                            accountId,
-                            currency: account?.currency ?? payment.currency,
-                          });
-                        }}
-                        options={props.accounts
-                          .filter((account) => account.isActive)
-                          .map((account) => ({
-                            value: account.id,
-                            label: `${accountDisplayName(account)} (${account.currency})`,
-                            iconUrl: account.iconPresentation?.type === "image" ? account.iconPresentation.url : undefined,
-                            iconEmoji: account.iconPresentation?.type === "unicode" ? account.iconPresentation.value : undefined,
-                            iconFallback: account.name,
-                          }))}
-                      />
-                    </FormField>
-                    <FormField label={`Amount (${payment.currency})`}>
-                      <Input
-                        value={payment.amount}
-                        inputMode="decimal"
-                        onChange={(event) => updatePaymentDraft(payment.id, { amount: event.target.value })}
-                      />
-                    </FormField>
-                    <FormField label="Paid date">
-                      <DateInput
-                        value={payment.paidDate}
-                        onChange={(event) => updatePaymentDraft(payment.id, { paidDate: event.target.value })}
-                      />
-                    </FormField>
-                    <FormField label="Paid time">
-                      <TimeInput
-                        value={payment.paidTime}
-                        onChange={(event) => updatePaymentDraft(payment.id, { paidTime: event.target.value })}
-                      />
-                    </FormField>
-                  </div>
-                  <div className="mt-3">
-                    <FormField label="Notes">
-                      <Input
-                        value={payment.notes}
-                        onChange={(event) => updatePaymentDraft(payment.id, { notes: event.target.value })}
-                      />
-                    </FormField>
-                  </div>
-                </div>
-              ))}
-              {!paymentDrafts.length ? (
-                <EmptyState text="No payments yet." />
-              ) : null}
-            </div>
-          </Card>
-        </div>
-
-        <div className="space-y-4">
-          <Card>
-            <h4 className="mb-3 font-medium text-white">Placements</h4>
-            <div className="space-y-3">
-              {props.sale.placements.map((placement) => {
-                const draft = placementDrafts.find((item) => item.id === placement.id);
-                return (
-                <div
-                  key={placement.id}
-                  className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-white">
-                        {placement.telegramChannelId}
-                      </p>
-                      <p className="text-xs text-neutral-500">
-                        {new Date(placement.scheduledAt).toLocaleString()} ·{" "}
-                        {placement.timezone}
-                      </p>
-                    </div>
-                    <div className="text-right text-sm">
-                      <p className="text-white">
-                        {placement.agreedPrice} {editCurrency}
-                      </p>
-                      <p className="text-xs text-neutral-500">
-                        {placement.status}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-4 text-sm">
-                    <FormField label="Date">
-                      <DateInput
-                        value={draft?.date ?? ""}
-                        onChange={(event) => updatePlacementDraft(placement.id, { date: event.target.value })}
-                      />
-                    </FormField>
-                    <FormField label="Time">
-                      <TimeInput
-                        value={draft?.time ?? ""}
-                        onChange={(event) => updatePlacementDraft(placement.id, { time: event.target.value })}
-                      />
-                    </FormField>
-                    <FormField label={`Price (${editCurrency})`}>
-                      <Input
-                        value={draft?.agreedPrice ?? placement.agreedPrice}
-                        inputMode="decimal"
-                        onChange={(event) => updatePlacementDraft(placement.id, { agreedPrice: event.target.value })}
-                      />
-                    </FormField>
-                    <FormField label="Recommended">
-                      <Input
-                        value={draft?.recommendedPrice ?? placement.recommendedPrice}
-                        inputMode="decimal"
-                        onChange={(event) => updatePlacementDraft(placement.id, { recommendedPrice: event.target.value })}
-                      />
-                    </FormField>
-                    <div>Expected: {placement.expectedViews.toLocaleString()}</div>
-                    <div>Paid allocation: {placement.paidAllocatedAmount || "0"}</div>
-                    <div>Actual views: {placement.actualViewsFinal ?? "-"}</div>
-                    <div>Actual CPM: {placement.actualCpm ?? "-"}</div>
-                  </div>
-                  {toNumber(draft?.agreedPrice ?? placement.agreedPrice) < toNumber(draft?.minimumPrice ?? placement.minimumPrice) ? (
-                    <div className="mt-3">
-                      <FormField label="Reason for low price">
-                        <Input
-                          value={draft?.manualPriceReason ?? ""}
-                          onChange={(event) => updatePlacementDraft(placement.id, { manualPriceReason: event.target.value })}
-                        />
-                      </FormField>
-                    </div>
-                  ) : null}
-                  {placement.managedPostId ? (
-                    <p className="mt-2 text-xs text-neutral-500">
-                      Managed post: {placement.managedPostId} · Deletion:{" "}
-                      {placement.plannedDeleteAt || "n/a"}
-                    </p>
-                  ) : null}
-                  <div className="mt-4">
-                    <SaleStatusActions
-                      sale={props.sale!}
-                      placement={placement}
-                      onAction={(action) =>
-                        void props.onAction(props.sale!, action, placement)
-                      }
-                    />
-                  </div>
-                </div>
-              );
-              })}
-            </div>
-          </Card>
-          {saveError ? (
-            <div className="rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-sm text-rose-200">
-              {saveError}
-            </div>
-          ) : null}
-          <div className="flex justify-end">
-            <Button onClick={() => void saveChanges()} disabled={saving}>
-              {saving ? "Saving..." : "Save changes"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 function MetricCard({
   label,
   value,
@@ -4127,32 +2988,6 @@ function MetricCard({
           <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
         </>
       )}
-    </div>
-  );
-}
-
-function MetricMoneyCard({
-  label,
-  amount,
-  settings,
-  rates,
-}: {
-  label: string;
-  amount: number;
-  settings: Awaited<ReturnType<typeof currenciesApi.getSettings>> | undefined;
-  rates: Awaited<ReturnType<typeof currenciesApi.listRates>> | undefined;
-}) {
-  return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-950/70 p-4">
-      <MetricPreviewLabel label={label} />
-      <div className="mt-2">
-        <MoneyStack
-          amount={amount}
-          currency={settings?.primaryCurrency || "USD"}
-          settings={settings}
-          rates={rates}
-        />
-      </div>
     </div>
   );
 }

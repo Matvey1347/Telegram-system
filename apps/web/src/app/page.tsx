@@ -20,10 +20,11 @@ import { Activity, Banknote, Megaphone, RadioTower, Target, TrendingUp, Users } 
 import { AdSalesDashboardCard } from '@/components/ad-sales/ad-sales-dashboard-card';
 import { IconPicker } from '@/components/icons/icon-picker';
 import { AppShell } from '@/components/layout/app-shell';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { accountDisplayName } from '@/lib/account-display';
 import { Button, Card, DateRangeInput, EmptyState, FormField, PageHeader, Skeleton, Table } from '@/components/ui/primitives';
-import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, getDashboardSummary, type ResolvedEmoji, transactionCategoriesApi } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
+import { accountsApi, type AdCampaign, type AdCampaignKpiStatus, currenciesApi, getDashboardSummary, type ResolvedEmoji, transactionCategoriesApi } from '@/lib/api';
+import { formatMoneyPreview } from '@/lib/money';
 
 const COLORS = ['#2563eb', '#10b981', '#f97316', '#f43f5e', '#8b5cf6', '#14b8a6', '#eab308', '#94a3b8'];
 const KPI_STATUS_COLORS: Record<string, string> = {
@@ -114,6 +115,8 @@ export default function DashboardPage() {
     queryKey: ['dashboard-summary', rangeMode, period?.dateFrom ?? null, period?.dateTo ?? null],
     queryFn: () => getDashboardSummary(period),
   });
+  const { data: currencySettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: currencyRates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
   const updateCategoryIconMutation = useMutation({
     mutationFn: ({ id, iconId }: { id: string; iconId: string | null }) =>
       transactionCategoriesApi.update(id, { iconId }),
@@ -132,8 +135,14 @@ export default function DashboardPage() {
     },
   });
 
+  const moneySettings = currencySettings ?? {
+    primaryCurrency: data?.primaryCurrency ?? 'USD',
+    secondaryCurrency: data?.secondaryCurrency ?? 'UAH',
+    tertiaryCurrency: 'UAH',
+    currencyDisplayMode: 'code' as const,
+  };
   const money = (value: number | string | null | undefined) =>
-    formatMoney(value, data?.primaryCurrency ?? '', 'symbol');
+    formatMoneyPreview({ amount: value, currency: moneySettings.primaryCurrency, settings: moneySettings, rates: currencyRates });
 
   const expenseBreakdown = useMemo(
     () => (data?.categoryBreakdown ?? []).filter((item) => item.type === 'expense'),
@@ -214,12 +223,12 @@ export default function DashboardPage() {
       {data ? (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={Banknote} label="Current balance" value={money(data.totalBalancePrimary)} detail={formatMoney(data.totalBalanceSecondary, data.secondaryCurrency ?? '', 'symbol')} tone="blue" />
-            <MetricCard icon={Megaphone} label="Channel ad revenue" value={money(data.incomeForPeriod)} detail={`${n(data.revenueTransactionsCount)} revenue transactions · ${n(data.channelsWithRevenueCount)} channels`} tone="green" />
-            <MetricCard icon={TrendingUp} label="Operating result" value={money(data.profitForPeriod)} detail={`${money(data.incomeForPeriod)} revenue · ${money(data.expensesForPeriod)} expenses`} tone={data.profitForPeriod >= 0 ? 'green' : 'red'} />
-            <MetricCard icon={Target} label="Invested capital" value={money(data.investedCapital)} detail={`${money(data.remainingToBreakEven)} left to break even`} tone="violet" />
+            <MetricCard icon={Banknote} label="Current balance" value={<MoneyStack amount={data.totalBalancePrimary} currency={moneySettings.primaryCurrency} settings={moneySettings} rates={currencyRates} mainClassName="text-2xl font-semibold text-white" subClassName="text-sm text-neutral-500" />} detail={`${n(data.accountBalances.length)} accounts`} tone="blue" />
+            <MetricCard icon={Megaphone} label="Channel ad revenue" value={<MoneyStack amount={data.incomeForPeriod} currency={moneySettings.primaryCurrency} settings={moneySettings} rates={currencyRates} mainClassName="text-2xl font-semibold text-white" subClassName="text-sm text-neutral-500" />} detail={`${n(data.revenueTransactionsCount)} revenue transactions · ${n(data.channelsWithRevenueCount)} channels`} tone="green" />
+            <MetricCard icon={TrendingUp} label="Operating result" value={<MoneyStack amount={data.profitForPeriod} currency={moneySettings.primaryCurrency} settings={moneySettings} rates={currencyRates} mainClassName="text-2xl font-semibold text-white" subClassName="text-sm text-neutral-500" />} detail={`${money(data.incomeForPeriod)} revenue · ${money(data.expensesForPeriod)} expenses`} tone={data.profitForPeriod >= 0 ? 'green' : 'red'} />
+            <MetricCard icon={Target} label="Invested capital" value={<MoneyStack amount={data.investedCapital} currency={moneySettings.primaryCurrency} settings={moneySettings} rates={currencyRates} mainClassName="text-2xl font-semibold text-white" subClassName="text-sm text-neutral-500" />} detail={`${money(data.remainingToBreakEven)} left to break even`} tone="violet" />
             <MetricCard icon={Target} label="Projected payback" value={data.projectedPaybackMonths == null ? '-' : `${n(data.projectedPaybackMonths, 1)} mo`} detail={`${money(data.projectedMonthlyProfit)} monthly pace`} tone={data.projectedPaybackMonths == null ? 'amber' : 'teal'} />
-            <MetricCard icon={Megaphone} label="Ad spend" value={money(data.adSpendForPeriod)} detail={`${data.periodCampaignsCount} campaigns in period`} tone="amber" />
+            <MetricCard icon={Megaphone} label="Ad spend" value={<MoneyStack amount={data.adSpendForPeriod} currency={moneySettings.primaryCurrency} settings={moneySettings} rates={currencyRates} mainClassName="text-2xl font-semibold text-white" subClassName="text-sm text-neutral-500" />} detail={`${data.periodCampaignsCount} campaigns in period`} tone="amber" />
             <MetricCard icon={RadioTower} label="Own channels" value={n(data.ownChannelsCount)} detail={`${n(data.totalSubscribers)} subscribers total`} tone="teal" />
             <MetricCard icon={Activity} label="Active audience" value={activeRate == null ? '-' : `${n(activeRate, 1)}%`} detail={`${n(data.activeSubscribersEstimate)} estimated active`} tone="green" />
             <MetricCard icon={Users} label="Workspace members" value={n(data.workspaceMembersCount)} detail={`${n(data.telegramChannelsCount)} total channels`} tone="blue" />
@@ -316,7 +325,13 @@ export default function DashboardPage() {
                             <span className="truncate">{accountDisplayName(account)}</span>
                           </span>
                         }
-                        value={formatMoney(account.balance, account.currency, 'symbol')}
+                        value={formatMoneyPreview({
+                          amount: account.balance,
+                          currency: account.currency,
+                          settings: moneySettings,
+                          rates: currencyRates,
+                          amountInPrimary: account.primary,
+                        })}
                         subValue={money(account.primary)}
                         amount={Math.max(0, account.primary)}
                         max={Math.max(...data.accountBalances.map((item) => Math.max(0, item.primary)), 1)}
@@ -406,7 +421,7 @@ function SectionHeader({ title, meta }: { title: string; meta?: string }) {
   );
 }
 
-function MetricCard({ icon: Icon, label, value, detail, tone }: { icon: typeof Banknote; label: string; value: string; detail: string; tone: 'blue' | 'green' | 'red' | 'amber' | 'violet' | 'teal' }) {
+function MetricCard({ icon: Icon, label, value, detail, tone }: { icon: typeof Banknote; label: string; value: ReactNode; detail: string; tone: 'blue' | 'green' | 'red' | 'amber' | 'violet' | 'teal' }) {
   const toneClass = {
     blue: 'border-blue-900/70 bg-blue-950/20 text-blue-300',
     green: 'border-emerald-900/70 bg-emerald-950/20 text-emerald-300',
@@ -420,7 +435,7 @@ function MetricCard({ icon: Icon, label, value, detail, tone }: { icon: typeof B
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm text-neutral-400">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+          <div className="mt-2">{value}</div>
         </div>
         <div className={`rounded-lg border p-2 ${toneClass}`}><Icon size={20} /></div>
       </div>

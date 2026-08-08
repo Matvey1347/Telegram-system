@@ -7,20 +7,19 @@ import type {
   TelegramAdSalePlacement,
   TelegramManagedPostCalendarItem,
 } from "@telegram-system/shared";
-import type {
-  TelegramChannel,
-  TelegramChannelNetwork,
-} from "./api";
+import type { TelegramChannel, TelegramChannelNetwork } from "./api";
 
 export type TelegramAdCalendarView = "week" | "month" | "list";
-export type TelegramAdSalesCalendarRangeMode = "week" | "month";
+export type TelegramAdSalesCalendarRangeMode = "week" | "month" | "threeMonths";
 export type TelegramAdSalesTab =
   | "calendar"
   | "sales"
+  | "clients"
   | "analytics"
   | "settings";
 
-const AD_SALES_CALENDAR_RANGE_STORAGE_PREFIX = "telegram-ad-sales:calendar-range";
+const AD_SALES_CALENDAR_RANGE_STORAGE_PREFIX =
+  "telegram-ad-sales:calendar-range";
 
 function adSalesCalendarRangeStorageKey(storage: Pick<Storage, "getItem">) {
   const workspaceId = storage.getItem("selected-workspace-id") || "default";
@@ -33,7 +32,9 @@ export function readAdSalesCalendarRangeMode(
   if (!storage) return null;
   try {
     const value = storage.getItem(adSalesCalendarRangeStorageKey(storage));
-    return value === "week" || value === "month" ? value : null;
+    return value === "week" || value === "month" || value === "threeMonths"
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -170,12 +171,16 @@ export function expandNetworkChannelIds(params: {
     const network = params.networks.find(
       (item) => item.id === params.selectedNetworkId,
     );
-    const networkChannelIds = (network?.channels ?? []).map((channel) => channel.id);
+    const networkChannelIds = (network?.channels ?? []).map(
+      (channel) => channel.id,
+    );
     const networkIds = new Set(networkChannelIds);
     if (!params.selectedChannelIds.length) {
       return networkChannelIds;
     }
-    return params.selectedChannelIds.filter((channelId) => networkIds.has(channelId));
+    return params.selectedChannelIds.filter((channelId) =>
+      networkIds.has(channelId),
+    );
   }
   if (!params.selectedChannelIds.length) {
     return Array.from(new Set(params.allChannelIds ?? []));
@@ -183,7 +188,10 @@ export function expandNetworkChannelIds(params: {
   return Array.from(new Set(params.selectedChannelIds));
 }
 
-export function channelLocalDateKey(value: string | Date, timezone = "Europe/Warsaw") {
+export function channelLocalDateKey(
+  value: string | Date,
+  timezone = "Europe/Warsaw",
+) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -198,7 +206,10 @@ export function channelLocalDateKey(value: string | Date, timezone = "Europe/War
   return `${year}-${month}-${day}`;
 }
 
-export function channelLocalTime(value: string | Date, timezone = "Europe/Warsaw") {
+export function channelLocalTime(
+  value: string | Date,
+  timezone = "Europe/Warsaw",
+) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("en-GB", {
@@ -223,7 +234,11 @@ function zonedParts(date: Date, timezone: string) {
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
-export function zonedDateTimeToUtc(dateKey: string, time: string, timezone: string) {
+export function zonedDateTimeToUtc(
+  dateKey: string,
+  time: string,
+  timezone: string,
+) {
   const [year, month, day] = dateKey.split("-").map(Number);
   const [hour, minute, second = 0] = time.split(":").map(Number);
   let guess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
@@ -339,5 +354,7 @@ export function findOverlayPlacementForManagedPost(params: {
 
 export function getChannelOptionLabel(channel: TelegramChannel) {
   const username = channel.username?.trim();
-  return username ? `${channel.title} · @${username.replace(/^@/, "")}` : channel.title;
+  return username
+    ? `${channel.title} · @${username.replace(/^@/, "")}`
+    : channel.title;
 }

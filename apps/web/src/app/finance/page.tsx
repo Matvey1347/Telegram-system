@@ -10,13 +10,15 @@ import {
   Account,
   accountsApi,
   currenciesApi,
+  type CurrencySettings,
+  type ExchangeRate,
   transactionCategoriesApi,
   transactionsApi,
   transfersApi,
   type Transaction,
   type TransactionType,
 } from '@/lib/api';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatRate } from '@/lib/money';
 import { MoneyStack } from '@/components/ui/money-stack';
 import { AccountName } from '@/components/accounts/account-name';
 import { Button, Card, DateRangeInput, EmptyState, EntityCard, ErrorState, FormField, MasonryGrid, PageHeader, Skeleton } from '@/components/ui/primitives';
@@ -113,7 +115,7 @@ export default function FinancePage() {
                   <MoneyStack amount={account.balance ?? account.calculatedBalance} currency={account.currency} settings={settings} rates={rates} amountInPrimary={account.convertedCurrency === settings?.primaryCurrency ? account.convertedBalance : null} />
                   <span className="rounded-full border border-neutral-700 px-2 py-1 text-xs">{account.currency}</span>
                 </div>
-                <AccountStatsSummary account={account} displayMode={settings?.currencyDisplayMode} />
+        <AccountStatsSummary account={account} settings={settings} rates={rates} />
               </EntityCard>
             ))}
           </MasonryGrid>
@@ -269,7 +271,7 @@ function FinanceSectionSkeleton({ variant = 'cards' }: { variant?: 'cards' | 'ta
   );
 }
 
-function AccountStatsSummary({ account, displayMode }: { account: Account; displayMode?: 'code' | 'symbol' }) {
+function AccountStatsSummary({ account, settings, rates }: { account: Account; settings?: CurrencySettings; rates?: ExchangeRate[] }) {
   const stats = account.transactionStats;
   const count = stats?.count ?? 0;
   const received = Number(stats?.received ?? 0);
@@ -282,22 +284,22 @@ function AccountStatsSummary({ account, displayMode }: { account: Account; displ
     <div className="mt-3 space-y-1.5 text-xs leading-snug text-neutral-500">
       <div>{count} {count === 1 ? 'transaction' : 'transactions'}</div>
       <div className="grid gap-1">
-        <AccountStatLine label="Received" value={received} currency={account.currency} displayMode={displayMode} tone="positive" />
-        <AccountStatLine label="Spent" value={spent} currency={account.currency} displayMode={displayMode} tone="negative" />
-        <AccountStatLine label="Transferred in" value={transferredIn} currency={account.currency} displayMode={displayMode} tone="positive" />
-        <AccountStatLine label="Transferred out" value={transferredOut} currency={account.currency} displayMode={displayMode} tone="negative" />
-        {delta !== 0 ? <AccountStatLine label="Delta" value={delta} currency={account.currency} displayMode={displayMode} tone={delta > 0 ? 'positive' : 'negative'} /> : null}
+        <AccountStatLine label="Received" value={received} currency={account.currency} settings={settings} rates={rates} tone="positive" />
+        <AccountStatLine label="Spent" value={spent} currency={account.currency} settings={settings} rates={rates} tone="negative" />
+        <AccountStatLine label="Transferred in" value={transferredIn} currency={account.currency} settings={settings} rates={rates} tone="positive" />
+        <AccountStatLine label="Transferred out" value={transferredOut} currency={account.currency} settings={settings} rates={rates} tone="negative" />
+        {delta !== 0 ? <AccountStatLine label="Delta" value={delta} currency={account.currency} settings={settings} rates={rates} tone={delta > 0 ? 'positive' : 'negative'} /> : null}
       </div>
     </div>
   );
 }
 
-function AccountStatLine({ label, value, currency, displayMode, tone }: { label: string; value: number; currency: string; displayMode?: 'code' | 'symbol'; tone: 'positive' | 'negative' }) {
+function AccountStatLine({ label, value, currency, settings, rates, tone }: { label: string; value: number; currency: string; settings?: CurrencySettings; rates?: ExchangeRate[]; tone: 'positive' | 'negative' }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span>{label}</span>
       <span className={`font-medium ${tone === 'positive' ? 'text-emerald-300' : 'text-rose-300'}`}>
-        {formatMoney(value, currency, displayMode)}
+        <MoneyStack amount={value} currency={currency} settings={settings} rates={rates} mainClassName="text-xs font-medium" subClassName="text-[11px] text-neutral-500" />
       </span>
     </div>
   );

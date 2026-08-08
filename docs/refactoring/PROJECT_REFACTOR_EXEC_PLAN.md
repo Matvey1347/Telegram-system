@@ -1,6 +1,6 @@
 # Project Refactor ExecPlan
 
-Updated: 2026-08-04
+Updated: 2026-08-08
 
 ## Current State
 
@@ -38,7 +38,7 @@ Measured before edits:
 | Largest backend file | `apps/api/src/telegram-channels/telegram-channels.service.ts` - 11019 |
 | Largest frontend file | `apps/web/src/app/telegram-posts/page.tsx` - 6775 |
 
-`apps/web/src/lib/api.ts` was reduced from 3575 lines to 2235 lines by extracting type-only API contracts, moving `applicationLogsApi` to `apps/web/src/lib/application-logs-api.ts`, and removing a now-unused managed-feedback helper. The temporary 1486-line `apps/web/src/lib/api-types.ts` type warehouse was split into domain modules under `apps/web/src/lib/api-types/`, leaving `apps/web/src/lib/api-types.ts` as an 11-line compatibility barrel. `apps/api/src/ad-campaigns/ad-campaigns.service.ts` was reduced to 1864 lines by extracting invite-link history payload construction. Transitional architecture allowances match current sizes so any growth fails `pnpm architecture:check`.
+`apps/web/src/lib/api.ts` was reduced from 3575 lines to 757 lines by extracting type-only API contracts, moving `applicationLogsApi` to `apps/web/src/lib/application-logs-api.ts`, moving endpoint facades into focused modules (`workspace-api`, `finance-api`, `prompt-notes-api`, `telegram-channels-api`, `telegram-channel-helpers-api`, `telegram-sources-api`, `marketing-api`, `telegram-ad-sales-api`), and removing now-unused managed-feedback helpers. The temporary 1486-line `apps/web/src/lib/api-types.ts` type warehouse was split into domain modules under `apps/web/src/lib/api-types/`, leaving `apps/web/src/lib/api-types.ts` as an 11-line compatibility barrel. `packages/shared/src/types/telegram-ad-sales.ts` was reduced below its legacy allowance by moving CRM contracts to `packages/shared/src/types/telegram-ad-sales-crm.ts`. `apps/api/src/ad-campaigns/ad-campaigns.service.ts` was reduced to 1864 lines by extracting invite-link history payload construction. Transitional architecture allowances remain shrinking-only; current project-wide `pnpm architecture:check` still fails on older oversized files that have grown outside this slice.
 
 ## Large Files
 
@@ -56,7 +56,7 @@ Measured before edits:
 
 - All files above.
 - `apps/web/src/app/ad-campaigns/page.tsx` - campaigns/promos/hypotheses page state, tables, modals, analytics.
-- `apps/web/src/lib/api.ts` - axios client, interceptors, endpoint facades.
+- `apps/web/src/lib/api.ts` - compatibility facade with axios client, interceptors, stream utilities and domain API factory exports.
 
 ### 1000+ Lines
 
@@ -125,6 +125,10 @@ Frontend target:
 - Extract invite-link history payload construction from `AdCampaignsService` into `apps/api/src/ad-campaigns/invite-link-history.ts` with focused characterization tests.
 - Add `scripts/check-architecture.mjs` as a baseline-aware guard. Existing legacy files above limits are tracked as shrinking-only transitional entries; new files above hard policy and legacy growth fail.
 - Add project-scoped Codex agent definitions under `.codex/agents`.
+- Assign stable project call-signs in `.codex/agents`: Linus Backend, Ada Frontend, Dieter Design, Grace Explorer and Turing Review.
+- Extract `telegramAdSalesApi` from `apps/web/src/lib/api.ts` to `apps/web/src/lib/telegram-ad-sales-api.ts` while preserving the `@/lib/api` compatibility export.
+- Extract workspace, finance, prompt-notes, Telegram channels, Telegram source/account, marketing and Ad Sales endpoint implementations from `apps/web/src/lib/api.ts` while preserving `@/lib/api` compatibility exports.
+- Extract Telegram Ad Sales CRM shared contracts from `packages/shared/src/types/telegram-ad-sales.ts` to `packages/shared/src/types/telegram-ad-sales-crm.ts`.
 
 ## Validation Baseline
 
@@ -169,9 +173,10 @@ Pre-existing results before implementation:
 
 | Command | Result |
 |---|---|
-| `pnpm architecture:check` | pass: 289 production TS/TSX files scanned; transitional allowances match current sizes |
+| `pnpm architecture:check` | fail: current refactored files are within transitional allowances, but unrelated legacy growth remains in Telegram channels, Telegram posts pages, transactions, UI primitives, icon picker and managed-post import modal |
 | `pnpm --filter @telegram-system/shared typecheck` | pass |
 | `pnpm --filter api typecheck` | pass |
+| `pnpm --filter api test -- telegram-ad-sales.service.spec.ts telegram-ad-sales-crm-advertisers.service.spec.ts --runInBand` | pass: 2 suites, 31 tests |
 | `pnpm --filter api test -- --runInBand` | pass: 30 suites, 209 tests |
 | `pnpm --filter api test -- telegram-ad-sales.service.spec.ts --runInBand` | pass: 19 tests |
 | `pnpm --filter api test -- invite-link-history.spec.ts --runInBand` | pass |

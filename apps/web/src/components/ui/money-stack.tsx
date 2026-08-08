@@ -1,10 +1,10 @@
 import type { CurrencySettings, ExchangeRate } from '@/lib/api';
-import { formatMoney, getMoneyVariants } from '@/lib/money';
+import { getMoneyPreview } from '@/lib/money';
 
 type MoneyStackProps = {
   amount: number | string | null | undefined;
   currency: string | null | undefined;
-  settings?: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'currencyDisplayMode'> | null;
+  settings?: Pick<CurrencySettings, 'primaryCurrency' | 'secondaryCurrency' | 'tertiaryCurrency' | 'currencyDisplayMode'> | null;
   rates?: ExchangeRate[];
   amountInPrimary?: number | string | null;
   className?: string;
@@ -24,25 +24,25 @@ export function MoneyStack({
   subClassName = 'text-sm text-neutral-400',
   approximate = true,
 }: MoneyStackProps) {
-  const displayMode = settings?.currencyDisplayMode ?? 'code';
-  const variants = getMoneyVariants({
+  const preview = getMoneyPreview({
     amount,
     currency,
     settings,
     rates,
     amountInPrimary,
   });
+  const [primary, secondary, tertiary] = preview;
+  const formatPreviewItem = (item: (typeof preview)[number]) =>
+    item.amount == null ? 'Rate missing' : item.label;
 
   return (
     <div className={className}>
-      <div className={mainClassName}>{formatMoney(amount, currency, displayMode)}</div>
-      {variants.length ? (
+      <div className={mainClassName}>
+        {[primary, secondary].filter(Boolean).map(formatPreviewItem).join(' / ')}
+      </div>
+      {tertiary ? (
         <div className={subClassName}>
-          {variants.map((variant) => (
-            <div key={variant.currency}>
-              {variant.amount == null ? '≈ Rate missing' : `${approximate ? '≈ ' : ''}${variant.label}`}
-            </div>
-          ))}
+          {tertiary.amount == null ? 'Rate missing' : `${approximate ? '≈ ' : ''}${tertiary.label}`}
         </div>
       ) : null}
     </div>

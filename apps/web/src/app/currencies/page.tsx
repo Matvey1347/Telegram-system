@@ -55,7 +55,7 @@ export default function CurrenciesPage() {
       {showInitialLoading ? <LoadingState /> : null}
       {error ? <Card className="text-red-300">Failed to load currency data</Card> : null}
 
-      {settings ? <CurrencySettingsCard key={`${settings.primaryCurrency}-${settings.secondaryCurrency}-${settings.currencyDisplayMode}`} settings={settings} onSave={(payload) => saveSettings.mutate(payload)} /> : null}
+      {settings ? <CurrencySettingsCard key={`${settings.primaryCurrency}-${settings.secondaryCurrency}-${settings.tertiaryCurrency}-${settings.currencyDisplayMode}`} settings={settings} onSave={(payload) => saveSettings.mutate(payload)} /> : null}
 
       <MasonryGrid className="mt-6">
         {rates?.map((rate) => (
@@ -83,19 +83,20 @@ export default function CurrenciesPage() {
   );
 }
 
-function CurrencySettingsCard({ settings, onSave }: { settings: { primaryCurrency: Currency; secondaryCurrency: Currency; currencyDisplayMode: CurrencyDisplayMode; supportedCurrencies: Currency[] }; onSave: (v: { primaryCurrency: Currency; secondaryCurrency: Currency; currencyDisplayMode: CurrencyDisplayMode }) => void }) {
+function CurrencySettingsCard({ settings, onSave }: { settings: { primaryCurrency: Currency; secondaryCurrency: Currency; tertiaryCurrency: Currency; currencyDisplayMode: CurrencyDisplayMode; supportedCurrencies: Currency[] }; onSave: (v: { primaryCurrency: Currency; secondaryCurrency: Currency; tertiaryCurrency: Currency; currencyDisplayMode: CurrencyDisplayMode }) => void }) {
   const [primaryCurrency, setPrimaryCurrency] = useState<Currency>(settings.primaryCurrency);
   const [secondaryCurrency, setSecondaryCurrency] = useState<Currency>(settings.secondaryCurrency);
+  const [tertiaryCurrency, setTertiaryCurrency] = useState<Currency>(settings.tertiaryCurrency ?? 'UAH');
   const [currencyDisplayMode, setCurrencyDisplayMode] = useState<CurrencyDisplayMode>(settings.currencyDisplayMode);
 
   return (
     <Card>
       <h3 className="mb-4 text-lg font-semibold">Currency settings</h3>
       <form
-        className="grid gap-3 md:grid-cols-3"
+        className="grid gap-3 md:grid-cols-4"
         onSubmit={(e) => {
           e.preventDefault();
-          onSave({ primaryCurrency: primaryCurrency.toUpperCase(), secondaryCurrency: secondaryCurrency.toUpperCase(), currencyDisplayMode });
+          onSave({ primaryCurrency: primaryCurrency.toUpperCase(), secondaryCurrency: secondaryCurrency.toUpperCase(), tertiaryCurrency: tertiaryCurrency.toUpperCase(), currencyDisplayMode });
         }}
       >
         <FormField label="Primary currency">
@@ -103,6 +104,9 @@ function CurrencySettingsCard({ settings, onSave }: { settings: { primaryCurrenc
         </FormField>
         <FormField label="Secondary currency">
           <CurrencySelect value={secondaryCurrency} onChange={setSecondaryCurrency} currencies={settings.supportedCurrencies} />
+        </FormField>
+        <FormField label="Third currency">
+          <CurrencySelect value={tertiaryCurrency} onChange={setTertiaryCurrency} currencies={settings.supportedCurrencies} />
         </FormField>
         <FormField label="Display">
           <Select value={currencyDisplayMode} onChange={(e) => setCurrencyDisplayMode(e.target.value as CurrencyDisplayMode)}>

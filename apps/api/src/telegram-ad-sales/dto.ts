@@ -16,6 +16,7 @@ import {
   TelegramAdvertiserTaskType,
 } from '@prisma/client';
 import {
+  Allow,
   ArrayMaxSize,
   IsArray,
   IsBoolean,
@@ -148,7 +149,16 @@ export class TelegramAdvertisersQueryDto extends PaginationQueryDto {
   @IsOptional() @IsEnum(TelegramAdvertiserStatus) status?: TelegramAdvertiserStatus;
   @IsOptional() @IsEnum(TelegramAdvertiserLifecycleStage) lifecycleStage?: TelegramAdvertiserLifecycleStage;
   @IsOptional() @IsString() ownerMemberId?: string;
-  @IsOptional() @IsBoolean() archived?: boolean;
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === true || value === 'true'
+      ? true
+      : value === false || value === 'false'
+        ? false
+        : value,
+  )
+  @IsBoolean()
+  archived?: boolean;
 }
 
 export class TelegramAdvertiserSearchDto {
@@ -286,6 +296,16 @@ export class TelegramAdCrmMemberSettingsDto {
 }
 
 export class TelegramAdAnalyticsQueryDto {
+  @Allow()
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @Allow()
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
   @IsOptional()
   @Transform(({ value, obj }: { value: unknown; obj?: Record<string, unknown> }) =>
     typeof value === 'string'
@@ -307,6 +327,7 @@ export class TelegramAdAnalyticsQueryDto {
   @IsDateString()
   dateTo?: string;
   @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsString() networkId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(366) rangeDays?: number;
   @IsOptional() @IsIn(['PREVIOUS_PERIOD', 'PREVIOUS_30_DAYS', 'PREVIOUS_MONTH', 'CUSTOM', 'NONE']) compareMode?: 'PREVIOUS_PERIOD' | 'PREVIOUS_30_DAYS' | 'PREVIOUS_MONTH' | 'CUSTOM' | 'NONE';
   @IsOptional() @IsDateString() compareDateFrom?: string;
@@ -316,7 +337,6 @@ export class TelegramAdAnalyticsQueryDto {
 
 export class TelegramAdAnalyticsSeriesQueryDto extends TelegramAdAnalyticsQueryDto {
   @IsOptional() @IsString() channelId?: string;
-  @IsOptional() @IsString() networkId?: string;
   @IsOptional() @IsString() telegramAdProductId?: string;
 }
 
@@ -350,7 +370,6 @@ export class TelegramAdInventoryRebuildDto {
 
 export class TelegramAdPriceFillCorrelationQueryDto extends TelegramAdAnalyticsQueryDto {
   @IsOptional() @IsString() channelId?: string;
-  @IsOptional() @IsString() networkId?: string;
   @IsOptional() @IsIn(['SALE_CONTEXT', 'CURRENT_CHANNELS']) networkMode?: 'SALE_CONTEXT' | 'CURRENT_CHANNELS';
   @IsOptional() @IsIn(['DAY', 'WEEK', 'MONTH']) bucket?: 'DAY' | 'WEEK' | 'MONTH';
 }

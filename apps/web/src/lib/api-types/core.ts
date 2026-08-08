@@ -45,6 +45,7 @@ export type WorkspaceInfo = {
   role: WorkspaceRole;
   primaryCurrency?: Currency;
   secondaryCurrency?: Currency;
+  tertiaryCurrency?: Currency;
   currencyDisplayMode?: CurrencyDisplayMode;
   avatarIcon?: Icon | null;
   avatarPresentation?: ResolvedEmoji | null;

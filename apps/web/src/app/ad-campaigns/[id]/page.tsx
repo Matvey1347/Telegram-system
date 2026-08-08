@@ -1,15 +1,16 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RotateCw } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
 import { PageTabHead } from '@/components/layout/page-tab-head';
+import { MoneyStack } from '@/components/ui/money-stack';
 import { Button, Card, LoadingState, PageHeader } from '@/components/ui/primitives';
 import { TelegramEntityAvatar } from '@/components/telegram/telegram-entity-avatar';
 import { adCampaignsApi, currenciesApi, type AdCampaign } from '@/lib/api';
-import { formatMoney } from '@/lib/money';
 import { useAppToast } from '@/providers/toast-provider';
 
 function toNumber(value: unknown) {
@@ -64,6 +65,7 @@ export default function AdCampaignDetailPage() {
   const { pushToast } = useAppToast();
 
   const { data: currencySettings } = useQuery({ queryKey: ['currency-settings'], queryFn: currenciesApi.getSettings });
+  const { data: currencyRates } = useQuery({ queryKey: ['currency-rates'], queryFn: currenciesApi.listRates });
   const { data: campaign, isLoading, error } = useQuery({
     queryKey: ['ad-campaign', id],
     queryFn: () => adCampaignsApi.get(id),
@@ -105,8 +107,20 @@ export default function AdCampaignDetailPage() {
                 <p className="text-sm text-slate-300">{campaign.decisionText || 'Not enough data yet.'}</p>
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm md:w-[360px]">
-                <InfoPill label="Cost" value={formatMoney(Number(campaign.price || 0), campaign.currency, currencySettings?.currencyDisplayMode)} />
-                <InfoPill label="Primary" value={formatMoney(Number(campaign.priceInPrimaryCurrency || 0), currencySettings?.primaryCurrency || campaign.currency, currencySettings?.currencyDisplayMode)} />
+                <InfoPill
+                  label="Cost"
+                  value={
+                    <MoneyStack
+                      amount={Number(campaign.price || 0)}
+                      currency={campaign.currency}
+                      settings={currencySettings}
+                      rates={currencyRates}
+                      amountInPrimary={campaign.priceInPrimaryCurrency}
+                      mainClassName="font-semibold text-white"
+                      subClassName="text-xs text-slate-500"
+                    />
+                  }
+                />
               </div>
             </div>
           </Card>
@@ -340,11 +354,11 @@ function MetricCard({ title, value }: { title: string; value: string }) {
   );
 }
 
-function InfoPill({ label, value }: { label: string; value: string }) {
+function InfoPill({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
       <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-0.5 truncate font-semibold text-slate-100">{value}</p>
+      <div className="mt-0.5 font-semibold text-slate-100">{value}</div>
     </div>
   );
 }

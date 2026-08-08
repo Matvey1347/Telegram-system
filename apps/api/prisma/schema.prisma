@@ -395,6 +395,7 @@ model Workspace {
   timezone            String              @default("Europe/Warsaw")
   primaryCurrency     String              @default("USD") @db.VarChar(3)
   secondaryCurrency   String              @default("UAH") @db.VarChar(3)
+  tertiaryCurrency    String              @default("UAH") @db.VarChar(3)
   currencyDisplayMode CurrencyDisplayMode @default(code)
   avatarIconId        String?
 

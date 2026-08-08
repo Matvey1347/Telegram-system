@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { CurrencyDisplayMode } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceService } from '../common/workspace.service';
 import { ApplicationLoggerService } from '../application-logs/application-logger.service';
@@ -45,6 +46,13 @@ const getSupportedCurrencies = () => {
   return Array.from(new Set([...SUPPORTED_CURRENCIES, ...intlCurrencies])).sort();
 };
 
+type WorkspaceCurrencySettingsRow = {
+  primaryCurrency: string;
+  secondaryCurrency: string;
+  tertiaryCurrency: string;
+  currencyDisplayMode: CurrencyDisplayMode;
+};
+
 @Injectable()
 export class CurrenciesService {
   private readonly logger = new Logger(CurrenciesService.name);
@@ -61,14 +69,19 @@ export class CurrenciesService {
   async getSettings(userId: string) {
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const workspace = await this.prisma.workspace.findUniqueOrThrow({
-      where: { id: workspaceId },
-      select: {
-        primaryCurrency: true,
-        secondaryCurrency: true,
-        currencyDisplayMode: true,
-      },
-    });
+    const [workspace] = await this.prisma.$queryRaw<
+      WorkspaceCurrencySettingsRow[]
+    >`
+      SELECT
+        "primaryCurrency",
+        "secondaryCurrency",
+        "tertiaryCurrency",
+        "currencyDisplayMode"
+      FROM "Workspace"
+      WHERE id = ${workspaceId}
+      LIMIT 1
+    `;
+    if (!workspace) throw new NotFoundException('Workspace not found');
     return {
       ...workspace,
       supportedCurrencies: getSupportedCurrencies(),
@@ -83,19 +96,24 @@ export class CurrenciesService {
     }
     const workspaceId =
       await this.workspaceService.resolveWorkspaceIdForUser(userId);
-    const workspace = await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: {
-        primaryCurrency: dto.primaryCurrency,
-        secondaryCurrency: dto.secondaryCurrency,
-        currencyDisplayMode: dto.currencyDisplayMode,
-      },
-      select: {
-        primaryCurrency: true,
-        secondaryCurrency: true,
-        currencyDisplayMode: true,
-      },
-    });
+    const [workspace] = await this.prisma.$queryRaw<
+      WorkspaceCurrencySettingsRow[]
+    >`
+      UPDATE "Workspace"
+      SET
+        "primaryCurrency" = ${dto.primaryCurrency},
+        "secondaryCurrency" = ${dto.secondaryCurrency},
+        "tertiaryCurrency" = ${dto.tertiaryCurrency ?? 'UAH'},
+        "currencyDisplayMode" = ${dto.currencyDisplayMode}::"CurrencyDisplayMode",
+        "updatedAt" = NOW()
+      WHERE id = ${workspaceId}
+      RETURNING
+        "primaryCurrency",
+        "secondaryCurrency",
+        "tertiaryCurrency",
+        "currencyDisplayMode"
+    `;
+    if (!workspace) throw new NotFoundException('Workspace not found');
 
     try {
       await this.syncRatesForWorkspace(workspaceId, workspace.primaryCurrency);
@@ -296,11 +314,19 @@ export class CurrenciesService {
   }
 
   private async getWorkspaceCurrencyCodes(workspaceId: string) {
-    const [workspace, accounts, campaigns] = await Promise.all([
-      this.prisma.workspace.findUnique({
-        where: { id: workspaceId },
-        select: { primaryCurrency: true, secondaryCurrency: true },
-      }),
+    const [workspaces, accounts, campaigns] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{
+          primaryCurrency: string;
+          secondaryCurrency: string;
+          tertiaryCurrency: string;
+        }>
+      >`
+        SELECT "primaryCurrency", "secondaryCurrency", "tertiaryCurrency"
+        FROM "Workspace"
+        WHERE id = ${workspaceId}
+        LIMIT 1
+      `,
       this.prisma.account.findMany({
         where: { workspaceId },
         select: { currency: true },
@@ -310,9 +336,11 @@ export class CurrenciesService {
         select: { currency: true },
       }),
     ]);
+    const workspace = workspaces[0] ?? null;
     return [
       workspace?.primaryCurrency,
       workspace?.secondaryCurrency,
+      workspace?.tertiaryCurrency,
       ...accounts.map((row) => row.currency),
       ...campaigns.map((row) => row.currency),
     ].filter((currency): currency is string => Boolean(currency));
